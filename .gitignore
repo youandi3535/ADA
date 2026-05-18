@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 가상환경
+venv/
+.venv/
+env/
+ENV/
+
+# 환경변수 (절대 커밋 금지!)
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 로그
+*.log
+logs/
+
+# 데이터 (큰 파일은 따로 관리)
+data/
+*.csv
+*.parquet
+*.db
+*.sqlite
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 빌드 산출물
+dist/
+build/
+*.egg-info/
