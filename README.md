@@ -33,4 +33,6 @@ ADA/
 2. 새 브랜치 생성: \`git checkout -b feat/내기능\`
 3. 작업 후 커밋: \`git commit -m "feat: 기능 설명"\`
 4. push 후 PR 생성: \`git push -u origin feat/내기능\`
-5. CI 통과 + 리뷰 승인 → 머지
+5. CI 통과 + 리뷰 승인 → 머지.
+
+
