@@ -50,3 +50,7 @@ data/
 dist/
 build/
 *.egg-info/
+
+# Claude Code 로컬 설정
+.claude/
+
