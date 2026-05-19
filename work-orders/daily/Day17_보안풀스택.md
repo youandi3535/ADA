@@ -78,8 +78,9 @@ v2 시스템 전체에 대한 **종단 보안 모델** 을 완성한다. 사용�
 
 - [ ] `security/pii_detector.py` 강화:
   - 정규식 (한국 주민번호, 한국 휴대전화, 신용카드 Luhn, 이메일, IPv4/v6, 한국 도로명/지번 주소 시그니처)
-  - NER fallback: `klue/bert-base-ner` (옵션, 비용 고려)
+  - 정규식 + 한국어 키워드 휴리스틱 only (v2.1: NER 모델 의존성 제거)
   - 컬럼명 휴리스틱: ['name','email','phone','mobile','id','ssn','rrn','card','address','addr','dob','birth',...]
+  - 검사 대상은 정형 컬럼(텍스트/숫자)만 — v2.1 스코프 축소로 이미지/오디오 컬럼은 입력 형식 자체에서 제외됨
 - [ ] `security/pii_masker.py`:
   - `mask_text(s)` — 정규식 매칭 부분 `***` 또는 부분 마스킹 (`010-****-1234`)
   - `pseudonymize_column(s, salt)` — Faker 기반 결정론적 가명화 (동일 원본 → 동일 가명)

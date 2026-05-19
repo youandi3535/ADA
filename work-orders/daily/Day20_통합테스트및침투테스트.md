@@ -1,19 +1,18 @@
 # Day 20 — 통합 테스트 (5게이트 E2E · 자체학습 · 자동오류 · 침투 50종)
 > 프로젝트: Adaptive AutoAI Pipeline Agent | 3주 스프린트 Day 20/21
-> 본 문서는 v2 신규 작업이다.
+> 본 문서는 v2 신규 작업이다. **v2.1 스코프 축소 적용** (RENEWAL_SPEC.md 권위).
 
 ---
 
 ## 📋 오늘의 목표
 
-v2 시스템 전체를 **5종 통합 테스트 시나리오** 와 **50종 보안 침투 페이로드** 로 검증한다. 모든 KP7~KP11 정량 지표를 측정·기록.
+v2 시스템 전체를 **4종 통합 테스트 시나리오 (IT-1~IT-4)** 와 **50종 보안 침투 페이로드** 로 검증한다. 모든 KP7~KP11 정량 지표를 측정·기록. 침투 50종은 IT-4 안에 통합 (보안 시나리오).
 
-테스트 시나리오 (대표 5종):
-- **IT-1**: 5게이트 인터랙티브 E2E (Titanic + 임원 의도 + OUT-01/10)
+테스트 시나리오 (4종):
+- **IT-1**: 5게이트 인터랙티브 E2E (Titanic + 임원 의도 + OUT-01/OUT-07)
 - **IT-2**: 자체학습 누적 효과 (동일 데이터셋 2회 실행, 두 번째 trial 수 30%↓ + 메트릭 5%↑)
 - **IT-3**: 자동 오류 처리 사이클 (의도적 5회 오류 주입, KB 적중률 80% 검증)
-- **IT-4**: 트랜스포머 우선 정책 (G4 선택지 중 transformer 비율 ≥ 33% 검증)
-- **IT-5**: 보안 침투 (50종, 0건 통과 + audit_log 50건 INSERT)
+- **IT-4**: 보안 침투 (50종, 0건 통과 + audit_log 50건 INSERT) — 트랜스포머 우선 정책(KP9)은 본 시나리오 안에서 보조 측정
 
 ---
 
@@ -36,7 +35,7 @@ v2 시스템 전체를 **5종 통합 테스트 시나리오** 와 **50종 보안
   5. interrupt G2 → 추천 방법론 선택
   6. interrupt G3 → 추천 전략 선택
   7. interrupt G4 → 추천 모델 선택
-  8. interrupt G5 → OUT-01, OUT-10 선택
+  8. interrupt G5 → OUT-01, OUT-07 선택
   9. 완료 → /outputs/{job_id} 조회 → 2 산출물 모두 다운로드
 - 검증:
   - 각 interrupt 메시지에 proposals 포함
@@ -74,20 +73,10 @@ v2 시스템 전체를 **5종 통합 테스트 시나리오** 와 **50종 보안
   5. 최종 통계: 5회 중 4회 자동 해결 → 자동 해결률 80% (≥ 60% KP8)
   6. error_kb.success_count = 4, confidence > 0.85
 
-### 4. IT-4 — 트랜스포머 우선 정책
+### 4. IT-4 — 보안 침투 50종 + 트랜스포머 우선 정책 (보조)
 
-- [ ] `tests/integration_v2/test_it4_transformer_policy.py`
-- 시나리오:
-  1. tabular_ml 잡 10회 실행 (다양한 데이터셋)
-  2. 각 잡의 G4 proposals 의 trained_models 중 트랜스포머 사용 비율 측정
-  3. 전체 평균 ≥ 33% (KP9)
-- 보조:
-  - 데이터셋이 너무 작아 TabPFN 부적합한 경우 (rows>10000)는 트랜스포머 제외 허용
-  - 그래도 다른 카테고리 (timeseries, image, nlp)에서 ≥ 50% 충족
-
-### 5. IT-5 — 보안 침투 50종
-
-- [ ] `tests/integration_v2/test_it5_penetration.py`
+- [ ] `tests/integration_v2/test_it4_penetration.py`
+- 보조 측정: tabular_ml/timeseries/anomaly_detection 잡 6회 샘플의 G4 proposals 에서 트랜스포머 사용 비율 ≥ 25% (KP9 v2.1)
 - 페이로드 카테고리:
 
 | 분류 | 페이로드 예시 | 기대 결과 |
@@ -104,38 +93,38 @@ v2 시스템 전체를 **5종 통합 테스트 시나리오** 와 **50종 보안
 - security_audit_log 에 신규 INSERT ≥ 50 건
 - 시스템 정상 동작 유지 (다른 정상 잡에 영향 없음)
 
-### 6. KPI v2 측정 (KP1~KP11)
+### 5. KPI v2 측정 (KP1~KP11)
 
 - [ ] `scripts/measure_kpi_v2.py` 실행:
   ```
-  KP1 E2E 성공률      ≥ 85% : 측정값 ...
-  KP2 응답 속도        ≤ 120s: ...
-  KP3 자동 재루프 성공 ≥ 75% : ...
-  KP4 카테고리 커버    6/6   : ...
-  KP5 API p95          < 400ms: ...
-  KP6 자동 누적 룰     ≥ 15   : ...
-  KP7 자체학습 효과    +5%↑/-30% trial : ...
-  KP8 자체 오류 해결   ≥ 60%  : ...
-  KP9 트랜스포머 채택  ≥ 33%  : ...
+  KP1  E2E 성공률      ≥ 85% : 측정값 ...
+  KP2  응답 속도        ≤ 120s: ...
+  KP3  자동 재루프 성공 ≥ 75% : ...
+  KP4  카테고리 커버    4/4   : ...   # v2.1: 4종 (tabular_ml/tabular_dl/timeseries/anomaly_detection)
+  KP5  API p95          < 400ms: ...
+  KP6  자동 누적 룰     ≥ 15   : ...
+  KP7  자체학습 효과    +5%↑/-30% trial : ...
+  KP8  자체 오류 해결   ≥ 60%  : ...
+  KP9  트랜스포머 채택  ≥ 25%  : ...  # v2.1 조정 (TRANSFORMER_REGISTRY 8종으로 축소)
   KP10 침투 0건 통과   ✓      : ...
   KP11 사용자 1순위 채택 ≥ 60%: ...
   ```
 - 측정 결과를 `kpi_v2_report.md` 로 저장 (Day21 데모에서 사용)
 
-### 7. Load 테스트
+### 6. Load 테스트
 
 - [ ] `tests/load/locustfile.py`:
   - 동시 사용자 50명, 각자 잡 시작 + 게이트 응답
   - 평균 응답 시간, 99 percentile, 에러율
 - [ ] 통과 기준: 동시 50 사용자에서도 API p95 < 1s
 
-### 8. 재해 복구 (DR) 시뮬레이션
+### 7. 재해 복구 (DR) 시뮬레이션
 
 - [ ] Postgres 컨테이너 강제 종료 → 30초 내 재기동 → 진행 중인 잡이 재개되는지 (PostgresSaver 영속화)
 - [ ] Redis 컨테이너 종료 → Celery 워커 재연결 → 큐 손실 0
 - [ ] MinIO 컨테이너 종료 → 산출물 저장 재시도 (3회)
 
-### 9. 통합 테스트 결과 보고서
+### 8. 통합 테스트 결과 보고서
 
 - [ ] `tests/integration_v2/REPORT.md` 자동 생성:
   - 시나리오별 PASS/FAIL
@@ -184,7 +173,7 @@ async def test_it1_5gates_e2e():
                 gate = msg["gate"]; proposals = msg["proposals"]
                 # 1순위 선택
                 if gate == "G5":
-                    choice = [{"code":"OUT-01"},{"code":"OUT-10"}]
+                    choice = [{"code":"OUT-01"},{"code":"OUT-07"}]
                 else:
                     choice = proposals[0]
                 await httpx.AsyncClient().post(f"{BASE}/pipeline/{job_id}/decision",
@@ -197,7 +186,7 @@ async def test_it1_5gates_e2e():
     assert set(interrupts.keys()) == {"G1","G2","G3","G4","G5"}
     out = (await httpx.AsyncClient().get(f"{BASE}/outputs/{job_id}", headers=H)).json()
     assert len(out["items"]) == 2
-    assert {x["output_code"] for x in out["items"]} == {"OUT-01","OUT-10"}
+    assert {x["output_code"] for x in out["items"]} == {"OUT-01","OUT-07"}
 ```
 
 ### Penetration 페이로드 일부
@@ -231,8 +220,7 @@ PROMPT_INJECTION = [
 | `tests/integration_v2/test_it1_5gates.py` | 신규 |
 | `tests/integration_v2/test_it2_self_learning.py` | 신규 |
 | `tests/integration_v2/test_it3_auto_error.py` | 신규 |
-| `tests/integration_v2/test_it4_transformer_policy.py` | 신규 |
-| `tests/integration_v2/test_it5_penetration.py` | 신규 |
+| `tests/integration_v2/test_it4_penetration.py` | 신규 (침투 50종 + 트랜스포머 비율 보조 측정) |
 | `tests/load/locustfile.py` | 신규 |
 | `scripts/measure_kpi_v2.py` | 신규 |
 | `tests/integration_v2/REPORT.md` (자동생성) | 신규 |
@@ -243,7 +231,7 @@ PROMPT_INJECTION = [
 ## 🔗 의존성 & 선행 조건
 
 - Day1~Day19 모두 완료
-- 테스트 데이터: titanic.csv, monthly_sales.csv, cifar10_sample.zip, korean_reviews.csv, noisy_tabular.csv
+- 테스트 데이터 (v2.1: 4 카테고리): titanic.csv (tabular_ml), monthly_sales.csv (timeseries), network_traffic.csv (anomaly_detection), noisy_tabular.csv (tabular_dl + Self-Evolving)
 - analyst/admin/viewer 3종 테스트 계정 시드 (`scripts/seed_test_users.py`)
 - 패키지: `pytest-asyncio`, `locust`, `playwright` (UI smoke)
 
@@ -251,7 +239,7 @@ PROMPT_INJECTION = [
 
 ## ✔️ 완료 기준
 
-- [ ] IT-1 ~ IT-5 모두 PASS
+- [ ] IT-1 ~ IT-4 모두 PASS
 - [ ] KPI v2 11개 측정 완료 + REPORT.md 생성
 - [ ] KP7, KP8, KP9, KP10, KP11 모두 기준 달성
 - [ ] Load 50 동시 사용자 시 API p95 < 1s
@@ -263,6 +251,6 @@ PROMPT_INJECTION = [
 
 - IT-2 자체학습 효과 측정은 데이터셋 의존적. 동일 데이터 사용 보장
 - IT-3 자동 오류 처리 실제 Claude CLI 호출은 비용. mock 모드 사용 권장 (옵션 환경변수)
-- IT-5 침투 테스트는 격리된 컨테이너 환경에서만. 운영 환경에 영향 X
-- KP9 33% 미달 시 ModelSelectionAgent의 transformer 강제 로직 재검토
+- IT-4 침투 테스트는 격리된 컨테이너 환경에서만. 운영 환경에 영향 X
+- KP9 25% 미달 시 ModelSelectionAgent의 transformer 강제 로직 재검토
 - Load 테스트 중 Anthropic API rate limit 발동 가능 — 가급적 mock LLM 사용

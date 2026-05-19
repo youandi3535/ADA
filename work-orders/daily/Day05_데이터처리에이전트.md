@@ -5,7 +5,7 @@
 
 ## 📋 오늘의 목표
 
-파이프라인의 첫 번째 관문인 `DataProfilerAgent`와 `SchemaValidatorAgent`를 완전히 구현한다. 데이터 프로파일러는 업로드된 CSV/Parquet/ZIP 파일을 MinIO에서 로딩하여 결측률·통계·기수성·메모리 사용량 등 상세 프로파일을 생성하고, 스키마 검증기는 6개 카테고리별 룰로 데이터 적합성을 판단한다. MinIO 공통 클라이언트(`tools/minio_tool.py`)도 완성하여 전체 팀이 재사용할 수 있도록 한다.
+파이프라인의 첫 번째 관문인 `DataProfilerAgent`와 `SchemaValidatorAgent`를 완전히 구현한다. 데이터 프로파일러는 업로드된 CSV/Parquet/ZIP 파일을 MinIO에서 로딩하여 결측률·통계·기수성·메모리 사용량 등 상세 프로파일을 생성하고, 스키마 검증기는 4개 카테고리별 룰로 데이터 적합성을 판단한다. MinIO 공통 클라이언트(`tools/minio_tool.py`)도 완성하여 전체 팀이 재사용할 수 있도록 한다.
 
 ---
 
@@ -80,15 +80,15 @@
   - 예외 처리: 시계열 분석 실패 시 `{"error": str(e)}` 반환 (파이프라인 중단 방지)
 
 - [ ] `_detect_category(self, df, filename) -> str` 구현:
-  - filename 확장자가 `.jpg/.png/.zip` → `image`
-  - text 컬럼(dtype=object, cardinality > rows * 0.8) 존재 시 → `nlp`
   - datetime 컬럼 존재 시 → `timeseries` 후보
+  - target 없음 + 수치형 위주 → `anomaly_detection` 후보
+  - 클래스 수 ≥ 1000 또는 행 수 ≥ 100K → `tabular_dl` 후보
   - 그 외 → `tabular_ml`
 
 ### 2. agents/schema_validator.py 구현
 
 - [ ] `SchemaValidatorAgent(BaseAgent)` 클래스 작성
-- [ ] `CATEGORY_RULES: dict` 정의 — 6개 카테고리별 검증 룰:
+- [ ] `CATEGORY_RULES: dict` 정의 — 4개 카테고리별 검증 룰:
   ```python
   CATEGORY_RULES = {
       "tabular_ml": {
@@ -107,16 +107,7 @@
           "requires_target": True,
           "requires_date_col": True,
       },
-      "image": {
-          "min_files": 50,
-          "supported_formats": [".jpg", ".jpeg", ".png", ".bmp", ".tiff"],
-      },
-      "nlp": {
-          "min_rows": 100,
-          "requires_text_col": True,
-          "min_avg_text_length": 10,
-      },
-      "anomaly": {
+      "anomaly_detection": {
           "min_rows": 500,
           "requires_target": False,
       },
@@ -152,10 +143,6 @@
       if rules.get("requires_date_col") and not profile.get("date_col"):
           errors.append("시계열 카테고리: 날짜 컬럼 필수")
       
-      # 텍스트 컬럼 검사 (nlp)
-      if rules.get("requires_text_col") and not profile.get("text_col"):
-          errors.append("NLP 카테고리: 텍스트 컬럼 필수")
-      
       # 결측률 50% 초과 컬럼 경고
       for col, missing_rate in profile.get("missing", {}).items():
           if missing_rate > 0.5:
@@ -167,9 +154,6 @@
           "warnings": warnings,
       }
   ```
-
-- [ ] `_detect_text_col(self, profile: dict) -> Optional[str]` 구현:
-  - dtype=object 컬럼 중 평균 길이가 `min_avg_text_length` 초과인 컬럼 반환
 
 ### 3. tools/minio_tool.py 구현
 
@@ -220,7 +204,7 @@
   - MinIO mock (moto 라이브러리 사용)
 
 - [ ] `tests/agents/test_schema_validator.py` 작성:
-  - 6개 카테고리별 CATEGORY_RULES 존재 확인
+  - 4개 카테고리별 CATEGORY_RULES 존재 확인
   - `min_rows` 미달 시 `is_valid=False` 반환 확인
   - 결측률 50% 초과 컬럼 warnings 포함 확인
   - `target_column` 없는 tabular_ml 오류 확인
@@ -501,7 +485,7 @@ class TestDataProfilerAgent:
 - [ ] `pytest tests/agents/test_schema_validator.py -v` 전체 통과
 - [ ] `pytest tests/tools/test_minio_tool.py -v` 전체 통과
 - [ ] `DataProfilerAgent().CATEGORY_RULES` 존재하지 않음 (SchemaValidator에 있음) — 분리 확인
-- [ ] `SchemaValidatorAgent.CATEGORY_RULES` 6개 카테고리 키 존재 확인
+- [ ] `SchemaValidatorAgent.CATEGORY_RULES` 4개 카테고리 키 존재 확인
 - [ ] Titanic CSV 기준 DataProfilerAgent 실행 결과: `rows=891`, `cols=12` 확인
 - [ ] 결측률 50% 초과 컬럼(`Cabin`) → SchemaValidator에서 warning 포함 확인
 - [ ] `MinIOClient()` 싱글턴 패턴 확인: 두 번 인스턴스화 시 동일 객체 반환
@@ -540,19 +524,19 @@ class TestDataProfilerAgent:
 
 ## 🆕 v2 확장 작업 (마스터 설계서 §1.2 · §10.3)
 
-> v1 은 csv/parquet/zip 중심이었으나 v2는 **xlsx · json · pdf · txt · html · 이미지 · 음성**까지 모두 처리해야 한다. 또한 데이터 진입 직후 **PII 스캔 + 미니 게이트**를 발동한다.
+> v1 은 csv/parquet/zip 중심이었으나 v2는 **csv · xlsx · parquet · json · zip · pdf · txt · html** 8종 정형/반정형 포맷을 모두 처리해야 한다. 또한 데이터 진입 직후 **PII 스캔 + 미니 게이트**를 발동한다.
 
 ### 1. 멀티 포맷 로더 확장 (`tools/loaders/`)
 
 - [ ] `tools/loaders/__init__.py` — 디스패처: 확장자/MIME으로 적절한 로더 선택
 - [ ] `tools/loaders/csv_loader.py` — chardet 인코딩 감지 + 구분자 자동 추론
 - [ ] `tools/loaders/xlsx_loader.py` — `openpyxl` 기반 다중 시트 처리. 각 시트를 DataFrame 으로 반환하거나 사용자가 G0 단계에서 시트 선택
+- [ ] `tools/loaders/parquet_loader.py` — `pyarrow` 기반 컬럼 스토어 로딩
 - [ ] `tools/loaders/json_loader.py` — JSON Lines / 중첩 JSON 모두. 중첩일 때 `pd.json_normalize` 자동 적용
-- [ ] `tools/loaders/pdf_loader.py` — `pypdf` + `pdfplumber` 폴백. 텍스트 추출 + 표 탐지 (Camelot/Tabula)
-- [ ] `tools/loaders/txt_loader.py` — 라인 단위 분할, 인코딩 자동 감지
-- [ ] `tools/loaders/html_loader.py` — BeautifulSoup 으로 `<table>` 추출 + 텍스트 추출
-- [ ] `tools/loaders/image_loader.py` — 단일 이미지 / ZIP / 디렉토리 모두 지원. EXIF 메타데이터 추출
-- [ ] `tools/loaders/audio_loader.py` — `librosa` 로 wav/mp3 로딩, MFCC 추출 (옵션, 음성 카테고리)
+- [ ] `tools/loaders/zip_loader.py` — 내부 csv/parquet/xlsx 추출 (zip bomb 방어)
+- [ ] `tools/loaders/pdf_loader.py` — `pypdf` + `pdfplumber` 폴백. 텍스트/표 추출 후 DataFrame 변환
+- [ ] `tools/loaders/txt_loader.py` — 라인 단위 분할, 인코딩 자동 감지 (구조화된 로그/TSV 등)
+- [ ] `tools/loaders/html_loader.py` — BeautifulSoup 으로 `<table>` 추출 (정형 데이터 위주)
 - [ ] `MinIOClient.load_file` 확장: 위 로더 디스패처 사용
 
 ### 2. 자동 카테고리 추론 강화
@@ -560,10 +544,9 @@ class TestDataProfilerAgent:
 `DataProfilerAgent._detect_category` 확장:
 
 - xlsx + 시계열 시그니처 → `timeseries`
-- pdf/html/txt → 텍스트 추출 후 `nlp`
-- 이미지 ZIP/디렉토리 → `image`
-- 음성 → `audio` (신규 카테고리, v2 옵션)
 - json 중첩 → `tabular_ml` (평탄화 후)
+- target 없음 + 수치형 위주 → `anomaly_detection`
+- 대규모(>100K행) → `tabular_dl` 후보
 
 ### 3. PII 스캔 + 미니 게이트 (G0의 일부)
 
@@ -599,13 +582,13 @@ class TestDataProfilerAgent:
 
 ### 6. 완료 기준 (v2 추가)
 
-- [ ] `pytest tests/tools/test_loaders.py` — 8개 포맷 모두 통과
+- [ ] `pytest tests/tools/test_loaders.py` — 8개 포맷(csv/xlsx/parquet/json/zip/pdf/txt/html) 모두 통과
 - [ ] PII 컬럼 포함 데이터 업로드 후 `state.awaiting_decision == 'G0_PII'` 발동 확인
 - [ ] 임의 잡 종료 후 `SELECT count(*) FROM dataset_embeddings;` ≥ 1
 - [ ] zip bomb 테스트 파일 업로드 시 413 또는 422 응답
 
 ### 7. 주의사항 (v2)
 
-- pdf 로더에서 추출된 텍스트는 OCR 미적용 (스캔 PDF는 별도 경로 — Day12에서 OCR 옵션)
+- pdf 로더는 표/정형 텍스트 추출에 한정 (스캔 PDF OCR은 범위 외)
 - 임베딩 생성은 CPU도 가능하나 GPU 있으면 6배 빠름
 - xlsx 다중 시트는 사용자가 시트 선택할 때까지 모든 시트 메타만 보여줌

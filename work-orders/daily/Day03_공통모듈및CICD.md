@@ -28,7 +28,7 @@
 - [ ] 핵심 식별자 필드:
   - `job_id: str`
   - `file_id: str`
-  - `category: str` — tabular_ml / tabular_dl / timeseries / image / nlp / anomaly
+  - `category: str` — tabular_ml / tabular_dl / timeseries / anomaly_detection
   - `task: str` — classification / regression / clustering / anomaly_detection
 - [ ] 입력 옵션 필드:
   - `target_column: Optional[str] = None`
@@ -164,7 +164,7 @@
 
 - [ ] trigger: `push` (main, develop), `pull_request`
 - [ ] jobs.test:
-  - python-version: 3.11
+  - python-version: 3.10
   - `pip install -r requirements/base.txt -r requirements/api.txt -r requirements/worker.txt`
   - `ruff check .` — 린팅
   - `mypy shared/ agents/ api/ orchestrator/` — 타입 체크
@@ -215,7 +215,7 @@ class PipelineState(BaseModel):
     # --- 핵심 식별자 ---
     job_id: str
     file_id: str
-    category: str                          # tabular_ml | tabular_dl | timeseries | image | nlp | anomaly
+    category: str                          # tabular_ml | tabular_dl | timeseries | anomaly_detection
     task: str                              # classification | regression | clustering | anomaly_detection
 
     # --- 입력 옵션 ---
@@ -348,7 +348,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements/base.txt -r requirements/api.txt -r requirements/worker.txt
@@ -544,7 +544,7 @@ PERSONAS: dict[str, str] = {
     "MetricsAggregatorAgent":       "당신은 후보 모델의 메트릭을 정규화·비교해 최적 모델을 객관적으로 골라내는 메트릭 심판관입니다.",
     "FineTuneExecutorAgent":        "당신은 트랜스포머 모델의 마지막 1%를 끌어올리는 미세조정 전문가입니다.",
     "EvalAgent":                    "당신은 임계치 룰과 도메인 감각을 결합해 모델 출시 가능성을 판정하는 모델 QA 평가관입니다.",
-    "ExplainabilityAgent":          "당신은 모델 판단 근거를 SHAP/Attention/시계열 분해로 시각화하는 해석성 분석가입니다.",
+    "ExplainabilityAgent":          "당신은 모델 판단 근거를 SHAP과 시계열 분해로 시각화하는 해석성 분석가입니다.",
     "InsightAgent":                 "당신은 분석 메트릭을 비즈니스 의사결정자가 이해할 수 있는 한국어 인사이트로 옮기는 분석 스토리텔러입니다.",
     "ReportComposerAgent":          "당신은 사용자가 선택한 산출물 조합을 병렬로 조율해 데드라인 안에 묶어 내는 산출물 PM입니다.",
     "SelfLearningAgent":            "당신은 매 분석에서 얻은 지식을 3-Stack KB에 깔끔히 정리해 다음 분석을 더 똑똑하게 만드는 지식 큐레이터입니다.",

@@ -1,7 +1,7 @@
 # Day 0 — 마스터 설계서 v2 (Adaptive AutoAI Pipeline Agent / ADA)
 > 프로젝트 코드네임: **ADA v2 — Conversational AutoAI Studio**
 > 스프린트: 3주 / 21일 (Day1 ~ Day21)
-> 문서 버전: v2.0 (2026-05-15 작성)
+> 문서 버전: v2.1 (2026-05-18 스코프 축소 리뉴얼 — image/NLP 카테고리 및 8종 산출물 제거, Python 3.10 고정)
 
 ---
 
@@ -14,11 +14,11 @@
 1. §1 — 프로덕트 비전: 우리가 만들려는 시스템의 한 줄 정의와 사용자 여정
 2. §2 — 시스템 토폴로지: 컨테이너/서비스/네트워크 구성도
 3. §3 — 인터랙티브 5게이트 플로우: HITL(Human-in-the-Loop) 5단계 의사결정 지점
-4. §4 — 에이전트 카탈로그 v2: 27 에이전트 + 13 산출물 생성기 유틸리티
+4. §4 — 에이전트 카탈로그 v2: 27 에이전트 + 5 산출물 생성기 유틸리티
 5. §5 — 자체학습 에이전트 (3-Stack Self-Learning) 설계
 6. §6 — 자동 오류 처리 에이전트 + Claude CLI 사이드카 브리지
-7. §7 — Transformer 우선 정책과 모델 레지스트리
-8. §8 — 확장된 산출물 패밀리 (PPT/대시보드/논문/영상프롬프트/...)
+7. §7 — Transformer 우선 정책과 모델 레지스트리 (8종)
+8. §8 — 산출물 패밀리 (PPT/PDF/대본/대시보드/인사이트 5종)
 9. §9 — 웹 대시보드 — 에이전트 현황판 설계
 10. §10 — 보안 아키텍처 (인증·인가·감사·프롬프트 인젝션·기밀)
 11. §11 — DB 스키마 v2 마이그레이션 명세
@@ -30,7 +30,7 @@
 
 ## 1. 프로덕트 비전 (한 줄과 사용자 여정)
 
-> **한 줄 정의** — "사용자가 어떤 데이터든 던지면, 다섯 번의 가벼운 선택만으로 의도에 맞게 자동 분석·튜닝·해석을 수행하고, 원하는 형태(PPT/대시보드/영상 프롬프트/논문/기획안/보고서/요약/대본 등)로 산출물을 뽑아주는 대화형 AutoAI 스튜디오. 시간이 지날수록 더 똑똑해지고, 자체적으로 오류를 고치며, 외부 위협으로부터 안전하다."
+> **한 줄 정의** — "사용자가 정형/시계열 데이터를 던지면, 다섯 번의 가벼운 선택만으로 의도에 맞게 자동 분석·튜닝·해석을 수행하고, 원하는 형태(PPT/PDF/대본/웹 대시보드/인사이트 5종)로 산출물을 뽑아주는 대화형 AutoAI 스튜디오. 시간이 지날수록 더 똑똑해지고, 자체적으로 오류를 고치며, 외부 위협으로부터 안전하다."
 
 ### 1.1 사용자 여정 (Customer Journey)
 
@@ -39,7 +39,7 @@
         ↓
 ②  시스템 현황판 확인 (어떤 에이전트가 어떤 역할로 돌아가고 있는가)
         ↓
-③  데이터 업로드 (csv/xlsx/parquet/json/zip/pdf/txt/html/jpg/png/wav 등)
+③  데이터 업로드 (csv/xlsx/parquet/json/zip/pdf/txt/html — 정형/시계열 8종)
         ↓
 ④  "시작" 클릭 → 의도 입력창 (자유서술 1~3문장)
         ↓
@@ -47,7 +47,7 @@
         ↓
 ⑥  자동 EDA 수행
         ↓
-⑦  [HITL-2] 에이전트가 "방법론(ML/DL/시계열/이상탐지/생성형/...)" 제안 + 이유 → 사용자 선택
+⑦  [HITL-2] 에이전트가 "방법론(정형 ML / 정형 DL / 시계열 / 이상탐지)" 제안 + 이유 → 사용자 선택
         ↓
 ⑧  자동 전처리 + 피처 엔지니어링 수행
         ↓
@@ -73,8 +73,8 @@
 | 항목 | v1 (Day1~14) | v2 (Day1~21) |
 |---|---|---|
 | 사용자 개입 지점 | error_recovery 시 HITL 1회 | **5단계 HITL 게이트** (LangGraph interrupt 기반) |
-| 입력 데이터 | csv/parquet/zip 중심 | **csv/xlsx/parquet/json/zip/pdf/txt/html/이미지/음성** 전부 |
-| 산출물 | PPT/PDF/대본 3종 | **10+ 종** (PPT/PDF/웹대시보드/영상프롬프트/PPT프롬프트/인사이트/논문/기획안/요약/리포트/발표대본/팟캐스트프롬프트/인포그래픽프롬프트) |
+| 입력 데이터 | csv/parquet/zip 중심 | **csv/xlsx/parquet/json/zip/pdf/txt/html** 8종 (정형/시계열) |
+| 산출물 | PPT/PDF/대본 3종 | **5종** (OUT-01 PPT / OUT-02 PDF / OUT-03 발표 대본 / OUT-04 정적 웹 대시보드 / OUT-07 인사이트 정리) |
 | 학습 효과 | 단순 success_patterns 누적 | **3-Stack Self-Learning** (Postgres KB + MinIO artifacts + pgvector RAG) |
 | 오류 처리 | ErrorRecoveryAgent in-flow | **AutoErrorHandlerAgent 데몬** + Claude CLI 사이드카 + Error KB |
 | 모델 정책 | 4종 트리 + DL 1종 | **트랜스포머 우선 정책** (가능하면 무조건 트랜스포머 조합) |
@@ -132,7 +132,7 @@ v1 대비 신규 컨테이너: **claude-cli-sidecar**, **vault (시크릿 매니
 |---|---|---|
 | `pipeline` | 4 | 메인 파이프라인 (LangGraph 그래프 실행) |
 | `training` | 2 (GPU 가능) | 모델 학습/튜닝 — 무거운 잡 격리 |
-| `output` | 2 | 산출물 생성 (PPT/PDF/영상프롬프트 등) |
+| `output` | 2 | 산출물 생성 (PPT/PDF/대본/대시보드/인사이트) |
 | `harness` | 1 | 자체학습 데몬 + 에러KB 정리 작업 |
 
 큐 분리 이유: 학습 잡이 메인 파이프라인 큐를 막지 않도록, 그리고 자체학습 작업이 백그라운드에서 조용히 돌도록.
@@ -154,7 +154,7 @@ v1 대비 신규 컨테이너: **claude-cli-sidecar**, **vault (시크릿 매니
 | **G0 (Intent)** | 데이터 업로드 직후 | 자유 텍스트 1~3문장 | IntentElicitorAgent — 의도 파악 후 구조화 |
 | **G0_PII (PII Mini)** | 데이터 프로파일링 중 PII 감지 시에만 | 컬럼별 마스킹/제외/유지 선택 | DataProfiler + SecurityGuardAgent 협업 — PII 컬럼 발견 시 발동 |
 | **G1 (Direction)** | 데이터 프로파일링 후 | 3안 중 1안 선택 | AnalysisProposerAgent — 데이터+의도로 3개 방향 제시 |
-| **G2 (Methodology)** | EDA 후 | ML/DL/시계열/이상탐지/생성/하이브리드 등 중 선택 | MethodologyProposerAgent — 이유와 함께 제시 |
+| **G2 (Methodology)** | EDA 후 | 정형 ML / 정형 DL / 시계열 / 이상탐지 중 선택 | MethodologyProposerAgent — 이유와 함께 제시 |
 | **G3 (Model Strategy)** | 전처리+FE 후 | 최종 모델 전략 선택 (예: TabTransformer / XGBoost+SHAP / TFT) | ModelStrategyProposerAgent — 후보별 장단점 매트릭스 제시 |
 | **G4 (Best Model)** | Top-3 학습 후 | 비교표에서 1개 모델 선택 | ModelComparisonReporterAgent — 비교 시각화 + 추천 |
 | **G5 (Outputs)** | 평가/해석 완료 후 | 산출물 다중 선택 (체크박스) | OutputTypeSelectorAgent — 의도와 메트릭으로 추천 산출물 강조 |
@@ -228,7 +228,7 @@ async def submit_decision(job_id: str, req: DecisionRequest, db = Depends(get_db
 - **G2**: 표 형식 (방법론, 적합도 점수, 이유, 트랜스포머 가능 여부, 예상 메트릭), 라디오 선택
 - **G3**: 매트릭스 (모델 후보 × 평가축), 라디오 선택 + "이유 자세히 보기" 펼침
 - **G4**: 메트릭 비교 막대차트 + 학습곡선 + 해석 미리보기, 라디오 선택
-- **G5**: 체크박스 그리드 (10+ 산출물 종류), 추천 산출물에 ⭐ 배지
+- **G5**: 체크박스 그리드 (5종 산출물 OUT-01/02/03/04/07), 추천 산출물에 ⭐ 배지
 
 ### 3.4 타임아웃 정책
 
@@ -242,7 +242,7 @@ async def submit_decision(job_id: str, req: DecisionRequest, db = Depends(get_db
 
 **A. 입력·검증 (3종)** — 기존 유지
 - `IntentElicitorAgent` 🆕 — 자유 의도 텍스트를 구조화
-- `DataProfilerAgent` (확장: xlsx/json/pdf/이미지/음성 핸들러 추가)
+- `DataProfilerAgent` (확장: xlsx/json/pdf/txt/html 핸들러 추가 — 정형/시계열 8종)
 - `SchemaValidatorAgent`
 
 **B. 의사결정 제안 (5종, 신규)** 🆕
@@ -258,7 +258,7 @@ async def submit_decision(job_id: str, req: DecisionRequest, db = Depends(get_db
 - `EDAAgent`
 
 **D. 모델링 (5종)** — 기존 + 트랜스포머 우선
-- `ModelSelectionAgent` (확장: TabTransformer/Informer/TFT/ViT/BERT 우선)
+- `ModelSelectionAgent` (확장: TabTransformer/FTTransformer/Informer/TFT/PatchTST/TranAD 우선)
 - `HyperparameterTunerAgent`
 - `TrainingExecutorAgent`
 - `TrainingMonitorAgent`
@@ -270,8 +270,8 @@ async def submit_decision(job_id: str, req: DecisionRequest, db = Depends(get_db
 - `InsightAgent`
 
 **F. 산출물 오케스트레이터 (에이전트 1종)** 🆕
-- `ReportComposerAgent` — 오케스트레이터. 사용자가 G5 에서 고른 산출물 코드에 따라 아래 13개 **생성기 유틸리티 클래스** 를 병렬로 호출한다.
-  - 생성기 유틸리티 (`reports/` 패키지, 에이전트 아님): `PresentationGenerator`, `PDFGenerator`, `ScriptGenerator` (기존 3종) + 신규 10종 `DashboardArtifactGenerator` / `VideoPromptGenerator` / `PPTPromptGenerator` / `InsightMDGenerator` / `PaperGenerator` / `PlanGenerator` / `SummaryGenerator` / `ReportGenerator` / `InfographicPromptGenerator` / `PodcastPromptGenerator`
+- `ReportComposerAgent` — 오케스트레이터. 사용자가 G5 에서 고른 산출물 코드에 따라 아래 5개 **생성기 유틸리티 클래스** 를 병렬로 호출한다.
+  - 생성기 유틸리티 (`reports/` 패키지, 에이전트 아님, 5종): `PresentationGenerator` (OUT-01) / `PDFGenerator` (OUT-02) / `ScriptGenerator` (OUT-03) / `DashboardArtifactGenerator` (OUT-04, 정적 HTML 단일 파일) / `InsightMDGenerator` (OUT-07)
   - 이들 생성기는 `agent_registry` 에 등록되지 **않으며** heartbeat 도 보내지 않는다. 단순 도구.
 
 **G. 메타 (3종, 신규)** 🆕
@@ -286,7 +286,7 @@ async def submit_decision(job_id: str, req: DecisionRequest, db = Depends(get_db
 **I. 슈퍼바이저 (1종)** — 기존
 - `SupervisorAgent` (확장: G0 IntentElicitor 호출 책임)
 
-**합계 — 에이전트 27종 + 산출물 생성기 유틸 13종**:
+**합계 — 에이전트 27종 + 산출물 생성기 유틸 5종**:
 
 | 카테고리 | 에이전트 수 | 비고 |
 |---|---|---|
@@ -296,7 +296,7 @@ async def submit_decision(job_id: str, req: DecisionRequest, db = Depends(get_db
 | C 전처리·EDA + 미니게이트 | 4 | PreprocessingStrategist, FeatureEngineer, EDA, PreprocessingChoiceAgent |
 | D 모델링 + 트랜스포머 튜닝 | 6 | 5종 + FineTuneExecutorAgent |
 | E 평가·해석 | 3 | Eval, Explainability, Insight |
-| F 산출물 오케스트레이터 | 1 | ReportComposer만. 13 생성기는 유틸리티(`reports/*.py`) |
+| F 산출물 오케스트레이터 | 1 | ReportComposer만. 5 생성기는 유틸리티(`reports/*.py`) |
 | G 메타 | 3 | SelfLearning, AutoErrorHandler, SecurityGuard. (대시보드는 서비스 레이어) |
 | H 회복 | 1 | ErrorRecoveryAgent |
 | **agent_registry 시드 합계** | **27** | |
@@ -314,7 +314,7 @@ agent_registry seed migration(Day02 §5)은 정확히 **27 행**을 INSERT 한�
 | 03 | DataProfilerAgent | none | 당신은 들어온 데이터의 형태와 결을 한눈에 파악하는 데이터 검수관입니다. |
 | 04 | SchemaValidatorAgent | none | 당신은 분석 카테고리별 필수 요건을 엄격히 점검하는 데이터 품질 감사관입니다. |
 | 05 | AnalysisProposerAgent (G1) | Opus | 당신은 분석 의도와 데이터를 보고 서로 다른 세 갈래의 길을 제시하는 데이터 전략 컨설턴트입니다. |
-| 06 | MethodologyProposerAgent (G2) | Sonnet | 당신은 ML/DL/시계열/이상탐지 등 방법론을 데이터 특성에 맞게 비교 권장하는 AutoML 자문가입니다. |
+| 06 | MethodologyProposerAgent (G2) | Sonnet | 당신은 정형 ML / 정형 DL / 시계열 / 이상탐지 4종 방법론을 데이터 특성에 맞게 비교 권장하는 AutoML 자문가입니다. |
 | 07 | ModelStrategyProposerAgent (G3) | Opus | 당신은 모델 아키텍처 후보를 장단점 매트릭스로 정리해 의사결정을 돕는 모델링 아키텍트입니다. |
 | 08 | ModelComparisonReporterAgent (G4) | none | 당신은 학습 결과를 공정한 비교표와 그래프로 가시화하는 모델 평가 리포터입니다. |
 | 09 | OutputTypeSelectorAgent (G5) | Sonnet | 당신은 의도·청중·메트릭을 보고 최적 산출물 조합을 권장하는 리서치 디자인 큐레이터입니다. |
@@ -329,7 +329,7 @@ agent_registry seed migration(Day02 §5)은 정확히 **27 행**을 INSERT 한�
 | 18 | MetricsAggregatorAgent | none | 당신은 후보 모델의 메트릭을 정규화·비교해 최적 모델을 객관적으로 골라내는 메트릭 심판관입니다. |
 | 19 | FineTuneExecutorAgent | none | 당신은 트랜스포머 모델의 마지막 1%를 끌어올리는 미세조정 전문가입니다. |
 | 20 | EvalAgent | Opus | 당신은 임계치 룰과 도메인 감각을 결합해 모델 출시 가능성을 판정하는 모델 QA 평가관입니다. |
-| 21 | ExplainabilityAgent | none | 당신은 모델 판단 근거를 SHAP/Attention/시계열 분해로 시각화하는 해석성 분석가입니다. |
+| 21 | ExplainabilityAgent | none | 당신은 모델 판단 근거를 SHAP과 시계열 분해로 시각화하는 해석성 분석가입니다. |
 | 22 | InsightAgent | Opus | 당신은 분석 메트릭을 비즈니스 의사결정자가 이해할 수 있는 한국어 인사이트로 옮기는 분석 스토리텔러입니다. |
 | 23 | ReportComposerAgent | none | 당신은 사용자가 선택한 산출물 조합을 병렬로 조율해 데드라인 안에 묶어 내는 산출물 PM입니다. |
 | 24 | SelfLearningAgent | none | 당신은 매 분석에서 얻은 지식을 3-Stack KB에 깔끔히 정리해 다음 분석을 더 똑똑하게 만드는 지식 큐레이터입니다. |
@@ -358,7 +358,7 @@ CREATE TABLE agent_registry (
     llm_model    VARCHAR(64),                    -- 'none' | 'claude-sonnet-4-6' | 'claude-opus-4-7'
     inputs       JSONB,                          -- 입력 state 필드 목록
     outputs      JSONB,                          -- 출력 state 필드 목록
-    capabilities JSONB,                          -- ['shap', 'gradcam', 'tuning', ...]
+    capabilities JSONB,                          -- ['shap', 'tuning', 'tsdecompose', ...]
     version      VARCHAR(16) DEFAULT '2.0.0',
     is_active    BOOLEAN DEFAULT TRUE,
     last_heartbeat TIMESTAMPTZ,
@@ -633,20 +633,18 @@ CREATE INDEX idx_error_kb_agent ON error_kb(agent_name);
 | `tabular_ml` (분류/회귀) | **TabTransformer**, **FT-Transformer**, **TabPFN** | `pytorch-tabnet`, `tab-transformer-pytorch`, `tabpfn` |
 | `tabular_dl` | **FT-Transformer**, **TabPFN** | 동상 |
 | `timeseries` | **Informer**, **Temporal Fusion Transformer (TFT)**, **PatchTST** | `pytorch-forecasting`, `neuralforecast` |
-| `image` | **ViT-B/16**, **Swin-T**, **DeiT-S** | `torchvision.models`, `timm` |
-| `nlp` | **klue/bert-base**, **XLM-RoBERTa**, **DeBERTa-v3** | `transformers` |
 | `anomaly_detection` | **TranAD**, **Anomaly Transformer** | `tranad` (자체 포팅), `anomaly-transformer-pytorch` |
-| `multimodal` (옵션) | **CLIP**, **BLIP-2** | `open-clip-torch` |
+
+> v2.1 스코프 축소: `image` / `nlp` / `multimodal` 카테고리는 본 프로젝트에서 제거되었다. TRANSFORMER_REGISTRY 총 **8종** (위 4 카테고리 × 평균 2~3종).
 
 ### 7.3 모델 레지스트리 (`pipelines/registry.py`)
 
 ```python
+# TRANSFORMER_REGISTRY — v2.1 스코프 축소 후 4 카테고리 × 8종
 TRANSFORMER_REGISTRY = {
-    "tabular_ml": ["TabTransformer", "FTTransformer", "TabPFN"],
-    "tabular_dl": ["FTTransformer", "TabPFN"],
-    "timeseries": ["Informer", "TFT", "PatchTST"],
-    "image": ["ViT", "SwinT", "DeiTS"],
-    "nlp": ["KLUE_BERT", "XLMRoBERTa", "DeBERTaV3"],
+    "tabular_ml":        ["TabTransformer", "FTTransformer", "TabPFN"],
+    "tabular_dl":        ["FTTransformer", "TabPFN"],
+    "timeseries":        ["Informer", "TFT", "PatchTST"],
     "anomaly_detection": ["TranAD", "AnomalyTransformer"],
 }
 
@@ -675,72 +673,74 @@ def select_top3_with_transformer(state) -> list[str]:
 
 ---
 
-## 8. 확장된 산출물 패밀리
+## 8. 산출물 패밀리 (5종)
 
 ### 8.1 산출물 메뉴 (G5에서 사용자가 다중 선택)
 
 | 코드 | 산출물 | 생성기 | 추천 시점 |
 |---|---|---|---|
-| `OUT-01` | PPT 발표자료 | `PresentationGenerator` | 모든 분석 (기본) |
-| `OUT-02` | PDF 리포트 | `PDFGenerator` | 모든 분석 (기본) |
-| `OUT-03` | 발표 대본 | `ScriptGenerator` | OUT-01 함께 추천 |
-| `OUT-04` | 정적 웹 대시보드 (HTML 단일파일) | `DashboardArtifactGenerator` | 시각화 중심 분석 |
-| `OUT-05` | 영상 제작 프롬프트 | `VideoPromptGenerator` | 마케팅·교육 의도 |
-| `OUT-06` | PPT 제작 프롬프트 (Gamma/Beautiful.ai 입력용) | `PPTPromptGenerator` | 외부 디자인 도구 사용자 |
-| `OUT-07` | 인사이트 정리 (Markdown) | `InsightMDGenerator` (Day15 신규 — InsightAgent 결과를 마크다운 산출물로 패키징) | 기획/전략 의도 |
-| `OUT-08` | 학술 논문 초안 (IEEE/ACM LaTeX) | `PaperGenerator` | 학계·R&D 의도 |
-| `OUT-09` | 기획안 (Word/Markdown) | `PlanGenerator` | 사업 기획 의도 |
-| `OUT-10` | 1페이지 요약 (Executive Summary) | `SummaryGenerator` | 임원 보고 |
-| `OUT-11` | 상세 비즈니스 리포트 (Markdown→PDF) | `ReportGenerator` | 의사결정용 |
-| `OUT-12` | 인포그래픽 디자인 프롬프트 | `InfographicPromptGenerator` | 마케팅·홍보 |
-| `OUT-13` | 팟캐스트 대본 + 음성 합성 프롬프트 | `PodcastPromptGenerator` | 콘텐츠 제작 |
+| `OUT-01` | PPT 발표자료 (.pptx) | `PresentationGenerator` | 모든 분석 (기본) |
+| `OUT-02` | 상세 PDF 리포트 (.pdf) | `PDFGenerator` | 모든 분석 (기본) |
+| `OUT-03` | 발표 대본 (.txt) | `ScriptGenerator` | OUT-01 함께 추천 |
+| `OUT-04` | 정적 웹 대시보드 (.html 단일 파일) | `DashboardArtifactGenerator` | 시각화 중심 분석 |
+| `OUT-07` | 인사이트 정리 (.md) | `InsightMDGenerator` (Day15 — InsightAgent 결과를 마크다운으로 패키징) | 기획/전략 의도 |
+
+> v2.1 스코프 축소: 영상·외부PPT·논문·기획안·요약·비즈니스 리포트·인포그래픽·팟캐스트 8종(OUT-05/06/08~13)은 제거되었다. G5는 위 5종만 노출한다.
 
 ### 8.2 추천 로직
 
 `OutputTypeSelectorAgent` 가 사용자 의도(`state.user_intent`)와 메트릭(`state.eval_result`)을 기반으로:
 
 ```python
-RECOMMEND_MAP = {
-    "고객 보고": ["OUT-01", "OUT-02", "OUT-03"],
-    "임원 의사결정": ["OUT-10", "OUT-11", "OUT-01"],
-    "사업 기획": ["OUT-09", "OUT-07", "OUT-11"],
-    "마케팅 콘텐츠": ["OUT-05", "OUT-12", "OUT-13"],
-    "학술 발표": ["OUT-08", "OUT-01", "OUT-03"],
-    "시각화 대시보드": ["OUT-04", "OUT-02"],
-    ...
+# 청중별
+RECOMMEND_BY_AUDIENCE = {
+    "임원":      ["OUT-01", "OUT-03"],
+    "분석가":    ["OUT-02", "OUT-07", "OUT-04"],
+    "일반대중":  ["OUT-04"],
+    "운영":      ["OUT-04", "OUT-02"],
+}
+
+# 목표별
+RECOMMEND_BY_GOAL = {
+    "예측":          ["OUT-01", "OUT-02"],
+    "분류":          ["OUT-01", "OUT-02"],
+    "군집화":        ["OUT-04", "OUT-07"],
+    "이상탐지":      ["OUT-04", "OUT-07"],
+    "예측+해석":     ["OUT-02", "OUT-07"],
+    "의사결정지원":  ["OUT-01"],
 }
 ```
 
-추천된 산출물은 G5 UI에서 ⭐ 배지로 강조하되, 사용자는 자유롭게 추가/해제할 수 있다.
+추천된 산출물은 G5 UI에서 ⭐ 배지로 강조하되, 사용자는 자유롭게 추가/해제할 수 있다. 청중 카테고리 "학술"·"마케팅"은 사용하지 않거나 위 5종으로 매핑한다.
 
 ### 8.3 산출물 생성 병렬화
 
-`ReportComposerAgent` 가 사용자가 선택한 N 개의 산출물을 `ThreadPoolExecutor(max_workers=4)` 로 병렬 생성. 각 생성기는 독립적인 MinIO 경로에 저장.
+`ReportComposerAgent` 가 사용자가 선택한 N 개의 산출물(최대 5)을 `ThreadPoolExecutor(max_workers=4)` 로 병렬 생성. 각 생성기는 독립적인 MinIO 경로에 저장.
 
 ### 8.4 산출물 별 디테일 사양
 
-자세한 명세는 **Day15_산출물패밀리확장.md** 참조. 여기서는 신규 4종만 요약.
+자세한 명세는 **Day15_산출물패밀리확장.md** 참조. 여기서는 핵심 사양만 요약.
+
+**OUT-01 PresentationGenerator**
+- `python-pptx` 기반 10~18 슬라이드 (표지·요약·EDA·모델·평가·해석·결론·부록)
+- 카테고리별 색상 테마: tabular_ml 파랑 / tabular_dl 청록 / timeseries 초록 / anomaly_detection 빨강
+
+**OUT-02 PDFGenerator**
+- `reportlab` 또는 Markdown→PDF (wkhtmltopdf) 기반 상세 보고서
+- 메트릭 표·SHAP 차트·학습 곡선·인사이트 텍스트 포함
+
+**OUT-03 ScriptGenerator**
+- OUT-01 슬라이드별 1~2문단 한국어 발표 대본 (.txt)
+- 분량: 슬라이드당 90~150자, 전체 5~8분 분량
 
 **OUT-04 DashboardArtifactGenerator**
 - 단일 HTML 파일에 Chart.js + 인라인 데이터 + EDA 차트 base64 인라인 + 모델 비교 인터랙티브 위젯
 - 오프라인 동작 (CDN은 가능, 인터넷 없어도 핵심 동작)
 - 약 500KB ~ 2MB
 
-**OUT-05 VideoPromptGenerator**
-- 6개 씬 구조: 인트로(데이터 소개) → 문제정의 → 분석 → 핵심 발견 → 비즈니스 임팩트 → 결론
-- 각 씬마다 시각 묘사 + 카메라 무브 + 자막 + BGM 분위기
-- 출력 형식: `runway_v2`, `sora`, `veo`, `kling`, `pika` 호환 5종 동시 생성
-- 시간 예산: 60~90초
-
-**OUT-08 PaperGenerator**
-- IEEE 또는 ACM 템플릿 (LaTeX), 사용자 선택
-- 섹션: Abstract → Introduction → Related Work → Methodology → Experiments → Results → Discussion → Conclusion → References
-- Related Work는 pgvector로 유사 과거 분석 결과를 참고문헌 후보로 자동 추천
-- `tex2pdf` 마이크로서비스 호출하여 PDF 동시 산출
-
-**OUT-09 PlanGenerator**
-- 8-페이지 기획안 (제목·요약·배경·목표·분석근거·솔루션·일정·예산)
-- Word(.docx) + Markdown 동시 출력
+**OUT-07 InsightMDGenerator**
+- InsightAgent 결과를 한국어 마크다운으로 패키징
+- 섹션: 핵심 발견 / 데이터 한계 / 비즈니스 시사점 / 권장 후속 액션
 
 ---
 
@@ -756,16 +756,10 @@ RECOMMEND_MAP = {
 | timeseries | `Informer` | Informer |
 | timeseries | `TFT` | Temporal Fusion Transformer |
 | timeseries | `PatchTST` | PatchTST |
-| image | `ViT` | ViT-B/16 |
-| image | `SwinT` | Swin-T |
-| image | `DeiTS` | DeiT-S |
-| nlp | `KLUE_BERT` | klue/bert-base |
-| nlp | `XLMRoBERTa` | XLM-RoBERTa |
-| nlp | `DeBERTaV3` | DeBERTa-v3 |
 | anomaly_detection | `TranAD` | TranAD |
 | anomaly_detection | `AnomalyTransformer` | Anomaly Transformer |
 
-코드(레지스트리 키, 함수 인자, MLflow 태그)는 **반드시 권위 키** 를 쓴다. 사용자 노출 텍스트(G3/G4 UI, 산출물)에서는 사람용 표시명을 쓴다.
+코드(레지스트리 키, 함수 인자, MLflow 태그)는 **반드시 권위 키** 를 쓴다. 사용자 노출 텍스트(G3/G4 UI, 산출물)에서는 사람용 표시명을 쓴다. 총 **8종** (v2.1 스코프 축소 후 image/NLP 6종 제거).
 
 ---
 
@@ -783,7 +777,7 @@ RECOMMEND_MAP = {
 ├─────────────────────────────────────────────────────────────────┤
 │  📊 헬스 게이지 ── 4개 인프라(Postgres/Redis/MinIO/LLM) 게이지  │
 ├─────────────────────────────────────────────────────────────────┤
-│  🤖 에이전트 매트릭스 (27개 에이전트)                            │
+│  🤖 에이전트 매트릭스 (27개 에이전트, 4 카테고리)                │
 │  ┌──────────┬──────────┬──────────┬──────────┬──────────┐       │
 │  │  입력    │  의사결정│  전처리  │  모델링  │  메타    │       │
 │  │  3개     │  5개     │  3개     │  5개     │  4개     │       │
@@ -795,7 +789,7 @@ RECOMMEND_MAP = {
 ├─────────────────────────────────────────────────────────────────┤
 │  🏃 실행 중인 작업                                              │
 │  Job-7a1b... │ tabular_ml │ G3 대기중      │ 사용자: 김** │ 진행률 60% │
-│  Job-9d2c... │ image      │ training_exec  │ 사용자: 박** │ 진행률 45% │
+│  Job-9d2c... │ timeseries │ training_exec  │ 사용자: 박** │ 진행률 45% │
 │  ...                                                            │
 ├─────────────────────────────────────────────────────────────────┤
 │  📈 자체학습 누적 효과                                          │
@@ -1027,7 +1021,7 @@ Day01  Docker v2 (+ claude-cli-sidecar, vault) + Security baseline
 Day02  DB v2 마이그레이션 (pgvector, interactive_sessions, error_kb, audit_log)
 Day03  공통 모듈 v2 (SecurityGuard, BaseGateAgent, SelfLearningClient, ErrorHandler base)
 Day04  LangGraph v2 (PostgresSaver, interrupt 기반 5 HITL 게이트) + AgentRegistry
-Day05  데이터 처리 에이전트 v2 (xlsx/json/pdf/이미지/음성 핸들러 추가)
+Day05  데이터 처리 에이전트 v2 (xlsx/json/pdf/txt/html 핸들러 추가 — 정형/시계열 8종)
 Day06  IntentElicitor + AnalysisProposer + Supervisor v2 + G0/G1 게이트
 Day07  EDA + MethodologyProposer + G2 게이트
 
@@ -1037,19 +1031,19 @@ Day08  Tabular ML + ModelSelection v2 (트랜스포머 우선 레지스트리)
 Day09  Tuner + TrainingExecutor + TrainingMonitor + Metrics (Top-3 강제)
 Day10  PreprocessingStrategist + FeatureEngineer + G3 (PreprocessingChoice 미니 게이트)
 Day11  ModelStrategyProposer + ModelComparisonReporter + G4 게이트
-Day12  Transformer-first 파이프라인 (TabTransformer/Informer/TFT/ViT/BERT/TranAD) + LoRA
+Day12  Transformer-first 파이프라인 (TabTransformer/FTTransformer/Informer/TFT/PatchTST/TranAD/AnomalyTransformer) + LoRA
 Day13  Eval + Explainability + Insight + 재루프 검증
 Day14  SelfLearningAgent (3-Stack) + KnowledgeDistillationPipeline + RAG 인용
 
 주3 Outputs, Errors, Security, Dashboard, Test
 ─────────────────────────────────────────────────────────────
-Day15  OutputTypeSelector + 13종 산출물 패밀리 (병렬 생성) + G5 게이트
+Day15  OutputTypeSelector + 5종 산출물 패밀리 (병렬 생성) + G5 게이트
 Day16  AutoErrorHandlerAgent + Claude CLI 사이드카 브리지 + Error KB 학습 사이클
 Day17  Security 풀스택 (JWT/RBAC/PII/프롬프트 인젝션/암호화/Vault/감사로그)
 Day18  웹 대시보드 — 에이전트 현황판 + HITL 게이트 UI + 산출물 다운로드 페이지
 Day19  FastAPI 완성 (12+5+@ 엔드포인트) + Streamlit UX 마무리 + WebSocket
 Day20  통합 테스트 (5게이트 E2E + 자체학습 효과 + 자동오류해결 + 보안 침투)
-Day21  인수 테스트 + KPI 측정 + 데모 5종 × 산출물 5종 + 풀 문서화
+Day21  인수 테스트 + KPI 측정 + 데모 매트릭스 4×5 (4 카테고리 × 5 산출물) + 풀 문서화
 ```
 
 ### 12.2 의존성 핵심 경로
@@ -1083,12 +1077,12 @@ Day09 ─→ Day10 ─→ Day11 ─→ Day12 ─→ Day13 ─→ Day14
 | KP1 E2E 성공률 | ≥ 80% | ≥ 85% | `SELECT count(*) FILTER (status='completed')` |
 | KP2 응답 속도 | Titanic E2E ≤ 90s | ≥ 게이트 응답 시간 제외 ≤ 120s | 타이머 |
 | KP3 자동 재루프 성공률 | ≥ 70% | ≥ 75% | retry>0 AND status='completed' |
-| KP4 카테고리 커버 | 6/6 | 6/6 + multimodal 1종 (옵션) | 라벨링 |
+| KP4 카테고리 커버 | 6/6 | **4/4** (tabular_ml, tabular_dl, timeseries, anomaly_detection) | 라벨링 |
 | KP5 API p95 | < 500ms | < 400ms (대시보드 폴링 제외) | locust |
 | KP6 AGENTS.md 자동 룰 | ≥ 10 | ≥ 15 | grep |
 | 🆕 KP7 자체학습 누적 효과 | — | 2회차 메트릭 +5%↑, Optuna trial -30% | 비교 측정 |
 | 🆕 KP8 자체 오류 해결률 | — | ≥ 60% (스프린트 종료 시점) | error_kb hit_then_success / total |
-| 🆕 KP9 트랜스포머 채택률 | — | G4 선택지 중 트랜스포머 비율 ≥ 33% | decisions 테이블 |
+| 🆕 KP9 트랜스포머 채택률 | — | G4 선택지 중 트랜스포머 비율 **≥ 25%** | decisions 테이블 |
 | 🆕 KP10 보안 침해 0건 | — | 침투 테스트 50종 0건 통과 | 침투 시나리오 |
 | 🆕 KP11 게이트 응답 만족도 | — | 사용자 1순위 안 채택률 ≥ 60% (G1 기준) | decisions.adopted_proposal_rank |
 
@@ -1170,3 +1164,4 @@ flowchart TB
 |---|---|---|---|
 | v1.0 | 2026-05-05 | 14일 스프린트 초안 | 팀 |
 | v2.0 | 2026-05-15 | 5 HITL 게이트, 3-stack 자체학습, 자동 오류 처리, 보안 풀스택, 산출물 13종, 21일 확장 | 팀 |
+| v2.1 | 2026-05-18 | 스코프 축소 — 분석 카테고리 6→4 (image/NLP 제거), 산출물 13→5 (OUT-05/06/08~13 제거), TRANSFORMER_REGISTRY 14→8종, MLflow 실험 6→4, KP4 4/4 · KP9 ≥25% 조정, Python 3.10 고정 | 팀 |

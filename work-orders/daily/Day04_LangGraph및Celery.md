@@ -182,9 +182,7 @@ LangGraph `StateGraph`를 사용하여 17개 에이전트 노드를 등록하고
       "tabular_ml": TabularMLPipeline,
       "tabular_dl": TabularDLPipeline,
       "timeseries": TimeSeriesPipeline,
-      "image": ImagePipeline,
-      "nlp": NLPPipeline,
-      "anomaly": AnomalyPipeline,
+      "anomaly_detection": AnomalyPipeline,
   }
   ```
 - [ ] `PipelineFactory.create(category: str) -> BasePipeline` 정적 메서드:

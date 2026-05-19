@@ -6,7 +6,7 @@
 
 ## 📋 오늘의 목표
 
-전체 FastAPI 엔드포인트 (v1 12개 + v2 신규 ~15개) 를 마무리하고, **SelfLearningAgent의 3-Stack 학습 사이클 (`distill_job`)** 을 완성한다. WebSocket 메시지 라우팅 강화, 캐시 정책, API 문서화까지 포함.
+전체 FastAPI 엔드포인트 (v1 12개 + v2 신규 ~13개, 총 **~25개**) 를 마무리하고, **SelfLearningAgent의 3-Stack 학습 사이클 (`distill_job`)** 을 완성한다. WebSocket 메시지 라우팅 강화, 캐시 정책, API 문서화까지 포함. v2.1 스코프 축소로 산출물 다운로드 엔드포인트는 5종에 한정.
 
 ---
 
@@ -166,7 +166,7 @@ class SelfLearningClient:
 - [ ] `POST /pipeline/{job_id}/resume` — 수동 재개
 - [ ] `POST /pipeline/{job_id}/cancel`
 - [ ] `GET /dashboard/agents`, `/jobs`, `/learning`, `/alarms`
-- [ ] `GET /outputs/{job_id}`, `/outputs/{job_id}/{code}`
+- [ ] `GET /outputs/{job_id}`, `/outputs/{job_id}/{code}` (5종: OUT-01/02/03/04/07)
 - [ ] `POST /admin/rules/{id}/approve`, `/admin/patches/{id}/approve`
 - [ ] `GET /admin/users` (admin)
 - [ ] `POST /admin/users/{id}/role` (admin)
@@ -265,7 +265,7 @@ class SelfLearningClient:
 - [ ] `GET /self_learning/cases/similar?intent=고객이탈예측` → 유사도 ≥ 0.75 결과 N건
 - [ ] 잡A → 잡B (유사) 시 G1 응답의 `referenced_past_jobs` 비어있지 않음
 - [ ] 동일 데이터셋 2회 실행 시 Optuna trial 수 ≥ 30% 감소 (KP7)
-- [ ] FastAPI Swagger `/docs` 에서 ~30개 엔드포인트 모두 설명 + 예시 노출
+- [ ] FastAPI Swagger `/docs` 에서 ~25개 엔드포인트 모두 설명 + 예시 노출
 - [ ] WebSocket 연결 후 게이트 인터럽트 메시지 정상 수신 (단위 테스트)
 
 ---

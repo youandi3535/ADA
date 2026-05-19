@@ -72,7 +72,7 @@ Docker Compose 기반으로 8개 서비스(frontend, api, worker, redis, postgre
 
 ### 2. Dockerfile.api 작성
 
-- [ ] `FROM python:3.11-slim` 베이스 이미지
+- [ ] `FROM python:3.10-slim` 베이스 이미지
 - [ ] `WORKDIR /app` 설정
 - [ ] `COPY requirements/api.txt ./requirements.txt` 후 `pip install --no-cache-dir -r requirements.txt`
 - [ ] `COPY . .` 전체 소스 복사
@@ -82,7 +82,7 @@ Docker Compose 기반으로 8개 서비스(frontend, api, worker, redis, postgre
 
 ### 3. Dockerfile.worker 작성
 
-- [ ] `FROM python:3.11-slim` 베이스 이미지
+- [ ] `FROM python:3.10-slim` 베이스 이미지
 - [ ] 시스템 패키지 설치: `libgomp1` (LightGBM 의존), `libpq-dev`
 - [ ] `COPY requirements/worker.txt` 후 pip install
 - [ ] GPU 지원 옵션: CUDA 런타임 여부에 따라 torch CPU/GPU 버전 선택
@@ -91,7 +91,7 @@ Docker Compose 기반으로 8개 서비스(frontend, api, worker, redis, postgre
 
 ### 4. Dockerfile.frontend 작성
 
-- [ ] `FROM python:3.11-slim`
+- [ ] `FROM python:3.10-slim`
 - [ ] `COPY requirements/frontend.txt` 후 pip install
 - [ ] `EXPOSE 8501`
 - [ ] `CMD ["streamlit", "run", "frontend/app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]`
@@ -99,7 +99,7 @@ Docker Compose 기반으로 8개 서비스(frontend, api, worker, redis, postgre
 
 ### 5. Dockerfile.serving 작성
 
-- [ ] `FROM python:3.11-slim`
+- [ ] `FROM python:3.10-slim`
 - [ ] FastAPI + uvicorn 기반 모델 서빙 서버
 - [ ] mlflow 모델 로딩: `mlflow.pyfunc.load_model()` 방식 사용
 - [ ] `EXPOSE 8080`
@@ -392,7 +392,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 - Redis는 캐시 + Celery 브로커 + pub/sub 겸용 (단일 인스턴스, 개발환경 한정)
 - MinIO는 로컬 개발 환경용. 프로덕션에서는 AWS S3로 교체 예정 (환경 변수만 변경)
 - MLflow 버전은 `v2.13.0`으로 고정 (API 호환성 보장, 임의 업그레이드 금지)
-- Python 버전은 `3.11`로 통일 (3.12는 일부 ML 패키지 미지원 확인됨)
+- Python 버전은 `3.10`로 통일 (3.11/3.12는 일부 ML 패키지 미지원 확인됨)
 
 ### 네트워크 주의사항
 

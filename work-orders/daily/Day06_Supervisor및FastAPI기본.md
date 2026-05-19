@@ -23,7 +23,7 @@
 
 - [ ] `SupervisorAgent(BaseAgent)` 클래스 작성
 - [ ] `model_name = "claude-sonnet-4-6"` 설정
-- [ ] `VALID_CATEGORIES = ['tabular_ml', 'tabular_dl', 'timeseries', 'image', 'nlp', 'anomaly']` 클래스 상수 정의
+- [ ] `VALID_CATEGORIES = ['tabular_ml', 'tabular_dl', 'timeseries', 'anomaly_detection']` 클래스 상수 정의
 - [ ] `__call__(self, state: PipelineState) -> PipelineState` 구현:
   1. `_validate_input(state)` 호출 — 룰 기반 검증
   2. 검증 실패 시 즉시 `error_recovery` 라우팅
@@ -42,7 +42,7 @@
       # timeseries: target_column 필수
       if state.category == "timeseries" and not state.target_column:
           errors.append("timeseries 카테고리는 target_column 필수")
-      # image: target_column 불필요 (경고)
+      # anomaly_detection: target_column 선택 (경고)
       return len(errors) == 0, errors
   ```
 
@@ -122,7 +122,7 @@
   ```python
   class PipelineStartRequest(BaseModel):
       file_id: str
-      category: str = Field(..., pattern="^(tabular_ml|tabular_dl|timeseries|image|nlp|anomaly)$")
+      category: str = Field(..., pattern="^(tabular_ml|tabular_dl|timeseries|anomaly_detection)$")
       target_column: Optional[str] = None
       user_question: Optional[str] = None
       max_retries: int = Field(default=3, ge=1, le=10)
@@ -209,7 +209,7 @@ from shared.config import settings
 from tools.minio_tool import MinIOClient
 import json
 
-VALID_CATEGORIES = ["tabular_ml", "tabular_dl", "timeseries", "image", "nlp", "anomaly"]
+VALID_CATEGORIES = ["tabular_ml", "tabular_dl", "timeseries", "anomaly_detection"]
 
 SYSTEM_PROMPT = """
 당신은 데이터 분석 파이프라인 입력 검증 전문가입니다.
@@ -518,9 +518,9 @@ async def start_pipeline(
   당신은 데이터 분석 의도를 구조화하는 전문가입니다.
   사용자의 자유 서술을 받아 다음 JSON 스키마로만 응답하세요.
   {
-    "primary_goal": "예측 | 분류 | 군집화 | 이상탐지 | 예측+해석 | 의사결정지원 | 생성 | 기타",
-    "audience": "임원 | 분석가 | 일반대중 | 학술 | 마케팅 | 운영",
-    "deliverable_hint": ["ppt","dashboard","report","insight","video","paper","plan","summary"],
+    "primary_goal": "예측 | 분류 | 군집화 | 이상탐지 | 예측+해석 | 의사결정지원 | 기타",
+    "audience": "임원 | 분석가 | 일반대중 | 운영",
+    "deliverable_hint": ["ppt","pdf","dashboard","script","insight_md"],
     "business_context": "1~2 문장 요약",
     "constraints": ["시간","해석가능성","비용","규제"],
     "success_criteria": "사용자가 명시한 성공 기준 (없으면 추정)"
@@ -608,6 +608,6 @@ async def start_pipeline(
 
 ### 7. 주의사항 (v2)
 
-- IntentElicitor LLM 응답이 JSON 실패하면 폴백: `primary_goal="예측"`, `audience="분석가"`, deliverable_hint=["ppt","report"]
+- IntentElicitor LLM 응답이 JSON 실패하면 폴백: `primary_goal="예측"`, `audience="분석가"`, deliverable_hint=["ppt","pdf"]
 - AnalysisProposer 가 3안을 못 만들면 (LLM 실패) → 카테고리별 기본 3안 하드코딩 폴백
 - decision 엔드포인트는 idempotent 하지 않음 — 동일 게이트 2회 호출 시 두 번째는 409 반환
