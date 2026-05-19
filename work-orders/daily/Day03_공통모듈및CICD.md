@@ -736,3 +736,123 @@ class SelfLearningClient:
 - `security/prompt_defense.py` 의 정규식은 한국어/영어 모두 대응
 - `BaseGateAgent.build_proposals` 의 응답은 반드시 길이 == proposal_count
 - `AGENTS.md`에 R-401~R-799 추가 시 v1 R-001~R-9xx와 번호 충돌 없도록 확인
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Correlation ID 자동 주입
+- BaseAgent 공통 훅에서 `structlog.contextvars.bind_contextvars(trace_id=..., job_id=..., agent_id=..., gate=...)` 자동 호출.
+- FastAPI 미들웨어 `X-Request-ID` 헤더 → structlog → OTel span 연결.
+
+### 2) 회로차단기 공통 라이브러리
+- `shared/resilience.py` 신설. `pybreaker` + `tenacity` 통합 데코레이터:
+  - `@anthropic_breaker`, `@mlflow_breaker`, `@minio_breaker`, `@claude_cli_breaker`
+- 모두 5회 실패 → 30분 OPEN, HALF_OPEN 단계 거쳐 CLOSED.
+
+### 3) DI 컨테이너 도입
+- `punq` (또는 `dependency-injector`) 로 SelfLearningClient, MinIOClient, RateLimiter 등을 Protocol 기반 주입.
+- BaseAgent 가 구체 클래스 import 금지 — Protocol 만 의존.
+
+### 4) Import 방향 강제
+- `import-linter` 설정으로 L1(runtime) ← L2(인터페이스) ← L3(에이전트) ← L4(오케스트레이션) 단방향 강제.
+- CI 에서 위반 시 머지 차단.
+
+### 5) SBOM·Cosign·Trivy CI 통합 (Day-C 와 연계)
+- `.github/workflows/security.yml` 에 syft → trivy → cosign 단계 추가.
+
+### 완료 기준 추가
+- [ ] structlog 로그에 trace_id/job_id/agent_id 4종 키 100% 포함
+- [ ] `@anthropic_breaker` 5회 실패 → OPEN 단위 테스트 통과
+- [ ] import-linter 검사 0건 위반
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **Langfuse** (🔴 Day-D §1) — `BaseAgent._call_llm` 에 `@traced` 데코레이터 자동 부착. R-1001.
+- **Guardrails AI** (🟡 Day-E §1) — `_call_llm(schema_cls=...)` 인자로 Pydantic schema 강제. R-1005.
+- **LLM Guard** (🔴 Day-D §2) — `shared/llm/guarded_llm.py` 가 sanitize 입력·출력 자동 통과.
+
+### 코드 위치
+- `agents/base.py` — 데코레이터 + schema 인자 + structlog correlation 통합.
+- `shared/observability/langfuse_client.py` — 싱글톤 + 데코레이터.
+- `shared/llm/guarded_llm.py` — Anthropic SDK + Guardrails 래퍼.
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-D §1: Langfuse (LLM 옵저버빌리티)
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-D_도구즉시도입.md §1` 본문. v2.4 부터 본 Day03 의 공통 모듈 영역에서 단일 권위.
+
+#### §1. Langfuse — LLM 호출 전 계층 추적
+
+#### 1.1 산출물
+- `docker-compose.observability.yml` — Langfuse + ClickHouse(또는 Postgres) 컨테이너 추가
+- `shared/observability/langfuse_client.py` — 싱글톤 + 데코레이터
+- `agents/base.py` 보강 — `@traced` 데코레이터를 BaseAgent._call_llm 에 자동 부착
+
+#### 1.2 구현
+
+```yaml
+# docker-compose.observability.yml
+services:
+  langfuse:
+    image: ghcr.io/langfuse/langfuse:2-latest
+    ports: ["3001:3000"]
+    environment:
+      DATABASE_URL: ${LANGFUSE_DB_URL}
+      NEXTAUTH_URL: ${LANGFUSE_PUBLIC_URL}
+      NEXTAUTH_SECRET: ${LANGFUSE_SECRET}
+      SALT: ${LANGFUSE_SALT}
+    depends_on: [postgres]
+    networks: [ada-net]
+```
+
+```python
+# shared/observability/langfuse_client.py
+from langfuse import Langfuse
+from functools import wraps
+import os
+
+_lf = Langfuse(
+    public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
+    secret_key=os.environ["LANGFUSE_SECRET_KEY"],
+    host=os.environ.get("LANGFUSE_HOST", "http://langfuse:3000"),
+)
+
+def traced(name=None):
+    """BaseAgent._call_llm·게이트 함수에 부착하는 트레이스 데코레이터."""
+    def deco(fn):
+        @wraps(fn)
+        async def wrapper(self, *args, **kwargs):
+            trace_name = name or f"{self.__class__.__name__}.{fn.__name__}"
+            with _lf.trace(name=trace_name,
+                            user_id=str(self.state.user_id) if hasattr(self, "state") else None,
+                            session_id=str(self.state.job_id) if hasattr(self, "state") else None,
+                            tags=[self.__class__.__name__]) as t:
+                result = await fn(self, *args, **kwargs)
+                t.update(output=result if isinstance(result, dict) else {"value": str(result)[:1000]})
+                return result
+        return wrapper
+    return deco
+```
+
+#### 1.3 룰 R-1001
+모든 LLM 호출(에이전트 _call_llm, 게이트 함수, claude-cli 브릿지)은 Langfuse trace 자동 첨부. PR 머지 시 grep 검사 — `_call_llm` 정의에 `@traced` 데코레이터 누락 시 차단.
+
+#### 1.4 대시보드 통합
+- Day18 Streamlit 현황판 → "Langfuse 비용" 위젯(최근 24h 토큰·달러).
+- 알람: 단일 잡 비용 ≥ $1 시 audit_log warn.
+
+#### 1.5 테스트
+- `tests/observability/test_langfuse_trace.py` — 더미 에이전트 호출 후 Langfuse trace ID 반환 확인 + tag·session_id 일치.
+
+---
+

@@ -776,3 +776,102 @@ SPECIALTY_REGISTRY = {
 - TabPFN 은 ≤ 10000행 / ≤ 100특성에서만 동작 — 룰 R-201 추가: 데이터 크기 체크 후 자동 제외
 - Transformer 후보가 데이터 부족으로 동작 불가능한 경우(예: 시계열 < 200개 시점에서 Informer/TFT) MethodologyProposer 단계에서 미리 제외
 - G2 응답이 4개일 수 있음 (3~4) — UI 동적 처리
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Optuna warm-start 실제 코드
+- ModelSelectionAgent 가 `SelfLearningClient.fetch_recipes(kb_type='hpo_warm_start', ...)` 결과를 `study.enqueue_trial(best_params)` 로 주입 (Day-B 와 연계, R-501).
+
+### 2) async event loop 충돌 해결
+- ModelSelectionAgent 의 `asyncio.run_until_complete()` 호출을 `asyncio.run_coroutine_threadsafe` 또는 `to_thread` 로 교체.
+- Celery 워커 내부 event loop 사전 생성 패턴 명시.
+
+### 3) 트랜스포머 정책 완화 (R-403)
+- 데이터 < 1,000 행 or GPU 미가용 시 트랜스포머 후보 자동 제외 + UI 에서 사용자에게 “트랜스포머 비활성 사유” 안내.
+- max_retries=3 무한 루프 가드.
+
+### 4) Top-3 후보 점수 가중치 KB 반영
+- success_pattern KB hit 시 모델 후보 가중치 +0.1. retracted KB 는 제외.
+
+### 5) MLflow nested run 검증
+- 부모 run 부재 시 명시적 에러 메시지 + 자동 생성 폴백.
+
+### 완료 기준 추가
+- [ ] HPO warm-start 적용 시 trial 수 회귀 측정 (KP7 자동)
+- [ ] event loop 충돌 단위 테스트 통과
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **FLAML** (🟡 Day-E §2) — ModelSelection·HyperparameterTuner 의 KB warm-start 폴백 (R-1006).
+
+### 코드 위치
+- `agents/tuner_flaml.py` — FLAML 백엔드.
+- `agents/model_selection.py` — KB miss 또는 confidence < 0.5 시 FLAML 60초 탐색 → Optuna enqueue.
+- 단위 테스트: `tests/hpo/test_flaml_fallback.py`.
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-E §2: FLAML (Cost-aware HPO 폴백)
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-E_도구단기도입.md §2` 본문. v2.4 부터 본 Day07 의 ModelSelection·HPO 영역에서 단일 권위.
+
+#### §2. FLAML — Cost-aware HPO 폴백
+
+#### 2.1 산출물
+- `agents/tuner_flaml.py` — FLAML 백엔드 래퍼
+- HyperparameterTunerAgent 갱신 — KB warm-start 없으면 FLAML 폴백
+
+#### 2.2 구현
+
+```python
+# agents/tuner_flaml.py
+from flaml import AutoML
+
+class FLAMLTuner:
+    def __init__(self, time_budget=120):
+        self.time_budget = time_budget
+
+    async def tune(self, X, y, task="classification"):
+        automl = AutoML()
+        settings = {
+            "time_budget": self.time_budget,
+            "task": task,
+            "estimator_list": ["lgbm", "xgboost", "rf", "catboost"],
+            "metric": "auto",
+            "log_file_name": f"/tmp/flaml_{uuid4().hex}.log",
+            "n_jobs": 2,
+        }
+        automl.fit(X_train=X, y_train=y, **settings)
+        return {
+            "best_estimator": automl.best_estimator,
+            "best_config": automl.best_config,
+            "best_loss": automl.best_loss,
+            "best_iteration": automl.best_iteration,
+        }
+```
+
+#### 2.3 통합 흐름
+1. ModelSelectionAgent → KB 에서 `hpo_warm_start` 조회.
+2. KB 미발견 또는 confidence < 0.5 → `FLAMLTuner` 로 빠른 베이스라인 탐색 (예: 60초).
+3. FLAML 결과를 Optuna `study.enqueue_trial(best_config)` 로 주입.
+4. Optuna 본 학습 진행.
+
+#### 2.4 룰 R-1006
+HPO warm-start 시 KB 추천이 없으면 FLAML cost-aware HPO 로 자동 폴백. budget = `min(120s, total_budget * 0.2)`.
+
+#### 2.5 테스트
+- `tests/hpo/test_flaml_fallback.py` — KB 비어있을 때 FLAML 실행 + Optuna 에 enqueue 확인.
+- `tests/hpo/test_flaml_with_kb.py` — KB 있을 때 FLAML 미실행(KB 우선).
+
+---
+

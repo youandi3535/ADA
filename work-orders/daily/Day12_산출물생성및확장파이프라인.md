@@ -392,3 +392,99 @@ PIPELINE_REGISTRY_V2 = {
 
 - TabPFN은 GPU 권장, CPU에서도 동작하나 매우 느림 (1만행 한계)
 - TranAD 의 공식 구현은 없음 — 내부 포팅 (`tranad/model.py`) 필요
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) 트랜스포머 라이브러리 라이선스·위험 명시
+- TabPFN — 비상업 라이선스, 사내·온프레미스 전용. 외부 노출 시 차단.
+- TranAD / AnomalyTransformer — 공식 PyPI 부재. ‘자체 포팅’ 위험으로 v2.2 스코프에서 옵션화. 기본 anomaly 는 IsolationForest + AutoEncoder.
+
+### 2) GPU 미가용 시 자동 폴백
+- CUDA_VISIBLE_DEVICES 미설정 또는 GPU 메모리 부족 시 트랜스포머 후보 자동 제외 + 사용자 안내.
+
+### 3) WeasyPrint 의존성
+- Cairo, Pango, GdkPixbuf, NanumGothic 한글 폰트를 Dockerfile.worker 에 사전 포함.
+- PDF 한글 렌더 단위 테스트.
+
+### 4) Anomaly 합성 레이블 폴백 명시
+- 순수 비지도 시 IsolationForest 예측을 ‘pseudo-label’ 로 사용한다는 한계를 OUT-02·07 에 명시 출력.
+
+### 완료 기준 추가
+- [ ] GPU 미가용 환경에서 폴백 자동 진행 테스트
+- [ ] PDF 한글 폰트 렌더 통과
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **PyOD v3** (🔴 Day-D §3) — AnomalyPipeline 알고리즘 풀.
+- **python-docx** (🔴 Day-D §4) — OUT-02 PDF 직전 Word 초안 보조 산출.
+- **NeuralForecast** (🟢 v3 백로그 A.2) — TimeseriesPipeline 딥러닝 후보 40+ 확장.
+- **SUOD** (🟢 v3 백로그 A.5) — 대용량 AnomalyPipeline 가속.
+
+### 코드 위치
+- `reports/word_generator.py` — Day-D §4.
+- `pipelines/anomaly/` — PyOD registry + SUOD wrapper(v3).
+- `pipelines/timeseries/neuralforecast_models.py` (v3 신설 예정).
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-D §3: PyOD v3 (이상탐지 풀 확장)
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-D_도구즉시도입.md §3` 본문. v2.4 부터 본 Day12 의 AnomalyPipeline 영역에서 단일 권위.
+
+#### §3. PyOD v3 — AnomalyPipeline 풀 확장
+
+#### 3.1 산출물
+- `pipelines/anomaly/pyod_registry.py` — PyOD 40+ 알고리즘 + 카테고리 매핑
+- `pipelines/anomaly/pipeline.py` 갱신 — AnomalyPipeline 이 PyOD registry 기반 자동 선택
+
+#### 3.2 구현
+
+```python
+# pipelines/anomaly/pyod_registry.py
+from pyod.models import (
+    iforest, lof, knn, hbos, copod, ecod, abod, cblof,
+    auto_encoder, vae, mo_gaal, deep_svdd
+)
+
+PYOD_REGISTRY = {
+    "fast_baseline":    [iforest.IForest, hbos.HBOS, copod.COPOD, ecod.ECOD],
+    "neighbor_based":   [lof.LOF, knn.KNN, cblof.CBLOF, abod.ABOD],
+    "deep_learning":    [auto_encoder.AutoEncoder, vae.VAE, deep_svdd.DeepSVDD],
+    "ensemble":         [mo_gaal.MO_GAAL],
+}
+
+def select_anomaly_top3(state) -> list:
+    """카테고리에서 빠른·이웃·딥러닝 1개씩 = Top-3 default."""
+    return [
+        PYOD_REGISTRY["fast_baseline"][0],   # IForest
+        PYOD_REGISTRY["neighbor_based"][0],  # LOF
+        PYOD_REGISTRY["deep_learning"][0],   # AutoEncoder
+    ]
+```
+
+#### 3.3 ModelSelectionAgent 통합
+- `category=='anomaly_detection'` 분기에서 `TRANSFORMER_REGISTRY` 만 보지 않고 PyOD 도 함께 후보화.
+- TranAD / AnomalyTransformer 는 옵션(R-403 완화에 따라 GPU 가용 시만).
+
+#### 3.4 SUOD (v3 백로그) 연계
+- 대용량 데이터 시 SUOD 로 병렬 가속 — Day-D 에서는 옵션 import 만 준비, 실 사용은 v3.
+
+#### 3.5 룰 R-1003
+AnomalyPipeline 알고리즘 선택은 PyOD v3 레지스트리에서 수행. 신규 알고리즘 추가 시 레지스트리에 1줄 추가 → 자동 후보화.
+
+#### 3.6 테스트
+- `tests/anomaly/test_pyod_registry.py` — 카테고리별 1개씩 학습·예측 ROC 검증.
+- `tests/anomaly/test_pyod_vs_legacy.py` — 기존 IsolationForest 결과 일치(회귀).
+
+---
+

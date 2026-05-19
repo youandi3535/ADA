@@ -325,3 +325,47 @@ class BaseAgent(ABC):
 - error_kb 가 너무 많은 false hit 을 만들 위험 — confidence 하한 0.10 유지
 - Anthropic API 비용 폭주 가드: 일일 한도 (MAX_DAILY_CLI_USD), 시간당 호출 수 (CLI_HOURLY_LIMIT=20)
 - 컨테이너 탈출 시도 감지: `docker events` 모니터 + 비정상 명령 실행 시 사이드카 자동 재시작
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) subprocess → Anthropic SDK 비동기 호출
+- `docker exec` + `subprocess.run(timeout=120)` 패턴 폐지.
+- Anthropic Python SDK 를 별도 스레드 풀에서 비동기 호출. extended thinking + prompt caching 활용.
+- claude-cli-sidecar 는 read-only 코드 검색용으로만 유지 (옵션).
+
+### 2) 회로차단기 (R-601 보강)
+- `@claude_cli_breaker` 5회 실패 → 30분 OPEN.
+- Redis 토큰 버킷: 시간당 호출 강제 제한(CLI_HOURLY_LIMIT=20).
+- MAX_DAILY_CLI_USD=5 는 hard cap (초과 시 OPEN).
+
+### 3) error_hash 정규화 강화
+- 한글·이모지·CJK 비ASCII 스택 normalize 함수 + unit test 50건.
+- 라인 번호 외에 메모리 주소·UUID·timestamp 도 정규화.
+
+### 4) AutoErrorHandler 무한 재귀 가드
+- handler 자체 실패 시 max 1회만 ErrorRecoveryAgent 로 폴백. 이후 즉시 critical alarm + 잡 abort.
+
+### 5) Patch 자동 적용 정책 명시
+- `code_patch` 타입은 절대 자동 적용 X (pending_patches 인간 검토만).
+- `param_adjust`, `retry`, `fallback` 3종만 confidence ≥ 0.9 + 단위 테스트 통과 시 자동.
+
+### 완료 기준 추가
+- [ ] subprocess 호출 코드 0건 (grep 가드)
+- [ ] @claude_cli_breaker 5회 실패 OPEN 테스트
+- [ ] 한글 스택 정규화 50건 통과
+- [ ] 무한 재귀 시뮬레이션 → 정확히 1회만 폴백
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **SWE-agent** (⚪ v3 백로그 B.3) — AutoErrorHandler 의 read-only 한계를 넘어 자율 코드 패치 PR 생성.
+- 현재(v2.3)는 R-601 보강(Anthropic SDK 비동기 + pybreaker)으로 충분. SWE-agent 는 30일 운영 + pending_patches 안정성 검증 후 도입 검토.
+- 도입 시 100% 인간 검토 유지 + ADR-1108 작성 필수.

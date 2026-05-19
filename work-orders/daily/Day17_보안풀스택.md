@@ -334,3 +334,229 @@ ph.verify(hash_str, "user_password")
 - 프롬프트 인젝션 정규식은 false positive 가능 — 사용자에게 "차단됨" 명확히 표시 후 재입력 유도
 - TLS 1.3 인증서 자동 갱신은 운영 환경에서 cert-manager 또는 acme.sh 사용
 - 침투 테스트는 격리된 dev 환경에서만 (운영 트래픽에 영향 X)
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Day-C 와 강결합 — 보강 6항목
+
+Day-C(보안 보강) 신설로 다음 항목이 Day17 베이스라인을 보강한다:
+
+- **mTLS** — 내부 서비스 6종 인증서 발급·배포 (R-703).
+- **MLflow 인증** — basic-auth 또는 OAuth-proxy (R-704).
+- **MFA (TOTP)** — admin/service 의무 (R-705).
+- **SBOM + cosign + Trivy** — CI 통합 (R-706).
+- **JWT RS256** — HS256 사용 금지 (R-707).
+- **Indirect prompt injection** — 데이터 추출 텍스트 sanitize (R-708).
+- **pybreaker + Rate limit** — 외부 API 호출 의무 (R-709).
+
+### 2) 침투 50종 실제 페이로드
+- OWASP ZAP + Nuclei templates 자동 스캔으로 보강.
+- Zip bomb 은 디스크 폭발 위험 → `max_unzip_size=100MB` 가드 단위 테스트로 대체.
+
+### 3) Vault Dev 모드 폐지 (R-903, Day-A 연계)
+- v2.2 부터 Raft 모드 필수. Dev 모드 사용 시 ruff 룰 위반.
+
+### 4) Secret rotation 무중단
+- JWT 30일 회전 시 grace period 24h + 진행 중 잡 토큰 추적 + 만료 24h 전 알림.
+
+### 5) Falco + AppArmor (Day-C)
+- 워커 컨테이너 비정상 syscall·외부 IP 연결 탐지.
+
+### 완료 기준 추가
+- [ ] 6개 mTLS 핸드셰이크 통과
+- [ ] MFA 미설정 admin 로그인 거부
+- [ ] OWASP ZAP 스캔 critical 0건
+- [ ] Vault Raft snapshot 정기 생성
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **LLM Guard** (🔴 Day-D §2) — Day17 베이스라인의 INJECTION_PATTERNS 앞단 강화. PromptInjection·Anonymize·BanCode·Toxicity·TokenLimit 스캐너.
+- **Guardrails AI** (🟡 Day-E §1) — 출력 스키마 강제. 27 에이전트 중 LLM 사용 11개 모두 schema 정의.
+
+### Day-C 와의 관계
+- Day-C(보안 보강): mTLS·MFA·SBOM·JWT RS256·회로차단기.
+- Day-D §2(LLM Guard): 콘텐츠 보안(인젝션·PII·독성).
+- Day-E §1(Guardrails): 구조 보안(스키마·할루시네이션).
+- 셋이 **3중 방어** 구성 (전송·콘텐츠·구조).
+
+### 룰 의무화
+- R-1002: 사용자 입력 sanitize = LLM Guard 우선 → ADA 정규식 폴백.
+- R-1005: 모든 게이트 LLM 응답 = Guardrails schema 검증 통과 의무.
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-A: 백업·DR·복구 인프라
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-A_백업및DR인프라.md` 의 본문 전체. 신설 Day-A 파일은 v2.4 부터 본 Day17 안의 § 섹션으로 흡수되었다.
+> 백업·DR 은 보안·운영 풀스택의 일부로 본 Day17 에서 단일 권위.
+
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-C: 보안 보강 (mTLS·MFA·SBOM·회로차단기)
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-C_보안보강.md` 의 본문 전체. 신설 Day-C 파일은 v2.4 부터 본 Day17 안의 § 섹션으로 흡수되었다.
+> 보안 풀스택의 자연스러운 보강으로 본 Day17 에서 단일 권위.
+
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-D §2: LLM Guard (보안 가드 통합)
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-D_도구즉시도입.md §2` 본문. v2.4 부터 본 Day17 보안 풀스택에서 단일 권위.
+
+#### §2. LLM Guard — 보안 가드 통합
+
+#### 2.1 산출물
+- `security/llm_guard_pipeline.py` — Input/Output Scanner 묶음
+- `security/data_sanitize.py` 보강 — 기존 ADA INJECTION_PATTERNS 정규식 앞에 LLM Guard 우선 적용
+
+#### 2.2 구현
+
+```python
+# security/llm_guard_pipeline.py
+from llm_guard.input_scanners import (
+    PromptInjection, Anonymize, BanCode, Toxicity, TokenLimit
+)
+from llm_guard.output_scanners import (
+    Deanonymize, NoRefusal, Sensitive, Bias, MaliciousURLs
+)
+from llm_guard.vault import Vault as LGVault
+
+_vault = LGVault()
+INPUT_SCANNERS = [
+    PromptInjection(threshold=0.85),
+    Anonymize(_vault, language="en"),   # 한글은 ADA Presidio 사용
+    BanCode(),
+    Toxicity(threshold=0.7),
+    TokenLimit(limit=4096),
+]
+OUTPUT_SCANNERS = [
+    Deanonymize(_vault),
+    Sensitive(),
+    Bias(threshold=0.6),
+    MaliciousURLs(),
+    NoRefusal(),
+]
+
+def scan_input(text: str) -> tuple[str, bool, dict]:
+    sanitized = text
+    results = {}
+    for s in INPUT_SCANNERS:
+        sanitized, is_valid, score = s.scan(sanitized)
+        results[s.__class__.__name__] = {"valid": is_valid, "risk": score}
+        if not is_valid:
+            return sanitized, False, results
+    return sanitized, True, results
+
+def scan_output(prompt: str, output: str) -> tuple[str, bool, dict]:
+    sanitized = output
+    results = {}
+    for s in OUTPUT_SCANNERS:
+        sanitized, is_valid, score = s.scan(prompt, sanitized)
+        results[s.__class__.__name__] = {"valid": is_valid, "risk": score}
+        if not is_valid:
+            return sanitized, False, results
+    return sanitized, True, results
+```
+
+#### 2.3 통합 위치
+- `api/middleware/security.py` — `/decision/{job_id}` 사용자 응답에 `scan_input` 우선 적용.
+- `agents/base.py` — `_call_llm` 진입 직전 `scan_input(state.user_intent)` + 직후 `scan_output(prompt, llm_response)`.
+- 실패 시 audit_log INSERT (severity=warn) + 사용자에게 사유 안내.
+
+#### 2.4 룰 R-1002
+사용자 입력 sanitize 경로는 **LLM Guard 우선 → ADA INJECTION_PATTERNS 폴백** 2단계. 둘 다 통과해야 LLM 컨텍스트 진입.
+
+#### 2.5 테스트
+- `tests/security/test_llm_guard.py` — 100종 인젝션 페이로드 (Day-C 의 50종 + LLM Guard 샘플 50종) 모두 차단.
+- `tests/security/test_pii_anonymize.py` — 영문 PII 마스킹 + 한글은 ADA Presidio 가 보강.
+
+---
+
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-E §1: Guardrails AI (LLM 출력 스키마 강제)
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-E_도구단기도입.md §1` 본문. v2.4 부터 본 Day17 보안 풀스택의 스키마 강제 영역에서 단일 권위.
+
+#### §1. Guardrails AI — LLM 출력 스키마 강제
+
+#### 1.1 산출물
+- `guardrails/rail_specs/` — 27 에이전트별 RAIL 명세 (또는 Pydantic schema)
+- `shared/llm/guarded_llm.py` — Anthropic SDK + Guardrails 래퍼
+
+#### 1.2 구현 패턴
+
+```python
+# guardrails/rail_specs/analysis_proposer.py
+from pydantic import BaseModel, Field
+from typing import List
+
+class Proposal(BaseModel):
+    title: str = Field(min_length=4, max_length=80)
+    why: str = Field(min_length=20, max_length=400)
+    plan_outline: List[str] = Field(min_items=2, max_items=6)
+    expected_metric: str
+    expected_duration_min: int = Field(ge=1, le=120)
+
+class AnalysisProposerOutput(BaseModel):
+    proposals: List[Proposal] = Field(min_items=3, max_items=3)
+    referenced_past_jobs: List[str]  # KB 인용 ID 강제 (R-501)
+```
+
+```python
+# shared/llm/guarded_llm.py
+from guardrails import Guard
+from anthropic import AsyncAnthropic
+
+class GuardedLLM:
+    def __init__(self, schema_cls, model="claude-sonnet-4-6"):
+        self.guard = Guard.from_pydantic(schema_cls)
+        self.client = AsyncAnthropic()
+        self.model = model
+
+    async def call(self, prompt: str, max_retries=2):
+        for attempt in range(max_retries + 1):
+            resp = await self.client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = resp.content[0].text
+            try:
+                validated = self.guard.parse(text)
+                return validated
+            except Exception as e:
+                if attempt == max_retries:
+                    raise
+                prompt += f"\n\n[VALIDATION_ERROR] 이전 응답이 스키마를 위반했습니다. 정확한 JSON으로 다시 응답하세요. 오류: {e}"
+```
+
+#### 1.3 BaseAgent 통합
+- BaseAgent._call_llm 이 schema_cls 인자 받음 — schema 가 있으면 GuardedLLM, 없으면 일반 호출(점진 마이그레이션).
+- 27 에이전트 중 LLM 사용 11개(Sonnet/Opus) 모두 schema 정의 의무.
+
+#### 1.4 룰 R-1005
+모든 게이트(G0~G5) LLM 응답은 Guardrails AI 스키마 검증 통과 후에만 state 반영. 검증 실패 + 2회 재시도 실패 → AutoErrorHandler 로 escalate.
+
+#### 1.5 테스트
+- `tests/guardrails/test_schema_enforcement.py` — 잘못된 JSON 반환 시뮬 → 자동 재시도 → 성공.
+- `tests/guardrails/test_kb_citation_required.py` — referenced_past_jobs 누락 시 validation fail.
+
+---
+

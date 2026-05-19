@@ -1,8 +1,101 @@
-# ADA v2.1 리뉴얼 스펙 (스코프 축소)
+# ADA v2.4 리뉴얼 스펙 (신설 Day 흡수)
 
-> **결정일**: 2026-05-18
+> **v2.1 결정일**: 2026-05-18 (스코프 축소)
+> **v2.2 결정일**: 2026-05-19 (감사 보고서 반영)
+> **v2.3 결정일**: 2026-05-19 (Notion 도구 카탈로그 18종 통합)
+> **v2.4 결정일**: 2026-05-19 (Day-A/B/C/D/E 5개 신설 Day → 기존 Day 흡수 + 삭제)
 > **권위**: 본 문서가 모든 작업지시서·README의 단일 권위 (Day00 마스터설계서보다 우선)
 > 모든 daily/*.md 파일은 이 스펙에 일치하도록 갱신되어야 한다.
+
+---
+
+## 0. v2.4 변경 요약 (신설 Day 흡수, 2026-05-19)
+
+> Day-A/B/C/D/E 5개 신설 작업지시서를 v2.2~v2.3 의 의도대로 만들었으나, 운영 편의를 위해 본 v2.4 부터는 **기존 Day 안으로 흡수**한다. 모든 본문 내용은 보존되며, 권위 위치만 이전된다.
+
+### v2.4.1 흡수 매핑
+
+| 원래 신설 Day | 통합 위치 | 통합 헤더 |
+|---|---|---|
+| Day-A 백업·DR | Day17 | 📦 통합본 (v2.4) — 원래 Day-A |
+| Day-B 자가학습 폐쇄 | Day19 | 📦 통합본 (v2.4) — 원래 Day-B |
+| Day-C 보안 보강 | Day17 | 📦 통합본 (v2.4) — 원래 Day-C |
+| Day-D §1 Langfuse | Day03 | 📦 통합본 (v2.4) — 원래 Day-D §1 |
+| Day-D §2 LLM Guard | Day17 | 📦 통합본 (v2.4) — 원래 Day-D §2 |
+| Day-D §3 PyOD v3 | Day12 | 📦 통합본 (v2.4) — 원래 Day-D §3 |
+| Day-D §4 python-docx | Day15 | 📦 통합본 (v2.4) — 원래 Day-D §4 |
+| Day-E §1 Guardrails AI | Day17 | 📦 통합본 (v2.4) — 원래 Day-E §1 |
+| Day-E §2 FLAML | Day07 | 📦 통합본 (v2.4) — 원래 Day-E §2 |
+| Day-E §3 StatsForecast | Day08 | 📦 통합본 (v2.4) — 원래 Day-E §3 |
+| Day-E §4 Chart.js/Plotly | Day15 | 📦 통합본 (v2.4) — 원래 Day-E §4 |
+
+### v2.4.2 변경된 권위 위치
+
+기존 `Day-A/B/C/D/E` 파일 참조는 **모두 통합 위치로 변경**된다. 룰·KPI·테이블·스크립트 명세는 그대로 유지.
+
+### v2.4.3 스프린트 일정
+
+21일 일정 유지. Day17(보안)·Day19(자가학습 통합) 분량이 증가하므로 해당 Day의 작업 시간 60% 정도 추가 배정 권고.
+
+---
+
+## 0. v2.3 변경 요약 (도구 카탈로그, 2026-05-19)
+
+> 출처: [Notion 카탈로그](https://www.notion.so/365545ab947d8100b8c7fa0165da49b4) → `TOOL_CATALOG_2026.md`
+
+### v2.3.1 신설 작업지시서 2종
+- **Day-D** — 도구 즉시 도입 4종 (Langfuse · LLM Guard · PyOD v3 · python-docx)
+- **Day-E** — 도구 단기 도입 4종 (Guardrails AI · FLAML · StatsForecast · Chart.js/Plotly)
+
+### v2.3.2 신설 백로그 문서
+- **v3_backlog.md** — 중기 5종 (Ray Tune · NeuralForecast · Captum · Arize Phoenix · SUOD) + 장기 5종 (Qdrant · ClearML · SWE-agent · Braintrust · Galileo)
+
+### v2.3.3 신설 룰
+- **R-1001 ~ R-1008** — Langfuse trace, LLM Guard sanitize 폴백, PyOD 레지스트리, Word 초안, Guardrails schema, FLAML 폴백, StatsForecast Top-3, Chart.js/Plotly 정책
+- **R-1101 ~ R-1105** (v3 백로그) — Ray Tune 분산 모드, NeuralForecast 진입점, Captum 우선, Phoenix 알람, SUOD 자동 활성화
+
+### v2.3.4 도구 분야별 카테고리 (8개)
+옵저버빌리티 · 벡터DB · ML/HPO · 시계열 · 이상탐지 · 보안 · 산출물 · 해석성 · 자가치유
+
+---
+
+# ADA v2.2 리뉴얼 스펙 (감사 보고서 반영 — 유지)
+
+---
+
+## 0. v2.2 변경 요약 (2026-05-19)
+
+> 출처: `ADA_v2_감사보고서.docx` — 22개 Day + 보조 문서 4종 프로덕션급 감사.
+
+### 0.1 신설 Day 3종
+- **Day-A** — 백업·DR·복구 인프라 (P0)
+- **Day-B** — 자가학습 사이클 폐쇄 + Stage 1 (P0)
+- **Day-C** — 보안 보강 (mTLS·MFA·SBOM·회로차단기) (P1)
+
+### 0.2 정책 변경
+- **R-403 완화** — 트랜스포머 강제 → 데이터·GPU 조건부 + max_retries=3.
+- **R-501·503·504·505 신설** — KB 인용 강제·사용 결과 피드백·자동 retraction·confidence decay.
+- **R-601 보강** — Claude CLI subprocess → Anthropic SDK 비동기 + pybreaker + Redis 토큰 버킷.
+- **R-703~709 신설** — mTLS·MLflow 인증·MFA·cosign·JWT RS256·indirect injection·회로차단기 의무.
+- **R-901~903 신설** — backup_catalog·model artifact SHA256·Vault Dev 모드 폐지.
+
+### 0.3 KPI 재조정
+- **KP2** — 트랙 분리: 트리만 90s / 트랜스포머 포함 180s.
+- **KP7** — 동일 데이터 +5% → 유사 데이터 군집 30일 회귀 기울기.
+- **KP11** — gate_recommendation_shadow.matched 자동 측정.
+- **KP12 신설** — 백업 RPO 준수율 ≥ 99% (월간).
+- **KP13 신설** — 분기 Game Day 통과율 (4/4).
+
+### 0.4 아키텍처 변경
+- 에이전트 플랫폼 4계층 분리 (L1 Runtime / L2 인터페이스 / L3 구현 / L4 오케스트레이션).
+- Redis Streams 이벤트 버스 도입.
+- 백업 사이드카 3종(postgres-backup·minio-mirror·vault-snapshot).
+- DR 사이트(가상 단독 서버) — Postgres hot standby + MinIO mirror + Vault snapshot.
+- Alembic 의무화.
+- SBOM(syft)·이미지 서명(cosign)·취약점 스캔(trivy) CI 통합.
+
+### 0.5 v3.0 백로그 (미해결)
+- Contextual Bandit (Stage 2)·Offline RL (Stage 3)·Patroni HA·Kafka/NATS·Feast·Reflex.
 
 ---
 
@@ -129,89 +222,4 @@ csv, xlsx, parquet, json, zip, pdf, txt, html
 | API 엔드포인트 | ~30 | **~25** |
 | 데모 매트릭스 | 5×5 | **4×5** (4 카테고리 × 5 산출물) |
 | 통합 테스트 IT | IT-1~IT-5 | **IT-1~IT-4** |
-| 인수 테스트 AT | AT-1~AT-5 | **AT-1~AT-4** |
-
----
-
-## 9. 변경되지 않는 것 (그대로 유지)
-
-- **27 에이전트** (카운트, 시드 27행 모두 유지)
-- **5 HITL 게이트** (G0~G5)
-- **G0_PII 미니게이트**
-- **3-Stack 자체학습** (PostgreSQL + MinIO + pgvector)
-- **25 노드 LangGraph 그래프**
-- **agent_registry seed 27행** (모든 에이전트 등록)
-- **보안 풀스택** (JWT, RBAC, RLS, PII, Vault)
-- **AutoErrorHandler + Claude CLI 사이드카**
-- **11개 KPI** (단 KP4는 "4/4", KP9는 "≥25%"로 조정)
-
----
-
-## 10. 에이전트 동작 변경 (이름은 유지, 내부 로직 축소)
-
-- **DataProfilerAgent**: 이미지/오디오 핸들러 제거
-- **PreprocessingStrategistAgent**: 이미지/NLP 전처리 분기 제거
-- **EDAAgent**: 워드클라우드/이미지 그리드 차트 제거
-- **ExplainabilityAgent**: GradCAM / Attention map 제거. **SHAP만 사용**
-- **ModelSelectionAgent**: 후보 모델 풀에서 image/NLP 모델 제거
-- **ReportComposerAgent**: GENERATORS 딕셔너리 13개 → 5개
-- **OutputTypeSelectorAgent**: G5 추천 매핑 5종 한정
-
----
-
-## 11. 코드 자체가 작성되지 않는 항목
-
-- `pipelines/image/` 디렉토리 및 `ImagePipeline` 클래스
-- `pipelines/nlp/` 디렉토리 및 `NLPPipeline` 클래스
-- `reports/video_prompt.py` (OUT-05)
-- `reports/ppt_prompt.py` (OUT-06)
-- `reports/paper_generator.py` (OUT-08)
-- `reports/plan_generator.py` (OUT-09)
-- `reports/summary_generator.py` (OUT-10)
-- `reports/report_generator.py` (OUT-11)
-- `reports/infographic_prompt.py` (OUT-12)
-- `reports/podcast_prompt.py` (OUT-13)
-- LaTeX 템플릿 (paper용)
-- 이미지 transform / NLP 토크나이저 모듈
-- GradCAM / Attention 시각화 모듈
-
----
-
-## 12. G5 추천 매핑 단순화
-
-```python
-# 청중별
-RECOMMEND_BY_AUDIENCE = {
-    "임원":      ["OUT-01", "OUT-03"],
-    "분석가":    ["OUT-02", "OUT-07", "OUT-04"],
-    "일반대중":  ["OUT-04"],
-    "운영":      ["OUT-04", "OUT-02"],
-}
-
-# 목표별
-RECOMMEND_BY_GOAL = {
-    "예측":          ["OUT-01", "OUT-02"],
-    "분류":          ["OUT-01", "OUT-02"],
-    "군집화":        ["OUT-04", "OUT-07"],
-    "이상탐지":      ["OUT-04", "OUT-07"],
-    "예측+해석":     ["OUT-02", "OUT-07"],
-    "의사결정지원":  ["OUT-01"],
-}
-```
-
-기존 매핑에서 OUT-05/06/08~13 참조는 모두 제거. 청중 카테고리 "학술", "마케팅"은 사용하지 않거나 위 5종으로 매핑.
-
----
-
-## 13. 검수 체크리스트 (모든 파일 수정 후)
-
-- [ ] grep `image` (소문자) 결과에 분석 카테고리 의미의 매치 없음 (PIL 같은 라이브러리 언급은 OK)
-- [ ] grep `nlp` 결과에 분석 카테고리 의미의 매치 없음
-- [ ] grep `OUT-05|OUT-06|OUT-08|OUT-09|OUT-10|OUT-11|OUT-12|OUT-13` 매치 0
-- [ ] grep `ResNet|EfficientNet|ViT|SwinT|DeiT|BERT|RoBERTa|DeBERTa|klue` 매치 0
-- [ ] grep `python:3.11|Python 3.11|python-version: 3.11` 매치 0
-- [ ] grep `ada-image|ada-nlp` 매치 0
-- [ ] grep `워드클라우드|wordcloud|GradCAM|Attention map` 매치 0
-- [ ] grep `13종 산출물|6 카테고리|6/6` 매치 0 또는 적절한 컨텍스트
-- [ ] agent_registry 27행 유지 확인
-- [ ] 5 HITL 게이트 / 3-Stack / 25 노드 LangGraph 언급 유지 확인
+| 인수 테스트 AT | AT-1~AT-5 | *

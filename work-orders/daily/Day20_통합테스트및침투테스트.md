@@ -254,3 +254,48 @@ PROMPT_INJECTION = [
 - IT-4 침투 테스트는 격리된 컨테이너 환경에서만. 운영 환경에 영향 X
 - KP9 25% 미달 시 ModelSelectionAgent의 transformer 강제 로직 재검토
 - Load 테스트 중 Anthropic API rate limit 발동 가능 — 가급적 mock LLM 사용
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) OWASP ZAP + Nuclei 통합 (IT-4 보강)
+- 50종 페이로드 목록만이 아니라 실제 자동 스캔 실행.
+- baseline scan + active scan 분리. CI 에서 critical 0건 게이트.
+
+### 2) DR 리허설 실제 시나리오 (Day-A 연계, IT-DR 신설)
+- §7 ‘컨테이너 강제 종료 후 30초 재기동’ 폐기.
+- 새 IT-DR: (a) Postgres 백업 1건을 별도 인스턴스에 PITR 복구 → smoke test, (b) MinIO 객체 삭제 후 versioning 복구, (c) Vault snapshot 복구 → unseal.
+- RPO/RTO 실제 측정값 기록.
+
+### 3) KP7 자동 측정 검증 (Day-B 연계)
+- IT-2 자체학습 효과 — kpi_kp7_trend view 가 30일 음/양 기울기 정확히 반환하는지 합성 데이터로 검증.
+
+### 4) KP9 정의 명확화
+- ‘G4 제안 안의 25% 가 트랜스포머’ — 노출이 아닌 ‘실제 채택률’ 로 측정. decisions 테이블 join.
+
+### 5) Zip bomb 가드 단위 테스트
+- 1TB 압축해제 실제 시뮬 금지. max_unzip_size 가드만 검증.
+
+### 완료 기준 추가
+- [ ] OWASP ZAP critical 0건
+- [ ] IT-DR 3종 시나리오 통과
+- [ ] KP7 view 정확도 검증
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **Guardrails AI** (🟡 Day-E §1) — IT-1 5게이트 E2E 에 schema 검증 통과 검증 추가.
+- **LLM Guard** (🔴 Day-D §2) — IT-4 침투 페이로드에 LLM Guard 통과 검증 100종 추가 (총 150종).
+- **Braintrust** (⚪ v3 백로그 B.4) — 운영 후 도입.
+
+### 통합 테스트 추가
+- `tests/integration_v2.3/test_day_d_smoke.py` — Day-D 4종 도구 smoke.
+- `tests/integration_v2.3/test_day_e_smoke.py` — Day-E 4종 도구 smoke.
+- IT-4 침투 페이로드 50→150 확장.

@@ -277,3 +277,57 @@ class SelfLearningClient:
 - PII 마스킹 누락된 텍스트가 임베딩에 들어가지 않도록 R-502 강제 (입력 직전 한 번 더 마스킹 확인)
 - harness 큐 워커가 1개만 있으면 distill 적체 가능 — 모니터링 후 증설 결정
 - distill 실패해도 잡 자체는 success/fail 상태 보존 (학습 실패는 사용자 경험에 영향 X)
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) KB → 코드 인용 위치 명시 (Day-B 연계)
+- 5개 kb_type 의 인용 위치를 `docs/architecture/kb_consumption_map.md` 단일 권위로 명시.
+- G1·ModelSelection·HPO·EDA·전처리 5개 위치에서 SelfLearningClient.fetch_recipes() 호출 강제 (R-501).
+
+### 2) record_outcome 의무 (R-503)
+- SelfLearningAgent.distill() 직전에 cited KB IDs 수집 + record_outcome 호출.
+
+### 3) 삭제 권리 엔드포인트 (PIPA)
+- /admin/users/{id}/purge — 사용자 데이터·임베딩·산출물·세션·결정 일괄 삭제. audit_log 만 보존.
+
+### 4) job_cost_metrics 테이블
+- 잡별 Anthropic API 토큰·달러·CPU/GPU 시간 집계. /admin/cost 대시보드.
+
+### 5) PII 임베딩 사전 검증 (R-502 강제)
+- distill_job 이 임베딩 전 데이터에 PII 패턴 매칭 시 raise.
+
+### 6) Day-B 와 인터페이스 매핑
+- gate_recommendation_shadow 테이블 INSERT 위치는 /decision/{job_id} 엔드포인트.
+
+### 완료 기준 추가
+- [ ] kb_consumption_map.md 5개 매핑 단위 테스트
+- [ ] /admin/users/{id}/purge → 관련 모든 테이블 0 rows
+- [ ] job_cost_metrics 집계 정확도
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **Arize Phoenix** (🟢 v3 백로그 A.4) — pgvector 임베딩 분포·드리프트 자동 시각화. R-1104 백로그.
+- **Galileo** (⚪ v3 백로그 B.5) — InsightAgent 출력 품질·할루시네이션 감시.
+- **Qdrant** (⚪ v3 백로그 B.1) — pgvector 한계 도달 시 마이그레이션.
+
+### v2.3 (현재)
+- SelfLearningAgent 가 임베딩 export 인터페이스(`distill_to_phoenix()`)만 노출 — 실제 Phoenix 연동은 v3.0.
+- KB → 코드 인용 매핑(Day-B)에 추가하여 도구별 적용 위치 명시.
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-B: 자가학습 사이클 폐쇄 + Stage 1
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-B_자가학습폐쇄.md` 의 본문 전체. 신설 Day-B 파일은 v2.4 부터 본 Day19 안의 § 섹션으로 흡수되었다.
+> 자가학습 사이클 폐쇄는 본 Day19 (API + SelfLearning 통합) 의 자연스러운 확장으로 단일 권위.
+

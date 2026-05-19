@@ -522,3 +522,31 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 - Vault는 dev 모드 (root token 노출). 프로덕션 배포 전 KV v2 + AppRole 인증으로 전환 필수
 - pgvector 인덱스 빌드는 Day02 마이그레이션에서 수행 (여기서는 익스텐션 설치만)
 
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Vault 영속화 (Dev 모드 폐지 일정)
+- v2.2 부터 Vault Dev 모드 사용 금지(R-903). Raft 스토리지 백엔드 + snapshot 디렉토리 영구 볼륨 마운트.
+- 마이그레이션: `scripts/security/vault_migrate_dev_to_raft.sh` (Day-C 와 함께).
+
+### 2) requirements hash pin
+- 모든 requirements/*.txt 는 `pip-compile --generate-hashes` 산출물. 평문 == 핀 금지.
+- CI 에서 `pip install --require-hashes` 검증.
+
+### 3) Alembic 베이스라인
+- Day02 에서 Alembic 초기 마이그레이션 생성하기 전, Day01 에서 `alembic init migrations` + `alembic.ini` 환경 변수 연결 + Dockerfile 에 alembic 포함.
+
+### 4) Day-A 백업 사이드카 연계
+- `docker-compose.yml` 과 `docker-compose.backup.yml` override 구조 결정. Day01 의 docker-compose 가 override 친화적으로 설계되어야 한다.
+
+### 5) 포트 충돌 방지
+- 8개 서비스 포트(5000/5432/6379/8000/8080/8501/9000/9001) 충돌 시 `.env` 의 `*_HOST_PORT` 변수로 대체 가능하도록 명시. README 보강.
+
+### 완료 기준 추가
+- [ ] `vault status` 가 Raft 모드 + sealed=false
+- [ ] `pip install --require-hashes -r requirements/api.txt` 통과
+- [ ] `alembic current` 가 빈 결과(베이스라인) 반환

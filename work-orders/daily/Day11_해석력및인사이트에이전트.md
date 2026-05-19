@@ -400,3 +400,44 @@ torch>=2.2.0
 - [ ] G3 → G4 → fine_tune (트랜스포머 시) → eval 흐름 E2E 통과
 - [ ] G4 비교표 데이터에 학습 곡선, SHAP top5, 학습 시간 모두 포함
 - [ ] 트랜스포머 SHAP 시각화 PNG MinIO 저장 (Attention map 미사용)
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) SHAP 샘플링 전략
+- KernelExplainer 시 층화 샘플링(target/group/time 분포 유지) 표준화. SHAP 신뢰도 보존.
+- tree 기반 모델은 TreeExplainer 우선.
+
+### 2) InsightAgent 프롬프트 인젝션 가드
+- user_question 은 sanitize_user_input + 200자 제한 (R-401).
+- 트랜스포머 attention 시각화는 KernelExplainer 대안으로 활용.
+
+### 3) 재루프 무한 방지
+- LangGraph `recursion_limit=15` 명시.
+- max_retries 하드 캡 5회 + 사용자 ‘중단’ 버튼.
+
+### 4) Insight 메타 캐싱
+- Opus 호출 비용 — 동일 잡 동일 메트릭에서 24h 캐시.
+
+### 완료 기준 추가
+- [ ] SHAP 층화 샘플링 단위 테스트
+- [ ] 재루프 6회 시 자동 중단
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **Captum** (🟢 v3 백로그 A.3) — PyTorch 트랜스포머 모델 해석. SHAP(트리) vs Captum(트랜스포머) 자동 분기 (R-1103 백로그).
+- **Chart.js / Plotly** (🟡 Day-E §4) — SHAP summary plot · attention heatmap 시각화.
+- **Galileo** (⚪ v3 백로그 B.5) — InsightAgent 출력 품질 모니터링.
+
+### 코드 위치
+- `agents/explainability_captum.py` (v3 신설 예정).
+- `reports/dashboard/attention_viz.py` — Plotly attention.
+- 현재(v2.3)는 SHAP TreeExplainer 우선, Captum 은 import 만 준비.

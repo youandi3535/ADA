@@ -638,3 +638,37 @@ if __name__ == "__main__":
 - `self_learning_kb.hash` 충돌 시 INSERT … ON CONFLICT (hash) DO UPDATE SET success_count=success_count+1 패턴 사용
 - security_audit_log 는 별도 파티셔닝 검토 (월 단위, Day17 결정)
 - RLS는 슈퍼유저(`autoai`) 제외. 워커에서 슈퍼유저로 접근 시 RLS 우회됨 — Day17에서 워커 전용 role 분리
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Alembic 의무화
+- `migrations/*.sql` 직접 실행 폐지. 모든 스키마 변경 = `alembic revision -m "..."` + `alembic upgrade head`.
+- `alembic_version` 테이블이 적용 상태 추적의 단일 권위.
+
+### 2) RLS 정책 명시
+- self_learning_kb, dataset_embeddings, intent_embeddings, lesson_embeddings, security_audit_log 5개 테이블 RLS 활성화.
+- 정책 예시:
+  ```sql
+  ALTER TABLE self_learning_kb ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY kb_owner_policy ON self_learning_kb
+    USING (created_by = current_setting('ada.current_user', true)::uuid
+           OR current_setting('ada.role', true) = 'admin');
+  ```
+- audit_log 는 admin/service 만 SELECT.
+
+### 3) JSONB GIN 인덱스
+- jobs.config, jobs.metrics, agent_runs.payload, decisions.recommended 등 자주 검색되는 JSONB 컬럼에 `CREATE INDEX ... USING gin (...);`
+
+### 4) Day-A 카탈로그 테이블 사전 통합
+- `backup_catalog`, `model_artifact_catalog` 테이블이 Day-A 에서 추가될 예정 — Day02 의 초기 스키마에 placeholder 마이그레이션으로 잡아둘 것.
+
+### 5) JSONB → Pydantic 컨트랙트
+- agent_runs.payload, decisions.recommended 등의 JSONB 는 Pydantic 모델 직렬화 결과. Pydantic 버전 표기 컬럼 추가 권고.
+
+### 완료 기준 추가
+- [ ] `alembic upgrade head` 멱등 실행
+- [ ] 5개 민감 테이블 RLS 활성화 + 단위 테스트(role=viewer 가 admin 데이터 select 시 0 rows)

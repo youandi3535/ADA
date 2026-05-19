@@ -584,3 +584,34 @@ AGENT_PROGRESS_MAP_V2 = {
 - PostgresSaver 는 async/sync 별도. Celery 워커는 sync 사용 권장
 - `interrupt_after` 노드 이름이 그래프 노드명과 정확히 일치해야 함
 - 게이트 노드 자체는 빠르게 실행되고 interrupt만 트리거 — LLM 호출은 게이트 노드 안에서 수행됨
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) LangGraph 버전 고정
+- `langgraph==X.Y.Z` 의 `interrupt_after` API 가 0.1↔0.2+ 사이에서 변경됨. requirements 에 정확한 버전 핀 + 회귀 테스트.
+
+### 2) 에이전트 플러그인 시스템
+- `agents/plugins/` 디렉토리 + `importlib.metadata.entry_points` 기반 자동 로딩.
+- 새 에이전트 = 파일 1개 + entry_point 등록 + agent_registry seed (Alembic revision).
+- LangGraph 그래프는 부팅 시 활성 에이전트 목록을 읽어 동적 빌드.
+
+### 3) Bulkhead — 에이전트 격리
+- 모델 학습 잡(training 큐)은 `ProcessPoolExecutor` 로 별도 프로세스에서 실행. 한 잡 OOM 이 워커 전체를 잡지 않도록.
+- Celery 워커 메모리 한도(`worker_max_memory_per_child=2048000`).
+
+### 4) 이벤트 버스 도입
+- Redis Streams 신설: `ada.events.job_created`, `gate_completed`, `model_trained`, `job_completed`, `job_failed`.
+- SelfLearning·BackupCheck·Drift·Audit 모두 직접 호출 대신 Stream consumer 로 분리.
+
+### 5) Celery 재시도 백오프
+- `autoretry_for` + `retry_backoff=True` + `retry_backoff_max=600` 명시. 단순 max_retries=3 만으로는 부족.
+
+### 완료 기준 추가
+- [ ] `langgraph.__version__` assert 단위 테스트
+- [ ] entry_points 등록만으로 새 더미 에이전트 자동 인식
+- [ ] 학습 잡 OOM 시뮬레이션 → 다른 잡 영향 0
+- [ ] Redis Stream consumer 단위 테스트 통과

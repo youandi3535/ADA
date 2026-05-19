@@ -1165,3 +1165,147 @@ flowchart TB
 | v1.0 | 2026-05-05 | 14일 스프린트 초안 | 팀 |
 | v2.0 | 2026-05-15 | 5 HITL 게이트, 3-stack 자체학습, 자동 오류 처리, 보안 풀스택, 산출물 13종, 21일 확장 | 팀 |
 | v2.1 | 2026-05-18 | 스코프 축소 — 분석 카테고리 6→4 (image/NLP 제거), 산출물 13→5 (OUT-05/06/08~13 제거), TRANSFORMER_REGISTRY 14→8종, MLflow 실험 6→4, KP4 4/4 · KP9 ≥25% 조정, Python 3.10 고정 | 팀 |
+| v2.2 | 2026-05-19 | **감사 보고서 반영** — Day-A(백업/DR)·Day-B(자가학습 폐쇄)·Day-C(보안 보강) 신설, 트랜스포머 강제 정책 완화, KP2 트랙 분리, KP12·KP13 신설, Vault Dev 모드 폐지 일정, Alembic·pybreaker·mTLS·SBOM·indirect injection 가드 명문화 | 검토팀 |
+| v2.3 | 2026-05-19 | **도구 카탈로그 통합** — Notion 18종 도구 도입. Day-D(즉시 4종)·Day-E(단기 4종) 신설, 중기 5종·장기 5종은 v3_backlog.md. R-1001~1008 신규 룰, R-1101~1105 백로그 룰. | 검토팀 |
+| v2.4 | 2026-05-19 | **신설 Day 흡수** — Day-A/B/C/D/E 5개 신설 작업지시서를 기존 Day 안으로 통합·삭제. Day-A→Day17, Day-B→Day19, Day-C→Day17, Day-D/E는 도구별 4분산. 권위 위치 갱신, 스프린트 21일 유지. | 검토팀 |
+
+---
+
+## 부록 C. v2.2 감사 보고서 반영 요약 (2026-05-19)
+
+> 출처: `ADA_v2_감사보고서.docx` — Day00~Day21 + 보조 문서 4종에 대한 프로덕션급 풀 감사.
+> 본 부록은 감사에서 발견된 결함을 v2.1 본문에 ‘덮어쓰기’ 하지 않고 **차분(diff)** 으로 명시한다.
+> Day별 구체 패치는 각 Day 파일의 “🆕 v2.2 보강” 섹션을 참조.
+
+### C.1 신설 Day 3종 → 통합 완료 (v2.4)
+
+신설 Day-A/B/C 파일은 v2.4 부터 본 마스터에서 명시한 기존 Day 안으로 흡수되었다.
+
+| 원래 Day | 제목 | **통합 위치 (v2.4)** | 통합 섹션 헤더 |
+|---|---|---|---|
+| Day-A | 백업·DR·복구 인프라 | **Day17 보안풀스택** | 📦 통합본 (v2.4) — 원래 Day-A |
+| Day-B | 자가학습 사이클 폐쇄 + Stage 1 | **Day19 API + SelfLearning** | 📦 통합본 (v2.4) — 원래 Day-B |
+| Day-C | 보안 보강 | **Day17 보안풀스택** | 📦 통합본 (v2.4) — 원래 Day-C |
+
+통합 후 스프린트는 21일 유지. 분량 증가는 Day17(보안+백업+DR 묶음)·Day19(자가학습 폐쇄)에 흡수.
+
+### C.2 정책 변경
+
+- **R-403 완화** — “트랜스포머 1개 강제 포함”은 *데이터 ≥ N 행 + GPU 가용* 시에만 적용. 그 외에는 “후보 노출 권장”. 무한 재시도 가드 (`max_retries=3`).
+- **R-501 보강** — 모든 게이트 제안 단계는 `SelfLearningClient.fetch_recipes()` 호출이 단위 테스트로 강제됨.
+- **R-503 신설** — 잡 종료 시 `record_outcome(kb_ids, success, metric_delta)` 호출 의무.
+- **R-504 신설** — KB fail_rate ≥ 0.7 + used_count ≥ 5 → 자동 retraction.
+- **R-505 신설** — KB confidence 시간 경과 decay (30일 미사용 시 ×0.95, 0.3 미만 비활성화).
+- **R-601 보강** — Claude CLI subprocess → Anthropic SDK 비동기 호출. `pybreaker(5 fail / 30min OPEN)` + Redis 토큰 버킷 의무.
+- **R-602 보강** — sidecar 폐지 또는 read-only 컨테이너에서 SDK Direct mode 만 허용.
+- **R-703~709 신설** — mTLS, MLflow 인증, MFA 의무화, cosign 서명, JWT RS256, indirect injection 차단, pybreaker 의무 (Day-C 참조).
+- **R-901~903 신설** — backup_catalog 등록, 모델 가중치 SHA256 검증, Vault Dev 모드 폐지 (Day-A 참조).
+
+### C.3 KPI 재조정
+
+| KPI | v2.1 | v2.2 |
+|---|---|---|
+| KP2 응답속도 | ≤ 120s (단일) | ≤ 90s (트리만) / ≤ 180s (트랜스포머 포함) **트랙 분리** |
+| KP7 자체학습 효과 | +5%·-30% (동일 데이터) | 유사 데이터셋 군집 30일 회귀 기울기 (`kpi_kp7_trend` view) |
+| KP8 자체 오류해결 | ≥ 60% | ≥ 40% + 회로차단기 의무 |
+| KP11 1순위 채택률 | ≥ 60% | `gate_recommendation_shadow.matched` 비율로 자동 측정 |
+| **KP12** (신설) | — | 백업 RPO 준수율 ≥ 99% (월간) |
+| **KP13** (신설) | — | 분기 Game Day 통과율 (4/4) |
+
+### C.4 아키텍처 변경 요약
+
+- **에이전트 플랫폼 4계층 분리** — L1(Runtime)/L2(인터페이스 계약)/L3(구현)/L4(오케스트레이션). 한 방향 의존 강제(import-linter).
+- **이벤트 버스 도입** — Redis Streams 1차. JobCreated·GateCompleted·ModelTrained·JobCompleted·JobFailed 도메인 이벤트. SelfLearning·Audit·Drift·BackupCheck 모두 구독자로 분리.
+- **백업 사이드카** — postgres-backup-sidecar, minio-mirror-agent, vault-snapshot-cron 3종 추가.
+- **DR 사이트(가상 단독 서버)** — Postgres hot standby + MinIO mc mirror --watch + Vault snapshot 외부 보관.
+- **데이터 sanitize 위치 확장** — 사용자 입력만이 아니라 사용자 업로드 데이터 추출 텍스트도 sanitize (indirect injection 차단).
+- **Alembic 의무화** — Day02 부터 모든 스키마 변경은 Alembic revision.
+- **이미지 서명·SBOM·트리비** — Day03 CI 에 syft·trivy·cosign 통합.
+
+### C.5 미해결 항목 (v3.0 백로그)
+
+- Contextual Bandit (LinUCB/Thompson Sampling) — 자가학습 Stage 2
+- Offline RL (CQL/BCQ) — 자가학습 Stage 3
+- Patroni HA Postgres
+- BentoML / KServe 모델 서빙
+- Reflex/NiceGUI 비동기 대시보드
+- Kafka 또는 NATS JetStream 영속 메시지 버스
+- Feast 피처 스토어
+
+### C.6 본문과 본 부록의 충돌 해결
+
+본 부록과 §1~§14 본문 사이에 충돌이 있을 경우, **본 부록(v2.2)이 우선**한다.
+단, 신설 Day-A/B/C 의 명세는 각 신설 Day 파일이 ‘단일 권위’ 다.
+
+---
+
+## 부록 D. v2.3 도구 카탈로그 통합 (2026-05-19)
+
+> 출처: `TOOL_CATALOG_2026.md` (Notion 페이지 기반 18종 도구).
+> 본 부록은 18개 외부 도구의 ADA 통합 단계·룰·코드 위치를 단일 권위로 정의한다.
+
+### D.1 신설 작업지시서 2종 → 도구별 분산 통합 (v2.4)
+
+신설 Day-D/E 파일은 v2.4 부터 도구 단위로 적절한 기존 Day 안으로 분산 흡수되었다.
+
+| 원래 § | 도구 | **통합 위치 (v2.4)** | 우선순위 |
+|---|---|---|---|
+| Day-D §1 | Langfuse | **Day03 공통 모듈** | 🔴 |
+| Day-D §2 | LLM Guard | **Day17 보안풀스택** | 🔴 |
+| Day-D §3 | PyOD v3 | **Day12 산출물·AnomalyPipeline** | 🔴 |
+| Day-D §4 | python-docx | **Day15 산출물 패밀리** | 🔴 |
+| Day-E §1 | Guardrails AI | **Day17 보안풀스택** | 🟡 |
+| Day-E §2 | FLAML | **Day07 ModelSelection** | 🟡 |
+| Day-E §3 | StatsForecast | **Day08 학습 실행** | 🟡 |
+| Day-E §4 | Chart.js / Plotly | **Day15 산출물 패밀리** | 🟡 |
+
+Day-D / Day-E 종합 테스트·완료 기준·주의사항은 Day15 끝에 통합 보존.
+
+### D.2 v3 백로그 문서 신설
+
+`v3_backlog.md` — 중기 5종(Ray Tune · NeuralForecast · Captum · Arize Phoenix · SUOD) + 장기 5종(Qdrant · ClearML · SWE-agent · Braintrust · Galileo) = 10개 도구 도입 명세 + 의존성 다이어그램 + ADR 권고 + 비용·라이선스 분석.
+
+### D.3 신규 룰 (R-1001~1008, v2.3)
+
+| 룰 | 정책 | 도구 | 권위 위치 |
+|---|---|---|---|
+| R-1001 | 모든 LLM 호출에 Langfuse trace 자동 부착 | Langfuse | Day-D §1.3 |
+| R-1002 | 사용자 입력 sanitize = LLM Guard 우선 → ADA 정규식 폴백 | LLM Guard | Day-D §2.4 |
+| R-1003 | AnomalyPipeline 알고리즘 선택은 PyOD v3 레지스트리에서 | PyOD v3 | Day-D §3.5 |
+| R-1004 | OUT-02 PDF 옵션 시 Word 초안 .docx 보존 | python-docx | Day-D §4.4 |
+| R-1005 | 모든 게이트 LLM 응답은 Guardrails schema 검증 통과 후 state 반영 | Guardrails AI | Day-E §1.4 |
+| R-1006 | HPO warm-start KB 없을 시 FLAML cost-aware 폴백 (budget = min(120s, total*0.2)) | FLAML | Day-E §2.4 |
+| R-1007 | TimeseriesPipeline Top-3 에 StatsForecast 베이스라인 1개 + 딥러닝 1개 의무 | StatsForecast | Day-E §3.4 |
+| R-1008 | OUT-04 단일 HTML 은 Chart.js 우선, 인터랙티브 시 Plotly 폴백 | Chart.js / Plotly | Day-E §4.4 |
+
+### D.4 v3 백로그 룰 (R-1101~1105, 향후)
+
+| 룰 | 정책 | 도구 |
+|---|---|---|
+| R-1101 | 학습 시간 ≥ 10분 예상 시 Ray Tune 분산 모드 권고 | Ray Tune |
+| R-1102 | TimeseriesPipeline 의 딥러닝 후보는 NeuralForecast 우선 단일 진입점 | NeuralForecast |
+| R-1103 | PyTorch 트랜스포머 모델 해석은 Captum 우선 | Captum |
+| R-1104 | pgvector 임베딩 분포 변화 > 임계 시 Phoenix 알람 + audit_log | Arize Phoenix |
+| R-1105 | 데이터 ≥ 100k 행 + anomaly_detection 시 SUOD 자동 활성화 | SUOD |
+
+### D.5 카테고리별 보강 매핑
+
+| ADA 카테고리 | v2.3 즉시·단기 도구 | v3 백로그 도구 |
+|---|---|---|
+| 옵저버빌리티 | Langfuse 🔴 | Arize Phoenix 🟢 |
+| 벡터 DB / RAG | — | Qdrant ⚪ |
+| ML / HPO / AutoML | FLAML 🟡 | Ray Tune 🟢 · ClearML ⚪ |
+| 시계열 예측 | StatsForecast 🟡 | NeuralForecast 🟢 |
+| 이상탐지 | PyOD v3 🔴 | SUOD 🟢 |
+| 보안 / 가드레일 | LLM Guard 🔴 · Guardrails AI 🟡 | — |
+| 산출물 생성 | python-docx 🔴 · Chart.js/Plotly 🟡 | — |
+| 모델 해석성 | — | Captum 🟢 |
+| 자가치유·평가 | — | SWE-agent ⚪ · Braintrust ⚪ · Galileo ⚪ |
+
+### D.6 권위 우선순위 (v2.3 갱신)
+
+`TOOL_CATALOG_2026.md` (도구 도입 단계) > `RENEWAL_SPEC.md v2.3` (스코프) > `Day00 부록 D` (본 부록, 도구 매핑) > `Day-D` / `Day-E` / `v3_backlog.md` (도구별 명세) > 기존 Day v2.3 도구 보강 섹션 (적용 위치).
+
+### D.7 본 부록과 본문의 충돌 해결
+
+본 부록과 §1~§14 본문 사이에 충돌이 있을 경우, **v2.3 부록(본 부록)이 우선**한다. v2.2 부록 C(감사 보강)와 동등 수준 권위.

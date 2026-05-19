@@ -611,3 +611,27 @@ async def start_pipeline(
 - IntentElicitor LLM 응답이 JSON 실패하면 폴백: `primary_goal="예측"`, `audience="분석가"`, deliverable_hint=["ppt","pdf"]
 - AnalysisProposer 가 3안을 못 만들면 (LLM 실패) → 카테고리별 기본 3안 하드코딩 폴백
 - decision 엔드포인트는 idempotent 하지 않음 — 동일 게이트 2회 호출 시 두 번째는 409 반환
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) 회로차단기·Rate limit 미들웨어
+- `shared.resilience` 데코레이터를 Anthropic·MLflow·MinIO 클라이언트 호출 지점에 의무 적용 (R-709).
+- Redis 토큰 버킷 미들웨어: 사용자·잡·에이전트 3차원 한도.
+
+### 2) 파일 magic byte 검증
+- /upload 가 확장자 기반 검증만 — 콘텐츠 magic byte 검사(libmagic) 추가. zip-bomb·polyglot 차단.
+
+### 3) Job ID ↔ Celery task_id 매핑
+- `jobs.celery_task_id` 컬럼 추가. /pipeline/cancel·/pipeline/pause 구현 시 정확한 매핑.
+
+### 4) HITL 추적
+- /decision/{job_id} 호출 시 누가 언제 어떤 IP 로 응답했는지 `decisions.responder_user_id, responded_at, responder_ip` 컬럼 추가.
+
+### 완료 기준 추가
+- [ ] Anthropic API 5회 실패 시 503 + Retry-After
+- [ ] 100 req/min 초과 사용자 429
+- [ ] magic byte 검증 단위 테스트 통과

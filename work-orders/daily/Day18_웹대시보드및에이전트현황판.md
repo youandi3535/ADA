@@ -327,3 +327,49 @@ def run_async(coro):
 - 게이트 응답 전송 후 동일 게이트 카드는 비활성화 (중복 클릭 방지)
 - 모바일에서 5개 산출물 그리드는 1열로 reflow
 - 대시보드가 무거우면 캐시 적극 활용: `@st.cache_data(ttl=5)`
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Backup Health 패널 (Day-A 연계)
+- Grafana 대시보드에 4종 backup_age, RPO 위반 카운트, 마지막 Game Day 일자 표시.
+- Streamlit 현황판에도 ‘백업 상태 OK/경고’ 위젯 추가.
+
+### 2) 에이전트 토글 UI
+- /admin/agents/{name}/toggle 엔드포인트 + Streamlit admin 페이지에서 on/off 스위치.
+- agent_registry.is_active 갱신 + LangGraph 그래프 재컴파일 (또는 skip-node 로직).
+
+### 3) SSE 분리 (Day10 연계)
+- 실시간 진행률은 별도 `/sse/jobs/{job_id}` 엔드포인트. Streamlit 은 게이트 카드만.
+- 5초 폴링 → 1초 SSE 푸시로 UX 향상 + 부하 감소.
+
+### 4) 27 에이전트 매트릭스 성능
+- Streamlit columns 반복 대신 HTML 그리드 (`st.markdown(unsafe_allow_html=False)` 대신 정적 컴포넌트 생성).
+
+### 5) 게스트 read-only 모드
+- viewer 권한 사용자도 대시보드 진입 — 단 다른 사용자 잡은 익명 마스킹.
+
+### 완료 기준 추가
+- [ ] Backup Health 패널 표시
+- [ ] 에이전트 토글 후 새 잡에서 그래프 동적 변경
+- [ ] SSE 1초 푸시 부하 테스트 (50 동시 사용자)
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **Langfuse** (🔴 Day-D §1) — Streamlit 현황판에 "최근 24h 비용·레이턴시" 위젯.
+- **Chart.js / Plotly** (🟡 Day-E §4) — 대시보드 차트 엔진.
+- **Arize Phoenix** (🟢 v3 백로그 A.4) — 임베딩 드리프트 별도 페이지.
+
+### 위젯 추가
+- `frontend/pages/01_시스템현황판.py` →
+  - "Langfuse 비용" 패널 — 잡당 토큰·달러 + 일일 총합.
+  - "스키마 검증 실패율" 패널 — Guardrails 재시도 통계.
+- 단일 잡 비용 ≥ $1 시 audit_log warn (Day-D §1.4).

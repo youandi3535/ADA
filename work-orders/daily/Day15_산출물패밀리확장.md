@@ -214,3 +214,217 @@ new Chart(document.getElementById('modelChart'), {type:'bar', data: data.modelCh
 - OUT-04 HTML 산출물은 base64 인라인 이미지로 5MB 한도 주의
 - LLM 호출 비용은 v2.1에서 크게 감소 (OUT-08/09/10/11 제거로 잡당 비용 ~80% 절감)
 - 사용자 선택 산출물이 모두 5개 선택돼도 병렬 fan-out으로 ≤ 30초 목표
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) 산출물 버전 관리
+- `outputs.version` 컬럼 추가. 같은 잡 재실행 시 v2, v3 … 누적. 이전 버전 다운로드 가능.
+
+### 2) 다운로드 감사 로그 (R-508 신설)
+- /outputs/{id}/download 호출 시 audit_log INSERT (event_type='output_download', resource_id=output_id).
+- presigned URL 만료 15분 후에도 마지막 다운로드자·시각 기록.
+
+### 3) 부분 실패 재시도 큐
+- ReportComposer 의 ThreadPoolExecutor 부분 실패(예: PDF 만 실패) 시 누락 산출물을 `output_retry` Redis 큐에 INSERT. 백그라운드 재시도.
+
+### 4) OUT-04 단일 HTML 크기 한도
+- 5MB 초과 시 이미지 외부 링크 모드로 자동 전환 + 경고.
+
+### 5) 산출물 생성기 동적 등록
+- `reports/registry.py` — GENERATORS 딕셔너리를 entry_points 기반 자동 등록 (Day04 플러그인 패턴과 동일).
+
+### 완료 기준 추가
+- [ ] outputs.version 누적 단위 테스트
+- [ ] /download audit_log INSERT 검증
+- [ ] 부분 실패 재시도 시나리오
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **python-docx** (🔴 Day-D §4) — OUT-02-DRAFT 보조 산출. G5 옵션 체크박스.
+- **Chart.js / Plotly** (🟡 Day-E §4) — OUT-04 단일 HTML 대시보드 엔진.
+
+### 코드 위치
+- `reports/word_generator.py` — Word 초안 생성기 (Day-D).
+- `reports/dashboard/charts_chartjs.py` — Chart.js 기반 (가벼움).
+- `reports/dashboard/charts_plotly.py` — Plotly 기반 (인터랙티브).
+- DashboardArtifactGenerator 가 차트 종류·데이터 크기에 따라 자동 선택.
+
+### G5 UI 변경
+- OUT-02 추천 시 "PDF + Word 초안" 옵션 체크박스 추가 (Day-D §4.3).
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-D §4: python-docx (Word 초안 산출)
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-D_도구즉시도입.md §4` 본문. v2.4 부터 본 Day15 산출물 패밀리 영역에서 단일 권위.
+
+#### §4. python-docx — Word 초안 산출
+
+#### 4.1 산출물
+- `reports/word_generator.py` — `WordDraftGenerator` 클래스 (PPT 생성기와 동일 인터페이스)
+- OUT-02 PDF 생성 직전에 Word 초안(.docx) 1개 생성 + MinIO 저장
+
+#### 4.2 구현
+
+```python
+# reports/word_generator.py
+from docx import Document
+from docx.shared import Pt, RGBColor
+
+class WordDraftGenerator:
+    def __init__(self, palette):
+        self.palette = palette  # 카테고리별 색상 (마스터 §8.4)
+
+    def build(self, state) -> bytes:
+        doc = Document()
+        # 표지·요약·EDA·모델·평가·해석·결론·부록 8섹션
+        doc.add_heading(state.title, level=0)
+        doc.add_paragraph(state.subtitle)
+        self._add_summary(doc, state)
+        self._add_metrics_table(doc, state)
+        self._add_shap_section(doc, state)
+        self._add_insight_section(doc, state)
+        # 한글 폰트 강제
+        for p in doc.paragraphs:
+            for run in p.runs:
+                run.font.name = "맑은 고딕"
+        buf = io.BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
+```
+
+#### 4.3 산출물 카테고리 변경
+- v2.1 OUT 코드와 충돌 방지 위해 **OUT-02-DRAFT** 라는 보조 코드 부여. 사용자는 G5 에서 "PDF 보고서 + Word 초안" 옵션 체크박스로 선택.
+- 기본은 PDF 만 제출. Word 초안은 옵션.
+
+#### 4.4 룰 R-1004
+OUT-02 PDF 생성 전 옵션이 활성화되면 Word 초안(.docx)을 동일 잡 ID 디렉토리에 보관. 다운로드 가능 + audit_log.
+
+#### 4.5 테스트
+- `tests/outputs/test_word_generator.py` — 표/이미지/한글 폰트/스타일 적용 통과.
+- `tests/outputs/test_pdf_word_consistency.py` — Word ↔ PDF 콘텐츠 동일 (제목·메트릭·인사이트 동일).
+
+---
+
+
+---
+
+## 📦 통합본 (v2.4) — Day-D 통합 테스트·완료 기준·주의사항
+
+> Day-D 의 종합 테스트·완료·주의 섹션이 본 Day15 끝에 보관된다.
+
+#### 🧪 통합 테스트 (Day-D 종합)
+
+`tests/integration_v2.3/test_day_d_smoke.py`:
+1. 분석 잡 1건 실행 — Langfuse 에 27 에이전트 trace 모두 기록
+2. 인젝션 페이로드 입력 → LLM Guard 차단 + audit_log
+3. anomaly_detection 카테고리 → PyOD Top-3 후보
+4. G5 에서 Word 초안 옵션 선택 → .docx 생성 + MinIO 저장
+
+---
+
+#### ✅ 완료 기준
+
+- [ ] Langfuse UI 접속 후 27 에이전트 trace 표시
+- [ ] LLM Guard 100종 페이로드 모두 차단 + audit_log INSERT
+- [ ] PyOD 카테고리별 Top-3 후보 학습 통과
+- [ ] Word 초안 .docx 생성 + 한글 폰트 + 표·이미지 표시
+- [ ] 4개 도구 통합 smoke 테스트 통과
+- [ ] R-1001~R-1004 AGENTS.md 등록
+
+---
+
+#### ⚠️ 주의사항
+
+- Langfuse 자체 DB 가 Postgres 일 경우 ada 메인 DB 와 분리 권고 — 컴플라이언스/리텐션 정책 다름.
+- LLM Guard 의 PII 마스킹은 영문 중심 — 한글 PII 는 ADA Presidio 또는 KLUE NER 보강 필요.
+- PyOD AutoEncoder/VAE/DeepSVDD 는 PyTorch 의존 — GPU 미가용 시 자동 폴백.
+- python-docx 한글 폰트는 Dockerfile.worker 에 NanumGothic 또는 맑은고딕 사전 포함.
+- 4개 도구 모두 R-709(pybreaker)·R-505(decay)·R-902(SHA256) 영향 없음 — 독립 모듈.
+
+---
+
+# 📦 통합본 (v2.4) — 원래 Day-E §4: Chart.js / Plotly (OUT-04 시각화 엔진)
+
+> 통합일: 2026-05-19 (v2.4)
+> 원래 `Day-E_도구단기도입.md §4` 본문. v2.4 부터 본 Day15 의 OUT-04 영역에서 단일 권위.
+
+#### §4. Chart.js / Plotly — OUT-04 시각화 엔진
+
+#### 4.1 산출물
+- `reports/dashboard/charts_chartjs.py` — Chart.js 기반 (가벼움, 정적)
+- `reports/dashboard/charts_plotly.py` — Plotly 기반 (인터랙티브)
+- DashboardArtifactGenerator 갱신 — 차트 종류·데이터 크기에 따라 자동 선택
+
+#### 4.2 선택 규칙
+
+| 차트 유형 | 데이터 크기 | 인터랙션 필요 | 라이브러리 |
+|---|---|---|---|
+| Bar/Line/Pie | < 10k 포인트 | 아니오 | Chart.js |
+| 3D scatter, surface | 임의 | 예 | Plotly |
+| Heatmap, Sunburst | > 1k 포인트 | 예 | Plotly |
+| Sparkline 인덱스 | 매우 작음 | 아니오 | Chart.js |
+| SHAP force plot | 임의 | 예 | Plotly (또는 shap.js) |
+
+#### 4.3 단일 HTML 5MB 한도
+- Chart.js CDN 사용 시 인라인 데이터만 추가 → 보통 1~2MB.
+- Plotly 인라인 + plotly.min.js CDN → 2~4MB. 5MB 초과 시 이미지 외부 링크 모드 폴백 (Day15 §4 와 연계).
+
+#### 4.4 룰 R-1008
+OUT-04 단일 HTML 은 Chart.js 우선, 인터랙티브 필요 또는 Chart.js 미지원 차트 시 Plotly 폴백.
+
+#### 4.5 ExplainabilityAgent 시각화
+- SHAP summary plot → Plotly (인터랙티브 호버).
+- 시계열 분해 (trend/seasonal/residual) → Chart.js (가벼움).
+- TabTransformer attention map → Plotly heatmap.
+
+#### 4.6 테스트
+- `tests/outputs/test_chartjs_render.py` — 5종 차트 렌더 + 파일 크기 < 5MB.
+- `tests/outputs/test_plotly_interactivity.py` — Plotly figure JSON 유효성 + 호버 데이터 포함.
+
+---
+
+
+---
+
+## 📦 통합본 (v2.4) — Day-E 통합 테스트·완료 기준·주의사항
+
+> Day-E 의 종합 테스트·완료·주의 섹션이 본 Day15 끝에 보관된다.
+
+#### 🧪 통합 테스트 (Day-E 종합)
+
+`tests/integration_v2.3/test_day_e_smoke.py`:
+1. tabular_ml 잡 — Guardrails 가 G1~G5 모두 schema 검증 통과
+2. KB 비어있는 신규 데이터셋 — FLAML 폴백 → Optuna enqueue 확인
+3. timeseries 잡 — Top-3 에 StatsForecast 베이스라인 포함
+4. OUT-04 생성 — Chart.js + Plotly 혼합 렌더 + 5MB 이내
+
+---
+
+#### ✅ 완료 기준
+
+- [ ] 11개 LLM 사용 에이전트 모두 Pydantic schema 정의 + Guardrails 통과
+- [ ] FLAML 폴백 단위 테스트 통과 + Optuna enqueue 검증
+- [ ] StatsForecast Top-3 포함 통합 테스트 통과
+- [ ] OUT-04 5종 차트 + 5MB 이내 단위 테스트 통과
+- [ ] R-1005~R-1008 AGENTS.md 등록
+
+---
+
+#### ⚠️ 주의사항
+
+- Guardrails AI 의 자동 재시도는 비용 증가 원인 — `max_retries=2` 고정 + Langfuse 로 재시도 모니터링.
+- FLAML 과 Optuna 가 같은 estimator 를 중복 탐색 — FLAML 결과를 Optuna 초기값으로만 사용해 중복 최소화.
+- StatsForecast 의 frequency inference 가 실패하면 사용자에게 명시적 freq 입력 요청.
+- Plotly 인라인 JS 는 ~4MB → CDN 사용이 기본. 오프라인 환경은 별도 정책.
+- 4개 도구 모두 Day-D 의 Langfuse trace 데코레이터 자동 적용 (이중 추적 방지: 동일 trace tree).
