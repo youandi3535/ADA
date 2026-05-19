@@ -113,14 +113,14 @@ frontend/
 
 #### 3.1 단계 1 — 파일 업로드
 
-- [ ] `st.file_uploader(type=['csv','xlsx','parquet','json','zip','pdf','txt','html','jpg','png','wav'], accept_multiple_files=False)`
-- [ ] 업로드 후 미리보기 (`st.dataframe` 또는 이미지 썸네일)
+- [ ] `st.file_uploader(type=['csv','xlsx','parquet','json','zip','pdf','txt','html'], accept_multiple_files=False)` (v2.1: 8종 입력 형식)
+- [ ] 업로드 후 미리보기 (`st.dataframe`)
 - [ ] PII 미니 게이트 발동 시: 컬럼별 라디오 (마스킹/제외/유지) UI
 
 #### 3.2 단계 2 — 의도 입력 (G0)
 
 - [ ] `st.text_area("어떤 분석/결과물이 필요하신가요?", placeholder="예: 다음 분기 매출을 예측해서 임원 보고용 PPT 만들어줘", max_chars=2000)`
-- [ ] [예시 의도 보기] 토글 — 5가지 예시 (마케팅, 운영, 학술, 임원, 일반)
+- [ ] [예시 의도 보기] 토글 — 4가지 예시 (임원 보고, 분석가 심층 분석, 운영 모니터링, 일반 대중 공유)
 - [ ] [시작] 클릭 → POST /pipeline/start → job_id 획득 → session_state['job_id'] 저장
 
 #### 3.3 단계 3 — 진행률 + 게이트 인터럽트 수신
@@ -162,12 +162,13 @@ frontend/
 
 ##### G5 — 산출물 다중 선택
 
-- [ ] 체크박스 그리드 (13종):
+- [ ] 체크박스 그리드 (5종):
   ```
-  [✓] ⭐ OUT-01 PPT 발표자료     [ ]    OUT-04 정적 웹 대시보드
-  [✓] ⭐ OUT-02 PDF 리포트       [✓]    OUT-05 영상 프롬프트
-  [ ]    OUT-03 발표 대본         [ ]    OUT-06 외부 PPT 프롬프트
-  ... (13개 전부)
+  [✓] ⭐ OUT-01 PPT 발표자료
+  [✓] ⭐ OUT-02 상세 PDF 리포트
+  [ ]    OUT-03 발표 대본
+  [ ]    OUT-04 정적 웹 대시보드
+  [✓] ⭐ OUT-07 인사이트 정리(MD)
   ```
 - [ ] ⭐ 가 시스템 추천. 기본 체크된 상태
 - [ ] [생성 시작] 버튼 → POST /pipeline/{job_id}/decision (gate=G5, choice=[...codes])
@@ -324,5 +325,5 @@ def run_async(coro):
 - Streamlit `st.fragment(run_every=5)` 는 1.35+ 기능. 미만이면 `st_autorefresh` 컴포넌트
 - WebSocket 인증: JWT 를 첫 메시지에 포함시키는 방식 (브라우저 WebSocket은 헤더 직접 못 보냄)
 - 게이트 응답 전송 후 동일 게이트 카드는 비활성화 (중복 클릭 방지)
-- 모바일에서 13개 산출물 그리드는 2열 → 1열로 reflow
+- 모바일에서 5개 산출물 그리드는 1열로 reflow
 - 대시보드가 무거우면 캐시 적극 활용: `@st.cache_data(ttl=5)`

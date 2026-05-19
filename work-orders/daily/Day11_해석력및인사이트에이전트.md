@@ -9,7 +9,7 @@
 분석 결과를 비즈니스 언어로 변환하는 InsightAgent를 완성한다.
 더불어 LangGraph 재루프 동작(Eval 실패 → 재학습 → 재평가)을 실제 시뮬레이션으로 검증한다.
 
-- ExplainabilityAgent: SHAP(표형/이상탐지) / GradCAM(이미지) / Attention(NLP) / 시계열 분해 4종 분기
+- ExplainabilityAgent: SHAP(표형/이상탐지) / 시계열 분해 2종 분기 (이미지 GradCAM, NLP Attention map 미사용)
 - InsightAgent: Claude Opus 4.7 기반 비즈니스 인사이트 생성 (한국어 4~6단락)
 - LangGraph 재루프 검증: retry_count 증가, max_retries 초과 시 error_recovery 라우팅
 
@@ -31,8 +31,6 @@
   - LLM 미사용: `use_llm = False`
   - 카테고리별 설명 방법 분기:
     - `tabular_ml`, `tabular_dl`, `anomaly_detection` → `_shap_explain()`
-    - `image` → `_gradcam_explain()`
-    - `nlp` → `_attention_explain()`
     - `timeseries`, `forecasting` → `_timeseries_explain()`
 
 - [ ] `_shap_explain(model, X_val, top_k=5) -> dict` 구현
@@ -48,26 +46,6 @@
     - `mean_abs_shap = np.abs(shap_values.values).mean(axis=0)`
     - `top_features = [{'feature': col, 'importance': float(val)} for col, val in sorted_top_k]`
   - 반환: `{'top_features': list, 'beeswarm_path': str, 'shap_values_summary': dict}`
-
-- [ ] `_gradcam_explain(model, images) -> dict` 구현
-  - `captum.attr.LayerGradCam(model, model.layer4[-1])` (ResNet 기준)
-  - 검증셋 이미지 중 클래스별 대표 이미지 5장 선택
-  - GradCAM 히트맵 생성 후 원본 이미지에 오버레이
-    - `captum.attr.visualization.visualize_image_attr(attr, original_image, method='heat_map')`
-  - 오버레이 이미지 PNG 저장 (클래스별 1장)
-  - MinIO 저장: `minio_tool.save_bytes(img_bytes, f"explanations/{job_id}/gradcam_{class_name}.png")`
-  - 반환: `{'gradcam_paths': list[str], 'attention_regions': list[dict]}`
-
-- [ ] `_attention_explain(model, tokenizer, texts) -> dict` 구현
-  - `transformers` BERT attention weights 추출
-    - `outputs = model(**inputs, output_attentions=True)`
-    - `attentions = outputs.attentions[-1]` (마지막 레이어)
-  - 토큰별 평균 attention 가중치 계산
-    - `token_importance = attentions.mean(dim=1).mean(dim=1).squeeze()`
-  - 상위 10개 중요 토큰 추출
-  - Attention 시각화 이미지 생성 (색상 강도 표시)
-  - MinIO 저장: `f"explanations/{job_id}/attention_map.png"`
-  - 반환: `{'top_tokens': list[dict], 'attention_path': str}`
 
 - [ ] `_timeseries_explain(model, series) -> dict` 구현
   - **구간별 기여도 분석:**
@@ -92,8 +70,6 @@
           'tabular_ml':        lambda: self._shap_explain(model, data['X_val']),
           'tabular_dl':        lambda: self._shap_explain(model, data['X_val']),
           'anomaly_detection': lambda: self._shap_explain(model, data['X_val']),
-          'image':             lambda: self._gradcam_explain(model, data['X_val']),
-          'nlp':               lambda: self._attention_explain(model, state.tokenizer, data['X_val']),
           'timeseries':        lambda: self._timeseries_explain(model, data['y_val']),
       }
       state.explanations = dispatch[state.category]()
@@ -184,8 +160,6 @@ class ExplainabilityAgent(BaseAgent):
         'tabular_ml':        '_shap_explain',
         'tabular_dl':        '_shap_explain',
         'anomaly_detection': '_shap_explain',
-        'image':             '_gradcam_explain',
-        'nlp':               '_attention_explain',
         'timeseries':        '_timeseries_explain',
         'forecasting':       '_timeseries_explain',
     }
@@ -197,10 +171,6 @@ class ExplainabilityAgent(BaseAgent):
         method = getattr(self, method_name)
         if state.category in ('tabular_ml', 'tabular_dl', 'anomaly_detection'):
             state.explanations = method(model, data['X_val'], top_k=5)
-        elif state.category == 'image':
-            state.explanations = method(model, data['X_val'])
-        elif state.category == 'nlp':
-            state.explanations = method(model, state.tokenizer, data['X_val'])
         else:
             state.explanations = method(model, data['y_val'])
         return state
@@ -320,7 +290,7 @@ def build_graph() -> StateGraph:
 
 | 경로 | 작업 | 설명 |
 |------|------|------|
-| `agents/explainability.py` | 신규 생성 | SHAP/GradCAM/Attention/시계열 해석 |
+| `agents/explainability.py` | 신규 생성 | SHAP/시계열 해석 (SHAP 단일 방식, 이미지/NLP 미사용) |
 | `agents/insight.py` | 신규 생성 | Claude Opus 4.7 비즈니스 인사이트 |
 | `core/graph.py` | 수정 | 조건부 엣지(재루프) 정의 추가 |
 | `tests/test_integration/test_reloop.py` | 신규 생성 | 재루프 시뮬레이션 통합 테스트 |
@@ -345,10 +315,8 @@ def build_graph() -> StateGraph:
 
 ```
 shap>=0.45.0
-captum>=0.7.0
 matplotlib>=3.8.4
 statsmodels>=0.14.2
-transformers>=4.40.0
 torch>=2.2.0
 ```
 
@@ -363,8 +331,7 @@ torch>=2.2.0
 
 - [ ] `ExplainabilityAgent._shap_explain()`: beeswarm plot PNG MinIO 저장 확인 (`explanations/{job_id}/shap_beeswarm.png`)
 - [ ] `ExplainabilityAgent._shap_explain()`: `top_features` 리스트 5개 반환 확인
-- [ ] `ExplainabilityAgent._gradcam_explain()`: 클래스별 GradCAM 히트맵 PNG 저장 확인
-- [ ] `ExplainabilityAgent._attention_explain()`: `top_tokens` 10개 포함 dict 반환 확인
+- [ ] `ExplainabilityAgent._timeseries_explain()`: 계절성 분해 + 구간별 기여도 PNG MinIO 저장 확인
 - [ ] `InsightAgent`: 한국어 4~6단락 인사이트 생성 (단락 수 `assert` 검증)
 - [ ] `InsightAgent`: 비즈니스 임팩트 문장 포함 확인 (수동 검토)
 - [ ] 재루프 시뮬레이션 케이스 1, 2, 3 모두 PASS
@@ -376,12 +343,9 @@ torch>=2.2.0
 ## ⚠️ 주의사항 & 제약
 
 1. **SHAP 계산 시간**: 대용량 데이터셋에서 KernelExplainer는 매우 느림. X_val 샘플링 (최대 500행) 필수.
-2. **GradCAM 레이어 지정**: 모델 아키텍처별 마지막 Conv 레이어 이름이 다름 (ResNet: `layer4[-1]`, EfficientNet: `features[-1]`). 모델명 기반 레이어 자동 선택 로직 구현 필요.
-3. **Attention 가중치 다중 헤드**: BERT attention은 12헤드 × 12레이어. 마지막 레이어의 평균값 사용 권장.
-4. **InsightAgent Opus 비용**: Opus 4.7은 비용이 높음. `_build_context()`에서 토큰 수 관리 필수 (4,000 토큰 이내).
-5. **재루프 무한 루프 방지**: `max_retries` 하드코딩 상한(5회) 설정. 그래프 정의에서 `recursion_limit` 파라미터 설정.
-6. **GradCAM requires_grad**: PyTorch 모델은 `model.eval()` 상태에서 `requires_grad=True` 설정 필요. Captum 사용 시 자동 처리됨.
-7. **InsightAgent 프롬프트 안전성**: 사용자 질문(`user_question`)이 프롬프트 인젝션 가능. 최대 200자 제한 및 특수문자 이스케이프 처리.
+2. **InsightAgent Opus 비용**: Opus 4.7은 비용이 높음. `_build_context()`에서 토큰 수 관리 필수 (4,000 토큰 이내).
+3. **재루프 무한 루프 방지**: `max_retries` 하드코딩 상한(5회) 설정. 그래프 정의에서 `recursion_limit` 파라미터 설정.
+4. **InsightAgent 프롬프트 안전성**: 사용자 질문(`user_question`)이 프롬프트 인젝션 가능. 최대 200자 제한 및 특수문자 이스케이프 처리.
 
 ---
 
@@ -401,11 +365,11 @@ torch>=2.2.0
   - why ("왜 딥러닝이 이 데이터에 우월한가" 등)
   - architecture_sketch
   - expected_metrics
-  - interpretability_strategy ("SHAP+Attention map")
+  - interpretability_strategy ("SHAP 단일 방식")
   - training_budget_min
   - fallback_strategy
   - rank
-  반드시 1개 이상은 트랜스포머 활용.
+  반드시 1개 이상은 정형 트랜스포머(TabTransformer/FTTransformer/TabPFN/Informer/TFT/PatchTST/TranAD/AnomalyTransformer) 활용.
   ```
 
 ### 2. `agents/proposers/model_comparison_reporter.py` — ModelComparisonReporterAgent (G4)
@@ -421,10 +385,10 @@ torch>=2.2.0
 - [ ] LoRA 또는 full fine-tuning 으로 최종 1회 더 학습 (epoch ≥ 추가 3)
 - [ ] MLflow에 별도 run으로 기록 (parent_run = 원래 학습 run)
 
-### 4. ExplainabilityAgent v2 — 트랜스포머 attention 별도 처리
+### 4. ExplainabilityAgent v2 — 트랜스포머 SHAP 처리
 
-- [ ] tabular_transformer 인 경우 self-attention weights → feature importance 변환
-- [ ] timeseries Informer/TFT 인 경우 attention temporal heatmap
+- [ ] tabular_transformer(TabTransformer/FTTransformer/TabPFN) 인 경우 SHAP KernelExplainer로 통일 처리
+- [ ] timeseries Informer/TFT/PatchTST 인 경우 SHAP 기반 시점별 기여도 + 계절성 분해 시각화로 한정
 
 ### 5. InsightAgent v2 — RAG로 과거 유사 사례 인사이트 참조
 
@@ -435,4 +399,4 @@ torch>=2.2.0
 
 - [ ] G3 → G4 → fine_tune (트랜스포머 시) → eval 흐름 E2E 통과
 - [ ] G4 비교표 데이터에 학습 곡선, SHAP top5, 학습 시간 모두 포함
-- [ ] 트랜스포머 attention 시각화 PNG MinIO 저장
+- [ ] 트랜스포머 SHAP 시각화 PNG MinIO 저장 (Attention map 미사용)

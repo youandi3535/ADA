@@ -9,11 +9,11 @@
 단위/통합/인수 테스트를 실행하여 KPI를 수치로 확인하고,
 Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검증한다.
 
-- 통합 테스트 25케이스 (6개 카테고리 E2E + 재루프 + 오류 복구 + 동시 요청)
+- 통합 테스트 IT-1~IT-4 (4개 카테고리 E2E + 재루프 + 오류 복구 + 동시 요청)
 - 에이전트 단위 테스트 커버리지 80% 이상
-- 인수 테스트 5종 (Titanic, 매출예측, CIFAR-10, 한국어 리뷰, 노이즈 데이터)
+- 인수 테스트 AT-1~AT-4 (Titanic, 매출예측, 네트워크 이상탐지, 노이즈 데이터 Harness)
 - KPI 7개 항목 수치 검증
-- 데모 시나리오 5종 서면 준비
+- 데모 시나리오 4종 서면 준비
 - 전체 문서화 완성
 
 ---
@@ -26,16 +26,15 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
 
 ## ✅ 작업 목록
 
-### 1. 통합 테스트 25케이스 작성
+### 1. 통합 테스트 24케이스 작성 (IT-1~IT-4 카테고리 그룹)
 
 - [ ] `tests/test_e2e/test_pipeline.py` 파일 생성
 
-  **6개 카테고리별 E2E 테스트 (6케이스):**
+  **4개 카테고리별 E2E 테스트 (5케이스):**
   - `test_e2e_tabular_ml_classification`: Titanic CSV → 분류 → PPT/PDF 생성 확인
   - `test_e2e_tabular_ml_regression`: 보스턴 주택 CSV → 회귀 → val_r2 > 0.5 확인
+  - `test_e2e_tabular_dl`: 정형 DL (TabTransformer/FTTransformer) → val_f1 ≥ 0.7 확인
   - `test_e2e_timeseries`: 월별 승객 수 CSV → 6개월 예측 → 신뢰구간 포함 확인
-  - `test_e2e_image`: 소규모 이미지 ZIP → 분류 → GradCAM 이미지 생성 확인
-  - `test_e2e_nlp`: 한국어 리뷰 CSV → 감성 분류 → 한국어 인사이트 생성 확인
   - `test_e2e_anomaly`: 노이즈 포함 tabular → 이상탐지 → val_auc > 0.6 확인
 
   **실패 → 재루프 → 성공 시나리오 (5케이스):**
@@ -77,16 +76,13 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
   - tabular 데이터: `n_rows`, `n_cols`, `missing_ratio` 정확성
   - 전체 결측 컬럼 처리
   - 혼합 타입 컬럼 처리
-  - 이미지 ZIP: 클래스별 파일 수 집계 확인
-  - 텍스트 파일: 평균 텍스트 길이, 고유 토큰 수
+  - timeseries: datetime 인덱스 인지 + 결측 구간 비율 확인
 
 - [ ] `tests/test_agents/test_schema_validator.py`
   - `tabular_ml`: target_col 존재 여부, 최소 2개 클래스
-  - `timeseries`: datetime 인덱스 필수, 최소 30행
-  - `image`: 클래스별 최소 10장
-  - `nlp`: 텍스트 컬럼 존재, 레이블 컬럼 존재
-  - `anomaly_detection`: 수치형 컬럼 2개 이상
   - `tabular_dl`: tabular_ml 동일 + 최소 200행
+  - `timeseries`: datetime 인덱스 필수, 최소 30행
+  - `anomaly_detection`: 수치형 컬럼 2개 이상
 
 - [ ] `tests/test_agents/test_eval_agent.py`
   - 임계치 경계값 테스트:
@@ -117,15 +113,10 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
   - ARIMA: `val_mape`, `val_rmse` 확인
   - LSTM: 최소 100행 데이터로 정상 학습 확인
 
-- [ ] `tests/test_pipelines/test_image.py`
-  - ResNet50: 데이터 <500 시 backbone freeze 확인
-  - EfficientNetB0: `val_f1_macro` 반환 확인
-  - DataLoader 배치 크기, shuffle 설정 확인
-
-- [ ] `tests/test_pipelines/test_nlp.py`
-  - klue/bert-base 토크나이저 정상 로드 확인
-  - `max_length=128` padding 확인
-  - `val_f1`, `val_accuracy` 반환 확인
+- [ ] `tests/test_pipelines/test_tabular_dl.py`
+  - TabTransformer / FTTransformer / TabPFN 학습 후 메트릭 반환 확인
+  - 데이터 < 1000행 시 LoRA 어댑터 학습 경로 진입 확인
+  - `val_f1`, `val_accuracy` 반환 확인 (분류) / `val_rmse`, `val_r2` (회귀)
 
 - [ ] `tests/test_pipelines/test_anomaly.py`
   - IsolationForest: `-1`/`1` 예측 값 확인
@@ -152,7 +143,7 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
   - `GET /rules`: `rule_code` 형식 R-A001~ 확인
   - `GET /telemetry/stats`: `success_rate` 필드 확인
 
-### 5. 인수 테스트 5종 실행
+### 5. 인수 테스트 4종 실행
 
 - [ ] **AT-1: Titanic CSV → tabular_ml 분류**
   - 입력: `titanic.csv` (891행, 12컬럼, target='Survived')
@@ -172,25 +163,16 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
     - 예측 차트 PNG MinIO 저장 확인
   - 검증 방법: `pytest tests/acceptance/test_at2_timeseries.py -v`
 
-- [ ] **AT-3: CIFAR-10 일부 ZIP → image 학습 → /predict 호출**
-  - 입력: `cifar10_sample.zip` (클래스당 100장, 10클래스)
-  - 카테고리: `image`
+- [ ] **AT-3: 네트워크 트래픽 → anomaly_detection 이상 탐지**
+  - 입력: `network_traffic.csv` (최소 5,000행, 수치형 다변량)
+  - 카테고리: `anomaly_detection`
   - 기준:
-    - `val_accuracy ≥ 0.70`
-    - `/predict/{model_id}` API 호출 시 유효 클래스명 반환
-    - GradCAM 이미지 생성 확인
-  - 검증 방법: `pytest tests/acceptance/test_at3_image.py -v`
+    - `val_auc ≥ 0.80`
+    - IsolationForest + AutoEncoder 비교 결과 PPT 슬라이드 포함 확인
+    - SHAP 기반 이상 기여도 차트 PNG MinIO 저장 확인
+  - 검증 방법: `pytest tests/acceptance/test_at3_anomaly.py -v`
 
-- [ ] **AT-4: 한국어 리뷰 CSV → nlp 감성 분류 → 한국어 인사이트**
-  - 입력: `korean_reviews.csv` (최소 1,000행, 컬럼: text, label)
-  - 카테고리: `nlp`
-  - 기준:
-    - `val_f1 ≥ 0.70`
-    - `state.insights` 한국어 4단락 이상 생성 확인
-    - Attention map PNG 생성 확인
-  - 검증 방법: `pytest tests/acceptance/test_at4_nlp.py -v`
-
-- [ ] **AT-5: 노이즈 포함 tabular → 1회 실패 유도 → Auditor 룰 추가 → 재실행 성공**
+- [ ] **AT-4: 노이즈 포함 tabular → 1회 실패 유도 → Auditor 룰 추가 → 재실행 성공**
   - 입력: `noisy_tabular.csv` (결측률 40%, 클래스 불균형 10:1)
   - 카테고리: `tabular_ml`
   - 시나리오:
@@ -201,7 +183,7 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
   - 기준:
     - AGENTS.md에 `R-A00X` 새 룰 추가 확인
     - 2차 실행 성공률 ≥ 1회
-  - 검증 방법: `pytest tests/acceptance/test_at5_harness.py -v`
+  - 검증 방법: `pytest tests/acceptance/test_at4_harness.py -v`
 
 ### 6. KPI 측정 (정량)
 
@@ -218,12 +200,12 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
   - `SELECT COUNT(*) FROM jobs WHERE retry_count > 0 AND status='completed'`
 
 - [ ] **Harness 학습 효과: 2번째 실행 정확도 +15%p 이상**
-  - 측정: AT-5 기준, 1차 실행 val_f1 대비 2차 실행 val_f1 차이
+  - 측정: AT-4 기준, 1차 실행 val_f1 대비 2차 실행 val_f1 차이
   - 예시: 1차 `0.48` → 2차 `0.65` (+17%p)
 
-- [ ] **카테고리 커버 6/6**
-  - 측정: 6개 카테고리 각 1회 이상 성공 완료 확인
-  - `tabular_ml`, `timeseries`, `image`, `nlp`, `anomaly_detection`, `tabular_dl`
+- [ ] **카테고리 커버 4/4**
+  - 측정: 4개 카테고리 각 1회 이상 성공 완료 확인
+  - `tabular_ml`, `tabular_dl`, `timeseries`, `anomaly_detection`
 
 - [ ] **API p95 응답 < 500ms**
   - 측정: `GET /health`, `GET /results/{job_id}` 100회 호출 후 p95 계산
@@ -238,12 +220,12 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
 - [ ] AGENTS.md `R-A001`~`R-A010` 이상 자동 생성 확인
   - 각 규칙 형식 검증: `rule_code`, `category`, `root_cause`, `confidence` 포함
   - 신뢰도 ≥ 0.8 규칙 자동 적용, 미만 규칙 pending 상태 확인
-  - AT-5 재실행에서 Harness 학습 효과(룰 적용으로 성능 향상) 검증
+  - AT-4 재실행에서 Harness 학습 효과(룰 적용으로 성능 향상) 검증
 
 - [ ] `SELECT * FROM audit_history ORDER BY created_at` 감사 이력 10건 이상 확인
 - [ ] `SELECT * FROM success_patterns` 성공 패턴 5건 이상 저장 확인
 
-### 8. 데모 시나리오 5종 준비
+### 8. 데모 시나리오 4종 준비
 
 - [ ] **시나리오 1: 고객 이탈 예측 (tabular_ml)**
   - 데이터: 통신사 고객 데이터 (계약기간, 요금제, 불만 횟수, 이탈여부)
@@ -259,21 +241,14 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
   - 비즈니스 임팩트: 재고/인력 계획 최적화 비용 절감
   - 발표 스크립트: 5분 분량
 
-- [ ] **시나리오 3: 불량품 탐지 (image)**
-  - 데이터: 제조 공정 제품 이미지 (정상/불량 2클래스)
-  - 목표: 불량품 자동 탐지, val_accuracy ≥ 0.90
-  - 기대 결과: GradCAM으로 불량 부위 하이라이트 시각화
-  - 비즈니스 임팩트: 검수 인력 X명 → AI 자동화로 비용 절감
+- [ ] **시나리오 3: 정형 DL 신용 평가 (tabular_dl)**
+  - 데이터: 신용 평가용 정형 데이터 (소득, 부채, 거래 이력 등)
+  - 목표: TabTransformer/FTTransformer 비교, val_f1 ≥ 0.75
+  - 기대 결과: SHAP 기반 신용 영향 요인 Top-5 추출
+  - 비즈니스 임팩트: 심사 자동화 + 의사결정 근거 명확화
   - 발표 스크립트: 5분 분량
 
-- [ ] **시나리오 4: 고객 리뷰 감성 분석 (nlp)**
-  - 데이터: 쇼핑몰 한국어 리뷰 (5,000건, 긍정/중립/부정)
-  - 목표: 3클래스 감성 분류, val_f1 ≥ 0.72
-  - 기대 결과: Attention map에서 "별로", "최악" 등 부정 키워드 강조
-  - 비즈니스 임팩트: 부정 리뷰 자동 알림 → 서비스 개선 사이클 단축
-  - 발표 스크립트: 5분 분량
-
-- [ ] **시나리오 5: 네트워크 이상 탐지 (anomaly)**
+- [ ] **시나리오 4: 네트워크 이상 탐지 (anomaly_detection)**
   - 데이터: 네트워크 트래픽 로그 (패킷 크기, 지연, 프로토콜 등)
   - 목표: 정상 패턴 학습 후 이상 트래픽 탐지, val_auc ≥ 0.80
   - 기대 결과: AutoEncoder 재구성 오차 기반 이상 점수 시각화
@@ -294,7 +269,7 @@ Self-Evolving Harness의 AGENTS.md 자동 누적 룰 10개 이상 생성을 검�
   - 시스템 아키텍처 다이어그램 (ASCII 또는 이미지)
   - 빠른 시작 (Docker Compose 실행 방법)
   - 환경 변수 목록 (`.env.example`)
-  - 6개 카테고리 사용 가이드
+  - 4개 카테고리 사용 가이드 (tabular_ml/tabular_dl/timeseries/anomaly_detection)
   - 기여 방법
 
 - [ ] **설계 문서** (`docs/architecture.md`):
@@ -478,22 +453,19 @@ pytest tests/test_pipelines/ --cov=pipelines --cov-fail-under=60
 | `tests/test_agents/test_auditor.py` | 신규 생성 | Auditor proposed_rule 형식 검증 |
 | `tests/test_pipelines/test_tabular_ml.py` | 신규 생성 | tabular_ml 파이프라인 테스트 |
 | `tests/test_pipelines/test_timeseries.py` | 신규 생성 | timeseries 파이프라인 테스트 |
-| `tests/test_pipelines/test_image.py` | 신규 생성 | image 파이프라인 테스트 |
-| `tests/test_pipelines/test_nlp.py` | 신규 생성 | nlp 파이프라인 테스트 |
+| `tests/test_pipelines/test_tabular_dl.py` | 신규 생성 | tabular_dl 파이프라인 테스트 |
 | `tests/test_pipelines/test_anomaly.py` | 신규 생성 | anomaly 파이프라인 테스트 |
 | `tests/test_api/test_endpoints.py` | 신규 생성 | API 12개 엔드포인트 테스트 |
 | `tests/acceptance/test_at1_titanic.py` | 신규 생성 | 인수 테스트 AT-1 |
 | `tests/acceptance/test_at2_timeseries.py` | 신규 생성 | 인수 테스트 AT-2 |
-| `tests/acceptance/test_at3_image.py` | 신규 생성 | 인수 테스트 AT-3 |
-| `tests/acceptance/test_at4_nlp.py` | 신규 생성 | 인수 테스트 AT-4 |
-| `tests/acceptance/test_at5_harness.py` | 신규 생성 | 인수 테스트 AT-5 (Self-Evolving) |
+| `tests/acceptance/test_at3_anomaly.py` | 신규 생성 | 인수 테스트 AT-3 |
+| `tests/acceptance/test_at4_harness.py` | 신규 생성 | 인수 테스트 AT-4 (Self-Evolving) |
 | `scripts/measure_kpi.py` | 신규 생성 | KPI 정량 측정 스크립트 |
 | `docs/architecture.md` | 신규 생성 | 아키텍처/데이터 흐름 설계 문서 |
 | `docs/demo_scripts/scenario_1_churn.md` | 신규 생성 | 데모 대본 시나리오 1 |
 | `docs/demo_scripts/scenario_2_sales.md` | 신규 생성 | 데모 대본 시나리오 2 |
-| `docs/demo_scripts/scenario_3_defect.md` | 신규 생성 | 데모 대본 시나리오 3 |
-| `docs/demo_scripts/scenario_4_sentiment.md` | 신규 생성 | 데모 대본 시나리오 4 |
-| `docs/demo_scripts/scenario_5_network.md` | 신규 생성 | 데모 대본 시나리오 5 |
+| `docs/demo_scripts/scenario_3_credit.md` | 신규 생성 | 데모 대본 시나리오 3 |
+| `docs/demo_scripts/scenario_4_network.md` | 신규 생성 | 데모 대본 시나리오 4 |
 | `.github/workflows/isolation_check.yml` | 수정 | pytest --cov 실행 확인 |
 
 ---
@@ -503,7 +475,7 @@ pytest tests/test_pipelines/ --cov=pipelines --cov-fail-under=60
 ### Day 13까지 완료되어야 하는 항목
 
 - 17개 에이전트 전체 구현 완료
-- 6개 파이프라인 전체 구현 완료
+- 4개 파이프라인 전체 구현 완료 (tabular_ml, tabular_dl, timeseries, anomaly_detection)
 - FastAPI 12개 엔드포인트 전체 구현 완료
 - Docker Compose 전체 서비스 실행 가능 (PostgreSQL, Redis, MinIO, MLflow, FastAPI, Celery, Streamlit)
 - AGENTS.md 기본 구조 존재
@@ -514,9 +486,8 @@ pytest tests/test_pipelines/ --cov=pipelines --cov-fail-under=60
 tests/fixtures/
 ├── titanic.csv                  # 891행, AT-1용
 ├── monthly_sales.csv            # 36개월, AT-2용
-├── cifar10_sample.zip           # 10클래스×100장, AT-3용
-├── korean_reviews.csv           # 1,000행, AT-4용
-├── noisy_tabular.csv            # 결측률 40%, AT-5용
+├── network_traffic.csv          # 5,000행, AT-3용
+├── noisy_tabular.csv            # 결측률 40%, AT-4용
 └── small_tabular.csv            # 50행, 단위 테스트용
 ```
 
@@ -538,15 +509,14 @@ locust>=2.29.0
 
 - [ ] `pytest tests/test_agents/ --cov=agents --cov-fail-under=80` → PASS
 - [ ] `pytest tests/test_pipelines/ --cov=pipelines --cov-fail-under=60` → PASS
-- [ ] 인수 테스트 AT-1 ~ AT-5 모두 PASS
+- [ ] 인수 테스트 AT-1 ~ AT-4 모두 PASS
 - [ ] E2E 성공률 ≥ 80% (KPI 스크립트 확인)
 - [ ] AT-1 Titanic E2E ≤ 90초 (타이머 측정)
 - [ ] AT-2 val_mape ≤ 0.30
-- [ ] AT-3 val_accuracy ≥ 0.70
-- [ ] AT-4 val_f1 ≥ 0.70
-- [ ] AT-5 AGENTS.md 새 룰 R-A00X 추가 확인
+- [ ] AT-3 val_auc ≥ 0.80
+- [ ] AT-4 AGENTS.md 새 룰 R-A00X 추가 확인
 - [ ] AGENTS.md 자동 룰 총 10개 이상 생성 (`grep -c "^### R-A" AGENTS.md` ≥ 10)
-- [ ] 데모 시나리오 5종 서면 준비 완료 (`docs/demo_scripts/` 5개 파일)
+- [ ] 데모 시나리오 4종 서면 준비 완료 (`docs/demo_scripts/` 4개 파일)
 - [ ] Swagger UI `/docs` 12개 엔드포인트 설명 완성 확인
 - [ ] `isolation_check.yml` CI 모든 PR 통과 확인
 
@@ -554,14 +524,14 @@ locust>=2.29.0
 
 ## ⚠️ 주의사항 & 제약
 
-1. **인수 테스트 실행 환경**: AT-1~AT-5는 반드시 Docker Compose 전체 서비스 실행 상태에서 수행.
-2. **테스트 데이터 저작권**: Titanic, CIFAR-10은 공개 데이터셋이나 한국어 리뷰 데이터는 별도 수집 또는 합성 데이터 사용.
+1. **인수 테스트 실행 환경**: AT-1~AT-4는 반드시 Docker Compose 전체 서비스 실행 상태에서 수행.
+2. **테스트 데이터 저작권**: Titanic은 공개 데이터셋. 신용평가/네트워크 트래픽 데이터셋도 공개 또는 합성 데이터 사용.
 3. **병렬 테스트 격리**: `pytest-xdist` 사용 시 각 테스트가 고유한 `job_id`를 사용하도록 `faker` 또는 `uuid` 활용.
-4. **AT 실행 시간**: AT-3(image), AT-4(nlp)는 GPU 없이 CPU만으로 실행 시 90초 초과 가능. GPU 환경 또는 `max_epochs=3` 제한으로 조정.
-5. **AGENTS.md 버전 관리**: 테스트 실행 중 AGENTS.md 동시 수정 방지를 위해 AT-5는 단독 실행 권장.
+4. **AT 실행 시간**: AT-3(anomaly), tabular_dl 트랜스포머는 CPU만으로 실행 시 90초 초과 가능. GPU 환경 또는 `max_epochs=3` 제한으로 조정.
+5. **AGENTS.md 버전 관리**: 테스트 실행 중 AGENTS.md 동시 수정 방지를 위해 AT-4는 단독 실행 권장.
 6. **커버리지 제외 파일**: `__init__.py`, `conftest.py`, `scripts/` 디렉토리는 커버리지 측정 제외 (`.coveragerc` 설정).
 7. **데모 시나리오 데이터 보안**: 실제 고객 데이터 대신 공개 데이터 또는 합성 데이터만 사용. 데모 환경에서 실 데이터 노출 금지.
-8. **Self-Evolving 10룰 검증**: 스프린트 기간 중 실패 케이스가 충분하지 않을 경우, AT-5 반복 실행 또는 실패 케이스 시뮬레이션으로 룰 누적 가능.
+8. **Self-Evolving 10룰 검증**: 스프린트 기간 중 실패 케이스가 충분하지 않을 경우, AT-4 반복 실행 또는 실패 케이스 시뮬레이션으로 룰 누적 가능.
 9. **문서화 최종 검토**: 에이전트 README 17개는 코드 완성 후 실제 함수 시그니처와 일치 여부 최종 확인.
 10. **CI isolation_check 최종**: 모든 PR 병합 전 `isolation_check.yml` 통과 필수. 직접 main 브랜치 push 금지.
 
@@ -584,7 +554,7 @@ locust>=2.29.0
 - [ ] Day1~Day14의 v2 확장 섹션이 모두 완료됨을 PR 머지로 확인
 - [ ] Day15~Day21 작업의 의존성 (DB v2 마이그레이션, 게이트 노드 등)이 모두 GREEN
 - [ ] AGENTS.md v2 룰(R-401~R-799) 추가 PR 머지 완료
-- [ ] 데모 시나리오 5종은 Day21에서 **5 카테고리 × 5 산출물** 매트릭스로 확장됨을 인지
+- [ ] 데모 시나리오 4종은 Day21에서 **4 카테고리 × 5 산출물** 매트릭스로 확장됨을 인지
 
 ### 3. KPI v1 시점 측정 (Day20에서 v2 KPI 재측정)
 

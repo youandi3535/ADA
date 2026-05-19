@@ -34,7 +34,7 @@ Day 1에서 기동된 PostgreSQL 컨테이너 위에 10개 핵심 테이블 DDL�
   - `sha256 CHAR(64) NOT NULL` — 파일 중복 탐지
   - `size_bytes BIGINT NOT NULL`
   - `minio_path VARCHAR(1024) NOT NULL`
-  - `category VARCHAR(64)` — tabular_ml / image / nlp 등
+  - `category VARCHAR(64)` — tabular_ml / tabular_dl / timeseries / anomaly_detection
   - `status VARCHAR(32) DEFAULT 'uploaded'`
   - `created_at TIMESTAMPTZ DEFAULT NOW()`
 
@@ -161,9 +161,9 @@ Day 1에서 기동된 PostgreSQL 컨테이너 위에 10개 핵심 테이블 DDL�
 
 - [ ] `mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)` 설정
 - [ ] Default Experiment 외 카테고리별 실험 사전 생성:
-  - `ada-tabular-ml`, `ada-tabular-dl`, `ada-timeseries`, `ada-image`, `ada-nlp`, `ada-anomaly`
+  - `ada-tabular-ml`, `ada-tabular-dl`, `ada-timeseries`, `ada-anomaly`
 - [ ] `scripts/mlflow_init.py` 스크립트 작성 (실험 초기화 자동화)
-- [ ] MLflow UI(http://localhost:5000)에서 6개 실험 목록 확인
+- [ ] MLflow UI(http://localhost:5000)에서 4개 실험 목록 확인
 
 ### 7. Alembic 마이그레이션 설정 (선택, Day 3 이전 완료 권장)
 
@@ -328,7 +328,7 @@ def ensure_bucket_exists(bucket_name: str = settings.MINIO_BUCKET) -> None:
 import mlflow
 from shared.config import settings
 
-CATEGORIES = ["tabular-ml", "tabular-dl", "timeseries", "image", "nlp", "anomaly"]
+CATEGORIES = ["tabular-ml", "tabular-dl", "timeseries", "anomaly"]
 
 def init_experiments():
     mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
@@ -390,7 +390,7 @@ if __name__ == "__main__":
 - [ ] `python -c "from shared.db import engine; print('DB OK')"` 성공
 - [ ] `python -c "from shared.models import Job; print(Job.__tablename__)"` 성공
 - [ ] `python tools/minio_setup.py` 실행 후 MinIO 콘솔에서 `autoai-artifacts` 버킷 확인
-- [ ] `python scripts/mlflow_init.py` 실행 후 MLflow UI에서 6개 실험 목록 확인
+- [ ] `python scripts/mlflow_init.py` 실행 후 MLflow UI에서 4개 실험 목록 확인
 - [ ] `psql -U autoai -d mlflow -c "\dt"` 에서 MLflow 내부 테이블 생성 확인
 - [ ] 비동기 세션 테스트: `async with AsyncSessionLocal() as s: print(await s.execute(text("SELECT 1")))`
 
@@ -496,7 +496,7 @@ if __name__ == "__main__":
   CREATE TABLE outputs (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     job_id      UUID REFERENCES jobs(id) ON DELETE CASCADE,
-    output_code VARCHAR(16) NOT NULL,        -- 'OUT-01'..'OUT-13'
+    output_code VARCHAR(16) NOT NULL,        -- 'OUT-01'..'OUT-04' | 'OUT-07'
     minio_path  VARCHAR(1024) NOT NULL,
     file_size_bytes BIGINT,
     generation_ms INTEGER,
@@ -586,7 +586,7 @@ if __name__ == "__main__":
     ('FineTuneExecutorAgent','modeling','트랜스포머 최종 튜닝','none',...),
     -- E 평가·해석 (3)
     ('EvalAgent','eval','품질 평가','claude-opus-4-7',...),
-    ('ExplainabilityAgent','eval','SHAP/GradCAM/Attention','none',...),
+    ('ExplainabilityAgent','eval','SHAP / 시계열 분해','none',...),
     ('InsightAgent','eval','비즈니스 인사이트','claude-opus-4-7',...),
     -- F 산출물 오케스트레이터 (1)
     ('ReportComposerAgent','output','산출물 fan-out','none',...),

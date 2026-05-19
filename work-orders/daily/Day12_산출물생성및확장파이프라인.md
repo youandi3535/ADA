@@ -6,23 +6,22 @@
 ## 📋 오늘의 목표
 
 분석 완료 후 사용자에게 전달할 **PPT / PDF / 발표 대본** 3종 산출물 생성 에이전트를 완성하고,
-이미지(Image) / NLP / 이상탐지(Anomaly) 3개 파이프라인을 신규 구현하여
-플랫폼이 지원하는 6개 카테고리 파이프라인을 모두 완성한다.
+**이상탐지(Anomaly)** 파이프라인을 신규 구현하여 플랫폼이 지원하는 4개 카테고리 파이프라인(tabular_ml, tabular_dl, timeseries, anomaly_detection)을 모두 완성한다.
 
 - ReportComposerAgent: PPT/PDF/Script 병렬 생성 조율
 - PresentationGenerator: python-pptx 기반 7~10 슬라이드 PPT
 - PDFGenerator: WeasyPrint + Jinja2 기반 PDF
 - ScriptGenerator: Claude Sonnet 4.6 기반 발표 대본
-- ImagePipeline: ResNet50/EfficientNetB0/ViT 파이프라인
-- NLPPipeline: klue/bert-base 한국어 파이프라인
-- AnomalyPipeline: IsolationForest/LOF/AutoEncoder 파이프라인
+- AnomalyPipeline: IsolationForest/LOF/OneClassSVM/AutoEncoder 파이프라인
+
+> 본 스코프 제외: 이미지(Image) 파이프라인 및 NLP 파이프라인은 v2.1 리뉴얼에서 제외되었다. 관련 코드(`pipelines/image/`, `pipelines/nlp/`)는 작성하지 않는다.
 
 ---
 
 ## 👤 담당자
 
 - **D**: ReportComposerAgent, PresentationGenerator, PDFGenerator, ScriptGenerator
-- **B**: ImagePipeline, NLPPipeline, AnomalyPipeline
+- **B**: AnomalyPipeline
 
 ---
 
@@ -56,19 +55,17 @@
     5. **EDA 차트 3**: 카테고리별 추가 차트 (이상치/단어빈도/클래스분포 등)
     6. **모델 비교표**: 후보 3개 모델 메트릭 비교 표 (4열 × N행)
     7. **최종 결과**: best model 이름, primary metric 값, 배지 스타일 강조
-    8. **해석 이미지**: SHAP beeswarm / GradCAM / Attention map 삽입
+    8. **해석 이미지**: SHAP beeswarm 삽입 (SHAP 단일 방식, GradCAM/Attention map 미사용)
     9. **비즈니스 인사이트**: `state.insights` 단락 별 bullet points (최대 6개)
     10. **향후 제안 & 한계점**: 추가 분석 제안, 모델 한계, 데이터 수집 권고
 
-  - **카테고리별 색상 테마:**
+  - **카테고리별 색상 테마 (4종):**
     ```python
     THEME_COLORS = {
         'tabular_ml':        RGBColor(37, 99, 235),    # 파랑 (#2563eb)
-        'timeseries':        RGBColor(22, 163, 74),    # 초록 (#16a34a)
-        'image':             RGBColor(124, 58, 237),   # 보라 (#7c3aed)
-        'nlp':               RGBColor(234, 88, 12),    # 주황 (#ea580c)
-        'anomaly_detection': RGBColor(220, 38, 38),    # 빨강 (#dc2626)
         'tabular_dl':        RGBColor(8, 145, 178),    # 청록 (#0891b2)
+        'timeseries':        RGBColor(22, 163, 74),    # 초록 (#16a34a)
+        'anomaly_detection': RGBColor(220, 38, 38),    # 빨강 (#dc2626)
     }
     ```
   - **레이아웃 설정:** `prs.slide_width = Inches(13.33)`, `prs.slide_height = Inches(7.5)` (와이드)
@@ -139,55 +136,7 @@
   - 슬라이드별 내용 요약 → LLM 호출 → 대본 텍스트 반환
   - MinIO 저장: `minio_tool.save_text(script_text, f"reports/{job_id}/script.txt")`
 
-### 5. ImagePipeline 구현 (B)
-
-- [ ] `pipelines/image/pipeline.py` 파일 생성
-  - `ImagePipeline(BasePipeline)` 클래스 정의
-  - 지원 모델: `resnet50`, `efficientnet_b0`, `vit_b_16`
-  - **데이터 크기별 전략:**
-    - `데이터 < 500`: `freeze_backbone=True`, FC layer만 학습
-      - `for param in model.parameters(): param.requires_grad = False`
-      - `model.fc = nn.Linear(in_features, num_classes)` (마지막 레이어만 학습)
-    - `데이터 >= 500`: full fine-tuning (전체 가중치 업데이트)
-      - `learning_rate=1e-5` (소규모), `1e-4` (대규모)
-  - **데이터셋 구성:**
-    - `torchvision.datasets.ImageFolder(root=data_dir, transform=transform)` 활용
-    - `DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)`
-    - 학습 증강: `RandomHorizontalFlip()`, `ColorJitter(0.2, 0.2, 0.2)`, `RandomRotation(15)`
-    - 검증 증강: 없음 (Resize + Normalize만)
-  - **모델 로드:**
-    - `torchvision.models.resnet50(pretrained=True)` (ImageNet 가중치)
-    - `torchvision.models.efficientnet_b0(pretrained=True)`
-    - `torchvision.models.vit_b_16(pretrained=True)`
-  - **학습 루프:**
-    - Adam optimizer, `CosineAnnealingLR` 스케줄러
-    - Early stopping (patience=5)
-    - 에폭당 train_loss, val_loss, val_accuracy, val_f1_macro 기록
-  - **메트릭:** `val_accuracy`, `val_f1_macro` (sklearn.metrics.f1_score)
-
-### 6. NLPPipeline 구현 (B)
-
-- [ ] `pipelines/nlp/pipeline.py` 파일 생성
-  - `NLPPipeline(BasePipeline)` 클래스 정의
-  - 모델: `klue/bert-base` (한국어 BERT 사전학습)
-  - **토크나이저:** `transformers.AutoTokenizer.from_pretrained('klue/bert-base')`
-  - **모델 로드:** `transformers.AutoModelForSequenceClassification.from_pretrained('klue/bert-base', num_labels=num_classes)`
-  - **데이터셋 클래스:**
-    ```python
-    class TextDataset(Dataset):
-        def __init__(self, texts, labels, tokenizer, max_length=128):
-            self.encodings = tokenizer(texts, max_length=max_length,
-                                       padding='max_length', truncation=True, return_tensors='pt')
-            self.labels = labels
-    ```
-  - **학습 설정:**
-    - `transformers.TrainingArguments`: epoch=5, batch=16, eval_steps=100
-    - `transformers.Trainer` 활용 또는 커스텀 학습 루프
-    - `AdamW(lr=2e-5)`, `LinearSchedule`
-  - **메트릭:** `val_f1` (macro), `val_accuracy`
-  - 한국어 텍스트 전처리: 특수문자 제거, 이모지 처리 (전처리 에이전트에서 처리 완료 가정)
-
-### 7. AnomalyPipeline 구현 (B)
+### 5. AnomalyPipeline 구현 (B)
 
 - [ ] `pipelines/anomaly/pipeline.py` 파일 생성
   - `AnomalyPipeline(BasePipeline)` 클래스 정의
@@ -236,11 +185,9 @@ import io
 class PresentationGenerator:
     THEME_COLORS = {
         'tabular_ml':        RGBColor(37, 99, 235),
-        'timeseries':        RGBColor(22, 163, 74),
-        'image':             RGBColor(124, 58, 237),
-        'nlp':               RGBColor(234, 88, 12),
-        'anomaly_detection': RGBColor(220, 38, 38),
         'tabular_dl':        RGBColor(8, 145, 178),
+        'timeseries':        RGBColor(22, 163, 74),
+        'anomaly_detection': RGBColor(220, 38, 38),
     }
 
     def generate(self, state: PipelineState) -> str:
@@ -301,48 +248,6 @@ class PDFGenerator:
         return path
 ```
 
-### ImagePipeline 핵심 구조
-
-```python
-class ImagePipeline(BasePipeline):
-    MODEL_BUILDERS = {
-        'resnet50':        lambda nc: models.resnet50(pretrained=True),
-        'efficientnet_b0': lambda nc: models.efficientnet_b0(pretrained=True),
-        'vit_b_16':        lambda nc: models.vit_b_16(pretrained=True),
-    }
-
-    def train(self, X_train, y_train, X_val, y_val, model_name: str, params: dict):
-        num_classes = len(set(y_train))
-        data_size   = len(X_train)
-        model       = self._build_model(model_name, num_classes, freeze=(data_size < 500))
-        train_loader, val_loader = self._build_loaders(X_train, y_train, X_val, y_val)
-
-        optimizer = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=params.get('lr', 1e-4)
-        )
-        scheduler = CosineAnnealingLR(optimizer, T_max=params.get('epochs', 20))
-        criterion = nn.CrossEntropyLoss()
-        best_val_f1 = 0.0
-        patience, patience_counter = 5, 0
-
-        for epoch in range(params.get('epochs', 20)):
-            train_loss = self._train_epoch(model, train_loader, optimizer, criterion)
-            val_acc, val_f1 = self._eval_epoch(model, val_loader, num_classes)
-            scheduler.step()
-            if val_f1 > best_val_f1:
-                best_val_f1 = val_f1
-                patience_counter = 0
-                torch.save(model.state_dict(), '/tmp/best_model.pt')
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    break
-
-        model.load_state_dict(torch.load('/tmp/best_model.pt'))
-        return model, {'val_accuracy': val_acc, 'val_f1_macro': best_val_f1}
-```
-
 ### AnomalyPipeline AutoEncoder 학습 구조
 
 ```python
@@ -381,14 +286,10 @@ def _train_autoencoder(self, X_train, X_val, params):
 | `reports/script_generator.py` | 신규 생성 | Claude Sonnet 4.6 발표 대본 생성 |
 | `templates/pdf_report.html` | 신규 생성 | PDF Jinja2 템플릿 |
 | `templates/pdf_style.css` | 신규 생성 | PDF 인쇄용 CSS |
-| `pipelines/image/pipeline.py` | 신규 생성 | ResNet/EfficientNet/ViT 파이프라인 |
-| `pipelines/image/__init__.py` | 신규 생성 | 패키지 초기화 |
-| `pipelines/nlp/pipeline.py` | 신규 생성 | klue/bert-base NLP 파이프라인 |
-| `pipelines/nlp/__init__.py` | 신규 생성 | 패키지 초기화 |
 | `pipelines/anomaly/pipeline.py` | 신규 생성 | 이상탐지 파이프라인 4종 |
 | `pipelines/anomaly/__init__.py` | 신규 생성 | 패키지 초기화 |
 | `reports/__init__.py` | 신규 생성 | 패키지 초기화 |
-| `shared/pipeline_factory.py` | 수정 | image, nlp, anomaly 파이프라인 등록 |
+| `shared/pipeline_factory.py` | 수정 | anomaly 파이프라인 등록 |
 | `core/state.py` | 수정 | ppt_path, pdf_path, script_path 필드 추가 |
 
 ---
@@ -409,32 +310,26 @@ def _train_autoencoder(self, X_train, X_val, params):
 python-pptx>=0.6.23
 weasyprint>=61.0
 jinja2>=3.1.4
-torchvision>=0.17.0
-transformers>=4.40.0
-datasets>=2.19.0
 scikit-learn>=1.4.0
+torch>=2.2.0
 ```
 
 ### 외부 의존성
 
 - `kaleido`: Plotly 이미지 내보내기
 - `Cairo` 라이브러리: WeasyPrint 렌더링 (Docker 이미지에 `apt install -y libcairo2`)
-- `klue/bert-base` HuggingFace 모델 다운로드 (첫 실행 시 캐시)
 
 ---
 
 ## ✔️ 완료 기준 (Done Criteria)
 
 - [ ] `PresentationGenerator`: 7~10 슬라이드 PPT 파일 생성, MinIO 저장 확인
-- [ ] `PresentationGenerator`: 카테고리별 색상 테마 적용 확인 (표지 배경색)
+- [ ] `PresentationGenerator`: 카테고리별 색상 테마 적용 확인 (표지 배경색, 4종 카테고리)
 - [ ] `PDFGenerator`: A4 PDF MinIO 저장, EDA 차트 2개 이상 포함 확인
 - [ ] `ScriptGenerator`: `[Slide 1]` ~ `[Slide N]` 형식 대본 생성 확인
 - [ ] `ScriptGenerator`: 마지막 슬라이드 액션 아이템 포함 확인
-- [ ] `ImagePipeline`: ResNet50 학습 후 `val_accuracy`, `val_f1_macro` 메트릭 반환 확인
-- [ ] `ImagePipeline`: 데이터 < 500 시 backbone freeze 확인 (`requires_grad=False`)
-- [ ] `NLPPipeline`: klue/bert-base 파인튜닝 후 `val_f1`, `val_accuracy` 반환 확인
 - [ ] `AnomalyPipeline`: IsolationForest, AutoEncoder 2종 학습 후 `val_auc` 반환 확인
-- [ ] `pipeline_factory.get('image')`, `get('nlp')`, `get('anomaly_detection')` 정상 반환 확인
+- [ ] `pipeline_factory.get('anomaly_detection')` 정상 반환 확인
 - [ ] `ReportComposerAgent`: 3종 병렬 생성 완료 후 `state.ppt_path`, `state.pdf_path`, `state.script_path` 모두 설정 확인
 
 ---
@@ -443,18 +338,16 @@ scikit-learn>=1.4.0
 
 1. **WeasyPrint Cairo 의존성**: Docker 이미지에 `libcairo2-dev`, `libpango1.0-dev`, `libgdk-pixbuf2.0-dev` 설치 필수.
 2. **PPT 슬라이드 이미지 크기**: `add_picture()`시 너비/높이 명시 필수. 미명시 시 원본 크기로 슬라이드 초과 가능.
-3. **HuggingFace 모델 캐시**: Docker 컨테이너 재시작 시 매번 다운로드 방지 위해 볼륨 마운트 (`/root/.cache/huggingface`).
-4. **ViT 입력 크기**: ViT-B/16은 `224×224` 고정. `Resize(224)` + `CenterCrop(224)` 전처리 필수.
-5. **병렬 생성 스레드 안전성**: `PresentationGenerator`와 `PDFGenerator`가 같은 MinIO 경로에 동시 쓰기 방지 (경로에 타입명 포함).
-6. **Script 대본 언어**: SCRIPT_PROMPT에 "한국어 작성" 명시. LLM이 영어로 응답할 경우 재호출 로직 필요.
-7. **AnomalyPipeline 레이블 없는 경우**: 순수 비지도 학습 시 `val_auc` 계산 불가. 합성 레이블(isolation forest 예측값) 기반 AUROC 계산으로 대체.
-8. **PDF 한국어 폰트**: WeasyPrint 한국어 렌더링을 위해 `NanumGothic` 또는 `Noto Sans KR` 폰트 Docker 이미지에 포함 필요.
+3. **병렬 생성 스레드 안전성**: `PresentationGenerator`와 `PDFGenerator`가 같은 MinIO 경로에 동시 쓰기 방지 (경로에 타입명 포함).
+4. **Script 대본 언어**: SCRIPT_PROMPT에 "한국어 작성" 명시. LLM이 영어로 응답할 경우 재호출 로직 필요.
+5. **AnomalyPipeline 레이블 없는 경우**: 순수 비지도 학습 시 `val_auc` 계산 불가. 합성 레이블(isolation forest 예측값) 기반 AUROC 계산으로 대체.
+6. **PDF 한국어 폰트**: WeasyPrint 한국어 렌더링을 위해 `NanumGothic` 또는 `Noto Sans KR` 폰트 Docker 이미지에 포함 필요.
 
 ---
 
 ## 🆕 v2 확장 작업 (마스터 설계서 §7 · §4-D)
 
-> Day12 의 v2 핵심: **트랜스포머 파이프라인 정식 도입** (TabTransformer, FTTransformer, TabPFN, Informer, TFT, PatchTST, ViT, KLUE-BERT, TranAD). 이 날 산출물은 PPT/PDF/대본 3종은 그대로 두고, 산출물 패밀리 확장(13종)은 Day15에서 본격화.
+> Day12 의 v2 핵심: **정형 트랜스포머 파이프라인 정식 도입** (8종: TabTransformer, FTTransformer, TabPFN, Informer, TFT, PatchTST, TranAD, AnomalyTransformer). 이 날 산출물은 PPT/PDF/대본 3종은 그대로 두고, 산출물 패밀리 확장(5종)은 Day15에서 본격화.
 
 ### 1. `pipelines/transformer/` 패키지 신설
 
@@ -464,8 +357,6 @@ scikit-learn>=1.4.0
   - 공통 인터페이스: `train(X, y, params) → model`, `evaluate(model, Xv, yv, task) → metrics`
 - [ ] `pipelines/transformer/timeseries.py` — Informer, TFT, PatchTST
   - 라이브러리: `pytorch-forecasting`, `neuralforecast`, `gluonts`
-- [ ] `pipelines/transformer/image.py` — ViT, SwinT, DeiTS (`timm`)
-- [ ] `pipelines/transformer/nlp.py` — KLUE-BERT, XLM-RoBERTa, DeBERTa-v3 (`transformers`)
 - [ ] `pipelines/transformer/anomaly.py` — TranAD, AnomalyTransformer
 
 ### 2. LoRA 어댑터 학습기 (`pipelines/transformer/lora.py`)
@@ -481,26 +372,23 @@ PIPELINE_REGISTRY_V2 = {
     ...v1...
     "transformer_tabular":    TabularTransformerPipeline,
     "transformer_timeseries": TSTransformerPipeline,
-    "transformer_image":      ImageTransformerPipeline,
-    "transformer_nlp":        NLPTransformerPipeline,
     "transformer_anomaly":    AnomalyTransformerPipeline,
 }
 ```
 
-### 4. 사전학습 가중치 캐시 볼륨
+### 4. 모델 캐시 볼륨
 
-- [ ] `docker-compose.yml` 의 worker-training 에 `./models_cache:/root/.cache/huggingface` 볼륨 마운트
-- [ ] 첫 실행 시 다운로드, 이후 캐시 사용
+- [ ] `docker-compose.yml` 의 worker-training 에 `./models_cache:/root/.cache` 볼륨 마운트
+- [ ] 첫 실행 시 다운로드/포팅, 이후 캐시 사용
 
 ### 5. 완료 기준 (v2 추가)
 
 - [ ] TabularTransformerPipeline (TabTransformer) Titanic E2E `val_f1 ≥ 0.78`
 - [ ] Informer Pipeline AirPassengers `val_mape ≤ 0.20`
-- [ ] LoRA 어댑터 학습으로 BERT 미세조정 시 학습 시간 ≥ 40% 단축 확인
+- [ ] LoRA 어댑터 학습으로 트랜스포머 미세조정 시 학습 시간 ≥ 40% 단축 확인
 - [ ] PipelineFactory.create("transformer_tabular") 정상 인스턴스화
 
 ### 6. 주의사항 (v2)
 
 - TabPFN은 GPU 권장, CPU에서도 동작하나 매우 느림 (1만행 한계)
-- ViT/SwinT 사전학습 가중치는 ImageNet-21k 기본. 도메인 적응이 어려운 경우 EfficientNet 폴백
 - TranAD 의 공식 구현은 없음 — 내부 포팅 (`tranad/model.py`) 필요

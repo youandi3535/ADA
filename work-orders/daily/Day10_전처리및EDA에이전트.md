@@ -40,28 +40,24 @@ EDAAgent가 카테고리별 시각화 차트를 MinIO에 저장한다.
     [
       {
         "step": "단계명 (handle_missing/encode_categorical/scale_numeric/handle_outliers/
-                  text_tokenize/image_normalize/timeseries_detrend/feature_creation 중 택1)",
+                  timeseries_detrend/feature_creation 중 택1)",
         "method": "구체적 방법명",
         "params": {"파라미터명": 값},
         "applies_to": ["적용 컬럼 또는 데이터 타입 리스트"]
       }
     ]
     ```
-  - **처리 단계 8종:**
+  - **처리 단계 6종:**
     1. `handle_missing`: 결측값 처리
     2. `encode_categorical`: 범주형 인코딩
     3. `scale_numeric`: 수치형 스케일링
     4. `handle_outliers`: 이상치 처리
-    5. `text_tokenize`: 텍스트 토크나이징
-    6. `image_normalize`: 이미지 정규화
-    7. `timeseries_detrend`: 시계열 추세 제거
-    8. `feature_creation`: 파생 변수 생성
+    5. `timeseries_detrend`: 시계열 추세 제거
+    6. `feature_creation`: 파생 변수 생성
   - `load_skill(state.category, 'preprocessing')` 으로 도메인 컨텍스트 주입
   - 카테고리별 기본 전략 분기:
     - `tabular_ml`, `anomaly_detection`: handle_missing → encode_categorical → scale_numeric → handle_outliers
     - `timeseries`: handle_missing → timeseries_detrend → scale_numeric
-    - `image`: image_normalize → (augmentation은 학습 시)
-    - `nlp`: handle_missing → text_tokenize
     - `tabular_dl`: handle_missing → encode_categorical → scale_numeric
   - 출력: `list[dict]` 형식, `state.preprocessing_plan`에 저장
 
@@ -92,15 +88,6 @@ EDAAgent가 카테고리별 시각화 차트를 MinIO에 저장한다.
   - `handle_outliers`:
     - `method='iqr_clip'` → IQR 방식 (Q1-1.5*IQR, Q3+1.5*IQR 범위로 clip)
     - `method='isolation_forest'` → `IsolationForest(contamination=0.05)` 이상치 행 제거
-
-  - `text_tokenize`:
-    - `transformers.AutoTokenizer.from_pretrained(model_name)` 활용
-    - 한국어: `'klue/bert-base'`, 영어: `'bert-base-uncased'`
-    - `max_length=128`, `padding='max_length'`, `truncation=True`
-
-  - `image_normalize`:
-    - `torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])`
-    - Resize to (224, 224)
 
   - `timeseries_detrend`:
     - Linear detrend: `scipy.signal.detrend(series)`
@@ -133,16 +120,7 @@ EDAAgent가 카테고리별 시각화 차트를 MinIO에 저장한다.
     - 이동 평균 오버레이: `rolling(window=30).mean()` 추가
     - 자기상관 함수 (ACF): `statsmodels.graphics.tsaplots.plot_acf`
 
-  - **image:**
-    - 클래스별 샘플 이미지 격자: PIL 이미지 로드 후 `plotly.figure_factory.create_annotated_heatmap` 또는 subplot grid
-    - 클래스 분포 막대 그래프: `plotly.express.bar`
-    - 이미지 크기 분포: `plotly.express.scatter(width vs height)`
-
-  - **nlp:**
-    - 텍스트 길이 분포: `plotly.express.histogram(df, x='text_length')`
-    - 상위 단어 빈도: `Counter(words).most_common(20)` → `plotly.express.bar`
-    - 감성/클래스별 텍스트 길이 비교: `plotly.express.box(df, x=target_col, y='text_length')`
-
+  - 모든 차트: SHAP 호환 가능한 정형 데이터 차트로 한정 (워드클라우드/이미지 그리드 미사용)
   - 모든 차트: PNG 파일로 변환 (`fig.write_image(f"{chart_name}.png", scale=2)`)
   - MinIO 저장: `minio_tool.save_file(png_bytes, f"eda/{job_id}/{chart_name}.png")`
   - `state.eda_charts` 리스트에 MinIO 경로 추가
@@ -156,12 +134,12 @@ EDAAgent가 카테고리별 시각화 차트를 MinIO에 저장한다.
     - 메인: 파일 업로드 + 진행 상황 + 결과
 
   - **파일 업로드 섹션:**
-    - `st.file_uploader("데이터 파일 업로드", type=['csv', 'parquet', 'zip', 'txt'], accept_multiple_files=False)`
+    - `st.file_uploader("데이터 파일 업로드", type=['csv', 'xlsx', 'parquet', 'json', 'zip', 'pdf', 'txt', 'html'], accept_multiple_files=False)`
     - 최대 100MB 제한 (`config.toml` 설정: `server.maxUploadSize = 100`)
     - 업로드 후 미리보기: `st.dataframe(df.head(10))`
 
   - **파이프라인 설정 섹션:**
-    - `st.selectbox("분석 카테고리", options=['tabular_ml', 'timeseries', 'image', 'nlp', 'anomaly_detection', 'tabular_dl'])`
+    - `st.selectbox("분석 카테고리", options=['tabular_ml', 'tabular_dl', 'timeseries', 'anomaly_detection'])`
     - `st.text_input("타겟 컬럼명 (선택사항)", placeholder="target")`
     - `st.text_input("분석 질문 (선택사항)", placeholder="어떤 인사이트가 필요하신가요?")`
     - `st.slider("최대 재시도 횟수", min_value=1, max_value=5, value=3)`
@@ -250,7 +228,7 @@ class FeatureEngineerAgent(BaseAgent):
 
         X_train, X_val, y_train, y_val = train_test_split(
             X, y, test_size=0.2, random_state=42,
-            stratify=y if state.category in ('classification', 'nlp') else None
+            stratify=y if state.category == 'classification' else None
         )
         data_dict = {'X_train': X_train, 'X_val': X_val, 'y_train': y_train, 'y_val': y_val}
         preprocessed_id = minio_tool.save_file(data_dict, f"preprocessed/{state.job_id}.pkl")
@@ -277,8 +255,6 @@ class EDAAgent(BaseAgent):
         'tabular_dl':        '_tabular_charts',
         'anomaly_detection': '_anomaly_charts',
         'timeseries':        '_timeseries_charts',
-        'image':             '_image_charts',
-        'nlp':               '_nlp_charts',
     }
 
     def run(self, state: PipelineState) -> PipelineState:
@@ -321,12 +297,12 @@ st.title("Adaptive AutoAI Pipeline Agent")
 
 with st.sidebar:
     st.header("파이프라인 설정")
-    category = st.selectbox("분석 카테고리", ['tabular_ml', 'timeseries', 'image', 'nlp', 'anomaly_detection', 'tabular_dl'])
+    category = st.selectbox("분석 카테고리", ['tabular_ml', 'tabular_dl', 'timeseries', 'anomaly_detection'])
     target_col = st.text_input("타겟 컬럼명", placeholder="target")
     user_question = st.text_input("분석 질문", placeholder="어떤 인사이트가 필요하신가요?")
     max_retries = st.slider("최대 재시도 횟수", 1, 5, 3)
 
-uploaded_file = st.file_uploader("데이터 파일 업로드", type=['csv', 'parquet', 'zip', 'txt'])
+uploaded_file = st.file_uploader("데이터 파일 업로드", type=['csv', 'xlsx', 'parquet', 'json', 'zip', 'pdf', 'txt', 'html'])
 
 if uploaded_file and st.button("파이프라인 시작", type="primary"):
     with st.spinner("파이프라인 시작 중..."):
@@ -364,7 +340,6 @@ if uploaded_file and st.button("파이프라인 시작", type="primary"):
 | `ui/__init__.py` | 신규 생성 | 패키지 초기화 |
 | `harness/skills/tabular_ml/preprocessing.md` | 신규 생성 | 전처리 도메인 지식 |
 | `harness/skills/timeseries/preprocessing.md` | 신규 생성 | 시계열 전처리 지식 |
-| `harness/skills/nlp/preprocessing.md` | 신규 생성 | NLP 전처리 지식 |
 | `core/state.py` | 수정 | preprocessing_plan, preprocessed_data_id, eda_charts 필드 추가 |
 
 ---
@@ -383,7 +358,6 @@ if uploaded_file and st.button("파이프라인 시작", type="primary"):
 
 ```
 scikit-learn>=1.4.0
-transformers>=4.40.0
 streamlit>=1.34.0
 websockets>=12.0
 httpx>=0.27.0
@@ -391,7 +365,6 @@ plotly>=5.22.0
 kaleido>=0.2.1
 scipy>=1.13.0
 statsmodels>=0.14.2
-pillow>=10.3.0
 ```
 
 ### Streamlit 설정 (`ui/.streamlit/config.toml`)
@@ -411,12 +384,11 @@ textColor = "#1e293b"
 
 ## ✔️ 완료 기준 (Done Criteria)
 
-- [ ] `PreprocessingStrategistAgent`: 6개 카테고리 각각 다른 `preprocessing_plan` 생성 확인
+- [ ] `PreprocessingStrategistAgent`: 4개 카테고리 각각 다른 `preprocessing_plan` 생성 확인
 - [ ] `FeatureEngineerAgent`: `KNNImputer`, `OneHotEncoder`, `StandardScaler` 3종 체이닝 실행 확인
 - [ ] `FeatureEngineerAgent`: 분류 시 `stratify=y` 적용, 8:2 분할 확인
 - [ ] `EDAAgent`: tabular_ml 히스토그램 최대 5개 + 히트맵 = 최대 6개 차트 MinIO 저장 확인
 - [ ] `EDAAgent`: timeseries 라인 차트 + ACF 차트 MinIO 저장 확인
-- [ ] `EDAAgent`: nlp 텍스트 길이 분포 + 단어 빈도 차트 MinIO 저장 확인
 - [ ] Streamlit UI: 로컬에서 `streamlit run ui/app.py` 정상 실행 확인
 - [ ] Streamlit UI: 파일 업로드 후 파이프라인 시작 → 진행 바 표시 확인
 
@@ -426,8 +398,7 @@ textColor = "#1e293b"
 
 1. **OneHotEncoder 차원 폭발**: `max_categories=50` 제한 필수. 고카디널리티 컬럼은 Target Encoding 사용.
 2. **대용량 데이터 처리**: 10만 행 이상 시 EDA는 샘플링(10,000행) 후 수행.
-3. **이미지 EDA 메모리**: 이미지 격자 생성 시 최대 20장 제한 (OOM 방지).
-4. **kaleido 의존성**: Plotly PNG 내보내기에 `kaleido` 필요. 미설치 시 `fig.write_html()` 폴백.
+3. **kaleido 의존성**: Plotly PNG 내보내기에 `kaleido` 필요. 미설치 시 `fig.write_html()` 폴백.
 5. **Streamlit WebSocket**: Streamlit Cloud 환경에서 `asyncio.run()` 호환 이슈 있음. `st.experimental_connection` 또는 `threading` 대안 검토.
 6. **타겟 누설 방지**: 전처리 fit은 반드시 X_train에만 수행, X_val은 transform만.
 7. **PreprocessingStrategist JSON 실패**: LLM 응답이 JSON 파싱 실패 시, 카테고리별 하드코딩 기본 plan 폴백 적용.

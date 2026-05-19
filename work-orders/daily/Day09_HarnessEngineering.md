@@ -38,8 +38,6 @@ LangSmith 기반 텔레메트리로 모든 에이전트 실행 이력을 추적�
         'regression':        {'val_r2': 0.5},
         'forecasting':       {'val_mape': 0.3, 'mode': 'max_below'},
         'anomaly_detection': {'val_auc': 0.7},
-        'image':             {'val_f1_macro': 0.6},
-        'nlp':               {'val_f1': 0.6},
     }
     ```
   - **1차 룰 기반 판정 로직:**
@@ -147,7 +145,7 @@ LangSmith 기반 텔레메트리로 모든 에이전트 실행 이력을 추적�
   - **`get_agent_stats(agent_name: str) -> dict` 구현:**
     - `agent_runs` 테이블 집계: 성공률, 평균 토큰, 평균 실행시간 반환
 
-### 6. Skills 파일 6종 작성
+### 6. Skills 파일 4종 작성
 
 - [ ] `harness/skills/tabular_ml/main.md` 작성
   - 행 수별 모델 선택 가이드:
@@ -168,19 +166,6 @@ LangSmith 기반 텔레메트리로 모든 에이전트 실행 이력을 추적�
     - `100 이상`: LSTM (복잡 패턴 포착)
   - 계절성 패턴 처리: `Prophet seasonality_mode='multiplicative'`
   - 외부 변수 포함: Prophet `add_regressor()` 활용
-
-- [ ] `harness/skills/image/main.md` 작성
-  - 데이터 수별 전략:
-    - `500 미만`: freeze backbone (ImageNet 가중치 유지), FC layer만 학습
-    - `500 이상`: full fine-tuning (learning_rate=1e-5 권장)
-  - 이미지 증강: `RandomHorizontalFlip`, `ColorJitter`, `RandomRotation(15)`
-  - 클래스 불균형: `WeightedRandomSampler` 활용
-
-- [ ] `harness/skills/nlp/main.md` 작성
-  - 한국어 특화 전처리: 특수문자 제거, 이모지 처리, 띄어쓰기 정규화
-  - 모델: `klue/bert-base` (한국어 사전학습)
-  - 파인튜닝: `AutoModelForSequenceClassification.from_pretrained('klue/bert-base')`
-  - 토큰 길이: `max_length=128` (리뷰), `max_length=512` (장문)
 
 - [ ] `harness/skills/anomaly/main.md` 작성
   - 이상치 비율별 알고리즘:
@@ -212,8 +197,6 @@ class EvalAgent(BaseAgent):
         'regression':        {'val_r2': 0.5},
         'forecasting':       {'val_mape': 0.3, 'mode': 'max_below'},
         'anomaly_detection': {'val_auc': 0.7},
-        'image':             {'val_f1_macro': 0.6},
-        'nlp':               {'val_f1': 0.6},
     }
 
     def run(self, state: PipelineState) -> PipelineState:
@@ -361,8 +344,6 @@ def log_agent_run(job_id: str, agent_name: str, status: str,
 | `harness/telemetry.py` | 신규 생성 | LangSmith + DB 텔레메트리 |
 | `harness/skills/tabular_ml/main.md` | 신규 생성 | 표형 ML 도메인 지식 |
 | `harness/skills/timeseries/main.md` | 신규 생성 | 시계열 도메인 지식 |
-| `harness/skills/image/main.md` | 신규 생성 | 이미지 도메인 지식 |
-| `harness/skills/nlp/main.md` | 신규 생성 | NLP 한국어 도메인 지식 |
 | `harness/skills/anomaly/main.md` | 신규 생성 | 이상탐지 도메인 지식 |
 | `harness/skills/tabular_dl/main.md` | 신규 생성 | 딥러닝 표형 도메인 지식 |
 | `harness/__init__.py` | 신규 생성 | 패키지 초기화 |

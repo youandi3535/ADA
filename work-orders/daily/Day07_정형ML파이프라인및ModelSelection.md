@@ -706,8 +706,8 @@ def test_unsupported_model_raises():
   적합한 방법론 후보 3~4개를 비교표 형식 JSON으로 응답:
   [
     {
-      "method": "tabular_ml | tabular_dl | timeseries | image_cls |
-                 nlp_cls | anomaly_detection | hybrid_ml_dl | generative",
+      "method": "tabular_ml | tabular_dl | timeseries |
+                 anomaly_detection | hybrid_ml_dl",
       "title": "표시명",
       "why": "이 방법론이 적합한 이유",
       "fit_score": 0.0~1.0,
@@ -721,31 +721,29 @@ def test_unsupported_model_raises():
   ```
 - [ ] 정확히 1순위 추천을 표시 (rank=1)
 
-### 3. `pipelines/registry.py` 신규 — 트랜스포머 레지스트리
+### 3. `pipelines/registry.py` 신규 — 트랜스포머 레지스트리 (8종)
 
 ```python
 TRANSFORMER_REGISTRY = {
     "tabular_ml":        ["TabTransformer", "FTTransformer", "TabPFN"],
     "tabular_dl":        ["FTTransformer", "TabPFN"],
     "timeseries":        ["Informer", "TFT", "PatchTST"],
-    "image":             ["ViT", "SwinT", "DeiTS"],
-    "nlp":               ["KLUE_BERT", "XLMRoBERTa", "DeBERTaV3"],
     "anomaly_detection": ["TranAD", "AnomalyTransformer"],
 }
 TREE_REGISTRY = {
     "tabular_ml": ["RandomForest", "XGBoost", "LightGBM", "CatBoost"],
-    "tabular_dl": [], "timeseries": ["Prophet","ARIMA"],
-    "image": [], "nlp": [], "anomaly_detection": ["IsolationForest","LOF","OneClassSVM"],
+    "tabular_dl": [],
+    "timeseries": ["Prophet", "ARIMA", "SARIMA"],
+    "anomaly_detection": ["IsolationForest", "LOF", "OneClassSVM"],
 }
 SPECIALTY_REGISTRY = {
     "tabular_ml": ["LogisticRegression"],
     "tabular_dl": ["MLP", "TabNet"],
     "timeseries": ["LSTM"],
-    "image": ["EfficientNetB0", "ResNet50"],
-    "nlp": ["FastText"],
     "anomaly_detection": ["AutoEncoder"],
 }
 ```
+*(트랜스포머 8종: TabTransformer / FTTransformer / TabPFN / Informer / TFT / PatchTST / TranAD / AnomalyTransformer)*
 
 ### 4. `agents/model_selection.py` v2 확장
 
@@ -776,5 +774,5 @@ SPECIALTY_REGISTRY = {
 ### 7. 주의사항 (v2)
 
 - TabPFN 은 ≤ 10000행 / ≤ 100특성에서만 동작 — 룰 R-201 추가: 데이터 크기 체크 후 자동 제외
-- Transformer 후보가 데이터 부족으로 동작 불가능한 경우(예: 이미지 < 100장에서 ViT) MethodologyProposer 단계에서 미리 제외
+- Transformer 후보가 데이터 부족으로 동작 불가능한 경우(예: 시계열 < 200개 시점에서 Informer/TFT) MethodologyProposer 단계에서 미리 제외
 - G2 응답이 4개일 수 있음 (3~4) — UI 동적 처리
