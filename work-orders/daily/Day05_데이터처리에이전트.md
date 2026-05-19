@@ -592,3 +592,45 @@ class TestDataProfilerAgent:
 - pdf 로더는 표/정형 텍스트 추출에 한정 (스캔 PDF OCR은 범위 외)
 - 임베딩 생성은 CPU도 가능하나 GPU 있으면 6배 빠름
 - xlsx 다중 시트는 사용자가 시트 선택할 때까지 모든 시트 메타만 보여줌
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Indirect prompt injection 차단
+- pdf/html/txt/xlsx 헤더에서 추출한 텍스트를 LLM 컨텍스트로 넘기기 전 `security.data_sanitize.sanitize_extracted_text()` 통과 의무 (R-708).
+- INJECTION_PATTERNS 매칭 시 `[BLOCKED_DATA_INJECTION]` 치환 + audit_log.
+
+### 2) 멀티 포맷 로더 실제 구현 체크리스트
+- xlsx(openpyxl), json(pandas read_json with orient autodetect), html(BeautifulSoup + table 추출), pdf(pdfplumber), txt(인코딩 자동 감지) 5종 로더 단위 테스트 ≥ 각 5건.
+- ZIP 다중 파일 — 첫 CSV 만이 아니라 모든 정형 파일 후보 → 사용자에게 선택 미니 게이트.
+
+### 3) 인코딩 폴백
+- chardet → UTF-8 → CP949 → Latin-1 순서. 모든 시도 실패 시 사용자 안내.
+
+### 4) PII 미니 게이트 위치 명확화
+- security/pii.py 의 호출 시점이 DataProfilerAgent 진입 직전임을 그래프에서 명시 (LangGraph 노드).
+
+### 5) DataProfiler 성능
+- `df.memory_usage(deep=True)` 는 100MB+ 파일에서 느림 → `pyarrow.dataset` 으로 lazy profile 옵션.
+
+### 완료 기준 추가
+- [ ] indirect injection 50종 페이로드 모두 차단
+- [ ] 5종 로더 단위 테스트 통과
+- [ ] PII 미니 게이트 단위 테스트 (PII 컬럼 1개 이상 시 interrupt)
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구
+- **LLM Guard** (🔴 Day-D §2) — pdf/html/txt/xlsx 추출 텍스트 sanitize 우선 적용 (R-1002, R-708).
+- ADA Presidio (한글 PII) + LLM Guard Anonymize(영문 PII) 이중 가드.
+
+### 코드 위치
+- `agents/data_profiler.py` — LLM 호출 직전 `security.llm_guard_pipeline.scan_input()` 통과 의무.
+- 검증 실패 시 audit_log INSERT + 사용자 안내.

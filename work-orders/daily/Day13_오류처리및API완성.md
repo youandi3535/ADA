@@ -637,3 +637,30 @@ class TelemetryStats(BaseModel):
 - [ ] /pipeline/{job_id}/decision 엔드포인트 G1~G5 모두 지원 통과
 - [ ] /dashboard/* 엔드포인트 5종 통합 테스트 통과
 - [ ] Rate limit 발동 시 429 응답 + X-RateLimit-Reset 헤더 확인
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Fallback 전략 6종 실제 구현
+- `shared/fallback_strategies.py` 신설 — retry / model_downgrade / sample_reduce / feature_drop / partial_skip / human_handoff 6종 모두 state 변경 패턴 표준화.
+- 단위 테스트 각 1건 이상.
+
+### 2) /predict 모델 캐시 만료
+- `functools.lru_cache` 대신 `cachetools.TTLCache(maxsize=10, ttl=3600)`. 메모리 누수 방지 + 모델 재배포 반영.
+
+### 3) WebSocket asyncio 충돌
+- Redis pub/sub 동기 코드는 `asyncio.to_thread` 로 wrap. FastAPI 비동기 루프와 분리.
+
+### 4) 모델 다운그레이드 캐스케이드
+- Opus rate limit → Sonnet → Haiku 단계 명시. Haiku 까지 막히면 KB cache + degraded mode.
+
+### 5) 오류 카테고리 정밀화
+- llm_api_error 를 (rate_limit / timeout / connection / auth / overload) 5종으로 세분화. 각각 다른 fallback.
+
+### 완료 기준 추가
+- [ ] 6종 fallback 단위 테스트 통과
+- [ ] /predict 모델 TTL 단위 테스트
+- [ ] 모델 다운그레이드 시뮬레이션

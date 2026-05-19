@@ -503,3 +503,27 @@ CREATE TABLE agent_runs (
 
 - 동일 잡에서 EvalAgent가 재루프로 여러번 호출되어도 distill 큐 발행은 잡 종료(END) 시점에만
 - Auditor와 SelfLearning이 동시에 동일 failure_logs 읽을 때 락 충돌 주의 — Auditor가 우선, SelfLearning은 5초 후 폴링
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) KB 오염 방지 (Day-B 와 연계)
+- `pending_rules` 테이블에 confidence < 0.8 규칙 저장 + 인간 검토 엔드포인트 `/admin/rules/{id}/approve` (Day19) 구현 의무.
+- R-A0xx 자동 누적 룰은 누가/언제/어떤 프로세스로 생성하는지 코드 단위 명문화 (HarnessAuditor 가 단일 생성자).
+
+### 2) Confidence 신뢰도 인플레이션 방지
+- 동일 error_hash 의 success_count 가 일정 임계 도달 시 confidence cap 1.0 - 데이터 다양성 페널티(다른 에이전트에서도 발견되어야 진짜 신뢰).
+
+### 3) Rule 충돌 해결
+- 동일 trigger 에 여러 룰 매칭 시 정책: (a) confidence 최대, (b) 최근 superseded_by 체인 추적, (c) 사용자 게이트로 충돌 표시.
+
+### 4) LangSmith rate limit 처리
+- 전송 실패 시 로컬 큐(disk-backed) 폴백, 다음 5분 후 재전송.
+
+### 완료 기준 추가
+- [ ] /admin/rules/{id}/approve 엔드포인트 통과
+- [ ] confidence cap 단위 테스트
+- [ ] 룰 충돌 시나리오 단위 테스트

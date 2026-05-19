@@ -218,3 +218,47 @@ v1 인수 테스트를 v2 인터랙티브 흐름에 맞춰 갱신. v2.1에서 im
 - 문서화 코드 예시는 실제 동작 코드와 동기화 (drift 방지 — `pytest-doctest` 활용)
 - AGENTS.md 자동 누적 룰이 15개 미달인 경우 AT-4 시나리오 추가 반복 실행으로 보충
 - Vault dev 모드는 데모 재시작 시 시드 재실행 필요 — demo_seed.sh에 포함
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) backup_restore.md 실제 콘텐츠
+- 체크리스트 1줄 폐기. 실제 pg_dump/pgBackRest 명령·mc mirror·Vault snapshot·복구 절차·트러블슈팅 ≥ 80줄.
+- Day-A 산출물 직접 참조.
+
+### 2) ADR (Architecture Decision Records) 도입
+- `docs/architecture/adr/` 에 ADR-0001 ~ ADR-0010 최소.
+- 권장 주제: LangGraph 선택, Celery 4큐, Vault 도입, 트랜스포머 강제 정책 완화, Alembic 의무화, 이벤트 버스, 백업 사이드카, MFA 정책, JWT RS256, KB Stage 정의.
+
+### 3) Vault HA 가이드
+- Raft HA 3노드 운영 가이드 (운영자용). Dev → Raft 마이그레이션 절차 포함.
+
+### 4) 데모 매트릭스 4×5 운영
+- 각 데모는 시드된 의도·게이트 응답 스크립트로 재현 가능 (`scripts/demo/seed_demo_N.py`).
+- ‘운영자도 한 시간 내 재현’ 기준.
+
+### 5) Day-A/B/C 산출물 통합 README
+- 신설 Day 의 산출물(스크립트·테이블·문서·대시보드)을 Day21 README 인덱스에 합류시킴.
+
+### 완료 기준 추가
+- [ ] backup_restore.md ≥ 80 줄 콘텐츠
+- [ ] ADR ≥ 10건
+- [ ] 데모 시드 스크립트 20개 (4 카테고리 × 5 산출물)
+
+---
+
+## 🧰 v2.3 도구 보강 (도구 카탈로그 2026-05-19 반영)
+
+> 출처: `TOOL_CATALOG_2026.md`. 본 섹션은 Day-D / Day-E / v3_backlog 의 도구를 본 Day 의 코드 위치에 매핑한다.
+
+### 적용 도구·문서
+- **ADR 추가** — ADR-0011 Langfuse 도입, ADR-0012 LLM Guard·Guardrails 분리, ADR-0013 FLAML·Optuna 협업 모델, ADR-0014 StatsForecast Top-3 정책, ADR-0015 PyOD v3 표준화, ADR-0016 python-docx OUT-02-DRAFT.
+- **v3 ADR 권고**: ADR-1101~1110 (v3_backlog.md §D).
+
+### 문서 갱신
+- `docs/operations/getting_started.md` — Langfuse·LLM Guard 설치 단계 추가.
+- `docs/development/add_new_tool.md` — 신설. 외부 도구 도입 시 ADR + 카탈로그 갱신 절차.
+- `docs/development/tool_catalog.md` — `TOOL_CATALOG_2026.md` 의 운영자판.

@@ -444,3 +444,30 @@ textColor = "#1e293b"
 - [ ] eda_templates 적용 시 EDA 시간 ≥ 20% 단축
 - [ ] preprocessing_choice 미니 게이트 발동 케이스 단위 테스트
 - [ ] G2 응답 표 UI 스크린샷 확보
+
+---
+
+## 🆕 v2.2 보강 (감사 보고서 2026-05-19 반영)
+
+> 출처: `ADA_v2_감사보고서.docx`. 본 섹션이 v2.1 본문과 충돌 시 **v2.2가 우선**한다.
+
+### 1) Streamlit asyncio 회피
+- 실시간 진행률 부분을 SSE(Server-Sent Events) 정적 페이지로 분리. Streamlit 은 게이트 카드 UI 만 담당.
+- session_state 충돌·재실행 폭주 방지.
+
+### 2) 시계열 시간순 검증
+- train/val split 시 `df.sort_values(time_col)` 가드 + 미래 데이터 누설(target_leakage) 단위 테스트.
+
+### 3) PreprocessingStrategist JSON 폴백
+- LLM 응답이 마크다운/JSON 혼합 시 robust parser. 폴백 plan 도 데이터 특성 기반 동적 생성(현재는 카테고리 하드코드).
+
+### 4) High-cardinality 인코딩
+- OneHotEncoder max_categories=50 초과 시 자동 Target Encoding (또는 Hash Encoding) 적용 로직 명시.
+
+### 5) failure_lesson 인용
+- PreprocessingStrategist 가 `fetch_recipes(kb_type='failure_lesson')` 결과를 plan 에 반영 (R-501).
+
+### 완료 기준 추가
+- [ ] 시간 누설 단위 테스트
+- [ ] High-cardinality 자동 분기 테스트
+- [ ] SSE 진행률 페이지 통신 테스트
