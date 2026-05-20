@@ -1,0 +1,19 @@
+# ============================================================
+# .streamlit/config.toml  -  ADA Frontend Streamlit 설정
+# 작업지시서 §7.2
+# ============================================================
+
+[server]
+maxUploadSize = 100         # MB  (.env 의 MAX_UPLOAD_SIZE_MB 와 일치)
+enableCORS = false
+enableXsrfProtection = true
+headless = true
+
+[theme]
+primaryColor = "#FF4B4B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+
+[browser]
+gatherUsageStats = false

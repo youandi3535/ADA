@@ -1,0 +1,28 @@
+# ============================================================
+# docker-compose.gpu.yml  -  GPU 노출 override
+# 사용:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#     --profile core --profile ml up -d worker-training
+#
+# 전제:
+#   - 호스트에 NVIDIA 드라이버 + nvidia-container-toolkit 설치
+#   - daemon.json 에 nvidia runtime 등록 완료
+#   - GTX 1060 3GB 기준 동시성 1 (worker-training 만)
+#
+# GPU 없는 팀원/VPS 는 이 파일 무시. 기본 compose 단독으로만 띄움.
+# ============================================================
+
+version: "3.9"
+
+services:
+  worker-training:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
+      PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:128"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

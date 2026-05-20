@@ -1,0 +1,40 @@
+# Python: 3.10  (Dockerfile FROM python:3.10-slim 과 동일 / 호스트 venv 도 3.10 권장)
+# pip 표준에는 인터프리터 버전을 핀하는 문법이 없어 주석 + .python-version 으로 명시.
+
+# =============================================================
+# api.txt  -  FastAPI 서버용
+# =============================================================
+-r base.txt
+
+# 웹 프레임워크
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+uvloop==0.19.0
+python-multipart==0.0.9
+aiofiles==23.2.1
+sse-starlette==2.1.0     # SSE (Day18 진행률)
+websockets==12.0         # WebSocket (Day18 대시보드)
+
+# DB
+sqlalchemy==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+pgvector==0.2.5          # pgvector Python 클라이언트 (Day19 RAG)
+
+# LLM
+anthropic==0.28.0        # Claude API
+langgraph==0.1.5         # 그래프 resume (Day04)
+langchain==0.2.3
+langchain-anthropic==0.1.13
+langsmith==0.1.65        # 트레이싱
+
+# 보안 (Day17)
+python-jose[cryptography]==3.3.0   # JWT
+passlib[bcrypt]==1.7.4              # 패스워드 해시
+itsdangerous==2.2.0                 # 서명된 쿠키
+hvac==2.3.0                         # Vault 클라이언트
+slowapi==0.1.9                      # rate limit
+
+# 보조
+celery==5.4.0           # Celery 태스크 enqueue 용도
+redis==5.0.4
