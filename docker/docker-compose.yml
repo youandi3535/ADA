@@ -122,7 +122,10 @@ services:
 
   mlflow:
     profiles: ["core"]
-    image: ghcr.io/mlflow/mlflow:v2.13.0
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mlflow
+    image: ada/mlflow:2.13.0          # 빌드 결과물 태그 (재빌드 캐시용)
     container_name: ada-mlflow
     restart: unless-stopped
     ports:
