@@ -1,0 +1,120 @@
+# =============================================================
+# Deploy  -  main 브랜치 머지 시 GHCR 이미지 푸시 + VPS 자동 배포
+#
+# 전제:
+#   - GitHub Secrets 등록 필요:
+#       VPS_HOST           VPS 의 공인 IP 또는 도메인 (또는 Tailscale hostname)
+#       VPS_USER           배포 전용 계정 (sudo 없이 docker 그룹 권한)
+#       VPS_SSH_KEY        VPS 의 ~/.ssh/authorized_keys 에 등록한 개인키
+#       VPS_DEPLOY_DIR     예: /opt/ada  (compose 파일과 .env 가 있는 경로)
+#       GHCR_PAT           (선택) GHCR pull 용 PAT - public 이미지면 불필요
+#   - VPS 에 /opt/ada/docker-compose.yml 과 .env 가 이미 배치돼 있어야 함
+# =============================================================
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:       # 수동 실행도 허용
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false   # 배포는 큐잉 (취소 X)
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+  IMAGE_BASENAME: ada        # ghcr.io/<owner>/ada-<service>:<tag>
+
+jobs:
+  # ---------------------------------------------------------
+  # 1) 3종 이미지 빌드 & GHCR 푸시
+  # ---------------------------------------------------------
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image:
+          - { name: api,      file: docker/Dockerfile.api }
+          - { name: frontend, file: docker/Dockerfile.frontend }
+          - { name: worker,   file: docker/Dockerfile.worker }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: tag
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push ${{ matrix.image.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.image.file }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_BASENAME }}-${{ matrix.image.name }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_BASENAME }}-${{ matrix.image.name }}:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+
+  # ---------------------------------------------------------
+  # 2) VPS 에 SSH 로 접속해서 pull + recreate
+  # ---------------------------------------------------------
+  deploy-to-vps:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    timeout-minutes: 15
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.VPS_DEPLOY_DIR }}"
+
+            # 1) 최신 compose 파일 동기 (git pull) - main 기준
+            git fetch --depth=1 origin main
+            git reset --hard origin/main
+
+            # 2) GHCR 로그인 (private 이미지면 PAT 사용)
+            echo "${{ secrets.GITHUB_TOKEN }}" \
+              | docker login ghcr.io -u ${{ github.actor }} --password-stdin || true
+
+            # 3) compose 파일이 있는 docker/ 로 이동
+            cd docker
+
+            # 4) 최신 이미지 받기
+            docker compose pull api frontend worker-pipeline worker-training worker-output worker-harness
+
+            # 5) 무중단에 가깝게 재기동 (DB/Redis/MinIO 는 건드리지 않음)
+            docker compose up -d --no-deps \
+              api frontend \
+              worker-pipeline worker-training worker-output worker-harness \
+              nginx
+
+            # 6) 헬스체크 - 30초 대기 후 상태 확인
+            sleep 30
+            docker compose ps
+            curl -fsS http://localhost:8000/health || (echo "API health failed"; exit 1)
+
+            # 7) 댕글링 이미지 정리 (디스크 절약)
+            docker image prune -f

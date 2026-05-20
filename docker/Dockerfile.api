@@ -1,0 +1,38 @@
+# ============================================================
+# Dockerfile.api  -  FastAPI 서버 이미지
+# Python 3.10-slim 베이스 (작업지시서 §2.1)
+# 빌드 컨텍스트: repo root  (compose의 context: ..)
+# ============================================================
+FROM python:3.10-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# 런타임 의존: 헬스체크 curl, psycopg2 런타임(libpq5), HTTPS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 캐시 최적화: requirements 먼저 복사 → install → 코드 복사
+COPY requirements/base.txt requirements/api.txt /app/requirements/
+RUN pip install -r /app/requirements/api.txt
+
+COPY . /app
+
+# 비루트 사용자 (R-003) - UID 1001 통일
+RUN useradd -m -u 1001 ada \
+ && chown -R ada:ada /app
+USER ada
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=40s \
+  CMD curl -fs http://localhost:8000/health || exit 1
+
+# 16GB / VPS 8GB 양쪽 모두 안전한 워커 수 (§1.2 재설계 한도)
+CMD ["uvicorn", "api.main:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "2", "--loop", "uvloop"]

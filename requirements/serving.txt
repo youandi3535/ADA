@@ -1,0 +1,19 @@
+# Python: 3.10  (Dockerfile FROM python:3.10-slim 과 동일 / 호스트 venv 도 3.10 권장)
+# pip 표준에는 인터프리터 버전을 핀하는 문법이 없어 주석 + .python-version 으로 명시.
+
+# =============================================================
+# serving.txt  -  모델 서빙용 (CPU 전용, 학습 의존 빠짐)
+# =============================================================
+-r base.txt
+
+mlflow==2.13.0
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# 학습 시 사용한 프레임워크 (예측만 하므로 가벼움)
+scikit-learn==1.5.0
+xgboost==2.0.3
+lightgbm==4.3.0
+torch==2.3.0           # CPU 빌드 (서빙은 CPU)
+numpy==1.26.4
+pandas==2.2.2

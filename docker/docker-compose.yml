@@ -1,0 +1,459 @@
+# ============================================================
+# ADA v2  -  docker-compose.yml  (재설계판)
+# 기반: work-orders/DOCKER_ENV_INVENTORY.md + LINUX_DOCKER_SETUP_GUIDE.md
+#
+# 위치: <repo>/docker/docker-compose.yml
+# 빌드 컨텍스트: .. (repo root)
+# .env 위치: <repo>/.env  ← env_file: ../.env
+# .dockerignore 위치: <repo>/.dockerignore  (Docker 가 자동 인식)
+#
+# Profile 4분리:
+#   core : postgres redis minio mlflow api frontend
+#          worker-pipeline worker-harness nginx
+#   ml   : worker-training worker-output serving
+#   sec  : vault claude-cli-sidecar
+#   obs  : (예약 - 옵저버빌리티는 별도 compose 또는 추후)
+#
+# 일상 기동:
+#   cd docker
+#   docker compose --profile core up -d                          # 개발 기본 (~8GB)
+#   docker compose --profile core --profile ml up -d             # 학습 단계 (~14GB)
+#   docker compose --profile core --profile ml --profile sec up -d   # Day16~17 보안
+#
+# GPU 사용:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#     --profile core --profile ml up -d worker-training
+# ============================================================
+
+version: "3.9"
+
+networks:
+  ada-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
+  mlflow_data:
+  vault_data:
+  models_cache:        # HuggingFace 사전학습 가중치 캐시 (한 번만 다운로드)
+
+services:
+
+  # ============ core profile ============================
+
+  postgres:
+    profiles: ["core"]
+    image: pgvector/pgvector:pg16              # postgres:16-alpine 절대 X
+    container_name: ada-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    shm_size: "256mb"
+    command: >
+      postgres
+      -c max_connections=100
+      -c shared_buffers=256MB
+      -c work_mem=8MB
+      -c maintenance_work_mem=64MB
+      -c wal_keep_size=1GB
+      -c max_wal_size=2GB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1500M
+    networks: [ada-net]
+
+  redis:
+    profiles: ["core"]
+    image: redis:7-alpine
+    container_name: ada-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    networks: [ada-net]
+
+  minio:
+    profiles: ["core"]
+    image: minio/minio:RELEASE.2024-04-06T05-26-02Z
+    container_name: ada-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    ports:
+      - "9100:9000"        # S3 API
+      - "9101:9001"        # Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+    networks: [ada-net]
+
+  mlflow:
+    profiles: ["core"]
+    image: ghcr.io/mlflow/mlflow:v2.13.0
+    container_name: ada-mlflow
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+      --default-artifact-root s3://${MINIO_BUCKET}/mlflow
+      --host 0.0.0.0
+      --port 5000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    networks: [ada-net]
+
+  api:
+    profiles: ["core"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: ada-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: ../.env
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 1500M
+    networks: [ada-net]
+
+  frontend:
+    profiles: ["core"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: ada-frontend
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file: ../.env
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+    networks: [ada-net]
+
+  worker-pipeline:
+    profiles: ["core"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: ada-worker-pipeline
+    restart: unless-stopped
+    command: celery -A orchestrator.runner worker -Q pipeline -c 2 -n pipeline@%h --loglevel=info
+    env_file: ../.env
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - models_cache:/app/models_cache
+    deploy:
+      resources:
+        limits:
+          memory: 2500M
+    networks: [ada-net]
+
+  worker-harness:
+    profiles: ["core"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: ada-worker-harness
+    restart: unless-stopped
+    command: celery -A orchestrator.runner worker -Q harness -c 1 -n harness@%h --loglevel=info
+    env_file: ../.env
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+    networks: [ada-net]
+
+  nginx:
+    profiles: ["core"]
+    image: nginx:1.27-alpine
+    container_name: ada-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # - "443:443"           # Day17 TLS 인증서 발급 후 활성화
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - frontend
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks: [ada-net]
+
+  # ============ ml profile (학습/산출/서빙) ============
+
+  worker-training:
+    profiles: ["ml"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: ada-worker-training
+    restart: unless-stopped
+    command: celery -A orchestrator.runner worker -Q training -c 1 -n training@%h --loglevel=info
+    env_file: ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    volumes:
+      - models_cache:/app/models_cache
+    deploy:
+      resources:
+        limits:
+          memory: 4000M
+    networks: [ada-net]
+
+  worker-output:
+    profiles: ["ml"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: ada-worker-output
+    restart: unless-stopped
+    command: celery -A orchestrator.runner worker -Q output -c 2 -n output@%h --loglevel=info
+    env_file: ../.env
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1500M
+    networks: [ada-net]
+
+  serving:
+    profiles: ["ml"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.serving
+    container_name: ada-serving
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file: ../.env
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1000M
+    networks: [ada-net]
+
+  # ============ sec profile (Vault + Claude CLI) ============
+
+  vault:
+    profiles: ["sec"]
+    image: hashicorp/vault:1.16
+    container_name: ada-vault
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_TOKEN}
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault_data:/vault/data
+      - ../scripts:/scripts:ro
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+    networks: [ada-net]
+
+  claude-cli-sidecar:
+    profiles: ["sec"]
+    build:
+      context: ..
+      dockerfile: docker/claude-cli-sidecar.Dockerfile
+    image: ada/claude-cli-sidecar:latest
+    container_name: ada-claude-sidecar
+    restart: unless-stopped
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ..:/workspace:ro
+      - ../error_handler/patches:/patches:rw
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    networks: [ada-net]
+=
+
+  vault:
+    profiles: ["sec"]
+    image: hashicorp/vault:1.16
+    container_name: ada-vault
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_TOKEN}
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault_data:/vault/data
+      - ../scripts:/scripts:ro
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+    networks: [ada-net]
+
+  claude-cli-sidecar:
+    profiles: ["sec"]
+    build:
+      context: ..
+      dockerfile: docker/claude-cli-sidecar.Dockerfile
+    image: ada/claude-cli-sidecar:latest
+    container_name: ada-claude-sidecar
+    restart: unless-stopped
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ..:/workspace:ro
+      - ../error_handler/patches:/patches:rw
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    networks: [ada-net]

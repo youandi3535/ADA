@@ -1,0 +1,77 @@
+# =============================================================
+# .dockerignore  -  Docker 빌드 컨텍스트에서 제외할 항목
+# 작은 컨텍스트 = 빠른 빌드 + 캐시 적중률 ↑ + 비밀값 유출 방지
+# =============================================================
+
+# --- VCS ---
+.git
+.gitignore
+.gitattributes
+
+# --- CI / IDE / OS ---
+.github
+.gitlab
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Python 캐시 ---
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+.tox
+
+# --- 가상환경 (호스트 OS 의존) ---
+venv
+.venv
+env
+ENV
+
+# --- 환경변수·비밀값 (절대 이미지에 포함 금지) ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+
+# --- 데이터·모델 (볼륨 마운트로 주입) ---
+data
+models_cache
+*.csv
+*.parquet
+*.db
+*.sqlite
+
+# --- 로그 ---
+*.log
+logs
+
+# --- 빌드 산출물 ---
+dist
+build
+*.egg-info
+
+# --- 문서·작업지시서 (런타임 불필요) ---
+docs
+work-orders
+README.md
+*.md
+!requirements/*.md
+
+# --- Jupyter ---
+.ipynb_checkpoints
+*.ipynb
+
+# --- Claude 로컬 설정 ---
+.claude

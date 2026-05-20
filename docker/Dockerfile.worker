@@ -1,0 +1,46 @@
+# ============================================================
+# Dockerfile.worker  -  Celery 워커 이미지 (ML / 오케스트레이션)
+# pipeline / training / output / harness 4종이 이 한 이미지 공용
+# Python 3.10-slim 베이스 (작업지시서 §2.2)
+# ============================================================
+FROM python:3.10-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+
+# ML 의존 시스템 패키지 (§3 표 그대로)
+#  - build: gcc/g++/build-essential, libpq-dev   (psycopg2/torch C 확장 빌드)
+#  - runtime: libpq5, libgomp1(OpenMP), libsndfile1(오디오), libgl1/libglib2.0-0(영상),
+#             libmagic1(MIME), poppler-utils(PDF), ffmpeg(A/V)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential gcc g++ \
+        libgomp1 libpq-dev libpq5 \
+        libsndfile1 libgl1 libglib2.0-0 \
+        libmagic1 poppler-utils \
+        ffmpeg \
+        curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements/base.txt requirements/worker.txt /app/requirements/
+RUN pip install -r /app/requirements/worker.txt
+
+COPY . /app
+
+# HuggingFace 사전학습 가중치 캐시 (compose 볼륨 마운트 지점)
+RUN mkdir -p /app/models_cache && chmod 777 /app/models_cache
+
+RUN useradd -m -u 1001 ada \
+ && chown -R ada:ada /app
+USER ada
+
+# 헬스체크: celery ping
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+    CMD celery -A orchestrator.runner inspect ping || exit 1
+
+# 큐별 -Q 와 동시성은 compose의 command 에서 override
+CMD ["celery", "-A", "orchestrator.runner", "worker", \
+     "--loglevel=info", "--concurrency=2", "-Q", "pipeline"]
