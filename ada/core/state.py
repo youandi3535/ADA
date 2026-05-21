@@ -30,8 +30,8 @@ class PipelineState(BaseModel):
     # 핵심 식별자
     job_id: str
     file_id: str
-    category: str  # tabular_ml / tabular_dl / timeseries / anomaly_detection
-    task: str = "auto"  # classification / regression / forecasting / anomaly_detection
+    category: str
+    task: str = "auto"
 
     # 입력 옵션
     target_column: Optional[str] = None
@@ -47,9 +47,9 @@ class PipelineState(BaseModel):
 
     # 데이터 분석 결과
     data_profile: Optional[dict[str, Any]] = None
-    validation: Optional[dict[str, Any]] = None  # {is_valid, errors, warnings}
+    validation: Optional[dict[str, Any]] = None
     preprocessing_plan: Optional[list[dict[str, Any]]] = None
-    preprocessed_data_id: Optional[str] = None  # MinIO 경로
+    preprocessed_data_id: Optional[str] = None
 
     # EDA
     eda_charts: list[str] = Field(default_factory=list)
@@ -57,6 +57,7 @@ class PipelineState(BaseModel):
 
     # 모델링
     model_candidates: list[str] = Field(default_factory=list)
+    best_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     trained_models: list[dict[str, Any]] = Field(default_factory=list)
     training_warnings: list[str] = Field(default_factory=list)
     best_model: Optional[dict[str, Any]] = None
@@ -67,27 +68,29 @@ class PipelineState(BaseModel):
     insights: Optional[str] = None
 
     # 산출물
-    output_paths: dict[str, str] = Field(default_factory=dict)  # {OUT-01: minio_path, ...}
+    output_paths: dict[str, str] = Field(default_factory=dict)
 
     # 오케스트레이션 제어
     retry_count: int = 0
     max_retries: int = 3
     re_loop_count: int = 0
-    max_re_loop: int = 2  # Day11 R-505 재루프 캡
+    max_re_loop: int = 2
     error: Optional[str] = None
     next_agent: Optional[str] = None
 
     # 자체학습 — KB 인용 (R-501)
     kb_citations: list[str] = Field(default_factory=list)
 
+    # 카테고리별 격리 컨테이너 (Day 0 H0-4)
+    # 멤버 A/B/C 가 자기 카테고리 키 안에만 쓰기 → 충돌 0건.
+    category_extras: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
     # 옵저버빌리티
     trace_id: Optional[str] = None
     started_at: datetime = Field(default_factory=datetime.utcnow)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON 직렬화 가능한 dict 반환. datetime → ISO 문자열."""
-        d = self.model_dump(mode="json")
-        return d
+        return self.model_dump(mode="json")
 
     def with_update(self, **kwargs: Any) -> "PipelineState":
         """R-005 — 직접 수정 대신 이 헬퍼를 사용한다."""

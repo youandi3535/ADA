@@ -1,16 +1,21 @@
-"""agents.report_composer — ReportComposerAgent (Day12).
+"""agents.report_composer — Day 0 dispatcher 패턴.
 
-requested_outputs (G5 응답) 에 따라 5종 산출물을 병렬 생성.
+카테고리별 추가 자산은 ``handlers/{cat}/output_extras.assets(state)`` 에서 가져옴.
+수정 권한: **HJ 단독** (dispatcher).
 """
 from __future__ import annotations
 
 import asyncio
-import time
+import uuid as _uuid
 from typing import Any
 
 from ada.core.state import PipelineState
 from agents.base import BaseAgent
+from agents.handlers import get_handler
 from outputs import GENERATORS
+import agents.handlers.timeseries  # noqa: F401
+import agents.handlers.anomaly  # noqa: F401
+import agents.handlers.tabular  # noqa: F401
 
 
 class ReportComposerAgent(BaseAgent):
@@ -19,6 +24,20 @@ class ReportComposerAgent(BaseAgent):
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
             requested = state.requested_outputs or list(GENERATORS.keys())
+
+            # 카테고리별 추가 자산 (Day 9 에 generator 들이 활용)
+            extras: dict[str, Any] = {}
+            assets_handler = get_handler(state.category, "assets")
+            if assets_handler is not None:
+                try:
+                    extras = assets_handler(state) or {}
+                except Exception as e:
+                    self.logger.warning("report_extras_failed",
+                                        category=state.category, error=str(e))
+
+            cat_extras = {**state.category_extras}
+            cat_extras.setdefault(state.category, {}).update(extras)
+
             results: dict[str, str] = {}
 
             async def _gen(code: str) -> tuple[str, str | None]:
@@ -49,11 +68,12 @@ class ReportComposerAgent(BaseAgent):
                         await self._save_output_row(state.job_id, code, path)
 
             return state.with_update(output_paths=results,
+                                     category_extras=cat_extras,
                                      next_agent="self_learning_dispatch")
 
-    async def _save_output_row(self, job_id: str, code: str, minio_path: str) -> None:
+    async def _save_output_row(self, job_id: str, code: str,
+                                minio_path: str) -> None:
         try:
-            import uuid as _uuid
             from ada.db.models import Output
             self.session.add(Output(
                 job_id=_uuid.UUID(job_id),
