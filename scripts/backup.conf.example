@@ -1,0 +1,27 @@
+# =============================================================
+# /etc/ada-backup.conf  — 로컬 리눅스 서버 백업 설정
+# =============================================================
+# 사용법:
+#   sudo cp scripts/backup.conf.example /etc/ada-backup.conf
+#   sudo chmod 600 /etc/ada-backup.conf
+#   sudo vi /etc/ada-backup.conf  # 실제 값으로 수정
+
+# VPS 접속 정보
+VPS_HOST=<VPS 공인 IP 또는 도메인>   # 예: 123.456.78.90
+VPS_USER=ada
+VPS_SSH_PORT=22
+
+# PostgreSQL (VPS 컨테이너 설정과 동일하게)
+POSTGRES_USER=autoai
+POSTGRES_DB=autoai
+CONTAINER=ada-postgres
+
+# 로컬 저장 경로
+BACKUP_DIR_DB=/srv/backup/ada/postgres
+LOCAL_DATA_DIR=/srv/backup/ada/datasets
+
+# VPS 데이터셋 경로
+VPS_DATA_DIR=/opt/ada/data
+
+# 보존 기간 (일)
+BACKUP_RETENTION_DAYS=14
