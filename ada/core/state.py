@@ -1,0 +1,94 @@
+"""ada.core.state — PipelineState (LangGraph 그래프 상태).
+
+R-005: 직접 수정 금지. ``state.model_copy(update={...})`` 패턴만 허용.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+# 4 카테고리 — v2 스코프 (메모리 ada_scope_decision)
+CATEGORIES = ("tabular_ml", "tabular_dl", "timeseries", "anomaly_detection")
+
+# 5 산출물 코드 (OUT-01/02/03/04/07)
+OUTPUT_CODES = ("OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07")
+
+# 5 게이트 (G0~G5 중 G0 의도 → G5 산출물)
+GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
+
+
+class PipelineState(BaseModel):
+    """LangGraph 그래프 상태 모델 (Day03 §1).
+
+    모든 에이전트가 이 상태를 입력으로 받아 새 상태를 반환한다.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=False)
+
+    # 핵심 식별자
+    job_id: str
+    file_id: str
+    category: str  # tabular_ml / tabular_dl / timeseries / anomaly_detection
+    task: str = "auto"  # classification / regression / forecasting / anomaly_detection
+
+    # 입력 옵션
+    target_column: Optional[str] = None
+    user_question: Optional[str] = None
+    user_intent: Optional[str] = None
+    user_id: Optional[str] = None
+
+    # 5 게이트 응답
+    current_gate: Optional[str] = None
+    gate_responses: dict[str, Any] = Field(default_factory=dict)
+    requested_outputs: list[str] = Field(default_factory=list)
+    auto_resolved_gates: list[str] = Field(default_factory=list)
+
+    # 데이터 분석 결과
+    data_profile: Optional[dict[str, Any]] = None
+    validation: Optional[dict[str, Any]] = None  # {is_valid, errors, warnings}
+    preprocessing_plan: Optional[list[dict[str, Any]]] = None
+    preprocessed_data_id: Optional[str] = None  # MinIO 경로
+
+    # EDA
+    eda_charts: list[str] = Field(default_factory=list)
+    eda_summary: Optional[str] = None
+
+    # 모델링
+    model_candidates: list[str] = Field(default_factory=list)
+    trained_models: list[dict[str, Any]] = Field(default_factory=list)
+    training_warnings: list[str] = Field(default_factory=list)
+    best_model: Optional[dict[str, Any]] = None
+
+    # 해석/평가
+    explanations: Optional[dict[str, Any]] = None
+    eval_result: Optional[dict[str, Any]] = None
+    insights: Optional[str] = None
+
+    # 산출물
+    output_paths: dict[str, str] = Field(default_factory=dict)  # {OUT-01: minio_path, ...}
+
+    # 오케스트레이션 제어
+    retry_count: int = 0
+    max_retries: int = 3
+    re_loop_count: int = 0
+    max_re_loop: int = 2  # Day11 R-505 재루프 캡
+    error: Optional[str] = None
+    next_agent: Optional[str] = None
+
+    # 자체학습 — KB 인용 (R-501)
+    kb_citations: list[str] = Field(default_factory=list)
+
+    # 옵저버빌리티
+    trace_id: Optional[str] = None
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON 직렬화 가능한 dict 반환. datetime → ISO 문자열."""
+        d = self.model_dump(mode="json")
+        return d
+
+    def with_update(self, **kwargs: Any) -> "PipelineState":
+        """R-005 — 직접 수정 대신 이 헬퍼를 사용한다."""
+        return self.model_copy(update=kwargs)

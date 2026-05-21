@@ -1,12 +1,13 @@
 """
-scripts/mlflow_init.py  -  MLflow 6개 실험 초기화
+scripts/mlflow_init.py  -  MLflow 4개 실험 초기화 (v2 스코프)
 
 사용:
     docker compose --profile core run --rm api python scripts/mlflow_init.py
 
-만들어지는 실험 (작업지시서 §11 체크리스트):
-    ada-tabular-ml, ada-tabular-dl, ada-timeseries,
-    ada-image,      ada-nlp,        ada-anomaly
+만들어지는 실험 (Day02 v2 §6 + 2026-05-18 스코프 축소):
+    ada-tabular-ml, ada-tabular-dl, ada-timeseries, ada-anomaly
+
+⚠ image / nlp 카테고리는 v2 스코프 축소(메모리 ada_scope_decision) 로 제거됨.
 """
 
 from __future__ import annotations
@@ -20,8 +21,6 @@ EXPERIMENTS = [
     "ada-tabular-ml",
     "ada-tabular-dl",
     "ada-timeseries",
-    "ada-image",
-    "ada-nlp",
     "ada-anomaly",
 ]
 
