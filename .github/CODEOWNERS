@@ -1,0 +1,125 @@
+# ADA v2 — CODEOWNERS (Day 0 H0-3)
+#
+# 카테고리 종주 패턴에 따른 단독 수정자 강제.
+# GitHub 가 자동으로 PR 에 해당 리뷰어를 지정하고, 다른 멤버가
+# 본인 폴더 밖을 수정할 때 경고/차단.
+#
+# 사용 전 .github/CODEOWNERS_TEAM_MAPPING 에 GitHub username 매핑 권장
+# 또는 아래 @hj, @member-a, @member-b, @member-c 를 실제 username 으로 교체.
+
+# ============================================================
+# 1) HJ — 시스템·메타·인프라·dispatcher 8종 (단독)
+# ============================================================
+/agents/base.py                            @hj
+/agents/personas.py                        @hj
+/agents/stubs.py                           @hj
+
+# dispatcher 8종 (handlers/{cat} 호출만)
+/agents/data_profiler.py                   @hj
+/agents/preprocessing_strategist.py        @hj
+/agents/feature_engineer.py                @hj
+/agents/eda_agent.py                       @hj
+/agents/model_selection.py                 @hj
+/agents/eval_agent.py                      @hj
+/agents/insight.py                         @hj
+/agents/report_composer.py                 @hj
+
+# 카테고리 무관 메타 5개
+/agents/supervisor.py                      @hj
+/agents/self_learning.py                   @hj
+/agents/auto_error_handler.py              @hj
+/agents/security_guard.py                  @hj
+/agents/error_recovery.py                  @hj
+
+# 게이트 dispatcher (각 카테고리 fallback 은 handlers/{cat}/proposer.py 로 위임됨)
+/agents/gates/                             @hj
+
+# 학습 실행 메타 (HPO/Monitor/Aggregator/FineTune/IntentElicitor/SchemaValidator)
+/agents/hyperparameter_tuner.py            @hj
+/agents/training_executor.py               @hj
+/agents/training_monitor.py                @hj
+/agents/metrics_aggregator.py              @hj
+/agents/fine_tune_executor.py              @hj
+/agents/intent_elicitor.py                 @hj
+/agents/schema_validator.py                @hj
+/agents/explainability.py                  @hj
+
+# handlers 공통 베이스
+/agents/handlers/__init__.py               @hj
+/agents/handlers/_base.py                  @hj
+/agents/handlers/common/                   @hj
+
+# 코어 / DB / 보안 / 옵저버빌리티 / 자체학습 / 에러 핸들러
+/ada/                                      @hj
+
+# 오케스트레이션
+/orchestrator/                             @hj
+
+# API / 프론트엔드 / 서빙
+/api/                                      @hj
+/frontend/app.py                           @hj
+/serving/                                  @hj
+
+# 산출물 carrier (5종)
+/outputs/base.py                           @hj
+/outputs/ppt.py                            @hj
+/outputs/pdf.py                            @hj
+/outputs/script.py                         @hj
+/outputs/html_dashboard.py                 @hj
+/outputs/markdown_insight.py               @hj
+/outputs/versioning.py                     @hj
+/outputs/plotly_chart.py                   @hj
+/outputs/__init__.py                       @hj
+
+# 파이프라인 베이스 + factory
+/pipelines/base.py                         @hj
+/pipelines/factory.py                      @hj
+/pipelines/__init__.py                     @hj
+
+# 인프라 / 문서 / CI / 마이그레이션
+/docker/                                   @hj
+/scripts/                                  @hj
+/.github/                                  @hj
+/requirements/                             @hj
+/migrations/                               @hj
+/alembic.ini                               @hj
+/Makefile                                  @hj
+/AGENTS.md                                 @hj
+/docs/                                     @hj
+/tools/                                    @hj
+
+# 루트 공통 테스트 (멤버별 카테고리 테스트는 아래 참조)
+/tests/conftest.py                         @hj
+/tests/test_state.py                       @hj
+/tests/test_personas.py                    @hj
+/tests/test_graph_build.py                 @hj
+/tests/test_agents_count.py                @hj
+/tests/integration/                        @hj
+
+# ============================================================
+# 2) Member A — timeseries 종주 (단독)
+# ============================================================
+/agents/handlers/timeseries/               @member-a
+/pipelines/timeseries/                     @member-a
+/tests/handlers/timeseries/                @member-a
+
+# ============================================================
+# 3) Member B — anomaly_detection 종주 (단독)
+# ============================================================
+/agents/handlers/anomaly/                  @member-b
+/pipelines/anomaly/                        @member-b
+/tests/handlers/anomaly/                   @member-b
+
+# ============================================================
+# 4) Member C — tabular_ml + tabular_dl 종주 (단독)
+# ============================================================
+/agents/handlers/tabular/                  @member-c
+/pipelines/tabular_ml/                     @member-c
+/pipelines/tabular_dl/                     @member-c
+/tests/handlers/tabular/                   @member-c
+
+# ============================================================
+# 5) 공유 규약 (3 멤버 합의 필요)
+# ============================================================
+# state.category_extras 키 격리는 코드 내 규약. 본 파일에서는
+# state.py 자체를 HJ 단독 수정으로 강제 (위 /ada/ 라인에서 처리).

@@ -1,29 +1,24 @@
-"""agents.eval_agent — EvalAgent (Day11).
+"""agents.eval_agent — Day 0 dispatcher 패턴.
 
-임계치 룰 + LLM 판단 결합. passed=False 면 재루프 가능 (R-505 cap=2).
+카테고리별 임계치는 ``handlers/{cat}/evaluator.evaluate(state)`` 가 담당.
+수정 권한: **HJ 단독** (dispatcher).
 """
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from ada.core.state import PipelineState
 from agents.base import BaseAgent
+from agents.handlers import get_handler
+import agents.handlers.timeseries  # noqa: F401
+import agents.handlers.anomaly  # noqa: F401
+import agents.handlers.tabular  # noqa: F401
 
-THRESHOLDS = {
-    "tabular_ml":         {"val_f1": 0.65, "val_accuracy": 0.70},
-    "tabular_dl":         {"val_f1": 0.70},
-    "timeseries":         {},  # rmse 는 도메인 의존이라 LLM 만 사용
-    "anomaly_detection":  {"val_auc": 0.70},
-}
+SYSTEM_PROMPT = """당신은 QA 평가관입니다. best_model.metrics + eval_result 를 보고
+모델 출시 가능성을 JSON 으로 종합 판단합니다.
 
-SYSTEM_PROMPT = """당신은 모델 출시 가능성을 판정하는 QA 평가관입니다.
-입력: best_model.metrics, eda_summary, training_warnings
-응답 JSON:
-{
-  "passed": true,
-  "rationale": "한국어 1~2문장",
-  "threshold_violations": ["val_f1<0.7" ...]
-}
+{"passed": true, "rationale": "한국어 1~2문장", "threshold_violations": [...]}
 """
 
 
@@ -33,49 +28,51 @@ class EvalAgent(BaseAgent):
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
-            best = state.best_model or {}
-            metrics = best.get("metrics") or {}
-
-            # 1) 임계치 룰
-            violations: list[str] = []
-            for k, thr in THRESHOLDS.get(state.category, {}).items():
-                v = metrics.get(k)
-                if v is not None and float(v) < thr:
-                    violations.append(f"{k}<{thr} (got {v:.3f})")
-
-            passed = len(violations) == 0
-            rationale = "임계치 통과" if passed else "; ".join(violations)
+            # 1) 카테고리 핸들러로 임계치 판정
+            eval_result: dict[str, Any] = {
+                "passed": True, "rationale": "기본 통과",
+                "threshold_violations": [], "metrics": {},
+            }
+            handler = get_handler(state.category, "evaluate")
+            if handler is not None:
+                try:
+                    eval_result = handler(state) or eval_result
+                except Exception as e:
+                    self.logger.warning("evaluator_handler_failed",
+                                        category=state.category, error=str(e))
 
             # 2) LLM 종합 판정 (선택)
             try:
+                payload = {
+                    "best_model": state.best_model,
+                    "eda_summary": state.eda_summary,
+                    "training_warnings": state.training_warnings,
+                    "category": state.category,
+                    "rule_eval": eval_result,
+                }
                 raw = await self._call_llm(
                     system_prompt=SYSTEM_PROMPT,
-                    user_prompt=json.dumps({
-                        "best_model": best,
-                        "eda_summary": state.eda_summary,
-                        "training_warnings": state.training_warnings,
-                        "category": state.category,
-                    }, ensure_ascii=False)[:2500],
+                    user_prompt=json.dumps(payload, ensure_ascii=False)[:2500],
                     max_tokens=400,
                     temperature=0.0,
                     json_mode=True,
                 )
                 parsed = self._parse_json(raw)
                 if "passed" in parsed:
-                    passed = bool(parsed["passed"])
-                    rationale = parsed.get("rationale", rationale)
-                    violations = parsed.get("threshold_violations", violations)
+                    eval_result["passed"] = bool(parsed["passed"])
+                    eval_result["rationale"] = parsed.get("rationale",
+                                                            eval_result["rationale"])
+                    eval_result["threshold_violations"] = parsed.get(
+                        "threshold_violations",
+                        eval_result["threshold_violations"],
+                    )
             except Exception as e:
                 self.logger.warning("eval_llm_skip", error=str(e))
 
-            eval_result = {
-                "passed": passed,
-                "rationale": rationale,
-                "threshold_violations": violations,
-                "metrics": metrics,
-            }
-            if passed:
-                return state.with_update(eval_result=eval_result, next_agent="explainability")
+            # 3) 분기
+            if eval_result["passed"]:
+                return state.with_update(eval_result=eval_result,
+                                         next_agent="explainability")
             new_re_loop = state.re_loop_count + 1
             if new_re_loop <= state.max_re_loop:
                 return state.with_update(eval_result=eval_result,
