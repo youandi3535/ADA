@@ -1,0 +1,13 @@
+ADA v2 Alembic migrations directory.
+
+생성: Day01 v2.2 §3 (베이스라인)
+실제 revision: Day02 부터 (ada/db/models.py 가 갖춰지면 `alembic revision --autogenerate -m "init"` 실행).
+
+Usage
+-----
+    # 로컬:
+    DATABASE_URL=postgresql://autoai:CHANGE@localhost:5433/autoai \
+        alembic upgrade head
+
+    # 도커(컨테이너 내부):
+    docker compose exec api alembic upgrade head
