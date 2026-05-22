@@ -1,4 +1,5 @@
-"""agents.handlers.anomaly.preprocessor — 이상탐지 전처리 (B 담당)."""
+"""agents.handlers.anomaly.preprocessor — 이상탐지 전처리 (NY 담당)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -24,14 +25,12 @@ def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
         name = step.get("name")
         try:
             if name == "standard_scale":
-                num_cols = [c for c in out.select_dtypes(include=[np.number]).columns
-                            if c != target]
+                num_cols = [c for c in out.select_dtypes(include=[np.number]).columns if c != target]
                 if num_cols:
                     out[num_cols] = StandardScaler().fit_transform(out[num_cols])
             elif name == "winsorize":
                 q = step.get("quantile", 0.05)
-                num_cols = [c for c in out.select_dtypes(include=[np.number]).columns
-                            if c != target]
+                num_cols = [c for c in out.select_dtypes(include=[np.number]).columns if c != target]
                 for c in num_cols:
                     lo, hi = out[c].quantile(q), out[c].quantile(1 - q)
                     out[c] = out[c].clip(lo, hi)

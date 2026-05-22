@@ -1,8 +1,9 @@
-"""agents.handlers.timeseries.selector — 시계열 모델 추천 (A 담당).
+"""agents.handlers.timeseries.selector — 시계열 모델 추천 (CS 담당).
 
 기본 top3: Prophet / SARIMA / TFT.
-Day 5 (A): 길이/계절성/exog 유무 기반 score 매트릭스로 동적 결정.
+Day 5 (CS): 길이/계절성/exog 유무 기반 score 매트릭스로 동적 결정.
 """
+
 from __future__ import annotations
 
 from typing import Any

@@ -3,6 +3,7 @@
 LLM top3 선정 → 실패 시 ``handlers/{cat}/selector.score(state, recipes)`` fallback.
 수정 권한: **HJ 단독** (dispatcher).
 """
+
 from __future__ import annotations
 
 import json
@@ -10,13 +11,13 @@ from typing import Any
 
 from sqlalchemy import select
 
+import agents.handlers.anomaly  # noqa: F401
+import agents.handlers.tabular  # noqa: F401
+import agents.handlers.timeseries  # noqa: F401
 from ada.core.state import PipelineState
 from ada.db.models import SelfLearningKB
 from agents.base import BaseAgent
 from agents.handlers import get_handler
-import agents.handlers.timeseries  # noqa: F401
-import agents.handlers.anomaly  # noqa: F401
-import agents.handlers.tabular  # noqa: F401
 
 SYSTEM_PROMPT = """당신은 AutoML 큐레이터입니다. 입력으로 받은
 data_profile, category, recipes 를 종합해 상위 3개 모델 후보를 JSON 으로 반환합니다.
@@ -73,8 +74,7 @@ class ModelSelectionAgent(BaseAgent):
                         rationale = result.get("rationale", rationale)
                         citations = result.get("citations") or citations
                     except Exception as e:
-                        self.logger.warning("selector_handler_failed",
-                                            category=state.category, error=str(e))
+                        self.logger.warning("selector_handler_failed", category=state.category, error=str(e))
 
             if not top3:
                 top3 = ["XGBoost"]
@@ -89,12 +89,14 @@ class ModelSelectionAgent(BaseAgent):
     async def _fetch_recipes(self, category: str) -> list[dict[str, Any]]:
         try:
             rows = await self.session.scalars(
-                select(SelfLearningKB).where(
+                select(SelfLearningKB)
+                .where(
                     SelfLearningKB.kb_type == "recipe",
                     SelfLearningKB.category == category,
-                ).order_by(SelfLearningKB.success_count.desc()).limit(5)
+                )
+                .order_by(SelfLearningKB.success_count.desc())
+                .limit(5)
             )
-            return [{"hash": r.hash, "payload": r.payload,
-                     "success_count": r.success_count} for r in rows]
+            return [{"hash": r.hash, "payload": r.payload, "success_count": r.success_count} for r in rows]
         except Exception:
             return []

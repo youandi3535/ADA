@@ -1,4 +1,5 @@
-"""agents.handlers.anomaly.eda — 이상탐지 EDA (B 담당)."""
+"""agents.handlers.anomaly.eda — 이상탐지 EDA (NY 담당)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 def charts(df: Any, state: Any) -> list[str]:
     """이상탐지 차트 — 결측 + 박스플롯."""
     import matplotlib  # noqa: WPS433
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # noqa: WPS433
     import numpy as np  # noqa: WPS433
@@ -22,8 +24,7 @@ def charts(df: Any, state: Any) -> list[str]:
             fig, ax = plt.subplots(figsize=(8, 4))
             miss.plot(kind="barh", ax=ax)
             ax.set_title("Missing rate (top 20) — anomaly")
-            paths.append(save_chart_to_minio(fig, kind="anomaly/missing",
-                                              job_id=state.job_id))
+            paths.append(save_chart_to_minio(fig, kind="anomaly/missing", job_id=state.job_id))
     except Exception:
         pass
 
@@ -35,8 +36,7 @@ def charts(df: Any, state: Any) -> list[str]:
             df[num_cols].plot(kind="box", ax=ax, vert=True)
             ax.set_title("Boxplot (outlier 시각화)")
             ax.tick_params(axis="x", rotation=30)
-            paths.append(save_chart_to_minio(fig, kind="anomaly/box",
-                                              job_id=state.job_id))
+            paths.append(save_chart_to_minio(fig, kind="anomaly/box", job_id=state.job_id))
         except Exception:
             pass
 

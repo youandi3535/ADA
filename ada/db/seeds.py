@@ -2,6 +2,7 @@
 
 Day02 §5 (v2 §5.5) — 27 에이전트 메타데이터 + persona 일괄 INSERT.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -9,8 +10,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agents.personas import PERSONAS, list_agents_by_category
 from ada.db.models import AgentRegistry, Rule
+from agents.personas import PERSONAS
 
 # (agent_name, role, description, llm_model)
 AGENT_META: list[tuple[str, str, str, str]] = [
@@ -56,33 +57,33 @@ assert len(AGENT_META) == 27, f"expected 27 agents, got {len(AGENT_META)}"
 
 # I/O 시그니처 — Day05~13 본문에서 본 형식대로 일관 유지
 AGENT_IO: dict[str, dict[str, list[str]]] = {
-    "SupervisorAgent":            {"inputs": ["file_id", "category", "user_intent"], "outputs": ["task", "next_agent"]},
-    "IntentElicitorAgent":        {"inputs": ["user_intent"], "outputs": ["intent_spec"]},
-    "DataProfilerAgent":          {"inputs": ["file_id"], "outputs": ["profile"]},
-    "SchemaValidatorAgent":       {"inputs": ["profile", "category"], "outputs": ["validation"]},
-    "AnalysisProposerAgent":      {"inputs": ["intent_spec", "profile"], "outputs": ["proposals_3"]},
-    "MethodologyProposerAgent":   {"inputs": ["proposals_3"], "outputs": ["methodology"]},
+    "SupervisorAgent": {"inputs": ["file_id", "category", "user_intent"], "outputs": ["task", "next_agent"]},
+    "IntentElicitorAgent": {"inputs": ["user_intent"], "outputs": ["intent_spec"]},
+    "DataProfilerAgent": {"inputs": ["file_id"], "outputs": ["profile"]},
+    "SchemaValidatorAgent": {"inputs": ["profile", "category"], "outputs": ["validation"]},
+    "AnalysisProposerAgent": {"inputs": ["intent_spec", "profile"], "outputs": ["proposals_3"]},
+    "MethodologyProposerAgent": {"inputs": ["proposals_3"], "outputs": ["methodology"]},
     "ModelStrategyProposerAgent": {"inputs": ["methodology"], "outputs": ["strategy"]},
     "ModelComparisonReporterAgent": {"inputs": ["models"], "outputs": ["comparison"]},
-    "OutputTypeSelectorAgent":    {"inputs": ["intent_spec"], "outputs": ["output_codes"]},
+    "OutputTypeSelectorAgent": {"inputs": ["intent_spec"], "outputs": ["output_codes"]},
     "PreprocessingStrategistAgent": {"inputs": ["profile", "methodology"], "outputs": ["preprocess_plan"]},
-    "FeatureEngineerAgent":       {"inputs": ["preprocess_plan"], "outputs": ["features"]},
-    "EDAAgent":                   {"inputs": ["features"], "outputs": ["eda_charts"]},
-    "PreprocessingChoiceAgent":   {"inputs": ["candidates"], "outputs": ["chosen"]},
-    "ModelSelectionAgent":        {"inputs": ["features", "strategy"], "outputs": ["top3"]},
-    "HyperparameterTunerAgent":   {"inputs": ["top3"], "outputs": ["best_params"]},
-    "TrainingExecutorAgent":      {"inputs": ["features", "best_params"], "outputs": ["models"]},
-    "TrainingMonitorAgent":       {"inputs": ["training_state"], "outputs": ["anomaly_signal"]},
-    "MetricsAggregatorAgent":     {"inputs": ["models"], "outputs": ["best_model"]},
-    "FineTuneExecutorAgent":      {"inputs": ["best_model"], "outputs": ["finetuned"]},
-    "EvalAgent":                  {"inputs": ["best_model", "metrics"], "outputs": ["evaluation"]},
-    "ExplainabilityAgent":        {"inputs": ["best_model", "features"], "outputs": ["shap_artifacts"]},
-    "InsightAgent":               {"inputs": ["evaluation", "shap_artifacts"], "outputs": ["insights"]},
-    "ReportComposerAgent":        {"inputs": ["insights", "output_codes"], "outputs": ["artifacts"]},
-    "SelfLearningAgent":          {"inputs": ["job_id"], "outputs": ["kb_entries"]},
-    "AutoErrorHandlerAgent":      {"inputs": ["error_event"], "outputs": ["patch_or_escalate"]},
-    "SecurityGuardAgent":         {"inputs": ["request_payload"], "outputs": ["security_verdict"]},
-    "ErrorRecoveryAgent":         {"inputs": ["failure_log"], "outputs": ["user_message", "next_action"]},
+    "FeatureEngineerAgent": {"inputs": ["preprocess_plan"], "outputs": ["features"]},
+    "EDAAgent": {"inputs": ["features"], "outputs": ["eda_charts"]},
+    "PreprocessingChoiceAgent": {"inputs": ["candidates"], "outputs": ["chosen"]},
+    "ModelSelectionAgent": {"inputs": ["features", "strategy"], "outputs": ["top3"]},
+    "HyperparameterTunerAgent": {"inputs": ["top3"], "outputs": ["best_params"]},
+    "TrainingExecutorAgent": {"inputs": ["features", "best_params"], "outputs": ["models"]},
+    "TrainingMonitorAgent": {"inputs": ["training_state"], "outputs": ["anomaly_signal"]},
+    "MetricsAggregatorAgent": {"inputs": ["models"], "outputs": ["best_model"]},
+    "FineTuneExecutorAgent": {"inputs": ["best_model"], "outputs": ["finetuned"]},
+    "EvalAgent": {"inputs": ["best_model", "metrics"], "outputs": ["evaluation"]},
+    "ExplainabilityAgent": {"inputs": ["best_model", "features"], "outputs": ["shap_artifacts"]},
+    "InsightAgent": {"inputs": ["evaluation", "shap_artifacts"], "outputs": ["insights"]},
+    "ReportComposerAgent": {"inputs": ["insights", "output_codes"], "outputs": ["artifacts"]},
+    "SelfLearningAgent": {"inputs": ["job_id"], "outputs": ["kb_entries"]},
+    "AutoErrorHandlerAgent": {"inputs": ["error_event"], "outputs": ["patch_or_escalate"]},
+    "SecurityGuardAgent": {"inputs": ["request_payload"], "outputs": ["security_verdict"]},
+    "ErrorRecoveryAgent": {"inputs": ["failure_log"], "outputs": ["user_message", "next_action"]},
 }
 
 CAPABILITY_MAP: dict[str, list[str]] = {
@@ -120,36 +121,36 @@ CAPABILITY_MAP: dict[str, list[str]] = {
 # Rule seeds — v2.4 까지 정의된 규칙 카탈로그 (요지)
 # ---------------------------------------------------------------------------
 RULE_SEED: list[dict[str, Any]] = [
-    {"rule_code": "R-001", "title": "시크릿 .env 만",      "category": "security"},
-    {"rule_code": "R-002", "title": ".env 커밋 금지",      "category": "security"},
-    {"rule_code": "R-003", "title": "비루트 USER",         "category": "security"},
-    {"rule_code": "R-101", "title": "스키마 변경 = 마이그레이션",   "category": "db"},
+    {"rule_code": "R-001", "title": "시크릿 .env 만", "category": "security"},
+    {"rule_code": "R-002", "title": ".env 커밋 금지", "category": "security"},
+    {"rule_code": "R-003", "title": "비루트 USER", "category": "security"},
+    {"rule_code": "R-101", "title": "스키마 변경 = 마이그레이션", "category": "db"},
     {"rule_code": "R-102", "title": "JSONB는 Pydantic 검증", "category": "db"},
-    {"rule_code": "R-103", "title": "PII 로그 출력 금지",   "category": "data"},
+    {"rule_code": "R-103", "title": "PII 로그 출력 금지", "category": "data"},
     {"rule_code": "R-202", "title": "Bulkhead prefetch=1", "category": "celery"},
     {"rule_code": "R-403", "title": "트랜스포머 강제 조건부 (v2.2 완화)", "category": "model"},
-    {"rule_code": "R-501", "title": "KB 인용 강제",         "category": "harness"},
+    {"rule_code": "R-501", "title": "KB 인용 강제", "category": "harness"},
     {"rule_code": "R-503", "title": "record_outcome 의무", "category": "harness"},
-    {"rule_code": "R-504", "title": "자동 retraction",      "category": "harness"},
-    {"rule_code": "R-505", "title": "decay",                "category": "harness"},
+    {"rule_code": "R-504", "title": "자동 retraction", "category": "harness"},
+    {"rule_code": "R-505", "title": "decay", "category": "harness"},
     {"rule_code": "R-601", "title": "Claude CLI SDK 비동기", "category": "error"},
     {"rule_code": "R-602", "title": "claude-cli read-only", "category": "error"},
-    {"rule_code": "R-703", "title": "mTLS",                 "category": "security"},
-    {"rule_code": "R-704", "title": "모델 SHA256 무결성",   "category": "security"},
-    {"rule_code": "R-705", "title": "MFA",                  "category": "security"},
-    {"rule_code": "R-706", "title": "cosign 모델 서명",      "category": "security"},
-    {"rule_code": "R-707", "title": "JWT RS256",            "category": "security"},
+    {"rule_code": "R-703", "title": "mTLS", "category": "security"},
+    {"rule_code": "R-704", "title": "모델 SHA256 무결성", "category": "security"},
+    {"rule_code": "R-705", "title": "MFA", "category": "security"},
+    {"rule_code": "R-706", "title": "cosign 모델 서명", "category": "security"},
+    {"rule_code": "R-707", "title": "JWT RS256", "category": "security"},
     {"rule_code": "R-708", "title": "indirect injection 가드", "category": "security"},
-    {"rule_code": "R-709", "title": "pybreaker 회로차단",   "category": "reliability"},
-    {"rule_code": "R-901", "title": "backup_catalog",       "category": "backup"},
-    {"rule_code": "R-902", "title": "백업 SHA256",          "category": "backup"},
+    {"rule_code": "R-709", "title": "pybreaker 회로차단", "category": "reliability"},
+    {"rule_code": "R-901", "title": "backup_catalog", "category": "backup"},
+    {"rule_code": "R-902", "title": "백업 SHA256", "category": "backup"},
     {"rule_code": "R-903", "title": "Vault Raft (Dev 금지)", "category": "security"},
     {"rule_code": "R-1001", "title": "Langfuse 옵저버빌리티", "category": "obs"},
-    {"rule_code": "R-1002", "title": "LLM Guard 입력 가드",  "category": "security"},
-    {"rule_code": "R-1003", "title": "PyOD v3 이상탐지",     "category": "model"},
-    {"rule_code": "R-1004", "title": "python-docx 산출물",   "category": "output"},
+    {"rule_code": "R-1002", "title": "LLM Guard 입력 가드", "category": "security"},
+    {"rule_code": "R-1003", "title": "PyOD v3 이상탐지", "category": "model"},
+    {"rule_code": "R-1004", "title": "python-docx 산출물", "category": "output"},
     {"rule_code": "R-1005", "title": "Guardrails AI 스키마", "category": "security"},
-    {"rule_code": "R-1006", "title": "FLAML AutoML",         "category": "model"},
+    {"rule_code": "R-1006", "title": "FLAML AutoML", "category": "model"},
     {"rule_code": "R-1007", "title": "StatsForecast 시계열", "category": "model"},
     {"rule_code": "R-1008", "title": "Chart.js/Plotly 차트", "category": "output"},
 ]
@@ -159,9 +160,7 @@ async def seed_agent_registry(session: AsyncSession) -> int:
     """agent_registry 27 행 upsert. 이미 있으면 persona 업데이트만."""
     inserted = 0
     for name, role, desc, llm in AGENT_META:
-        existing = await session.scalar(
-            select(AgentRegistry).where(AgentRegistry.agent_name == name)
-        )
+        existing = await session.scalar(select(AgentRegistry).where(AgentRegistry.agent_name == name))
         persona = PERSONAS.get(name, "")
         io_spec = AGENT_IO.get(name, {"inputs": [], "outputs": []})
         caps = CAPABILITY_MAP.get(name, [])
@@ -195,9 +194,7 @@ async def seed_rules(session: AsyncSession) -> int:
     """rules 테이블 시드 (멱등)."""
     inserted = 0
     for r in RULE_SEED:
-        existing = await session.scalar(
-            select(Rule).where(Rule.rule_code == r["rule_code"])
-        )
+        existing = await session.scalar(select(Rule).where(Rule.rule_code == r["rule_code"]))
         if existing:
             continue
         session.add(

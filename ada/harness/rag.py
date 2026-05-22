@@ -3,9 +3,9 @@
 dataset_embeddings / intent_embeddings / lesson_embeddings 3 컬렉션.
 임베딩 모델: SentenceTransformer (KB 인용 R-501).
 """
+
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Optional
 
 import numpy as np
@@ -14,9 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ada.core.logger import get_logger
 from ada.db.models import (
-    DatasetEmbedding,
-    IntentEmbedding,
-    LessonEmbedding,
     SelfLearningKB,
 )
 
@@ -38,9 +35,8 @@ class KBRAG:
             return self._embedder
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore
-            self._embedder = SentenceTransformer(
-                "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-            )
+
+            self._embedder = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
         except Exception:
             self._embedder = None
         return self._embedder
@@ -81,39 +77,52 @@ class KBRAG:
     async def search_recipes(self, category: str, top_k: int = 5) -> list[dict[str, Any]]:
         """category 기반 recipe 검색 (pgvector 없이 단순 정렬)."""
         rows = await self.session.scalars(
-            select(SelfLearningKB).where(
+            select(SelfLearningKB)
+            .where(
                 SelfLearningKB.kb_type == "recipe",
                 SelfLearningKB.category == category,
-            ).order_by(SelfLearningKB.success_count.desc()).limit(top_k)
+            )
+            .order_by(SelfLearningKB.success_count.desc())
+            .limit(top_k)
         )
-        return [{"hash": r.hash, "payload": r.payload,
-                 "confidence": r.confidence, "success_count": r.success_count}
-                for r in rows]
+        return [
+            {"hash": r.hash, "payload": r.payload, "confidence": r.confidence, "success_count": r.success_count}
+            for r in rows
+        ]
 
     # ------------------------------------------------------------------
     async def index_lesson(self, kb_id: Any, summary: str) -> None:
         emb = self.embed(summary)
-        await self.session.execute(text(
-            """
+        await self.session.execute(
+            text(
+                """
             INSERT INTO lesson_embeddings (kb_id, target, embedding)
             VALUES (:kb_id, :target, CAST(:emb AS vector))
             """
-        ), {"kb_id": str(kb_id), "target": summary[:1000], "emb": str(emb)})
+            ),
+            {"kb_id": str(kb_id), "target": summary[:1000], "emb": str(emb)},
+        )
 
     async def index_intent(self, job_id: Any, intent_text: str) -> None:
         emb = self.embed(intent_text)
-        await self.session.execute(text(
-            """
+        await self.session.execute(
+            text(
+                """
             INSERT INTO intent_embeddings (job_id, target, embedding)
             VALUES (:job_id, :target, CAST(:emb AS vector))
             """
-        ), {"job_id": str(job_id), "target": intent_text[:1000], "emb": str(emb)})
+            ),
+            {"job_id": str(job_id), "target": intent_text[:1000], "emb": str(emb)},
+        )
 
     async def index_dataset(self, upload_id: Any, summary: str) -> None:
         emb = self.embed(summary)
-        await self.session.execute(text(
-            """
+        await self.session.execute(
+            text(
+                """
             INSERT INTO dataset_embeddings (upload_id, target, embedding)
             VALUES (:u, :t, CAST(:emb AS vector))
             """
-        ), {"u": str(upload_id), "t": summary[:1000], "emb": str(emb)})
+            ),
+            {"u": str(upload_id), "t": summary[:1000], "emb": str(emb)},
+        )

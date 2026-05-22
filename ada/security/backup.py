@@ -2,14 +2,13 @@
 
 postgres dump + minio sync + sha256 등록.
 """
+
 from __future__ import annotations
 
 import hashlib
 import os
 import subprocess
 import tempfile
-from datetime import datetime
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

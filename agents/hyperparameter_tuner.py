@@ -2,6 +2,7 @@
 
 Optuna + FLAML warm-start. self_learning_kb 의 'hpo_warm_start' KB 도 반영.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -36,10 +37,10 @@ class HyperparameterTunerAgent(BaseAgent):
     def _optuna_search(self, model_name: str, state: PipelineState) -> dict[str, Any]:
         try:
             import optuna
+
             from pipelines.tabular_ml.search_space import get_search_space
 
-            study = optuna.create_study(direction="maximize",
-                                        study_name=f"{state.job_id}-{model_name}")
+            study = optuna.create_study(direction="maximize", study_name=f"{state.job_id}-{model_name}")
 
             def _obj(trial: optuna.Trial) -> float:
                 _ = get_search_space(model_name, trial)

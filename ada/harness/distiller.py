@@ -4,19 +4,20 @@
 R-501 인용 강제 · R-502 confidence cap 0.95 · R-503 record_outcome
 R-504 자동 retraction · R-505 decay (60d 미사용 0.9×)
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ada.core.logger import get_logger
-from ada.db.models import Job, SelfLearningKB, JobDistillationLog
+from ada.db.models import Job, JobDistillationLog, SelfLearningKB
 
 log = get_logger("harness")
 
@@ -34,8 +35,7 @@ def _hash_payload(payload: dict[str, Any]) -> str:
 class SelfLearningHarness:
     """KB 증류·인용·감쇠·재교정 단일 진입점."""
 
-    KB_TYPES = ("success_pattern", "recipe", "eda_template",
-                "hpo_warm_start", "failure_lesson")
+    KB_TYPES = ("success_pattern", "recipe", "eda_template", "hpo_warm_start", "failure_lesson")
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -90,18 +90,14 @@ class SelfLearningHarness:
         confidence_init: float = 0.5,
     ) -> int:
         h = _hash_payload({**payload, "kb_type": kb_type})
-        existing = await self.session.scalar(
-            select(SelfLearningKB).where(SelfLearningKB.hash == h)
-        )
+        existing = await self.session.scalar(select(SelfLearningKB).where(SelfLearningKB.hash == h))
         if existing is not None:
             existing.success_count = (existing.success_count or 0) + 1
             existing.confidence = min(
                 CONFIDENCE_CAP,
                 (existing.confidence or 0.5) + 0.05,
             )
-            existing.source_job_ids = list(
-                set((existing.source_job_ids or []) + [source_job_id])
-            )
+            existing.source_job_ids = list(set((existing.source_job_ids or []) + [source_job_id]))
             existing.updated_at = datetime.utcnow()
             ins = 0
         else:
@@ -117,9 +113,13 @@ class SelfLearningHarness:
             self.session.add(new)
             await self.session.flush()
             ins = 1
-            self.session.add(JobDistillationLog(
-                job_id=source_job_id, kb_type=kb_type, kb_id=new.id,
-            ))
+            self.session.add(
+                JobDistillationLog(
+                    job_id=source_job_id,
+                    kb_type=kb_type,
+                    kb_id=new.id,
+                )
+            )
         return ins
 
     # ------------------------------------------------------------------
@@ -148,9 +148,7 @@ class SelfLearningHarness:
     async def decay_unused(self) -> int:
         """R-505 — 60일 미사용 confidence 0.9×."""
         cutoff = datetime.utcnow() - timedelta(days=DECAY_DAYS)
-        result = await self.session.execute(
-            select(SelfLearningKB).where(SelfLearningKB.updated_at < cutoff)
-        )
+        result = await self.session.execute(select(SelfLearningKB).where(SelfLearningKB.updated_at < cutoff))
         rows = result.scalars().all()
         for kb in rows:
             kb.confidence = (kb.confidence or 0.5) * DECAY_RATE

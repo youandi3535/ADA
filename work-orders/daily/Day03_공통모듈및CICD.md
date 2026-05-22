@@ -70,27 +70,27 @@
   ```python
   # Anthropic
   anthropic_api_key: str
-  
+
   # LangSmith
   langsmith_api_key: str = ""
   langsmith_project: str = "ada-pipeline"
-  
+
   # Database
   database_url: str
-  
+
   # Redis
   redis_url: str = "redis://redis:6379/0"
-  
+
   # MinIO
   minio_endpoint: str = "minio:9000"
   minio_access_key: str
   minio_secret_key: str
   minio_bucket: str = "autoai-artifacts"
-  
+
   # MLflow
   mlflow_tracking_uri: str = "http://mlflow:5000"
   mlflow_s3_endpoint_url: str = "http://minio:9000"
-  
+
   # App
   log_level: str = "INFO"
   max_upload_size_mb: int = 100
@@ -368,9 +368,9 @@ jobs:
 
 ```
 R-0xx: 핵심 아키텍처 룰 (전체 적용)
-R-1xx: 데이터 관련 룰 (C 담당)
-R-2xx: 모델 관련 룰 (B 담당)
-R-3xx: 학습 관련 룰 (B 담당)
+R-1xx: 데이터 관련 룰 (jh 담당)
+R-2xx: 모델 관련 룰 (NY 담당)
+R-3xx: 학습 관련 룰 (NY 담당)
 R-9xx: Harness / 테스트 룰 (D 담당)
 ```
 
@@ -855,4 +855,3 @@ def traced(name=None):
 - `tests/observability/test_langfuse_trace.py` — 더미 에이전트 호출 후 Langfuse trace ID 반환 확인 + tag·session_id 일치.
 
 ---
-

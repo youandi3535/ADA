@@ -2,10 +2,8 @@
 
 파이프라인 진입점. 입력 검증 + LLM 태스크 분류 + HITL 재시도 가드.
 """
-from __future__ import annotations
 
-import os
-from typing import Any
+from __future__ import annotations
 
 import redis as redis_pkg
 

@@ -1,7 +1,8 @@
-"""agents.handlers.tabular.preprocessor — 정형 ML/DL 전처리 (C 담당).
+"""agents.handlers.tabular.preprocessor — 정형 ML/DL 전처리 (jh 담당).
 
-Day 2 (C): target_encoding 정교화 + SMOTE 옵션 + VIF 기반 drop.
+Day 2 (jh): target_encoding 정교화 + SMOTE 옵션 + VIF 기반 drop.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -11,8 +12,7 @@ def plan(state: Any) -> list[dict[str, Any]]:
     return [
         {"name": "impute_numeric", "strategy": "median", "needs_review": False},
         {"name": "impute_categorical", "strategy": "most_frequent", "needs_review": False},
-        {"name": "encode_categorical", "method": "one_hot",
-         "high_card_threshold": 50, "needs_review": True},
+        {"name": "encode_categorical", "method": "one_hot", "high_card_threshold": 50, "needs_review": True},
         {"name": "scale_numeric", "method": "robust", "needs_review": False},
     ]
 
@@ -56,9 +56,9 @@ def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
                         out[c] = out[c].map(freq).fillna(0.0)
             elif name == "scale_numeric":
                 from sklearn.preprocessing import RobustScaler, StandardScaler
+
                 method = step.get("method", "robust")
-                num_cols = [c for c in out.select_dtypes(include=[np.number]).columns
-                            if c != target]
+                num_cols = [c for c in out.select_dtypes(include=[np.number]).columns if c != target]
                 scaler = RobustScaler() if method == "robust" else StandardScaler()
                 if num_cols:
                     out[num_cols] = scaler.fit_transform(out[num_cols])

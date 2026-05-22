@@ -2,14 +2,15 @@
 
 Day04 v2 §1~§4. PostgresSaver checkpointer 로 영속화.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
 from typing import Any
 
+from ada.core.state import PipelineState
 from agents.stubs import (
     AnalysisProposerAgent,
-    AutoErrorHandlerAgent,
     DataProfilerAgent,
     EDAAgent,
     ErrorRecoveryAgent,
@@ -30,13 +31,11 @@ from agents.stubs import (
     PreprocessingStrategistAgent,
     ReportComposerAgent,
     SchemaValidatorAgent,
-    SecurityGuardAgent,
     SelfLearningAgent,
     SupervisorAgent,
     TrainingExecutorAgent,
     TrainingMonitorAgent,
 )
-from ada.core.state import PipelineState
 
 try:
     from langgraph.graph import END, StateGraph
@@ -47,11 +46,11 @@ except Exception:  # pragma: no cover - langgraph 미설치 환경
 
 # 게이트 노드: 동일 클래스를 그대로 사용 (BaseGate 가 interrupt 직전 상태 마킹)
 GATE_NODES = {
-    "gate_direction":      AnalysisProposerAgent,
-    "gate_methodology":    MethodologyProposerAgent,
+    "gate_direction": AnalysisProposerAgent,
+    "gate_methodology": MethodologyProposerAgent,
     "gate_model_strategy": ModelStrategyProposerAgent,
-    "gate_best_model":     ModelComparisonReporterAgent,
-    "gate_outputs":        OutputTypeSelectorAgent,
+    "gate_best_model": ModelComparisonReporterAgent,
+    "gate_outputs": OutputTypeSelectorAgent,
 }
 
 INTERRUPT_AFTER = list(GATE_NODES.keys())
@@ -74,9 +73,7 @@ def route_after_validation(state: PipelineState) -> str:
 
 def route_after_feature_engineer(state: PipelineState) -> str:
     """전처리 결정 신뢰도 낮으면 미니 게이트(PreprocessingChoice), 아니면 G3로."""
-    if state.preprocessing_plan and any(
-        s.get("needs_review") for s in state.preprocessing_plan
-    ):
+    if state.preprocessing_plan and any(s.get("needs_review") for s in state.preprocessing_plan):
         return "preprocessing_choice"
     return "gate_model_strategy"  # G3 게이트 — 모델 전략 선택
 
@@ -122,31 +119,31 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g = StateGraph(PipelineState)
 
     # ---- 노드 등록 (25 = 20 일반 + 5 게이트) -----------------------------
-    g.add_node("supervisor",               SupervisorAgent())
-    g.add_node("intent_elicitor",          IntentElicitorAgent())
-    g.add_node("data_profiler",            DataProfilerAgent())
-    g.add_node("schema_validator",         SchemaValidatorAgent())
-    g.add_node("gate_direction",           GATE_NODES["gate_direction"]())
-    g.add_node("eda_agent",                EDAAgent())
-    g.add_node("gate_methodology",         GATE_NODES["gate_methodology"]())
+    g.add_node("supervisor", SupervisorAgent())
+    g.add_node("intent_elicitor", IntentElicitorAgent())
+    g.add_node("data_profiler", DataProfilerAgent())
+    g.add_node("schema_validator", SchemaValidatorAgent())
+    g.add_node("gate_direction", GATE_NODES["gate_direction"]())
+    g.add_node("eda_agent", EDAAgent())
+    g.add_node("gate_methodology", GATE_NODES["gate_methodology"]())
     g.add_node("preprocessing_strategist", PreprocessingStrategistAgent())
-    g.add_node("feature_engineer",         FeatureEngineerAgent())
-    g.add_node("preprocessing_choice",     PreprocessingChoiceAgent())
-    g.add_node("gate_model_strategy",      GATE_NODES["gate_model_strategy"]())
-    g.add_node("model_selection",          ModelSelectionAgent())
-    g.add_node("hyperparameter_tuner",     HyperparameterTunerAgent())
-    g.add_node("training_executor",        TrainingExecutorAgent())
-    g.add_node("training_monitor",         TrainingMonitorAgent())
-    g.add_node("metrics_aggregator",       MetricsAggregatorAgent())
-    g.add_node("gate_best_model",          GATE_NODES["gate_best_model"]())
-    g.add_node("fine_tune_executor",       FineTuneExecutorAgent())
-    g.add_node("eval_agent",               EvalAgent())
-    g.add_node("explainability",           ExplainabilityAgent())
-    g.add_node("insight",                  InsightAgent())
-    g.add_node("gate_outputs",             GATE_NODES["gate_outputs"]())
-    g.add_node("report_composer",          ReportComposerAgent())
-    g.add_node("self_learning_dispatch",   SelfLearningAgent())
-    g.add_node("error_recovery",           ErrorRecoveryAgent())
+    g.add_node("feature_engineer", FeatureEngineerAgent())
+    g.add_node("preprocessing_choice", PreprocessingChoiceAgent())
+    g.add_node("gate_model_strategy", GATE_NODES["gate_model_strategy"]())
+    g.add_node("model_selection", ModelSelectionAgent())
+    g.add_node("hyperparameter_tuner", HyperparameterTunerAgent())
+    g.add_node("training_executor", TrainingExecutorAgent())
+    g.add_node("training_monitor", TrainingMonitorAgent())
+    g.add_node("metrics_aggregator", MetricsAggregatorAgent())
+    g.add_node("gate_best_model", GATE_NODES["gate_best_model"]())
+    g.add_node("fine_tune_executor", FineTuneExecutorAgent())
+    g.add_node("eval_agent", EvalAgent())
+    g.add_node("explainability", ExplainabilityAgent())
+    g.add_node("insight", InsightAgent())
+    g.add_node("gate_outputs", GATE_NODES["gate_outputs"]())
+    g.add_node("report_composer", ReportComposerAgent())
+    g.add_node("self_learning_dispatch", SelfLearningAgent())
+    g.add_node("error_recovery", ErrorRecoveryAgent())
     # (SecurityGuard / AutoErrorHandler 는 데몬 — 그래프 외부에서 호출)
 
     g.set_entry_point("supervisor")
@@ -174,41 +171,45 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_conditional_edges(
         "supervisor",
         route_after_supervisor,
-        {"intent_elicitor": "intent_elicitor",
-         "data_profiler": "data_profiler",
-         "error_recovery": "error_recovery"},
+        {"intent_elicitor": "intent_elicitor", "data_profiler": "data_profiler", "error_recovery": "error_recovery"},
     )
     g.add_conditional_edges(
-        "schema_validator", route_after_validation,
-        {"gate_direction": "gate_direction",
-         "error_recovery": "error_recovery"},
+        "schema_validator",
+        route_after_validation,
+        {"gate_direction": "gate_direction", "error_recovery": "error_recovery"},
     )
     g.add_conditional_edges(
-        "feature_engineer", route_after_feature_engineer,
-        {"preprocessing_choice": "preprocessing_choice",
-         "gate_model_strategy": "gate_model_strategy"},
+        "feature_engineer",
+        route_after_feature_engineer,
+        {"preprocessing_choice": "preprocessing_choice", "gate_model_strategy": "gate_model_strategy"},
     )
     g.add_conditional_edges(
-        "metrics_aggregator", route_after_metrics,
+        "metrics_aggregator",
+        route_after_metrics,
         {"gate_best_model": "gate_best_model"},
     )
     g.add_conditional_edges(
-        "gate_best_model", route_after_g4,
-        {"fine_tune_executor": "fine_tune_executor",
-         "eval_agent": "eval_agent"},
+        "gate_best_model",
+        route_after_g4,
+        {"fine_tune_executor": "fine_tune_executor", "eval_agent": "eval_agent"},
     )
     g.add_conditional_edges(
-        "eval_agent", route_after_eval,
-        {"explainability": "explainability",
-         "training_executor": "training_executor",
-         "error_recovery": "error_recovery"},
+        "eval_agent",
+        route_after_eval,
+        {
+            "explainability": "explainability",
+            "training_executor": "training_executor",
+            "error_recovery": "error_recovery",
+        },
     )
     g.add_conditional_edges(
-        "gate_outputs", route_after_g5,
+        "gate_outputs",
+        route_after_g5,
         {"report_composer": "report_composer"},
     )
     g.add_conditional_edges(
-        "error_recovery", route_after_error_recovery,
+        "error_recovery",
+        route_after_error_recovery,
         {"supervisor": "supervisor", "END": END},
     )
 

@@ -1,4 +1,5 @@
-"""agents.handlers.anomaly.insight — 이상탐지 인사이트 (B 담당)."""
+"""agents.handlers.anomaly.insight — 이상탐지 인사이트 (NY 담당)."""
+
 from __future__ import annotations
 
 from typing import Any

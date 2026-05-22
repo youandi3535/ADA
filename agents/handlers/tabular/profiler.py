@@ -1,4 +1,5 @@
-"""agents.handlers.tabular.profiler — 정형 데이터 추가 프로파일 (C 담당)."""
+"""agents.handlers.tabular.profiler — 정형 데이터 추가 프로파일 (jh 담당)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -35,16 +36,15 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
         extra["cardinality_levels"] = card_levels
 
         # VIF (수치형 top 10)  — 간이 구현: cor(X, X) 역행렬 대각
-        num_cols = [c for c in df.select_dtypes(include=[np.number]).columns
-                    if c != target][:10]
+        num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target][:10]
         if len(num_cols) >= 2:
-            from numpy.linalg import inv, LinAlgError
+            from numpy.linalg import LinAlgError, inv
+
             try:
                 M = df[num_cols].fillna(0).corr().values
                 if not np.isnan(M).any():
                     vif = np.diag(inv(M))
-                    extra["vif_top"] = {col: round(float(v), 2)
-                                          for col, v in zip(num_cols, vif)}
+                    extra["vif_top"] = {col: round(float(v), 2) for col, v in zip(num_cols, vif)}
             except LinAlgError:
                 pass
     except Exception as e:

@@ -5,7 +5,7 @@
 # 본인 폴더 밖을 수정할 때 경고/차단.
 #
 # 사용 전 .github/CODEOWNERS_TEAM_MAPPING 에 GitHub username 매핑 권장
-# 또는 아래 @hj, @member-a, @member-b, @member-c 를 실제 username 으로 교체.
+# 또는 아래 @hj, @cs, @ny, @jh 를 실제 username 으로 교체.
 
 # ============================================================
 # 1) HJ — 시스템·메타·인프라·dispatcher 8종 (단독)
@@ -97,29 +97,31 @@
 /tests/integration/                        @hj
 
 # ============================================================
-# 2) Member A — timeseries 종주 (단독)
+# 2) CS — timeseries 종주 (단독)
 # ============================================================
-/agents/handlers/timeseries/               @member-a
-/pipelines/timeseries/                     @member-a
-/tests/handlers/timeseries/                @member-a
+/agents/handlers/timeseries/               @cs
+/pipelines/timeseries/                     @cs
+/tests/handlers/timeseries/                @cs
+/requirements/handlers-timeseries.txt      @cs
 
 # ============================================================
-# 3) Member B — anomaly_detection 종주 (단독)
+# 3) NY — anomaly_detection 종주 (단독)
 # ============================================================
-/agents/handlers/anomaly/                  @member-b
-/pipelines/anomaly/                        @member-b
-/tests/handlers/anomaly/                   @member-b
+/agents/handlers/anomaly/                  @ny
+/pipelines/anomaly/                        @ny
+/tests/handlers/anomaly/                   @ny
+/requirements/handlers-anomaly.txt         @ny
 
 # ============================================================
-# 4) Member C — tabular_ml + tabular_dl 종주 (단독)
+# 4) jh — tabular_ml + tabular_dl 종주 (단독)
 # ============================================================
-/agents/handlers/tabular/                  @member-c
-/pipelines/tabular_ml/                     @member-c
-/pipelines/tabular_dl/                     @member-c
-/tests/handlers/tabular/                   @member-c
+/agents/handlers/tabular/                  @jh
+/pipelines/tabular_ml/                     @jh
+/pipelines/tabular_dl/                     @jh
+/tests/handlers/tabular/                   @jh
+/requirements/handlers-tabular.txt         @jh
 
 # ============================================================
 # 5) 공유 규약 (3 멤버 합의 필요)
 # ============================================================
-# state.category_extras 키 격리는 코드 내 규약. 본 파일에서는
-# state.py 자체를 HJ 단독 수정으로 강제 (위 /ada/ 라인에서 처리).
+#

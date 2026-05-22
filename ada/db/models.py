@@ -4,11 +4,11 @@ v1 10 + v2 14 = 24 테이블 매핑.
 - pgvector 컬럼은 ``pgvector.sqlalchemy.Vector(768)`` 사용.
 - v2 스코프 축소(2026-05-18) 적용: image/NLP 카테고리, OUT-05/06/08-13 산출물 제거.
 """
+
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -21,7 +21,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -33,6 +32,7 @@ except Exception:  # pragma: no cover
 
     def Vector(dim: int):  # type: ignore[override]
         return _LB()
+
 
 from ada.db.session import Base
 
@@ -93,9 +93,7 @@ class Job(Base):
     requested_outputs = Column(JSONB, default=list)  # ["OUT-01","OUT-04",...]
     user_intent = Column(Text)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     agent_runs = relationship("AgentRun", back_populates="job", cascade="all, delete")
     models = relationship("Model", back_populates="job", cascade="all, delete")
@@ -225,9 +223,7 @@ class Rule(Base):
 
 class AgentRegistry(Base):
     __tablename__ = "agent_registry"
-    __table_args__ = (
-        CheckConstraint("char_length(persona) <= 200", name="chk_persona_len"),
-    )
+    __table_args__ = (CheckConstraint("char_length(persona) <= 200", name="chk_persona_len"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_name = Column(String(128), unique=True, nullable=False)
@@ -276,7 +272,9 @@ class SelfLearningKB(Base):
     __tablename__ = "self_learning_kb"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    kb_type = Column(String(32), nullable=False)  # success_pattern / recipe / eda_template / hpo_warm_start / failure_lesson
+    kb_type = Column(
+        String(32), nullable=False
+    )  # success_pattern / recipe / eda_template / hpo_warm_start / failure_lesson
     category = Column(String(64))
     hash = Column(String(64), unique=True)
     payload = Column(JSONB, nullable=False)
@@ -286,9 +284,7 @@ class SelfLearningKB(Base):
     source_job_ids = Column(ARRAY(UUID(as_uuid=True)))
     created_by = Column(UUID(as_uuid=True))  # RLS
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class DatasetEmbedding(Base):
@@ -317,9 +313,7 @@ class LessonEmbedding(Base):
     __tablename__ = "lesson_embeddings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    kb_id = Column(
-        UUID(as_uuid=True), ForeignKey("self_learning_kb.id", ondelete="CASCADE")
-    )
+    kb_id = Column(UUID(as_uuid=True), ForeignKey("self_learning_kb.id", ondelete="CASCADE"))
     target = Column(Text)
     embedding = Column(Vector(768))
     created_by = Column(UUID(as_uuid=True))  # RLS
@@ -339,9 +333,7 @@ class ErrorKB(Base):
     fail_count = Column(Integer, default=0)
     confidence = Column(Float, default=0.0)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
-    )
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class SecurityAuditLog(Base):

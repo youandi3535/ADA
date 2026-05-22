@@ -1,4 +1,5 @@
-"""agents.handlers.tabular.output_extras — 정형 산출물 추가 (C 담당)."""
+"""agents.handlers.tabular.output_extras — 정형 산출물 추가 (jh 담당)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,6 +11,6 @@ def assets(state: Any) -> dict[str, Any]:
     return {
         "category_label": label,
         "category_color": color,
-        "extra_charts": [],   # Day 9 (C): ROC + Calibration + Confusion Matrix
+        "extra_charts": [],  # Day 9 (jh): ROC + Calibration + Confusion Matrix
         "extra_tables": [],
     }

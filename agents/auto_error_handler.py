@@ -2,9 +2,8 @@
 
 데몬으로도, 그래프 외부 hook 으로도 호출 가능.
 """
-from __future__ import annotations
 
-from sqlalchemy import select
+from __future__ import annotations
 
 from ada.core.state import PipelineState
 from ada.db.models import FailureLog
@@ -29,6 +28,7 @@ class AutoErrorHandlerAgent(BaseAgent):
                 await self.session.flush()
 
                 from ada.error_handler.auto_handler import AutoErrorHandler
+
                 await AutoErrorHandler(self.session).handle(fl)
             except Exception as e:
                 self.logger.warning("auto_error_handler_failed", error=str(e))

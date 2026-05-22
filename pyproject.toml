@@ -1,0 +1,73 @@
+# ============================================================
+# ADA v2 — Project & Tool Configuration
+# ============================================================
+# 본 파일은 4명 병렬 작업의 도구 일관성을 보장합니다.
+# - ruff 룰 / 버전 통일
+# - 4명 PC 에서 동일한 lint 결과 산출
+# - 카테고리별 per-file-ignores 로 영역 격리
+#
+# 수정 권한: HJ 단독 (.github/CODEOWNERS 참조)
+# ============================================================
+
+[project]
+name = "ada-v2"
+version = "2.4.0"
+description = "Automated Data Analysis platform — 4 카테고리 (tabular_ml/tabular_dl/timeseries/anomaly_detection)"
+requires-python = ">=3.10,<3.11"
+readme = "README.md"
+
+# ------------------------------------------------------------
+# Ruff (lint + format)
+# ------------------------------------------------------------
+[tool.ruff]
+required-version = ">=0.15.0"
+line-length = 120
+target-version = "py310"
+extend-exclude = [
+    "venv",
+    ".venv",
+    "__pycache__",
+    "migrations/versions",   # alembic 자동 생성 마이그레이션
+    "alembic",
+    "outputs/job_*",         # 산출물 디렉토리 (런타임 생성)
+    "frontend/.next",
+]
+
+[tool.ruff.lint]
+# E (pycodestyle errors), F (pyflakes), W (pycodestyle warnings), I (isort)
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line-too-long — line-length 120 으로 완화
+    "E402",  # module-level-import-not-at-top — try/except 조건부 import 허용
+    "E731",  # lambda 할당 허용 (테스트에서 자주 사용)
+]
+
+# 카테고리별 per-file-ignores
+# ─────────────────────────────────────────────────────────
+# __init__.py 의 재노출 import 는 F401 무시
+# 테스트는 fixture 미사용 변수도 허용
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"agents/handlers/*/__init__.py" = ["F401"]
+"tests/*" = ["F401", "F841"]
+"scripts/*" = ["E402"]   # 스크립트는 sys.path 조작 후 import 허용
+
+[tool.ruff.lint.isort]
+known-first-party = ["ada", "agents", "api", "orchestrator", "outputs", "pipelines", "tests", "tools"]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ------------------------------------------------------------
+# pytest (pytest.ini 가 기존에 있으므로 여기서는 최소 설정만)
+# ------------------------------------------------------------
+# pytest 설정은 pytest.ini 가 우선. 본 섹션은 백업용.
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"

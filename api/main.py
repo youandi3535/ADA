@@ -2,6 +2,7 @@
 
 Day13/Day17 에서 인증·rate-limit·SSE 추가.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -16,8 +17,7 @@ from fastapi.responses import JSONResponse
 
 from ada.core.config import settings
 from ada.core.logger import bind_context, get_logger
-from api.routes import pipeline as pipeline_routes
-from api.routes import upload as upload_routes
+from api.routes import pipeline as pipeline_routes, upload as upload_routes
 
 log = get_logger("api")
 
@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # DB 초기화는 Alembic 책임. MinIO 버킷만 보장.
     try:
         from tools.minio_tool import get_minio_client
+
         get_minio_client()  # _ensure_bucket
     except Exception as e:
         log.warning("minio_init_failed", error=str(e))
@@ -65,20 +66,26 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
 # --- 예외 핸들러 ---------------------------------------------------------------
 @app.exception_handler(RequestValidationError)
 async def validation_exc(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return JSONResponse(status_code=422, content={
-        "error": "validation_error",
-        "details": exc.errors(),
-    })
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "validation_error",
+            "details": exc.errors(),
+        },
+    )
 
 
 @app.exception_handler(Exception)
 async def generic_exc(request: Request, exc: Exception) -> JSONResponse:
     err_id = str(uuid.uuid4())
     log.error("unhandled_exception", err_id=err_id, error=str(exc))
-    return JSONResponse(status_code=500, content={
-        "error": "internal_error",
-        "error_id": err_id,
-    })
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_error",
+            "error_id": err_id,
+        },
+    )
 
 
 # --- 라우터 ------------------------------------------------------------------

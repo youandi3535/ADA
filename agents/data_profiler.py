@@ -5,8 +5,14 @@
 
 수정 권한: **HJ 단독** (dispatcher 자체). 카테고리 보강은 각 멤버.
 """
+
 from __future__ import annotations
 
+import agents.handlers.anomaly  # noqa: F401
+import agents.handlers.tabular  # noqa: F401
+
+# import side-effects 로 handlers 자동 등록
+import agents.handlers.timeseries  # noqa: F401
 from ada.core.state import PipelineState
 from agents.base import BaseAgent
 from agents.handlers import get_handler
@@ -14,10 +20,6 @@ from agents.handlers.common.shared import (
     basic_dataframe_profile,
     load_dataframe_from_state,
 )
-# import side-effects 로 handlers 자동 등록
-import agents.handlers.timeseries  # noqa: F401
-import agents.handlers.anomaly  # noqa: F401
-import agents.handlers.tabular  # noqa: F401
 
 
 class DataProfilerAgent(BaseAgent):
@@ -45,8 +47,6 @@ class DataProfilerAgent(BaseAgent):
                     if isinstance(extra, dict):
                         profile.update(extra)
                 except Exception as e:
-                    self.logger.warning("profiler_handler_failed",
-                                        category=state.category, error=str(e))
+                    self.logger.warning("profiler_handler_failed", category=state.category, error=str(e))
 
-            return state.with_update(data_profile=profile,
-                                     next_agent="schema_validator")
+            return state.with_update(data_profile=profile, next_agent="schema_validator")

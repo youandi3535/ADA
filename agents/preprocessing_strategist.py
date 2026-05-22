@@ -3,17 +3,18 @@
 LLM 으로 plan 시도 → 실패 시 ``handlers/{cat}/preprocessor.plan()`` fallback.
 수정 권한: **HJ 단독** (dispatcher).
 """
+
 from __future__ import annotations
 
 import json
 from typing import Any
 
+import agents.handlers.anomaly  # noqa: F401
+import agents.handlers.tabular  # noqa: F401
+import agents.handlers.timeseries  # noqa: F401
 from ada.core.state import PipelineState
 from agents.base import BaseAgent
 from agents.handlers import get_handler
-import agents.handlers.timeseries  # noqa: F401
-import agents.handlers.anomaly  # noqa: F401
-import agents.handlers.tabular  # noqa: F401
 
 SYSTEM_PROMPT = """당신은 시니어 데이터 엔지니어로서 데이터 프로파일을 보고
 전처리 단계를 JSON 으로 설계합니다.
@@ -62,8 +63,6 @@ class PreprocessingStrategistAgent(BaseAgent):
                     try:
                         plan = handler(state) or []
                     except Exception as e:
-                        self.logger.warning("preprocess_handler_failed",
-                                            category=state.category, error=str(e))
+                        self.logger.warning("preprocess_handler_failed", category=state.category, error=str(e))
 
-            return state.with_update(preprocessing_plan=plan,
-                                     next_agent="feature_engineer")
+            return state.with_update(preprocessing_plan=plan, next_agent="feature_engineer")

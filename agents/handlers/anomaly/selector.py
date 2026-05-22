@@ -1,4 +1,5 @@
-"""agents.handlers.anomaly.selector — 이상탐지 모델 추천 (B 담당)."""
+"""agents.handlers.anomaly.selector — 이상탐지 모델 추천 (NY 담당)."""
+
 from __future__ import annotations
 
 from typing import Any

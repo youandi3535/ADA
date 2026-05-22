@@ -1,7 +1,8 @@
-"""agents.handlers.tabular.evaluator — 정형 평가 (C 담당).
+"""agents.handlers.tabular.evaluator — 정형 평가 (jh 담당).
 
 기본 임계: tabular_ml val_f1>=0.65, val_accuracy>=0.70. tabular_dl val_f1>=0.70.
 """
+
 from __future__ import annotations
 
 from typing import Any

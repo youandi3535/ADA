@@ -2,9 +2,8 @@
 
 자유 의도 텍스트 → 구조화된 intent_spec.
 """
-from __future__ import annotations
 
-import json
+from __future__ import annotations
 
 from ada.core.state import PipelineState
 from agents.base import BaseAgent

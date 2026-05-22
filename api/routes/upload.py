@@ -1,8 +1,8 @@
 """api.routes.upload — 업로드/프로파일 라우터 (Day06)."""
+
 from __future__ import annotations
 
 import hashlib
-import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -19,14 +19,13 @@ from tools.minio_tool import get_minio_client
 
 router = APIRouter()
 
-ALLOWED_EXTENSIONS = {".csv", ".tsv", ".parquet", ".zip", ".xlsx", ".xls",
-                       ".json", ".pdf", ".txt", ".html"}
+ALLOWED_EXTENSIONS = {".csv", ".tsv", ".parquet", ".zip", ".xlsx", ".xls", ".json", ".pdf", ".txt", ".html"}
 
 # Magic byte 검증 (Day06 v2.4)
 MAGIC_BYTES = {
-    b"\x50\x4b\x03\x04": [".zip", ".xlsx"],   # ZIP (xlsx 포함)
-    b"PAR1":             [".parquet"],
-    b"%PDF":             [".pdf"],
+    b"\x50\x4b\x03\x04": [".zip", ".xlsx"],  # ZIP (xlsx 포함)
+    b"PAR1": [".parquet"],
+    b"%PDF": [".pdf"],
 }
 
 
@@ -61,17 +60,19 @@ async def upload_file(
     dup = await db.scalar(select(Upload).where(Upload.sha256 == sha))
     if dup is not None:
         return UploadResponse(
-            file_id=dup.file_id, filename=dup.filename,
-            size_bytes=dup.size_bytes, sha256=dup.sha256,
-            created_at=dup.created_at, minio_path=dup.minio_path,
+            file_id=dup.file_id,
+            filename=dup.filename,
+            size_bytes=dup.size_bytes,
+            sha256=dup.sha256,
+            created_at=dup.created_at,
+            minio_path=dup.minio_path,
             pii_columns=dup.pii_columns or [],
         )
 
     file_id = str(uuid.uuid4())
     object_name = f"uploads/{file_id}/{file.filename}"
     mc = get_minio_client()
-    minio_path = mc.upload_bytes(content, object_name,
-                                  content_type=file.content_type or "application/octet-stream")
+    minio_path = mc.upload_bytes(content, object_name, content_type=file.content_type or "application/octet-stream")
 
     row = Upload(
         file_id=file_id,
@@ -86,8 +87,10 @@ async def upload_file(
     await db.flush()
 
     return UploadResponse(
-        file_id=file_id, filename=row.filename,
-        size_bytes=row.size_bytes, sha256=row.sha256,
+        file_id=file_id,
+        filename=row.filename,
+        size_bytes=row.size_bytes,
+        sha256=row.sha256,
         created_at=row.created_at or datetime.utcnow(),
         minio_path=row.minio_path,
         pii_columns=[],
@@ -99,5 +102,4 @@ async def get_profile(file_id: str, db: AsyncSession = Depends(get_db)) -> Profi
     row = await db.scalar(select(Upload).where(Upload.file_id == file_id))
     if row is None:
         raise HTTPException(404, detail="upload not found")
-    return ProfileResponse(file_id=file_id, profile={"size_bytes": row.size_bytes,
-                                                       "filename": row.filename})
+    return ProfileResponse(file_id=file_id, profile={"size_bytes": row.size_bytes, "filename": row.filename})

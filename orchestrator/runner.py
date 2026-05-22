@@ -6,13 +6,13 @@
     output    ← generate_output_task (Day12)
     harness   ← distill_kb_task / decay_kb_task (Day09)
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import time
-import uuid
-from typing import Any, Optional
+from typing import Any
 
 from celery import Celery
 
@@ -42,11 +42,11 @@ celery_app.conf.update(
     task_time_limit=settings.pipeline_timeout_min * 60,
     task_soft_time_limit=settings.pipeline_timeout_min * 60 - 60,
     task_routes={
-        "ada.pipeline.run":     {"queue": "pipeline"},
-        "ada.pipeline.resume":  {"queue": "pipeline"},
-        "ada.training.*":       {"queue": "training"},
-        "ada.output.*":         {"queue": "output"},
-        "ada.harness.*":        {"queue": "harness"},
+        "ada.pipeline.run": {"queue": "pipeline"},
+        "ada.pipeline.resume": {"queue": "pipeline"},
+        "ada.training.*": {"queue": "training"},
+        "ada.output.*": {"queue": "output"},
+        "ada.harness.*": {"queue": "harness"},
     },
 )
 
@@ -125,11 +125,13 @@ def _get_callbacks() -> list:
         try:
             from langfuse.callback import CallbackHandler  # type: ignore
 
-            callbacks.append(CallbackHandler(
-                public_key=settings.langfuse_public_key,
-                secret_key=settings.langfuse_secret_key,
-                host=settings.langfuse_host,
-            ))
+            callbacks.append(
+                CallbackHandler(
+                    public_key=settings.langfuse_public_key,
+                    secret_key=settings.langfuse_secret_key,
+                    host=settings.langfuse_host,
+                )
+            )
         except Exception:
             pass
     return callbacks
@@ -164,8 +166,7 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
     from orchestrator.graph import get_pipeline_graph
 
     graph = get_pipeline_graph()
-    config = {"configurable": {"thread_id": job_id},
-              "callbacks": _get_callbacks()}
+    config = {"configurable": {"thread_id": job_id}, "callbacks": _get_callbacks()}
 
     try:
         final = await graph.ainvoke(state, config=config) if not resume else None
@@ -189,9 +190,7 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
     gate_code = gate_response.get("gate", "G?")
     existing = cur["gate_responses"] if isinstance(cur, dict) else cur.gate_responses
     new_responses = dict(existing)
-    new_responses[gate_code] = {**new_responses.get(gate_code, {}),
-                                "user_choice": gate_response.get("choice")}
-    await graph.aupdate_state(config, {"gate_responses": new_responses,
-                                       "current_gate": None})
+    new_responses[gate_code] = {**new_responses.get(gate_code, {}), "user_choice": gate_response.get("choice")}
+    await graph.aupdate_state(config, {"gate_responses": new_responses, "current_gate": None})
     final = await graph.ainvoke(None, config=config)
     return {"status": "completed", "final": final.to_dict() if final else None}
