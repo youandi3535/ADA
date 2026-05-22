@@ -1,1 +1,1 @@
-"""tests.handlers.timeseries — A 단독 테스트 폴더."""
+"""tests.handlers.timeseries — CS 단독 테스트 폴더."""

@@ -1,7 +1,7 @@
 """api.routes.auth — 로그인 / 토큰 발급 (Day17)."""
+
 from __future__ import annotations
 
-import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException

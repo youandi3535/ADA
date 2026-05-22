@@ -13,6 +13,7 @@
 
 핸들러는 모두 ``async`` 함수가 권장이지만 동기 함수도 허용. dispatcher 가 awaitable 확인.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, Protocol
@@ -27,10 +28,10 @@ class HandlerProtocol(Protocol):
 
 # (category, capability) -> callable
 HANDLER_REGISTRY: Dict[str, Dict[str, Callable[..., Any]]] = {
-    "timeseries":         {},
-    "anomaly_detection":  {},
-    "tabular_ml":         {},
-    "tabular_dl":         {},
+    "timeseries": {},
+    "anomaly_detection": {},
+    "tabular_ml": {},
+    "tabular_dl": {},
 }
 
 
@@ -47,15 +48,23 @@ def get_handler(category: str, capability: str) -> Callable[..., Any] | None:
 
 
 # tabular_ml 과 tabular_dl 은 핸들러를 공유하므로 _tabular 라는 alias 도 노출
-# (각 멤버 모듈은 carefully — A: timeseries / B: anomaly / C: tabular 만 import)
+# (각 멤버 모듈은 carefully — CS: timeseries / NY: anomaly / jh: tabular 만 import)
 
 
 def _auto_register_from_module(category: str, module: Any) -> None:
     """모듈의 'profile/plan/apply/charts/score/evaluate/generate/assets/g1/g2' 함수를
     자동으로 카테고리 핸들러에 등록."""
     capabilities = (
-        "profile", "plan", "apply", "charts", "score",
-        "evaluate", "generate", "assets", "g1", "g2",
+        "profile",
+        "plan",
+        "apply",
+        "charts",
+        "score",
+        "evaluate",
+        "generate",
+        "assets",
+        "g1",
+        "g2",
     )
     for cap in capabilities:
         fn = getattr(module, cap, None)

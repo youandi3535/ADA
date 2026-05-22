@@ -1,0 +1,24 @@
+# =============================================================
+# handlers-tabular.txt  -  정형 ML/DL 카테고리 (jh 단독)
+# =============================================================
+# 본 파일은 jh (tabular_ml + tabular_dl 종주) 가 단독 수정.
+# .github/CODEOWNERS 에 @jh 로 강제.
+#
+# scikit-learn, optuna, shap, torch, transformers 는
+# worker.txt 에서 공통으로 제공 (모든 카테고리가 의존).
+# =============================================================
+
+# Gradient Boosting (정형 ML)
+xgboost==2.0.3
+lightgbm==4.3.0
+catboost==1.2.5
+
+# 클래스 불균형 (Day 2 jh — SMOTE)
+imbalanced-learn==0.12.2
+
+# 정형 DL (Day 6 jh 본구현 시 활성화)
+# pytorch-tabular==1.1.0     # TabTransformer / FT-Transformer / NODE / TabNet 통합
+# pytorch-frame==0.2.4       # (선택) tabular DL 추가 백본
+
+# HPO warm-start (Day 6 jh — R-1006)
+# flaml==2.1.2               # warm-start 자동 시드

@@ -1,7 +1,8 @@
 """ada.security.rbac — Role-based Access Control (Day17)."""
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import Depends, HTTPException
 
@@ -9,10 +10,10 @@ from ada.security.jwt import get_current_user
 
 # 역할 권한 매트릭스
 PERMISSIONS = {
-    "admin":    {"*"},
-    "analyst":  {"upload", "pipeline.start", "pipeline.read", "pipeline.resume"},
-    "viewer":   {"pipeline.read"},
-    "service":  {"*"},
+    "admin": {"*"},
+    "analyst": {"upload", "pipeline.start", "pipeline.read", "pipeline.resume"},
+    "viewer": {"pipeline.read"},
+    "service": {"*"},
 }
 
 
@@ -26,4 +27,5 @@ def require_perm(perm: str) -> Callable:
         if not has_perm(user.get("role", ""), perm):
             raise HTTPException(403, detail=f"missing perm: {perm}")
         return user
+
     return _dep

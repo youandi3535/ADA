@@ -6,8 +6,8 @@
 
 from agents.gates.analysis_proposer import AnalysisProposerAgent  # noqa: F401
 from agents.gates.methodology_proposer import MethodologyProposerAgent  # noqa: F401
-from agents.gates.model_strategy_proposer import ModelStrategyProposerAgent  # noqa: F401
 from agents.gates.model_comparison_reporter import ModelComparisonReporterAgent  # noqa: F401
+from agents.gates.model_strategy_proposer import ModelStrategyProposerAgent  # noqa: F401
 from agents.gates.output_type_selector import OutputTypeSelectorAgent  # noqa: F401
 
 __all__ = [

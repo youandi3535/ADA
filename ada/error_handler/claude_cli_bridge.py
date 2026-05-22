@@ -2,16 +2,16 @@
 
 SDK 비동기 호출 우선. 사이드카 컨테이너 내부에서만 --allowed-tools 강제 (R-602).
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import shutil
 import subprocess
-from typing import Any, Optional
+from typing import Any
 
 from ada.core.breaker import get_breaker
-from ada.core.config import settings
 from ada.core.logger import get_logger
 
 log = get_logger("claude_cli")
@@ -28,10 +28,14 @@ class ClaudeCLIBridge:
         # R-602 — --allowed-tools 강제.
         return [
             "claude",
-            "-p", prompt,
-            "--allowed-tools", ALLOWED_TOOLS,
-            "--output-format", "json",
-            "--max-turns", "3",
+            "-p",
+            prompt,
+            "--allowed-tools",
+            ALLOWED_TOOLS,
+            "--output-format",
+            "json",
+            "--max-turns",
+            "3",
         ]
 
     async def request_patch(self, *, error_signature: str, stack: str) -> dict[str, Any]:
@@ -47,7 +51,10 @@ class ClaudeCLIBridge:
 
         def _run() -> str:
             proc = subprocess.run(
-                self._cmd(prompt), capture_output=True, text=True, timeout=60,
+                self._cmd(prompt),
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             return proc.stdout
 

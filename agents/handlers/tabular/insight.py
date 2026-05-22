@@ -1,4 +1,5 @@
-"""agents.handlers.tabular.insight — 정형 인사이트 (C 담당)."""
+"""agents.handlers.tabular.insight — 정형 인사이트 (jh 담당)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -30,7 +31,7 @@ def fallback(state: Any) -> str:
     metrics = bm.get("metrics", {})
     f1 = metrics.get("val_f1")
     auc = metrics.get("val_roc_auc")
-    parts = [f"본 분석은 {bm.get('model_name','미정')} 모델이 가장 우수한 성능을 보였습니다."]
+    parts = [f"본 분석은 {bm.get('model_name', '미정')} 모델이 가장 우수한 성능을 보였습니다."]
     if f1 is not None:
         parts.append(f"검증 F1 점수는 {float(f1):.2f} 입니다.")
     if auc is not None:

@@ -1,4 +1,5 @@
-"""A 단독 — timeseries 테스트 fixture."""
+"""CS 단독 — timeseries 테스트 fixture."""
+
 from __future__ import annotations
 
 import pytest
@@ -19,11 +20,13 @@ def ts_state():
 
 @pytest.fixture
 def ts_df():
-    import pandas as pd
     import numpy as np
+    import pandas as pd
+
     rng = np.random.default_rng(42)
-    return pd.DataFrame({
-        "date": pd.date_range("2024-01-01", periods=120, freq="D"),
-        "sales": (1000 + rng.normal(0, 50, 120).cumsum() +
-                  np.sin(np.arange(120) * 2 * np.pi / 7) * 30),
-    })
+    return pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=120, freq="D"),
+            "sales": (1000 + rng.normal(0, 50, 120).cumsum() + np.sin(np.arange(120) * 2 * np.pi / 7) * 30),
+        }
+    )

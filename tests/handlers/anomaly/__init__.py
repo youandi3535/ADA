@@ -1,1 +1,1 @@
-"""tests.handlers.anomaly — B 단독 테스트 폴더."""
+"""tests.handlers.anomaly — NY 단독 테스트 폴더."""

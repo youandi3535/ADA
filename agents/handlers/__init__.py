@@ -6,15 +6,15 @@
 다른 멤버 폴더는 **읽기만**, 수정은 단독 담당자만.
 
 서브 패키지:
-    timeseries/   ← A 단독
-    anomaly/      ← B 단독
-    tabular/      ← C 단독 (tabular_ml + tabular_dl 공통)
+    timeseries/   ← CS 단독
+    anomaly/      ← NY 단독
+    tabular/      ← jh 단독 (tabular_ml + tabular_dl 공통)
     common/       ← HJ 단독 (카테고리 무관 헬퍼)
 """
 
 from agents.handlers._base import (  # noqa: F401
-    HandlerProtocol,
     HANDLER_REGISTRY,
+    HandlerProtocol,
     get_handler,
     register_handler,
 )

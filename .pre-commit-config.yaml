@@ -1,0 +1,68 @@
+# ============================================================
+# ADA v2 — pre-commit 훅 (클라이언트측 가드)
+# ============================================================
+# 매 git commit 시 자동 실행되어 영역 위반/포매팅 오류를 차단.
+#
+# 최초 1회 설치:
+#   pip install pre-commit
+#   pre-commit install
+#
+# 수동 실행:
+#   pre-commit run --all-files
+#
+# 우회 (긴급시만, HJ 협의 필수):
+#   git commit --no-verify
+#
+# 수정 권한: HJ 단독 (.github/CODEOWNERS 참조)
+# ============================================================
+
+repos:
+  # ─────────────────────────────────────────────────────────
+  # 1) Ruff — lint + format 자동 수정
+  # ─────────────────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ─────────────────────────────────────────────────────────
+  # 2) 기본 위생 훅
+  # ─────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        exclude: ^(docker/.*\.yml|\.github/workflows/.*\.yml)$  # Helm/GHA template 제외
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ─────────────────────────────────────────────────────────
+  # 3) 본인 영역 외 수정 차단 (ADA 특화)
+  # ─────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: scope-check
+        name: "본인 영역 외 수정 차단 (CODEOWNERS 동기)"
+        entry: bash scripts/dev/check_scope.sh
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        # 우회: git commit --no-verify (HJ 협의 필수)
+
+      - id: shared-deps-warning
+        name: "공유 의존성 파일 수정 경고"
+        entry: bash -c 'changed=$(git diff --cached --name-only | grep -E "^(requirements/.*\.txt|pyproject\.toml|\.pre-commit-config\.yaml|alembic\.ini|\.github/)" || true); if [ -n "$changed" ]; then echo "⚠️  공유 파일 수정 감지 — HJ 리뷰 필요:"; echo "$changed" | sed "s/^/  - /"; fi; exit 0'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        # 경고만 (exit 0). 차단은 CODEOWNERS 가 PR 단계에서 강제.

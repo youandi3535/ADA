@@ -1,4 +1,5 @@
 """outputs.ppt — OUT-01 PowerPoint 발표자료 (python-pptx)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,16 +11,18 @@ class PresentationGenerator(OutputGenerator):
     output_code = "OUT-01"
     extension = "pptx"
 
-    def generate(self, *, insights: str, best_model: dict[str, Any],
-                 eda_charts: list[str], category: str, user_intent: str,
-                 eval_result: dict[str, Any] | None) -> str:
-        from outputs import CATEGORY_COLORS
+    def generate(
+        self,
+        *,
+        insights: str,
+        best_model: dict[str, Any],
+        eda_charts: list[str],
+        category: str,
+        user_intent: str,
+        eval_result: dict[str, Any] | None,
+    ) -> str:
         from pptx import Presentation
         from pptx.util import Inches, Pt
-        from pptx.dml.color import RGBColor
-
-        color_hex = CATEGORY_COLORS.get(category, "#2563eb").lstrip("#")
-        accent = RGBColor.from_string(color_hex)
 
         prs = Presentation()
         # 1) 표지
@@ -53,6 +56,7 @@ class PresentationGenerator(OutputGenerator):
             try:
                 # MinIO에서 임시 다운로드
                 from tools.minio_tool import get_minio_client
+
                 mc = get_minio_client()
                 if chart_path.startswith("s3://"):
                     key = chart_path.replace(f"s3://{mc.bucket}/", "")
@@ -62,8 +66,7 @@ class PresentationGenerator(OutputGenerator):
                 tmp = self._tmp().replace(".pptx", ".png")
                 with open(tmp, "wb") as f:
                     f.write(body)
-                slide.shapes.add_picture(tmp, Inches(0.5), Inches(1.5),
-                                          width=Inches(8))
+                slide.shapes.add_picture(tmp, Inches(0.5), Inches(1.5), width=Inches(8))
             except Exception:
                 pass
 

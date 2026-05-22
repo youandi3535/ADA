@@ -1,7 +1,7 @@
 # Day 0 리팩토링 완료 보고서 — Category Ownership 패턴 준비
 
 > 작성일: 2026-05-21
-> 목적: 4인 (HJ + A/B/C) Day 1~10 매일 병렬 무간섭 작업 토대
+> 목적: 4인 (HJ + CS/NY/jh) Day 1~10 매일 병렬 무간섭 작업 토대
 > 결과: 🟢 **160/160 syntax + 28/28 pytest + 0 NUL 바이트**
 
 ---
@@ -28,7 +28,7 @@ agents/handlers/                           # H0-1
 ├── common/
 │   ├── __init__.py                        (HJ)
 │   └── shared.py                          (HJ — load_dataframe/save_chart/basic_profile)
-├── timeseries/                            # ★ A 단독
+├── timeseries/                            # ★ CS 단독
 │   ├── __init__.py                        (auto-register)
 │   ├── profiler.py
 │   ├── preprocessor.py
@@ -38,16 +38,16 @@ agents/handlers/                           # H0-1
 │   ├── insight.py                         (SYSTEM_PROMPT + prompt_payload + fallback)
 │   ├── output_extras.py
 │   └── proposer.py                        (g1, g2)
-├── anomaly/                               # ★ B 단독
+├── anomaly/                               # ★ NY 단독
 │   └── (timeseries 와 동일 8 모듈)
-└── tabular/                               # ★ C 단독 (tabular_ml + tabular_dl 공유)
+└── tabular/                               # ★ jh 단독 (tabular_ml + tabular_dl 공유)
     └── (timeseries 와 동일 8 모듈)
 
 tests/handlers/                            # H0-5
 ├── __init__.py
-├── timeseries/{conftest,test_smoke}.py    # ★ A 단독
-├── anomaly/{conftest,test_smoke}.py       # ★ B 단독
-└── tabular/{conftest,test_smoke}.py       # ★ C 단독
+├── timeseries/{conftest,test_smoke}.py    # ★ CS 단독
+├── anomaly/{conftest,test_smoke}.py       # ★ NY 단독
+└── tabular/{conftest,test_smoke}.py       # ★ jh 단독
 
 .github/CODEOWNERS                         # H0-3 단독 수정자 매트릭스
 ```
@@ -76,15 +76,15 @@ tests/handlers/                            # H0-5
 ## 🛡️ 충돌 방지 보장
 
 ### 폴더 격리 (단독 수정자)
-- A: `agents/handlers/timeseries/` + `pipelines/timeseries/` + `tests/handlers/timeseries/`
-- B: `agents/handlers/anomaly/` + `pipelines/anomaly/` + `tests/handlers/anomaly/`
-- C: `agents/handlers/tabular/` + `pipelines/tabular_*/` + `tests/handlers/tabular/`
+- CS: `agents/handlers/timeseries/` + `pipelines/timeseries/` + `tests/handlers/timeseries/`
+- NY: `agents/handlers/anomaly/` + `pipelines/anomaly/` + `tests/handlers/anomaly/`
+- jh: `agents/handlers/tabular/` + `pipelines/tabular_*/` + `tests/handlers/tabular/`
 - HJ: 위 외 전부 (dispatcher 8종, 메타 5, 인프라, CODEOWNERS)
 
 ### state 격리
 `state.category_extras["{cat}"]` 키 안에만 자기 카테고리 데이터 저장 → 키 충돌 0건.
 
-### 신규 필드 (B 의 Day 6 작업을 위한 미리 준비)
+### 신규 필드 (NY 의 Day 6 작업을 위한 미리 준비)
 - `best_params: dict[str, dict]` — HPO 결과를 TrainingExecutor 가 사용
 
 ---
@@ -108,9 +108,9 @@ tests/handlers/                            # H0-5
 다음 명령으로 각 멤버 브랜치 생성:
 ```bash
 git checkout -b feat/hj-day1   # HJ — Supervisor KB + Prometheus + AutoError daemon
-git checkout -b feat/a-day1    # A  — timeseries profiler KPSS/ACF/PACF
-git checkout -b feat/b-day1    # B  — anomaly profiler outlier+PCA
-git checkout -b feat/c-day1    # C  — tabular profiler VIF+class balance
+git checkout -b feat/cs-day1   # CS — timeseries profiler KPSS/ACF/PACF
+git checkout -b feat/ny-day1   # NY — anomaly profiler outlier+PCA
+git checkout -b feat/jh-day1   # jh — tabular profiler VIF+class balance
 ```
 
 각자 `TEAM_10DAY_SCHEDULE.md` §"Day 1" 표 참고. **충돌 0건** 보장.

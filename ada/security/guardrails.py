@@ -1,4 +1,5 @@
 """ada.security.guardrails — LLM Guard + Guardrails AI (Day17 R-1002/R-1005)."""
+
 from __future__ import annotations
 
 import json
@@ -8,10 +9,12 @@ from typing import Any
 def llm_guard_input(text: str) -> dict[str, Any]:
     """R-1002 — LLM Guard input scan. 미설치면 SecurityGuardAgent 가드 fallback."""
     try:
-        from llm_guard.input_scanners import (  # type: ignore
-            Anonymize, PromptInjection, TokenLimit,
-        )
         from llm_guard import scan_prompt  # type: ignore
+        from llm_guard.input_scanners import (  # type: ignore
+            Anonymize,
+            PromptInjection,
+            TokenLimit,
+        )
 
         scanners = [PromptInjection(), TokenLimit(limit=4000), Anonymize()]
         sanitized, results, _ = scan_prompt(scanners, text)
@@ -19,9 +22,9 @@ def llm_guard_input(text: str) -> dict[str, Any]:
         return {"safe": all_valid, "sanitized": sanitized, "results": results}
     except Exception:
         from agents.security_guard import SecurityGuardAgent
+
         verdict = SecurityGuardAgent.scan_text(text)
-        return {"safe": verdict["safe"], "sanitized": text,
-                "results": {"fallback": verdict["safe"]}}
+        return {"safe": verdict["safe"], "sanitized": text, "results": {"fallback": verdict["safe"]}}
 
 
 def guardrails_validate(text: str, schema: dict[str, Any]) -> dict[str, Any]:
@@ -35,7 +38,7 @@ def guardrails_validate(text: str, schema: dict[str, Any]) -> dict[str, Any]:
             ValidJson,
         )
 
-        g = Guard.from_pydantic(output_class=None)  # 본문은 호출측 책임
+        Guard.from_pydantic(output_class=None)
         return {"valid": True, "data": json.loads(text)}
     except Exception:
         try:

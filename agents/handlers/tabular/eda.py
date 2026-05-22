@@ -1,4 +1,5 @@
-"""agents.handlers.tabular.eda — 정형 EDA (C 담당)."""
+"""agents.handlers.tabular.eda — 정형 EDA (jh 담당)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,9 +8,9 @@ from typing import Any
 def charts(df: Any, state: Any) -> list[str]:
     """결측 / 분포 / 상관 3종."""
     import matplotlib  # noqa: WPS433
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # noqa: WPS433
-    import numpy as np  # noqa: WPS433
 
     from agents.handlers.common.shared import save_chart_to_minio
 
@@ -22,8 +23,7 @@ def charts(df: Any, state: Any) -> list[str]:
             fig, ax = plt.subplots(figsize=(8, 4))
             miss.plot(kind="barh", ax=ax)
             ax.set_title("Missing rate (top 20) — tabular")
-            paths.append(save_chart_to_minio(fig, kind="tabular/missing",
-                                              job_id=state.job_id))
+            paths.append(save_chart_to_minio(fig, kind="tabular/missing", job_id=state.job_id))
     except Exception:
         pass
 
@@ -37,8 +37,7 @@ def charts(df: Any, state: Any) -> list[str]:
                 df[c].plot(kind="hist", ax=ax, bins=30)
                 ax.set_title(str(c))
             fig.tight_layout()
-            paths.append(save_chart_to_minio(fig, kind="tabular/hist",
-                                              job_id=state.job_id))
+            paths.append(save_chart_to_minio(fig, kind="tabular/hist", job_id=state.job_id))
         except Exception:
             pass
 
@@ -54,8 +53,7 @@ def charts(df: Any, state: Any) -> list[str]:
             ax.set_yticklabels(corr.columns)
             fig.colorbar(im, ax=ax)
             ax.set_title("Correlation")
-            paths.append(save_chart_to_minio(fig, kind="tabular/corr",
-                                              job_id=state.job_id))
+            paths.append(save_chart_to_minio(fig, kind="tabular/corr", job_id=state.job_id))
         except Exception:
             pass
 

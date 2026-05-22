@@ -4,6 +4,7 @@
 - save_chart_to_minio(fig, kind, job_id) → matplotlib fig 저장 통일
 - basic_dataframe_profile(df, target_column) → 4 카테고리 공통 stat
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -13,6 +14,7 @@ from typing import Any, Optional
 def load_dataframe_from_state(state: Any) -> Any:
     """state.file_id 의 확장자 기반 자동 포맷 감지 + MinIO 로딩."""
     from tools.minio_tool import get_minio_client
+
     fmt = state.file_id.rsplit(".", 1)[-1].lower() if "." in state.file_id else "csv"
     return get_minio_client().load_dataframe(state.file_id, fmt=fmt)
 
@@ -20,6 +22,7 @@ def load_dataframe_from_state(state: Any) -> Any:
 def save_chart_to_minio(fig: Any, *, kind: str, job_id: str) -> str:
     """matplotlib Figure → MinIO 저장 → s3:// 경로 반환."""
     import matplotlib.pyplot as plt  # noqa: WPS433
+
     from tools.minio_tool import get_minio_client
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
@@ -31,25 +34,22 @@ def save_chart_to_minio(fig: Any, *, kind: str, job_id: str) -> str:
 
 def basic_dataframe_profile(df: Any, *, target_column: Optional[str]) -> dict[str, Any]:
     """4 카테고리 공통 profile — n_rows, n_cols, dtypes, missing, cardinality, memory."""
-    import pandas as pd  # noqa: WPS433
     import numpy as np  # noqa: WPS433
+    import pandas as pd  # noqa: WPS433
 
     n_rows = int(len(df))
     n_cols = int(df.shape[1])
     dtypes = {c: str(t) for c, t in df.dtypes.items()}
     missing = {c: float(df[c].isnull().mean()) for c in df.columns}
     cardinality = {c: int(df[c].nunique(dropna=True)) for c in df.columns}
-    memory_mb = float(df.memory_usage(deep=True).sum()) / (1024 ** 2)
+    memory_mb = float(df.memory_usage(deep=True).sum()) / (1024**2)
 
     numeric_stats: dict[str, dict[str, float]] = {}
     num_df = df.select_dtypes(include=[np.number])
     if not num_df.empty:
         desc = num_df.describe(percentiles=[0.25, 0.5, 0.75]).to_dict()
         for c, stats in desc.items():
-            numeric_stats[c] = {
-                k: float(v) for k, v in stats.items()
-                if v is not None and not pd.isna(v)
-            }
+            numeric_stats[c] = {k: float(v) for k, v in stats.items() if v is not None and not pd.isna(v)}
 
     has_target = bool(target_column and target_column in df.columns)
     target_dtype = str(df[target_column].dtype) if has_target else ""
@@ -57,8 +57,7 @@ def basic_dataframe_profile(df: Any, *, target_column: Optional[str]) -> dict[st
     if has_target:
         try:
             is_categorical_like = (
-                df[target_column].dtype.name in ("object", "category", "bool")
-                or df[target_column].nunique() <= 50
+                df[target_column].dtype.name in ("object", "category", "bool") or df[target_column].nunique() <= 50
             )
             if is_categorical_like:
                 vc = df[target_column].value_counts(dropna=False, normalize=True)
@@ -68,9 +67,7 @@ def basic_dataframe_profile(df: Any, *, target_column: Optional[str]) -> dict[st
 
     sample_rows = df.head(5).fillna("").to_dict(orient="records")
     sample_rows = [
-        {k: (v if isinstance(v, (str, int, float, bool)) else str(v))
-         for k, v in row.items()}
-        for row in sample_rows
+        {k: (v if isinstance(v, (str, int, float, bool)) else str(v)) for k, v in row.items()} for row in sample_rows
     ]
 
     return {

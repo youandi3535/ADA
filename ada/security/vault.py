@@ -2,10 +2,11 @@
 
 Dev 모드 (Day01) 와 Raft 모드 (운영) 모두 지원. KV v2 마운트 사용.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
 import hvac  # type: ignore
 
@@ -37,7 +38,9 @@ def write_secret(path: str, data: dict[str, Any], *, mount: str = "secret") -> b
     client = get_client()
     try:
         client.secrets.kv.v2.create_or_update_secret(
-            path=path, secret=data, mount_point=mount,
+            path=path,
+            secret=data,
+            mount_point=mount,
         )
         return True
     except Exception as e:

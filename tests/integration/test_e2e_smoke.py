@@ -1,4 +1,5 @@
 """E2E 스모크 — Titanic 데이터로 4 카테고리 중 tabular_ml 만 빠르게."""
+
 from __future__ import annotations
 
 import pytest
@@ -10,12 +11,15 @@ def test_smoke_imports():
     from agents.stubs import ALL_AGENT_CLASSES
     from orchestrator.graph import build_graph
     from orchestrator.runner import celery_app
-    from pipelines.factory import PipelineFactory
     from outputs import GENERATORS
+    from pipelines.factory import PipelineFactory
 
     assert len(ALL_AGENT_CLASSES) == 27
     assert PipelineFactory.supported_categories() == [
-        "tabular_ml", "tabular_dl", "timeseries", "anomaly_detection",
+        "tabular_ml",
+        "tabular_dl",
+        "timeseries",
+        "anomaly_detection",
     ]
     assert set(GENERATORS) == {"OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07"}
     assert celery_app.conf.task_routes["ada.pipeline.run"]["queue"] == "pipeline"

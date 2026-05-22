@@ -1148,16 +1148,16 @@ flowchart TB
     graph --> minio
     graph -->|완료| api
     api --> user
-    
+
     graph -.->|에러| autoerr[AutoErrorHandler]
     autoerr --> cli[claude-cli-sidecar]
     autoerr --> errkb[(error_kb)]
-    
+
     graph -.->|종료 후| selflearn[SelfLearningAgent]
     selflearn --> kb1[(Postgres KB)]
     selflearn --> kb2[(MinIO artifacts)]
     selflearn --> kb3[(pgvector)]
-    
+
     dashboard[🖥️ 현황판] -.->|폴링| pg
     dashboard -.->|폴링| registry[(agent_registry)]
 ```
@@ -2629,27 +2629,27 @@ if __name__ == "__main__":
   ```python
   # Anthropic
   anthropic_api_key: str
-  
+
   # LangSmith
   langsmith_api_key: str = ""
   langsmith_project: str = "ada-pipeline"
-  
+
   # Database
   database_url: str
-  
+
   # Redis
   redis_url: str = "redis://redis:6379/0"
-  
+
   # MinIO
   minio_endpoint: str = "minio:9000"
   minio_access_key: str
   minio_secret_key: str
   minio_bucket: str = "autoai-artifacts"
-  
+
   # MLflow
   mlflow_tracking_uri: str = "http://mlflow:5000"
   mlflow_s3_endpoint_url: str = "http://minio:9000"
-  
+
   # App
   log_level: str = "INFO"
   max_upload_size_mb: int = 100
@@ -2927,9 +2927,9 @@ jobs:
 
 ```
 R-0xx: 핵심 아키텍처 룰 (전체 적용)
-R-1xx: 데이터 관련 룰 (C 담당)
-R-2xx: 모델 관련 룰 (B 담당)
-R-3xx: 학습 관련 룰 (B 담당)
+R-1xx: 데이터 관련 룰 (jh 담당)
+R-2xx: 모델 관련 룰 (NY 담당)
+R-3xx: 학습 관련 룰 (NY 담당)
 R-9xx: Harness / 테스트 룰 (D 담당)
 ```
 
@@ -4172,28 +4172,28 @@ AGENT_PROGRESS_MAP_V2 = {
   def _validate(self, profile, rules) -> dict:
       errors = []
       warnings = []
-      
+
       # rows 검사
       if "min_rows" in rules and profile["rows"] < rules["min_rows"]:
           errors.append(f"행 수 부족: {profile['rows']} < {rules['min_rows']}")
-      
+
       # 컬럼 수 검사
       if "max_cols" in rules and profile["cols"] > rules["max_cols"]:
           errors.append(f"컬럼 수 초과: {profile['cols']} > {rules['max_cols']}")
-      
+
       # target 컬럼 필수 검사
       if rules.get("requires_target") and not profile.get("has_target"):
           errors.append("target_column 지정 필수")
-      
+
       # 날짜 컬럼 검사 (timeseries)
       if rules.get("requires_date_col") and not profile.get("date_col"):
           errors.append("시계열 카테고리: 날짜 컬럼 필수")
-      
+
       # 결측률 50% 초과 컬럼 경고
       for col, missing_rate in profile.get("missing", {}).items():
           if missing_rate > 0.5:
               warnings.append(f"컬럼 '{col}' 결측률 {missing_rate:.1%} — 제거 권장")
-      
+
       return {
           "is_valid": len(errors) == 0,
           "errors": errors,
@@ -4752,7 +4752,7 @@ class TestDataProfilerAgent:
   사용자가 제공한 데이터 카테고리, 타겟 컬럼, 질문을 분석하여
   task 유형(classification/regression/clustering/anomaly_detection)을
   JSON 형식으로만 응답하세요.
-  
+
   응답 형식:
   {
     "task": "classification",
@@ -5498,16 +5498,16 @@ async def start_pipeline(
   당신은 AutoML 모델 선택 전문가입니다.
   데이터 프로파일과 과거 성공 패턴을 분석하여
   최적의 ML 모델 3개를 추천하세요.
-  
+
   선택 가능한 모델: RandomForest, XGBoost, LightGBM, CatBoost
-  
+
   고려 요소:
   - 데이터 크기 (rows): 소규모(<1K) → RandomForest, 대규모(>10K) → XGBoost/LightGBM
   - 피처 수 (cols): 고차원(>100) → LightGBM/XGBoost (feature selection 강점)
   - 결측값 비율: 높음(>20%) → XGBoost/LightGBM (내장 처리)
   - 범주형 피처 많음 → CatBoost
   - 불균형 데이터 → class_weight 지원하는 모델 우선
-  
+
   응답 형식 (JSON만):
   {
     "candidates": [
@@ -5531,7 +5531,7 @@ async def start_pipeline(
       결측값 있는 컬럼: {sum(1 for v in profile['missing'].values() if v > 0)}
       수치형 컬럼: {sum(1 for v in profile['dtypes'].values() if 'float' in v or 'int' in v)}
       범주형 컬럼: {sum(1 for v in profile['dtypes'].values() if v == 'object')}
-      
+
       === 과거 성공 패턴 (동일 카테고리) ===
       {patterns or "없음"}
       """
@@ -12643,5 +12643,3 @@ v1 인수 테스트를 v2 인터랙티브 흐름에 맞춰 갱신. v2.1에서 im
 - `docs/operations/getting_started.md` — Langfuse·LLM Guard 설치 단계 추가.
 - `docs/development/add_new_tool.md` — 신설. 외부 도구 도입 시 ADR + 카탈로그 갱신 절차.
 - `docs/development/tool_catalog.md` — `TOOL_CATALOG_2026.md` 의 운영자판.
-
-

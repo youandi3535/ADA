@@ -1,4 +1,5 @@
 """Harness/KB 단위 테스트 (Day09/Day20)."""
+
 from __future__ import annotations
 
 
@@ -11,8 +12,7 @@ def test_kb_fingerprint_idempotent():
 
 
 def test_distill_constants():
-    from ada.harness.distiller import (CONFIDENCE_CAP, DECAY_DAYS,
-                                        DECAY_RATE, RETRACT_CONFIDENCE)
+    from ada.harness.distiller import CONFIDENCE_CAP, DECAY_DAYS, DECAY_RATE, RETRACT_CONFIDENCE
 
     assert CONFIDENCE_CAP == 0.95
     assert RETRACT_CONFIDENCE == 0.20

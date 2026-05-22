@@ -1,1 +1,1 @@
-"""tests.handlers.tabular — C 단독 테스트 폴더."""
+"""tests.handlers.tabular — jh 단독 테스트 폴더."""

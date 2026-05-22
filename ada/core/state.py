@@ -2,6 +2,7 @@
 
 R-005: 직접 수정 금지. ``state.model_copy(update={...})`` 패턴만 허용.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -82,7 +83,7 @@ class PipelineState(BaseModel):
     kb_citations: list[str] = Field(default_factory=list)
 
     # 카테고리별 격리 컨테이너 (Day 0 H0-4)
-    # 멤버 A/B/C 가 자기 카테고리 키 안에만 쓰기 → 충돌 0건.
+    # 멤버 CS/NY/jh 가 자기 카테고리 키 안에만 쓰기 → 충돌 0건.
     category_extras: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     # 옵저버빌리티

@@ -2,10 +2,8 @@
 
 같은 job 의 같은 output_code 를 재생성하면 v2, v3... 자동 증가.
 """
-from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Optional
+from __future__ import annotations
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,8 +13,7 @@ from ada.db.models import Output
 
 async def get_next_version(session: AsyncSession, job_id: str, code: str) -> int:
     count = await session.scalar(
-        select(func.count(Output.id))
-        .where(Output.job_id == job_id, Output.output_code == code)
+        select(func.count(Output.id)).where(Output.job_id == job_id, Output.output_code == code)
     )
     return (count or 0) + 1
 

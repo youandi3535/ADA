@@ -1,4 +1,5 @@
-"""agents.handlers.timeseries.insight — 시계열 인사이트 프롬프트 (A 담당)."""
+"""agents.handlers.timeseries.insight — 시계열 인사이트 프롬프트 (CS 담당)."""
+
 from __future__ import annotations
 
 from typing import Any

@@ -4,9 +4,9 @@
   - gate_responses[gate_code] = {"proposals": [...], "awaiting_decision": True}
   - current_gate = gate_code  (LangGraph interrupt_after 가 즉시 멈춤)
 """
+
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ada.core.state import PipelineState
@@ -39,8 +39,7 @@ class BaseGate(BaseAgent):
                 proposals = await self._propose(state)
             except Exception as e:
                 self.logger.warning("gate_propose_failed", gate=self.gate_code, error=str(e))
-                proposals = [{"id": 1, "title": "기본 권장",
-                              "rationale": "LLM 실패로 fallback", "score": 0.5}]
+                proposals = [{"id": 1, "title": "기본 권장", "rationale": "LLM 실패로 fallback", "score": 0.5}]
 
             gate_responses = dict(state.gate_responses)
             gate_responses[self.gate_code] = {

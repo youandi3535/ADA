@@ -2,12 +2,12 @@
 
 S3 호환 boto3 클라이언트, 멱등/재시도/Presigned URL 헬퍼.
 """
+
 from __future__ import annotations
 
 import io
 import os
 import tempfile
-import uuid
 import zipfile
 from pathlib import Path
 from typing import Any, Optional
@@ -59,10 +59,8 @@ class MinIOClient:
         return f"s3://{self.bucket}/{object_name}"
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-    def upload_bytes(self, body: bytes, object_name: str,
-                     content_type: str = "application/octet-stream") -> str:
-        self.s3.put_object(Bucket=self.bucket, Key=object_name,
-                           Body=body, ContentType=content_type)
+    def upload_bytes(self, body: bytes, object_name: str, content_type: str = "application/octet-stream") -> str:
+        self.s3.put_object(Bucket=self.bucket, Key=object_name, Body=body, ContentType=content_type)
         return f"s3://{self.bucket}/{object_name}"
 
     def download_bytes(self, object_name: str) -> bytes:
@@ -83,6 +81,7 @@ class MinIOClient:
                 buf.seek(0)
                 try:
                     import chardet  # noqa: WPS433
+
                     enc = chardet.detect(body[:65536]).get("encoding") or "cp949"
                 except Exception:
                     enc = "cp949"

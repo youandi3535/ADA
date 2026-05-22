@@ -1,4 +1,5 @@
-"""agents.handlers.tabular.selector — 정형 ML/DL 모델 추천 (C 담당)."""
+"""agents.handlers.tabular.selector — 정형 ML/DL 모델 추천 (jh 담당)."""
+
 from __future__ import annotations
 
 from typing import Any

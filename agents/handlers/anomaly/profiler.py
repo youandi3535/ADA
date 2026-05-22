@@ -1,7 +1,8 @@
-"""agents.handlers.anomaly.profiler — 이상탐지 데이터 프로파일 보강 (B 담당).
+"""agents.handlers.anomaly.profiler — 이상탐지 데이터 프로파일 보강 (NY 담당).
 
-Day 1 (B): outlier_iqr_ratio, contamination_estimate, dim별 isolation depth.
+Day 1 (NY): outlier_iqr_ratio, contamination_estimate, dim별 isolation depth.
 """
+
 from __future__ import annotations
 
 from typing import Any
