@@ -102,11 +102,11 @@ jobs:
             # 3) compose 파일이 있는 docker/ 로 이동
             cd docker
 
-            # 4) 최신 이미지 받기
-            docker compose pull api frontend worker-pipeline worker-training worker-output worker-harness
+            # 4) 최신 이미지 받기 (--env-file: .env가 docker/ 위 루트에 있어서 명시 필요)
+            docker compose --env-file ../.env pull api frontend worker-pipeline worker-training worker-output worker-harness
 
             # 5) 무중단에 가깝게 재기동 (DB/Redis/MinIO 는 건드리지 않음)
-            docker compose up -d --no-deps \
+            docker compose --env-file ../.env up -d --no-deps \
               api frontend \
               worker-pipeline worker-training worker-output worker-harness \
               nginx

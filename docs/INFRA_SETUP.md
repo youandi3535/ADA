@@ -205,10 +205,8 @@ sudo ufw allow 443/tcp
 sudo ufw allow from 100.64.0.0/10            # Tailscale 대역 - 관리 포트
 sudo ufw enable
 
-# 7) 백업 cron 등록 (매일 03:00 → 로컬 리눅스 서버로 DB 덤프 push)
-sudo cp /opt/ada/scripts/backup_postgres.sh /usr/local/bin/
-sudo chmod +x /usr/local/bin/backup_postgres.sh
-(sudo crontab -l 2>/dev/null; echo "0 3 * * * /usr/local/bin/backup_postgres.sh >> /var/log/ada-backup.log 2>&1") | sudo crontab -
+# 7) 백업 cron — VPS 에는 불필요 (Pull 방식: 로컬 리눅스가 VPS에서 가져감)
+# → 로컬 리눅스 서버 셋업 §6 참고
 
 # 8) 주간 도커 청소
 sudo tee /etc/cron.weekly/ada-docker-cleanup >/dev/null <<'EOF'
@@ -227,27 +225,43 @@ sudo chmod +x /etc/cron.weekly/ada-docker-cleanup
 
 ---
 
-## 6. 로컬 리눅스 서버 1회 초기 셋업 (백업 전용)
+## 6. 로컬 리눅스 서버 1회 초기 셋업 (백업 전용 — Pull 방식)
+
+백업 방향: 로컬 리눅스가 VPS에 SSH 접속해서 덤프를 직접 가져옴.
+VPS 포트 22는 이미 열려 있으므로 별도 포트 설정 불필요.
+SSH 키([백업]학원리눅스서버컴)는 이미 VPS authorized_keys에 등록 완료.
+
+**학원에 직접 방문해서 아래 순서로 진행.**
 
 ```bash
-# 백업 전용 계정 (shell 제한)
-sudo adduser --disabled-password --gecos "" ada-backup
-sudo mkdir -p /srv/backup/ada/{postgres,datasets}
-sudo chown -R ada-backup:ada-backup /srv/backup/ada
+# 1) 백업 저장 폴더 생성
+sudo mkdir -p /srv/backup/ada/postgres
+sudo chmod 700 /srv/backup/ada/postgres   # DB 덤프는 민감 데이터, 소유자만 접근
 
-# VPS 의 ada 계정 공개키를 authorized_keys 에 등록
-sudo -u ada-backup mkdir -p /home/ada-backup/.ssh
-sudo -u ada-backup vi /home/ada-backup/.ssh/authorized_keys
+# 2) VPS 연결 테스트 (키 인증 확인)
+ssh ada@<VPS_HOST> "echo 연결성공"
+# → '연결성공' 출력되면 OK
 
-# Tailscale (외부 접근 절대 차단)
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --ssh
+# 3) 백업 테스트 (cron 등록 전 반드시 확인)
+ssh ada@<VPS_HOST> "docker exec ada-postgres pg_dump -U autoai autoai | gzip" \
+  > /srv/backup/ada/postgres/ada_test.sql.gz
+ls -lh /srv/backup/ada/postgres/
+# → 파일 생성되면 OK
 
-# UFW
-sudo ufw default deny incoming
-sudo ufw allow from 100.64.0.0/10    # Tailscale CGNAT 대역만
-sudo ufw enable
+# 4) cron 등록 (하루 3회: 03시, 12시, 18시)
+crontab -e
+# 아래 3줄 추가 후 저장 (Ctrl+O → 엔터 → Ctrl+X)
+
+# 0 3  * * * ssh ada@<VPS_HOST> "docker exec ada-postgres pg_dump -U autoai autoai | gzip" > /srv/backup/ada/postgres/ada_$(date +\%Y\%m\%d_\%H\%M\%S).sql.gz
+# 0 12 * * * ssh ada@<VPS_HOST> "docker exec ada-postgres pg_dump -U autoai autoai | gzip" > /srv/backup/ada/postgres/ada_$(date +\%Y\%m\%d_\%H\%M\%S).sql.gz
+# 0 18 * * * ssh ada@<VPS_HOST> "docker exec ada-postgres pg_dump -U autoai autoai | gzip" > /srv/backup/ada/postgres/ada_$(date +\%Y\%m\%d_\%H\%M\%S).sql.gz
 ```
+
+> **고도화 예정 (Tailscale 설치 후):**
+> 현재는 crontab에 명령어를 직접 입력하는 방식을 사용한다.
+> 추후 Tailscale로 원격 접근이 가능해지면 `scripts/backup_postgres.sh` 스크립트 방식으로
+> 전환할 것. 스크립트 방식은 에러 처리, 자동 정리, 로그 기록이 포함돼 있어 운영에 더 적합하다.
+> 전환 방법은 `scripts/backup.conf.example` 참고.
 
 ---
 

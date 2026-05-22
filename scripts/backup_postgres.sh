@@ -1,55 +1,61 @@
 #!/usr/bin/env bash
 # =============================================================
-# backup_postgres.sh
+# backup_postgres.sh  (Pull 방식 — 로컬 리눅스 서버에서 실행)
 # -------------------------------------------------------------
-# VPS 에서 실행되어, PostgreSQL 컨테이너의 덤프를 떠서
-# 로컬 리눅스 서버(BACKUP_HOST)의 BACKUP_DIR_DB 로 SCP push.
+# 로컬 리눅스가 VPS에 SSH로 접속해서 pg_dump를 파이프로 받아
+# 로컬에 직접 저장한다. VPS에 임시 파일 남지 않음.
 #
-# 설치(VPS):
+# 설치 (로컬 리눅스 서버):
 #   sudo cp scripts/backup_postgres.sh /usr/local/bin/
 #   sudo chmod +x /usr/local/bin/backup_postgres.sh
 #   # crontab -e
-#   0 3 * * *  /usr/local/bin/backup_postgres.sh >> /var/log/ada-backup.log 2>&1
+#   0 3,12,18 * * *  /usr/local/bin/backup_postgres.sh >> /var/log/ada-backup.log 2>&1
 #
 # 전제:
-#   - .env 가 /opt/ada/.env 에 존재 (또는 ENV_FILE 환경변수로 지정)
-#   - VPS 가 BACKUP_HOST 로 ssh 키 인증 가능 (~/.ssh/id_ed25519)
-#   - 로컬 리눅스 서버는 Tailscale 또는 사무실 LAN 으로 접근 가능
+#   - 로컬 리눅스의 SSH 키가 VPS authorized_keys 에 등록돼 있어야 함
+#     ([백업]학원리눅스서버컴 키 — 이미 등록 완료)
+#   - /etc/ada-backup.conf 에 설정값 입력 (backup.conf.example 참고)
 # =============================================================
 set -euo pipefail
 
-ENV_FILE="${ENV_FILE:-/opt/ada/.env}"
-[[ -f "$ENV_FILE" ]] || { echo "ENV file not found: $ENV_FILE"; exit 1; }
-# shellcheck disable=SC1090
-set -a; source "$ENV_FILE"; set +a
+CONF_FILE="${CONF_FILE:-/etc/ada-backup.conf}"
+[[ -f "$CONF_FILE" ]] && { set -a; source "$CONF_FILE"; set +a; }
+
+VPS_HOST="${VPS_HOST:-}"
+VPS_USER="${VPS_USER:-ada}"
+VPS_SSH_PORT="${VPS_SSH_PORT:-22}"
+POSTGRES_USER="${POSTGRES_USER:-autoai}"
+POSTGRES_DB="${POSTGRES_DB:-autoai}"
+CONTAINER="${CONTAINER:-ada-postgres}"
+BACKUP_DIR_DB="${BACKUP_DIR_DB:-/srv/backup/ada/postgres}"
+BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+
+[[ -z "$VPS_HOST" ]] && { echo "[ERROR] VPS_HOST 가 설정되지 않았습니다. /etc/ada-backup.conf 확인"; exit 1; }
 
 TS="$(date +%Y%m%d_%H%M%S)"
 DUMP_NAME="ada_${POSTGRES_DB}_${TS}.sql.gz"
-TMP_PATH="/tmp/${DUMP_NAME}"
+LOCAL_PATH="${BACKUP_DIR_DB}/${DUMP_NAME}"
 
-echo "[$(date -Is)] BEGIN backup_postgres -> ${DUMP_NAME}"
+mkdir -p "${BACKUP_DIR_DB}"
 
-# 1) 컨테이너 내부에서 pg_dump (custom format + gzip)
-docker exec -i ada-postgres \
-  pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --no-owner --clean --if-exists \
-  | gzip -9 > "${TMP_PATH}"
+echo "[$(date -Is)] BEGIN pull_backup -> ${DUMP_NAME}"
 
-SIZE=$(du -h "${TMP_PATH}" | cut -f1)
-echo "[$(date -Is)] dump ok: ${SIZE}"
+# 1) VPS에 SSH 접속 → docker exec으로 pg_dump → 파이프로 로컬에 직접 저장
+ssh -p "${VPS_SSH_PORT}" \
+    -o StrictHostKeyChecking=accept-new \
+    -o ConnectTimeout=30 \
+    "${VPS_USER}@${VPS_HOST}" \
+    "docker exec -i ${CONTAINER} \
+      pg_dump -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+      --no-owner --clean --if-exists" \
+    | gzip -9 > "${LOCAL_PATH}"
 
-# 2) 로컬 리눅스 서버로 SCP push
-scp -q -o StrictHostKeyChecking=accept-new \
-  "${TMP_PATH}" \
-  "${BACKUP_USER}@${BACKUP_HOST}:${BACKUP_DIR_DB}/"
+SIZE=$(du -h "${LOCAL_PATH}" | cut -f1)
+echo "[$(date -Is)] saved: ${LOCAL_PATH} (${SIZE})"
 
-echo "[$(date -Is)] uploaded to ${BACKUP_HOST}:${BACKUP_DIR_DB}/"
+# 2) 오래된 백업 로컬에서 직접 정리
+find "${BACKUP_DIR_DB}" -type f -name "ada_*.sql.gz" \
+     -mtime "+${BACKUP_RETENTION_DAYS}" -delete
 
-# 3) 원격에서 오래된 백업 정리 (BACKUP_RETENTION_DAYS 이상)
-ssh -o StrictHostKeyChecking=accept-new \
-  "${BACKUP_USER}@${BACKUP_HOST}" \
-  "find '${BACKUP_DIR_DB}' -type f -name 'ada_*.sql.gz' -mtime +${BACKUP_RETENTION_DAYS} -delete"
-
-# 4) 로컬 임시 파일 제거
-rm -f "${TMP_PATH}"
-
-echo "[$(date -Is)] END backup_postgres OK"
+echo "[$(date -Is)] cleanup done (retention: ${BACKUP_RETENTION_DAYS}days)"
+echo "[$(date -Is)] END pull_backup OK"

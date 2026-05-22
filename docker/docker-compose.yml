@@ -50,7 +50,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -64,7 +64,7 @@ services:
       -c wal_keep_size=1GB
       -c max_wal_size=2GB
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -q"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -103,8 +103,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     ports:
-      - "9100:9000"        # S3 API
-      - "9101:9001"        # Console
+      - "127.0.0.1:9100:9000"   # S3 API
+      - "127.0.0.1:9101:9001"   # Console
     volumes:
       - minio_data:/data
     healthcheck:
@@ -127,7 +127,7 @@ services:
     container_name: ada-mlflow
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     environment:
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
@@ -154,10 +154,11 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
+    image: ghcr.io/youandi3535/ada-api:latest
     container_name: ada-api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
@@ -189,10 +190,11 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
+    image: ghcr.io/youandi3535/ada-frontend:latest
     container_name: ada-frontend
     restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
@@ -219,6 +221,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
+    image: ghcr.io/youandi3535/ada-worker:latest
     container_name: ada-worker-pipeline
     restart: unless-stopped
     command: celery -A orchestrator.runner worker -Q pipeline -c 2 -n pipeline@%h --loglevel=info
@@ -245,6 +248,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
+    image: ghcr.io/youandi3535/ada-worker:latest
     container_name: ada-worker-harness
     restart: unless-stopped
     command: celery -A orchestrator.runner worker -Q harness -c 1 -n harness@%h --loglevel=info
@@ -288,6 +292,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
+    image: ghcr.io/youandi3535/ada-worker:latest
     container_name: ada-worker-training
     restart: unless-stopped
     command: celery -A orchestrator.runner worker -Q training -c 1 -n training@%h --loglevel=info
@@ -314,6 +319,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
+    image: ghcr.io/youandi3535/ada-worker:latest
     container_name: ada-worker-output
     restart: unless-stopped
     command: celery -A orchestrator.runner worker -Q output -c 2 -n output@%h --loglevel=info
@@ -341,7 +347,7 @@ services:
     container_name: ada-serving
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
