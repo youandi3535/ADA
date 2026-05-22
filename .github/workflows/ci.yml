@@ -94,3 +94,10 @@ jobs:
           push: false
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+
+  docker-build-all:
+    name: docker-build-check
+    runs-on: ubuntu-latest
+    needs: docker-build-check
+    steps:
+      - run: echo "All docker builds passed"
