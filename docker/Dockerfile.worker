@@ -25,7 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements/base.txt requirements/worker.txt /app/requirements/
+COPY requirements/base.txt requirements/worker.txt \
+     requirements/handlers-tabular.txt \
+     requirements/handlers-timeseries.txt \
+     requirements/handlers-anomaly.txt \
+     /app/requirements/
 RUN pip install -r /app/requirements/worker.txt
 
 COPY . /app
