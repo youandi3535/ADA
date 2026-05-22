@@ -58,6 +58,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements/base.txt
           pip install -r requirements/api.txt
+          # smoke test 용 최소 데이터 라이브러리 (worker.txt 전체는 torch 때문에 무거움)
+          pip install pandas==2.2.2 numpy==1.26.4 scikit-learn==1.5.0
           pip install ruff pytest pytest-asyncio pytest-cov
 
       - name: Lint (ruff)
