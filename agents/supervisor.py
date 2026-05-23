@@ -1,14 +1,21 @@
-"""agents.supervisor — SupervisorAgent (Day06 §A).
+"""agents.supervisor — SupervisorAgent (Day06 §A + Day 1 KB 폴백 + 메트릭).
 
-파이프라인 진입점. 입력 검증 + LLM 태스크 분류 + HITL 재시도 가드.
+파이프라인 진입점.
+    1) 입력 검증
+    2) retry >= 1 시 ErrorKB 조회 → 매칭 시 fast-fail (자동 패치 큐) 우회
+    3) HITL — retry >= 2 시 인간 개입
+    4) LLM 태스크 분류 (시그널)
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import redis as redis_pkg
 
 from ada.core.config import settings
 from ada.core.state import PipelineState
+from ada.observability.metrics import record_kb_citation
 from agents.base import BaseAgent
 
 VALID_CATEGORIES = ("tabular_ml", "tabular_dl", "timeseries", "anomaly_detection")
@@ -42,7 +49,17 @@ class SupervisorAgent(BaseAgent):
                     next_agent="error_recovery",
                 )
 
-            # 2) HITL — 자동 재시도 한도 초과 시 인간 개입
+            # 2) retry >= 1: ErrorKB 조회 → 매칭 있으면 빠른 폴백
+            if state.retry_count >= 1 and state.error:
+                kb_match = await self._lookup_error_kb(state.error)
+                if kb_match is not None:
+                    record_kb_citation(source="error_kb")
+                    return state.with_update(
+                        kb_citations=list(state.kb_citations) + [f"error_kb:{kb_match['hash']}"],
+                        next_agent=kb_match.get("recommended_recovery", "error_recovery"),
+                    )
+
+            # 3) HITL — 자동 재시도 한도 초과 시 인간 개입
             if state.retry_count >= 2:
                 try:
                     r = redis_pkg.Redis.from_url(settings.redis_url)
@@ -54,7 +71,7 @@ class SupervisorAgent(BaseAgent):
                     next_agent="error_recovery",
                 )
 
-            # 3) LLM 태스크 분류 (선택, 시그널)
+            # 4) LLM 태스크 분류 (선택, 시그널)
             task = state.task or "auto"
             try:
                 user_prompt = (
@@ -79,6 +96,32 @@ class SupervisorAgent(BaseAgent):
                 next_agent="intent_elicitor",
             )
 
+    # ------------------------------------------------------------------
+    async def _lookup_error_kb(self, error_message: str) -> dict[str, Any] | None:
+        """ErrorKB 에서 동일 fingerprint 조회. 매칭 없으면 None."""
+        if self.session is None:
+            return None
+        try:
+            from sqlalchemy import select
+
+            from ada.db.models import ErrorKB
+            from ada.error_handler.auto_handler import fingerprint
+
+            fp = fingerprint(error_message)
+            kb = await self.session.scalar(select(ErrorKB).where(ErrorKB.error_hash == fp["hash"]))
+            if kb is None or (kb.confidence or 0.0) < 0.7:
+                return None
+            return {
+                "hash": fp["hash"],
+                "kb_id": str(kb.id),
+                "confidence": float(kb.confidence or 0.0),
+                "recommended_recovery": (kb.payload or {}).get("recommended_recovery", "error_recovery"),
+            }
+        except Exception as e:
+            self.logger.warning("error_kb_lookup_failed", error=str(e))
+            return None
+
+    # ------------------------------------------------------------------
     @staticmethod
     def _validate_input(state: PipelineState) -> tuple[bool, list[str]]:
         errs: list[str] = []

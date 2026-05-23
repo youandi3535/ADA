@@ -1,7 +1,9 @@
-"""agents.training_executor — TrainingExecutorAgent (Day08).
+"""agents.training_executor — TrainingExecutorAgent (Day08 + Day 6 best_params 연결).
 
 4 카테고리에 따라 PipelineFactory 로 파이프라인을 선택하고,
 ModelSelectionAgent 가 선정한 후보 3종을 학습한다.
+
+Day 6 계약: state.best_params[model] 가 있으면 그 값을 params 로 흘려준다.
 """
 
 from __future__ import annotations
@@ -69,11 +71,17 @@ class TrainingExecutorAgent(BaseAgent):
 
             trained: list[dict[str, Any]] = []
             for model_name in state.model_candidates:
+                # Day 6 계약: HyperparameterTuner 가 채운 best_params 우선 사용.
+                params = (state.best_params or {}).get(model_name, {}) or {}
                 try:
-                    model = pipeline.train(X_tr, y_tr, model_name=model_name, params={})
+                    model = pipeline.train(X_tr, y_tr, model_name=model_name, params=params)
                     metrics = pipeline.evaluate(model, X_val, y_val, task=task)
-                    info = {"model_name": model_name, "metrics": metrics, "mlflow_run_id": pipeline.mlflow_run_id}
-                    # 정형 ML 만 모델 SHA256 + MinIO 저장 의무 (Day08 R-704)
+                    info: dict[str, Any] = {
+                        "model_name": model_name,
+                        "metrics": metrics,
+                        "mlflow_run_id": pipeline.mlflow_run_id,
+                        "params_used": params,
+                    }
                     if state.category == "tabular_ml":
                         save = pipeline.save_model(model, state.job_id, model_name)
                         info.update(save)

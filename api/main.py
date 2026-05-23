@@ -107,6 +107,16 @@ from api.routes import kb as kb_routes  # noqa: E402
 
 app.include_router(kb_routes.router, prefix="/kb", tags=["KB"])
 
+# Prometheus metrics (Day 1)
+from api.routes import metrics as metrics_routes  # noqa: E402
+
+app.include_router(metrics_routes.router, tags=["Metrics"])
+
+# Admin audit + observability (Day 3)
+from api.routes import admin as admin_routes  # noqa: E402
+
+app.include_router(admin_routes.router, tags=["Admin"])
+
 
 # --- 메타 ---------------------------------------------------------------------
 @app.get("/health", tags=["meta"])
