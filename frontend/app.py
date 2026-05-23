@@ -45,7 +45,15 @@ def _headers() -> dict[str, str]:
 
 
 # --- 탭 ------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs(["1) 업로드/시작", "2) 에이전트 현황판", "3) HITL 응답", "4) 산출물/KB"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [
+        "1) 업로드/시작",
+        "2) 에이전트 현황판",
+        "3) HITL 응답",
+        "4) 산출물/KB",
+        "5) KPI 대시보드",
+    ]
+)
 
 # === 탭 1 — 업로드 ============================================================
 with tab1:
@@ -147,3 +155,80 @@ with tab4:
             st.json(r)
         except Exception as e:
             st.warning(str(e))
+
+
+# === 탭 5 — KPI 대시보드 (Day 10) =============================================
+with tab5:
+    st.header("5) KPI 대시보드")
+    st.caption("최근 N 시간의 운영 지표 — KP1 E2E 성공률 / KP2 평균 시간 / KP5 p95 / KP9 KB 적용률")
+
+    col_c1, col_c2 = st.columns([1, 4])
+    with col_c1:
+        since_h = st.number_input("최근 (시간)", min_value=1, max_value=720, value=24, step=1)
+    with col_c2:
+        st.write("")
+        refresh = st.button("KPI 갱신", key="kpi_refresh")
+
+    if refresh or "kpi_data" not in st.session_state:
+        try:
+            r = requests.get(
+                f"{API_BASE}/admin/observability/prometheus_check",
+                headers=_headers(),
+                timeout=5,
+            )
+            if r.ok:
+                st.session_state["kpi_prom"] = r.json()
+        except Exception:
+            pass
+
+        # API 가 없으면 로컬 스크립트 호출 (개발 환경)
+        try:
+            import json as _j
+            import subprocess
+
+            p = subprocess.run(
+                ["python", "scripts/kpi_measure.py", "--since", str(since_h), "--json"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if p.returncode == 0 and p.stdout.strip():
+                st.session_state["kpi_data"] = _j.loads(p.stdout.strip())
+        except Exception:
+            st.session_state["kpi_data"] = None
+
+    data = st.session_state.get("kpi_data") or {}
+    kpi_cols = st.columns(5)
+    kpi_cols[0].metric(
+        "KP1 E2E 성공률",
+        f"{(data.get('KP1_e2e_success_rate') or 0) * 100:.1f}%"
+        if data.get("KP1_e2e_success_rate") is not None
+        else "—",
+    )
+    kpi_cols[1].metric(
+        "KP2 평균 종단(분)",
+        f"{data.get('KP2_avg_duration_min', '—')}" if data.get("KP2_avg_duration_min") is not None else "—",
+    )
+    kpi_cols[2].metric(
+        "KP5 p95 응답(ms)",
+        f"{data.get('KP5_p95_api_ms', '—')}" if data.get("KP5_p95_api_ms") is not None else "—",
+    )
+    kpi_cols[3].metric(
+        "KP9 KB 적용률",
+        f"{(data.get('KP9_kb_citation_rate') or 0) * 100:.1f}%"
+        if data.get("KP9_kb_citation_rate") is not None
+        else "—",
+    )
+    kpi_cols[4].metric("최근 job 수", data.get("n_jobs", "—"))
+
+    with st.expander("raw KPI JSON"):
+        st.json(data)
+
+    prom = st.session_state.get("kpi_prom")
+    if prom:
+        st.divider()
+        st.subheader("Prometheus exposition 샘플")
+        if prom.get("available"):
+            st.success(f"메트릭 노출 OK · size {prom.get('size_bytes', 0)} bytes")
+        else:
+            st.warning("ada_agent_duration_seconds 미노출 — /metrics 확인 필요")

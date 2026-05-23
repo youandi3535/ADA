@@ -3,6 +3,7 @@
 R-003 모든 에이전트는 이 클래스를 상속한다.
 R-004 LLM 호출은 ``_call_llm()`` 헬퍼만 사용.
 """
+
 from __future__ import annotations
 
 import abc
@@ -94,6 +95,16 @@ class BaseAgent(abc.ABC):
                 output_tokens=self._last_output_tokens,
                 error=error,
             )
+            # Day 1 — Prometheus 메트릭 인스트루먼테이션 (단일 진입점)
+            try:
+                from ada.observability.metrics import record_agent_run
+
+                err_type = None
+                if status == "failed" and error:
+                    err_type = error.split(":", 1)[0]
+                record_agent_run(self.__class__.__name__, duration_ms / 1000.0, err_type)
+            except Exception:
+                pass
             if self.session is not None:
                 row = await self.session.get(AgentRun, run_id)
                 if row is not None:
@@ -163,9 +174,7 @@ class BaseAgent(abc.ABC):
 
     @staticmethod
     def _strip_md_fence(text: str) -> str:
-        return re.sub(
-            r"^```(?:json)?\s*|\s*```\s*$", "", text.strip(), flags=re.MULTILINE
-        )
+        return re.sub(r"^```(?:json)?\s*|\s*```\s*$", "", text.strip(), flags=re.MULTILINE)
 
     def _parse_json(self, text: str) -> Any:
         text = self._strip_md_fence(text)

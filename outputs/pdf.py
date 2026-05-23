@@ -1,10 +1,23 @@
-"""outputs.pdf — OUT-02 PDF 상세 리포트 (reportlab)."""
+"""outputs.pdf — OUT-02 PDF 상세 리포트 (reportlab) + Day 9 카테고리 테마/훅."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from outputs.base import OutputGenerator
+from outputs.base import OutputGenerator, get_theme
+
+
+def _colored_para_style(styles: Any, name: str, base: str, rgb: tuple[int, int, int]) -> Any:
+    """primary 색상이 적용된 스타일 생성 (Heading 등)."""
+    from reportlab.lib.colors import Color
+    from reportlab.lib.styles import ParagraphStyle
+
+    r, g, b = rgb
+    return ParagraphStyle(
+        name=name,
+        parent=styles[base],
+        textColor=Color(r / 255.0, g / 255.0, b / 255.0),
+    )
 
 
 class PDFReportGenerator(OutputGenerator):
@@ -20,7 +33,9 @@ class PDFReportGenerator(OutputGenerator):
         category: str,
         user_intent: str,
         eval_result: dict[str, Any] | None,
+        state: Any = None,  # Day 9 — extras 호출용
     ) -> str:
+        from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.lib.units import cm
@@ -30,53 +45,105 @@ class PDFReportGenerator(OutputGenerator):
             Paragraph,
             SimpleDocTemplate,
             Spacer,
+            Table,
+            TableStyle,
         )
+
+        theme = get_theme(category)
+        primary = theme["primary_rgb"]
+        label_ko = theme["label_ko"]
+        primary_color = colors.Color(primary[0] / 255.0, primary[1] / 255.0, primary[2] / 255.0)
 
         local = self._tmp()
         doc = SimpleDocTemplate(
             local, pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm
         )
         styles = getSampleStyleSheet()
+        title_style = _colored_para_style(styles, "TitleColored", "Title", primary)
+        h2_style = _colored_para_style(styles, "H2Colored", "Heading2", primary)
         flow: list = []
 
-        flow.append(Paragraph("ADA 자동 분석 보고서", styles["Title"]))
+        # 표지 — 색상 적용 제목 + 카테고리 라벨
+        flow.append(Paragraph(f"ADA 자동 분석 보고서 — {label_ko}", title_style))
         flow.append(Spacer(1, 1 * cm))
-        flow.append(Paragraph(f"<b>카테고리:</b> {category}", styles["Normal"]))
+        flow.append(Paragraph(f"<b>카테고리:</b> {label_ko} ({category})", styles["Normal"]))
         flow.append(Paragraph(f"<b>사용자 의도:</b> {user_intent or '미지정'}", styles["Normal"]))
         flow.append(Spacer(1, 0.5 * cm))
 
-        flow.append(Paragraph("핵심 인사이트", styles["Heading2"]))
+        # 핵심 인사이트
+        flow.append(Paragraph("핵심 인사이트", h2_style))
         flow.append(Paragraph((insights or "").replace("\n", "<br/>"), styles["BodyText"]))
         flow.append(PageBreak())
 
-        flow.append(Paragraph("Best Model", styles["Heading2"]))
+        # Best Model
+        flow.append(Paragraph("Best Model", h2_style))
         bm = best_model or {}
         flow.append(Paragraph(f"모델: <b>{bm.get('model_name')}</b>", styles["BodyText"]))
         for k, v in (bm.get("metrics") or {}).items():
             txt = f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
             flow.append(Paragraph(txt, styles["BodyText"]))
 
+        # EDA Charts
         flow.append(PageBreak())
-        flow.append(Paragraph("EDA Charts", styles["Heading2"]))
+        flow.append(Paragraph("EDA Charts", h2_style))
         for chart in eda_charts[:6]:
-            try:
-                import tempfile
+            tmp = self._download_chart(chart)
+            if tmp:
+                try:
+                    flow.append(Image(tmp, width=15 * cm, height=8 * cm))
+                    flow.append(Spacer(1, 0.5 * cm))
+                except Exception:
+                    continue
 
-                from tools.minio_tool import get_minio_client
+        # Day 9 — 카테고리 extras
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        if any(extras.get(k) for k in ("charts", "tables", "text_blocks")):
+            flow.append(PageBreak())
+            flow.append(Paragraph(f"[{label_ko}] 카테고리 분석", h2_style))
 
-                mc = get_minio_client()
-                key = chart.replace(f"s3://{mc.bucket}/", "") if chart.startswith("s3://") else chart
-                body = mc.download_bytes(key)
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png").name
-                with open(tmp, "wb") as f:
-                    f.write(body)
-                flow.append(Image(tmp, width=15 * cm, height=8 * cm))
-                flow.append(Spacer(1, 0.5 * cm))
-            except Exception:
-                continue
+            for chart in extras.get("charts", [])[:4]:
+                tmp = self._download_chart(chart)
+                if tmp:
+                    try:
+                        flow.append(Image(tmp, width=15 * cm, height=8 * cm))
+                        flow.append(Spacer(1, 0.4 * cm))
+                    except Exception:
+                        continue
 
+            for tbl in extras.get("tables", [])[:3]:
+                title = str(tbl.get("title", "표"))
+                flow.append(Paragraph(f"<b>{title}</b>", styles["BodyText"]))
+                try:
+                    rows = list(tbl.get("rows", []))
+                    cols = list(tbl.get("columns") or (list(rows[0].keys()) if rows else []))
+                    if cols and rows:
+                        data: list[list[Any]] = [list(cols)]
+                        for row in rows[:15]:
+                            data.append([str(row.get(c, "")) for c in cols])
+                        t = Table(data, hAlign="LEFT")
+                        t.setStyle(
+                            TableStyle(
+                                [
+                                    ("BACKGROUND", (0, 0), (-1, 0), primary_color),
+                                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                                ]
+                            )
+                        )
+                        flow.append(t)
+                        flow.append(Spacer(1, 0.4 * cm))
+                except Exception:
+                    continue
+
+            for text_block in extras.get("text_blocks", [])[:3]:
+                flow.append(Paragraph(str(text_block).replace("\n", "<br/>"), styles["BodyText"]))
+                flow.append(Spacer(1, 0.3 * cm))
+
+        # 평가
         flow.append(PageBreak())
-        flow.append(Paragraph("평가", styles["Heading2"]))
+        flow.append(Paragraph("평가", h2_style))
         ev = eval_result or {}
         flow.append(Paragraph(f"passed: <b>{ev.get('passed')}</b>", styles["BodyText"]))
         flow.append(Paragraph(ev.get("rationale", ""), styles["BodyText"]))
