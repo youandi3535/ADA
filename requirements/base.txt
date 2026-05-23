@@ -14,3 +14,5 @@ httpx==0.27.0
 boto3==1.34.101
 tenacity==8.3.0          # 재시도 데코레이터
 orjson==3.10.3           # 빠른 JSON
+pybreaker==1.2.0         # 서킷브레이커 (ada/core/breaker.py)
+chardet==5.2.0           # 파일 인코딩 자동 감지 (tools/minio_tool.py)

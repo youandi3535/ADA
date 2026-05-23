@@ -86,3 +86,7 @@ plotly==5.22.0
 
 # 산출물 생성 (Day12/Day15) — 5종 carrier
 python-pptx==0.6.23          # PPT
+reportlab==4.2.2             # PDF (outputs/pdf.py)
+
+# 시스템 모니터링
+psutil==5.9.8                # TrainingMonitorAgent 메모리/CPU 감시
