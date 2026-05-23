@@ -35,8 +35,9 @@ itsdangerous==2.2.0                 # 서명된 쿠키
 hvac==2.3.0                         # Vault 클라이언트
 slowapi==0.1.9                      # rate limit
 
-# 관측 (Day01 Prometheus)
+# 관측 (Day01 Prometheus + Langfuse)
 prometheus-client==0.20.0   # /metrics 엔드포인트 + ada_* 지표
+langfuse==2.36.0             # LLM 호출 추적 (ada/core/langfuse_client.py, 미설치 시 no-op)
 
 # 보조
 celery==5.4.0           # Celery 태스크 enqueue 용도
