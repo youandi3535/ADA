@@ -35,6 +35,9 @@ itsdangerous==2.2.0                 # 서명된 쿠키
 hvac==2.3.0                         # Vault 클라이언트
 slowapi==0.1.9                      # rate limit
 
+# 관측 (Day01 Prometheus)
+prometheus-client==0.20.0   # /metrics 엔드포인트 + ada_* 지표
+
 # 보조
 celery==5.4.0           # Celery 태스크 enqueue 용도
 redis==5.0.4
