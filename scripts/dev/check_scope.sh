@@ -33,11 +33,11 @@ case "$EMAIL" in
         ROLE="CS (timeseries)"
         ALLOWED_REGEX="^(agents/handlers/timeseries/|pipelines/timeseries/|tests/handlers/timeseries/|requirements/handlers-timeseries\.txt$)"
         ;;
-    *ny*|*NY*|*member-b*|*memberB*|*anomaly*|*anom-*)
+    *ny*|*NY*|*member-b*|*memberB*|*anomaly*|*anom-*|*olivia*)
         ROLE="NY (anomaly)"
         ALLOWED_REGEX="^(agents/handlers/anomaly/|pipelines/anomaly/|tests/handlers/anomaly/|requirements/handlers-anomaly\.txt$)"
         ;;
-    *jh*|*JH*|*member-c*|*memberC*|*tabular*|*tab-*)
+    *jh*|*JH*|*member-c*|*memberC*|*tabular*|*tab-*|*twinking*)
         ROLE="jh (tabular)"
         ALLOWED_REGEX="^(agents/handlers/tabular/|pipelines/tabular_(ml|dl)/|tests/handlers/tabular/|requirements/handlers-tabular\.txt$)"
         ;;

@@ -12,17 +12,17 @@ CODEOWNERS 파일의 핸들이 **실제로 존재하는 GitHub 계정**이어야
 
 ---
 
-## 📋 매핑 표 (작성 필요)
+## 📋 매핑 표 (✅ 적용 완료 — 2026-05-22)
 
-| 짧은 핸들 | 멤버 | 담당 영역 | 실제 GitHub username |
-|---|---|---|---|
-| `@hj` | HJ | 시스템·메타·인프라 | `@youandi3535`  ← 실제 username 으로 확정/수정 |
-| `@cs` | CS | timeseries     | `@________________` |
-| `@ny` | NY | anomaly        | `@________________` |
-| `@jh` | jh | tabular        | `@________________` |
+| 짧은 핸들 | 멤버 | 실명 | 담당 영역 | 실제 GitHub username | git 이메일 |
+|---|---|---|---|---|---|
+| `@hj` | HJ | 효중 | 시스템·메타·인프라 | **@youandi3535** | youandi3535@gmail.com |
+| `@cs` | CS | 창선 | timeseries        | **@chang-seon**     | csya97@naver.com |
+| `@ny` | NY | 나연 | anomaly           | **@oliviajain4-dev** | oliviajain4@gmail.com |
+| `@jh` | jh | 정현 | tabular           | **@han00jh**        | twinking3594@gmail.com |
 
-> 위 표의 빈 칸을 실제 username 으로 채운 뒤 아래 절차 진행.
-> 핸들과 실제 username 이 동일하면 (예: GitHub username 도 `cs`) 치환 불필요.
+> ✅ CODEOWNERS 파일에는 이미 실제 username 으로 치환됨 (2026-05-22 적용).
+> 멤버 교체 시 위 표 업데이트 + 아래 sed 명령으로 재치환.
 
 ---
 
@@ -33,7 +33,7 @@ CODEOWNERS 파일의 핸들이 **실제로 존재하는 GitHub 계정**이어야
 GitHub 레포 Settings → Collaborators 에서 4명 모두 **Write 권한** 이상으로 추가되어 있어야 함.
 (추가 안 된 username 은 CODEOWNERS 에서 무시됨)
 
-### 2) CODEOWNERS 일괄 치환 (핸들과 username 이 다른 경우)
+### 2) CODEOWNERS 일괄 치환 (이미 적용된 명령 — 참고용)
 
 ```bash
 cd /path/to/ADA
@@ -41,11 +41,11 @@ cd /path/to/ADA
 # 백업
 cp .github/CODEOWNERS .github/CODEOWNERS.bak
 
-# 일괄 치환 (실제 username 으로 교체 — @hj 는 이미 youandi3535 가능)
-sed -i 's/@hj\b/@youandi3535/g'          .github/CODEOWNERS
-sed -i 's/@cs\b/@__realname_cs/g'        .github/CODEOWNERS
-sed -i 's/@ny\b/@__realname_ny/g'        .github/CODEOWNERS
-sed -i 's/@jh\b/@__realname_jh/g'        .github/CODEOWNERS
+# 2026-05-22 적용한 실제 매핑
+sed -i 's/@hj\b/@youandi3535/g'         .github/CODEOWNERS
+sed -i 's/@cs\b/@chang-seon/g'          .github/CODEOWNERS
+sed -i 's/@ny\b/@oliviajain4-dev/g'     .github/CODEOWNERS
+sed -i 's/@jh\b/@han00jh/g'             .github/CODEOWNERS
 
 # 확인
 grep "@" .github/CODEOWNERS | head -20

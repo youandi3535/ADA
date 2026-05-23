@@ -5,121 +5,121 @@
 # 본인 폴더 밖을 수정할 때 경고/차단.
 #
 # 사용 전 .github/CODEOWNERS_TEAM_MAPPING 에 GitHub username 매핑 권장
-# 또는 아래 @hj, @cs, @ny, @jh 를 실제 username 으로 교체.
+# 또는 아래 @youandi3535, @chang-seon, @oliviajain4-dev, @han00jh 를 실제 username 으로 교체.
 
 # ============================================================
 # 1) HJ — 시스템·메타·인프라·dispatcher 8종 (단독)
 # ============================================================
-/agents/base.py                            @hj
-/agents/personas.py                        @hj
-/agents/stubs.py                           @hj
+/agents/base.py                            @youandi3535
+/agents/personas.py                        @youandi3535
+/agents/stubs.py                           @youandi3535
 
 # dispatcher 8종 (handlers/{cat} 호출만)
-/agents/data_profiler.py                   @hj
-/agents/preprocessing_strategist.py        @hj
-/agents/feature_engineer.py                @hj
-/agents/eda_agent.py                       @hj
-/agents/model_selection.py                 @hj
-/agents/eval_agent.py                      @hj
-/agents/insight.py                         @hj
-/agents/report_composer.py                 @hj
+/agents/data_profiler.py                   @youandi3535
+/agents/preprocessing_strategist.py        @youandi3535
+/agents/feature_engineer.py                @youandi3535
+/agents/eda_agent.py                       @youandi3535
+/agents/model_selection.py                 @youandi3535
+/agents/eval_agent.py                      @youandi3535
+/agents/insight.py                         @youandi3535
+/agents/report_composer.py                 @youandi3535
 
 # 카테고리 무관 메타 5개
-/agents/supervisor.py                      @hj
-/agents/self_learning.py                   @hj
-/agents/auto_error_handler.py              @hj
-/agents/security_guard.py                  @hj
-/agents/error_recovery.py                  @hj
+/agents/supervisor.py                      @youandi3535
+/agents/self_learning.py                   @youandi3535
+/agents/auto_error_handler.py              @youandi3535
+/agents/security_guard.py                  @youandi3535
+/agents/error_recovery.py                  @youandi3535
 
 # 게이트 dispatcher (각 카테고리 fallback 은 handlers/{cat}/proposer.py 로 위임됨)
-/agents/gates/                             @hj
+/agents/gates/                             @youandi3535
 
 # 학습 실행 메타 (HPO/Monitor/Aggregator/FineTune/IntentElicitor/SchemaValidator)
-/agents/hyperparameter_tuner.py            @hj
-/agents/training_executor.py               @hj
-/agents/training_monitor.py                @hj
-/agents/metrics_aggregator.py              @hj
-/agents/fine_tune_executor.py              @hj
-/agents/intent_elicitor.py                 @hj
-/agents/schema_validator.py                @hj
-/agents/explainability.py                  @hj
+/agents/hyperparameter_tuner.py            @youandi3535
+/agents/training_executor.py               @youandi3535
+/agents/training_monitor.py                @youandi3535
+/agents/metrics_aggregator.py              @youandi3535
+/agents/fine_tune_executor.py              @youandi3535
+/agents/intent_elicitor.py                 @youandi3535
+/agents/schema_validator.py                @youandi3535
+/agents/explainability.py                  @youandi3535
 
 # handlers 공통 베이스
-/agents/handlers/__init__.py               @hj
-/agents/handlers/_base.py                  @hj
-/agents/handlers/common/                   @hj
+/agents/handlers/__init__.py               @youandi3535
+/agents/handlers/_base.py                  @youandi3535
+/agents/handlers/common/                   @youandi3535
 
 # 코어 / DB / 보안 / 옵저버빌리티 / 자체학습 / 에러 핸들러
-/ada/                                      @hj
+/ada/                                      @youandi3535
 
 # 오케스트레이션
-/orchestrator/                             @hj
+/orchestrator/                             @youandi3535
 
 # API / 프론트엔드 / 서빙
-/api/                                      @hj
-/frontend/app.py                           @hj
-/serving/                                  @hj
+/api/                                      @youandi3535
+/frontend/app.py                           @youandi3535
+/serving/                                  @youandi3535
 
 # 산출물 carrier (5종)
-/outputs/base.py                           @hj
-/outputs/ppt.py                            @hj
-/outputs/pdf.py                            @hj
-/outputs/script.py                         @hj
-/outputs/html_dashboard.py                 @hj
-/outputs/markdown_insight.py               @hj
-/outputs/versioning.py                     @hj
-/outputs/plotly_chart.py                   @hj
-/outputs/__init__.py                       @hj
+/outputs/base.py                           @youandi3535
+/outputs/ppt.py                            @youandi3535
+/outputs/pdf.py                            @youandi3535
+/outputs/script.py                         @youandi3535
+/outputs/html_dashboard.py                 @youandi3535
+/outputs/markdown_insight.py               @youandi3535
+/outputs/versioning.py                     @youandi3535
+/outputs/plotly_chart.py                   @youandi3535
+/outputs/__init__.py                       @youandi3535
 
 # 파이프라인 베이스 + factory
-/pipelines/base.py                         @hj
-/pipelines/factory.py                      @hj
-/pipelines/__init__.py                     @hj
+/pipelines/base.py                         @youandi3535
+/pipelines/factory.py                      @youandi3535
+/pipelines/__init__.py                     @youandi3535
 
 # 인프라 / 문서 / CI / 마이그레이션
-/docker/                                   @hj
-/scripts/                                  @hj
-/.github/                                  @hj
-/requirements/                             @hj
-/migrations/                               @hj
-/alembic.ini                               @hj
-/Makefile                                  @hj
-/AGENTS.md                                 @hj
-/docs/                                     @hj
-/tools/                                    @hj
+/docker/                                   @youandi3535
+/scripts/                                  @youandi3535
+/.github/                                  @youandi3535
+/requirements/                             @youandi3535
+/migrations/                               @youandi3535
+/alembic.ini                               @youandi3535
+/Makefile                                  @youandi3535
+/AGENTS.md                                 @youandi3535
+/docs/                                     @youandi3535
+/tools/                                    @youandi3535
 
 # 루트 공통 테스트 (멤버별 카테고리 테스트는 아래 참조)
-/tests/conftest.py                         @hj
-/tests/test_state.py                       @hj
-/tests/test_personas.py                    @hj
-/tests/test_graph_build.py                 @hj
-/tests/test_agents_count.py                @hj
-/tests/integration/                        @hj
+/tests/conftest.py                         @youandi3535
+/tests/test_state.py                       @youandi3535
+/tests/test_personas.py                    @youandi3535
+/tests/test_graph_build.py                 @youandi3535
+/tests/test_agents_count.py                @youandi3535
+/tests/integration/                        @youandi3535
 
 # ============================================================
 # 2) CS — timeseries 종주 (단독)
 # ============================================================
-/agents/handlers/timeseries/               @cs
-/pipelines/timeseries/                     @cs
-/tests/handlers/timeseries/                @cs
-/requirements/handlers-timeseries.txt      @cs
+/agents/handlers/timeseries/               @chang-seon
+/pipelines/timeseries/                     @chang-seon
+/tests/handlers/timeseries/                @chang-seon
+/requirements/handlers-timeseries.txt      @chang-seon
 
 # ============================================================
 # 3) NY — anomaly_detection 종주 (단독)
 # ============================================================
-/agents/handlers/anomaly/                  @ny
-/pipelines/anomaly/                        @ny
-/tests/handlers/anomaly/                   @ny
-/requirements/handlers-anomaly.txt         @ny
+/agents/handlers/anomaly/                  @oliviajain4-dev
+/pipelines/anomaly/                        @oliviajain4-dev
+/tests/handlers/anomaly/                   @oliviajain4-dev
+/requirements/handlers-anomaly.txt         @oliviajain4-dev
 
 # ============================================================
 # 4) jh — tabular_ml + tabular_dl 종주 (단독)
 # ============================================================
-/agents/handlers/tabular/                  @jh
-/pipelines/tabular_ml/                     @jh
-/pipelines/tabular_dl/                     @jh
-/tests/handlers/tabular/                   @jh
-/requirements/handlers-tabular.txt         @jh
+/agents/handlers/tabular/                  @han00jh
+/pipelines/tabular_ml/                     @han00jh
+/pipelines/tabular_dl/                     @han00jh
+/tests/handlers/tabular/                   @han00jh
+/requirements/handlers-tabular.txt         @han00jh
 
 # ============================================================
 # 5) 공유 규약 (3 멤버 합의 필요)
