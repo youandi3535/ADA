@@ -122,6 +122,11 @@ from api.routes import error_dashboard as error_dashboard_routes  # noqa: E402
 
 app.include_router(error_dashboard_routes.router)
 
+# 팀 Q&A 수집 & 조회 (KB 학습 원천)
+from api.routes import conversation_kb as conversation_kb_routes  # noqa: E402
+
+app.include_router(conversation_kb_routes.router)
+
 
 # --- 메타 ---------------------------------------------------------------------
 @app.get("/health", tags=["meta"])
