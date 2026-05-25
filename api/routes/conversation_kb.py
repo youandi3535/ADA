@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -49,6 +50,61 @@ from ada.db.session import get_db
 
 router = APIRouter(prefix="/kb/conversation", tags=["ConversationKB"])
 log = get_logger("conversation_kb")
+
+# KB 저장 최소 품질 점수 (0.0~1.0). 이 값 미만은 임베딩·인덱싱 건너뜀.
+_MIN_QUALITY_SCORE = 0.45
+
+
+# =============================================================================
+# 품질 게이트 — 오답/거부/빈 답변이 KB에 쌓이는 것 방지
+# =============================================================================
+
+# 거부·실패 패턴 (이 패턴이 포함된 답변은 KB에 저장하지 않음)
+_REFUSAL_PATTERNS = [
+    re.compile(r"죄송(합니다|해요|해서)", re.I),
+    re.compile(r"(잘\s*모르|알\s*수\s*없|답\s*변\s*할\s*수\s*없)", re.I),
+    re.compile(r"I\s+(don'?t\s+know|can'?t|cannot|am\s+not\s+able)", re.I),
+    re.compile(r"(I'?m\s+sorry|I\s+apologize)", re.I),
+    re.compile(r"\((오류|에러|Error).*(발생|occurred)\)", re.I),
+    re.compile(r"\(Claude\s+응답\s+없음\)", re.I),
+    re.compile(r"\(Ollama\s+응답\s+없음\)", re.I),
+    re.compile(r"폴백\s+실패", re.I),
+    re.compile(r"모든\s+폴백\s+비활성화", re.I),
+]
+
+
+def _quality_score(question: str, answer: str) -> float:
+    """답변 품질 점수 (0.0~1.0).
+
+    판단 기준:
+      - 너무 짧은 답변 패널티
+      - 거부/실패 패턴 → 즉시 낮은 점수
+      - 코드 블록·구체적 내용 포함 시 보너스
+    """
+    score = 1.0
+
+    # 1. 길이 기반
+    ans_len = len(answer.strip())
+    if ans_len < 30:
+        score *= 0.2
+    elif ans_len < 80:
+        score *= 0.6
+    elif ans_len < 150:
+        score *= 0.85
+
+    # 2. 거부/실패 패턴
+    for pat in _REFUSAL_PATTERNS:
+        if pat.search(answer):
+            score *= 0.15
+            break
+
+    # 3. 구체적 내용 보너스
+    if "```" in answer:
+        score = min(1.0, score * 1.25)  # 코드 블록
+    elif any(kw in answer for kw in ("def ", "class ", "import ", "return ", "async ")):
+        score = min(1.0, score * 1.10)  # 코드 키워드
+
+    return round(score, 3)
 
 
 # =============================================================================
@@ -132,6 +188,17 @@ async def _embed_and_index_conv(
       → /kb/conversation/unprocessed 로 수동 재처리 가능
     """
     import asyncio
+
+    # ── 0. 품질 게이트 — 오답/거부/빈 답변 KB 저장 방지 ──────────────────
+    q_score = _quality_score(question, answer)
+    if q_score < _MIN_QUALITY_SCORE:
+        log.info(
+            "kb_skipped_low_quality",
+            conv_id=conv_id,
+            quality_score=q_score,
+            answer_preview=answer[:80],
+        )
+        return
 
     # ── 1. 임베딩 생성 (CPU-bound → thread pool) ───────────────────────
     try:

@@ -5,6 +5,12 @@
     2순위  Ollama 로컬 LLM (qwen2.5:7b, 호스트 실행)
     3순위  Claude Opus (클라우드, 최후 수단)
 
+다중 게이트 (KB 히트 시 모두 통과해야 KB 답변 반환):
+    - 코사인 유사도 ≥ threshold (기본 0.82)
+    - success_count ≥ min_hit_count (기본 0, 훅에서는 3)
+    - 단어 겹침 비율 ≥ min_word_overlap (기본 0.0, 훅에서는 0.5)
+    - 예외: 유사도 ≥ 0.98 (사실상 동일 문장) → hit_count/overlap 게이트 면제
+
 엔드포인트:
     POST /kb/search          질문 입력 → 3단계 폴백으로 답변 반환
     GET  /kb/search/health   KB + Ollama + Embedder 상태 확인
@@ -16,6 +22,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -59,6 +66,9 @@ class SearchIn(BaseModel):
     threshold: float = Field(default=_DEFAULT_THRESHOLD, ge=0.0, le=1.0)
     use_ollama_fallback: bool = Field(default=True)
     use_claude_fallback: bool = Field(default=True)
+    # 다중 게이트 파라미터
+    min_hit_count: int = Field(default=0, ge=0, description="최소 success_count (훅에서는 3 권장)")
+    min_word_overlap: float = Field(default=0.0, ge=0.0, le=1.0, description="단어 겹침 비율 (훅에서는 0.5 권장)")
 
 
 class KBHit(BaseModel):
@@ -68,7 +78,25 @@ class KBHit(BaseModel):
     team_member: Optional[str]
     project: Optional[str]
     similarity: float
+    success_count: int = 1
     source: str = "team_kb"
+
+
+# =============================================================================
+# 단어 겹침 비율 (다중 게이트 보조)
+# =============================================================================
+
+
+def _word_overlap_ratio(q1: str, q2: str) -> float:
+    """두 질문의 의미 단어(2글자 이상) 겹침 비율.
+
+    분모: min(len(words1), len(words2)) — 짧은 쪽 기준 → 관대하게 계산.
+    """
+    words1 = set(re.findall(r"\w{2,}", q1.lower()))
+    words2 = set(re.findall(r"\w{2,}", q2.lower()))
+    if not words1 or not words2:
+        return 0.0
+    return len(words1 & words2) / min(len(words1), len(words2))
 
 
 class SearchOut(BaseModel):
@@ -118,7 +146,10 @@ async def _vector_search(
     threshold: float,
     top_k: int,
 ) -> list[dict[str, Any]]:
-    """self_learning_kb 에서 가장 유사한 qa_pair 검색."""
+    """self_learning_kb 에서 가장 유사한 qa_pair 검색.
+
+    success_count 도 반환 — 다중 게이트 필터링에 사용.
+    """
     emb_str = "[" + ",".join(f"{v:.6f}" for v in embedding) + "]"
 
     rows = (
@@ -129,6 +160,7 @@ async def _vector_search(
                 "       payload->>'answer'      AS answer, "
                 "       payload->>'team_member' AS team_member, "
                 "       payload->>'project'     AS project, "
+                "       COALESCE(success_count, 1) AS success_count, "
                 "       1 - (embedding <=> CAST(:emb AS vector)) AS similarity "
                 "FROM   self_learning_kb "
                 "WHERE  kb_type = 'qa_pair' "
@@ -147,10 +179,27 @@ async def _vector_search(
             "answer": r.answer or "",
             "team_member": r.team_member,
             "project": r.project,
+            "success_count": int(r.success_count),
             "similarity": float(r.similarity),
         }
         for r in rows
     ]
+
+
+async def _increment_success_count(db: AsyncSession, kb_id: str) -> None:
+    """KB 히트 시 success_count 증가 (학습 누적)."""
+    try:
+        await db.execute(
+            text(
+                "UPDATE self_learning_kb "
+                "SET success_count = COALESCE(success_count, 1) + 1, "
+                "    updated_at = NOW() "
+                "WHERE id = CAST(:kb_id AS uuid)"
+            ).bindparams(kb_id=kb_id)
+        )
+        await db.commit()
+    except Exception:  # noqa: BLE001
+        pass  # 카운트 실패는 조용히 무시
 
 
 # =============================================================================
@@ -287,11 +336,36 @@ async def search_kb(
 
     # ── 2. 벡터 검색 ──────────────────────────────────────────────────────
     hits_raw = await _vector_search(db, embedding, body.threshold, _TOP_K)
-    hits = [KBHit(**h) for h in hits_raw]
 
-    # ── 3. KB 히트 ────────────────────────────────────────────────────────
+    # ── 3. 다중 게이트 필터 ───────────────────────────────────────────────
+    # 유사도 ≥ 0.98 (사실상 동일 문장) → hit_count / overlap 게이트 면제
+    _EXACT_SIM = 0.98
+    filtered: list[dict[str, Any]] = []
+    for h in hits_raw:
+        sim = h["similarity"]
+        is_exact = sim >= _EXACT_SIM
+
+        if not is_exact:
+            # hit_count 게이트
+            if body.min_hit_count > 0 and h["success_count"] < body.min_hit_count:
+                continue
+            # 단어 겹침 게이트
+            if body.min_word_overlap > 0.0:
+                overlap = _word_overlap_ratio(body.question, h["question"])
+                if overlap < body.min_word_overlap:
+                    continue
+
+        filtered.append(h)
+
+    hits = [KBHit(**h) for h in filtered]
+
+    # ── 4. KB 히트 ────────────────────────────────────────────────────────
     if hits:
         best = hits[0]
+        # success_count 증가 (비동기, 응답 차단 없음)
+        import asyncio
+
+        asyncio.create_task(_increment_success_count(db, best.kb_id))
         return SearchOut(
             answered_by="team_kb",
             answer=best.answer,
@@ -301,7 +375,7 @@ async def search_kb(
             model_used=None,
         )
 
-    # ── 4. KB 미스 → Ollama → Claude Opus ────────────────────────────────
+    # ── 5. KB 미스 → Ollama → Claude Opus ────────────────────────────────
     answer, model_used, answered_by = await _run_fallbacks(
         body.question, body.use_ollama_fallback, body.use_claude_fallback
     )

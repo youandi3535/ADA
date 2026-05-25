@@ -133,7 +133,40 @@ class AutoErrorHandler:
     async def handle(self, log_row: FailureLog) -> dict[str, Any]:
         fp = fingerprint(log_row.error_message or "", log_row.stack_trace or "")
 
-        # ── 1순위: ErrorKB 자동 매칭 ───────────────────────────────────────
+        # ── Tier 0: 정적 결정론적 Fixer (LLM 비용 0, < 100ms) ──────────────
+        try:
+            from ada.error_handler.static_fixers import try_static_fix
+
+            static = try_static_fix(
+                log_row.error_message or "",
+                log_row.stack_trace or "",
+            )
+            if static and static.get("diff"):
+                self.session.add(
+                    PendingPatch(
+                        error_kb_id=None,
+                        patch_diff=static["diff"],
+                        test_plan=f"[static:{static['fixer']}] {static['test_plan']}",
+                        confidence=static["confidence"],
+                        review_status="pending",
+                    )
+                )
+                await self.session.flush()
+                log.info(
+                    "static_patch_queued",
+                    fixer=static["fixer"],
+                    confidence=static["confidence"],
+                    chars=len(static["diff"]),
+                )
+                return {
+                    "action": "patch_queued_static",
+                    "fixer": static["fixer"],
+                    "patch_chars": len(static["diff"]),
+                }
+        except Exception as e:  # noqa: BLE001
+            log.warning("static_fixer_failed", error=str(e))
+
+        # ── Tier 1: ErrorKB 자동 매칭 ──────────────────────────────────────
         kb = await self.session.scalar(select(ErrorKB).where(ErrorKB.error_hash == fp["hash"]))
         if kb and (kb.confidence or 0.0) >= 0.7:
             log_row.auto_handled_by_kb = True
@@ -143,7 +176,33 @@ class AutoErrorHandler:
             log.info("auto_kb_match", kb_id=str(kb.id), confidence=kb.confidence)
             return {"action": "auto_kb_match", "kb_id": str(kb.id)}
 
-        # ── 2순위: Ollama qwen2.5-coder ────────────────────────────────────
+        # ── Tier 1.5: 승인된 패치 재사용 (LLM 비용 0) ─────────────────────
+        if kb:
+            try:
+                approved = await self.session.scalar(
+                    select(PendingPatch)
+                    .where(PendingPatch.error_kb_id == kb.id)
+                    .where(PendingPatch.review_status == "approved")
+                    .order_by(PendingPatch.created_at.desc())
+                )
+                if approved and (approved.confidence or 0.0) >= 0.65:
+                    kb.success_count = (kb.success_count or 0) + 1
+                    await self.session.flush()
+                    log.info(
+                        "approved_patch_reused",
+                        kb_id=str(kb.id),
+                        patch_id=str(approved.id),
+                        confidence=approved.confidence,
+                    )
+                    return {
+                        "action": "patch_reused_approved",
+                        "patch_id": str(approved.id),
+                        "patch_chars": len(approved.patch_diff or ""),
+                    }
+            except Exception as e:  # noqa: BLE001
+                log.warning("approved_patch_lookup_failed", error=str(e))
+
+        # ── Tier 2: Ollama qwen2.5-coder ───────────────────────────────────
         try:
             patch = await _ollama_coder_fix(fp["signature"], log_row.stack_trace or "")
             diff = (patch.get("diff") or "").strip()
@@ -175,7 +234,7 @@ class AutoErrorHandler:
         except Exception as e:  # noqa: BLE001
             log.warning("ollama_coder_failed", error=str(e))
 
-        # ── 3순위: Claude CLI Bridge ────────────────────────────────────────
+        # ── Tier 3: Claude CLI Bridge ───────────────────────────────────────
         try:
             from ada.error_handler.claude_cli_bridge import ClaudeCLIBridge
 
