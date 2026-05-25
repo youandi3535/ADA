@@ -35,7 +35,11 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=40s \
   CMD curl -fs http://localhost:8000/health || exit 1
 
-# 16GB / VPS 8GB 양쪽 모두 안전한 워커 수 (§1.2 재설계 한도)
+# workers=1 고정 — SentenceTransformer 싱글턴 공유 필수
+# 멀티워커(≥2)는 프로세스마다 독립 임베딩 모델을 가지므로
+# 동일 문자열이라도 워커 간 BLAS 비결정성으로 코사인 유사도가
+# ~0.705 까지 떨어져 KB 히트가 불가능해짐 (0.82 임계값 미달).
+# 처리량이 필요하면 단일 프로세스 내 async concurrency 로 확장할 것.
 CMD ["uvicorn", "api.main:app", \
      "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "2", "--loop", "uvloop"]
+     "--workers", "1", "--loop", "uvloop"]
