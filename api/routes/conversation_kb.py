@@ -66,30 +66,18 @@ def _verify_secret(x_kb_secret: str = Header(default="")) -> None:
 
 
 # =============================================================================
-# 임베딩 (지연 초기화 싱글턴 — kb_search 와 동일 모델, 동일 프로세스 내 공유)
+# 임베딩 — kb_search 의 싱글턴을 공유 (이중 초기화 방지)
 # =============================================================================
-
-_embedder = None
-
-
-def _get_embedder():
-    global _embedder  # noqa: PLW0603
-    if _embedder is None:
-        try:
-            from sentence_transformers import SentenceTransformer  # type: ignore
-
-            _embedder = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
-        except Exception:  # noqa: BLE001
-            return None
-    return _embedder
 
 
 def _embed(question: str) -> list[float] | None:
-    model = _get_embedder()
-    if model is None:
+    """kb_search 모듈의 _embed 를 위임 — 동일 프로세스 내 싱글턴 모델 공유."""
+    try:
+        from api.routes.kb_search import _embed as _kb_embed  # noqa: PLC0415
+
+        return _kb_embed(question)
+    except Exception:  # noqa: BLE001
         return None
-    vec = model.encode(question, normalize_embeddings=True)
-    return vec.tolist()
 
 
 # =============================================================================
