@@ -11,5 +11,12 @@
         ]
       }
     ]
+  },
+  "mcpServers": {
+    "ada-team-kb": {
+      "command": "python",
+      "args": ["scripts/kb_mcp_server.py"],
+      "env": {}
+    }
   }
 }

@@ -20,6 +20,7 @@ sqlalchemy==2.0.30
 asyncpg==0.29.0
 alembic==1.13.1
 pgvector==0.2.5          # pgvector Python 클라이언트 (Day19 RAG)
+sentence-transformers==2.7.0  # KB 벡터 검색 (paraphrase-multilingual-mpnet-base-v2)
 
 # LLM
 anthropic==0.28.0        # Claude API

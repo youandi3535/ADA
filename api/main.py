@@ -127,6 +127,11 @@ from api.routes import conversation_kb as conversation_kb_routes  # noqa: E402
 
 app.include_router(conversation_kb_routes.router)
 
+# 팀 Q&A KB 검색 (1순위 KB, 2순위 Claude 폴백)
+from api.routes import kb_search as kb_search_routes  # noqa: E402
+
+app.include_router(kb_search_routes.router)
+
 
 # --- 메타 ---------------------------------------------------------------------
 @app.get("/health", tags=["meta"])
