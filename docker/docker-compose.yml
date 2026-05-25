@@ -34,7 +34,8 @@ volumes:
   minio_data:
   mlflow_data:
   vault_data:
-  models_cache:        # HuggingFace 사전학습 가중치 캐시 (한 번만 다운로드)
+  models_cache:        # HuggingFace 사전학습 가중치 캐시 (worker 전용)
+  hf_model_cache:      # HuggingFace 모델 캐시 (api 컨테이너 전용, 재시작 시 재다운로드 방지)
 
 services:
 
@@ -182,7 +183,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1500M
+          memory: 3500M                   # sentence-transformers 모델 로드 여유 (1500M → 3500M)
     networks: [ada-net]
 
   frontend:
