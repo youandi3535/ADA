@@ -189,10 +189,13 @@ def _ollama_answer_sync(question: str) -> tuple[str, str]:
             ],
             "stream": False,
             "options": {
-                "num_predict": 2048,  # 최대 생성 토큰
+                "num_predict": 512,  # 최대 생성 토큰 (512 = ~71s@7t/s, timeout 120s 여유)
                 "temperature": 0.3,  # 낮은 temperature → 사실적 답변
                 "top_p": 0.9,
-                "num_gpu": 99,  # GPU 레이어 최대 사용 (3GB VRAM 범위)
+                "num_gpu": 0,  # CPU 전용 강제
+                # GTX 1060 3GB < 모델 4.7GB → 부분 오프로드 시 PCIe 병목으로 오히려 1.3t/s
+                # CPU 전용(Ryzen 7 3800XT 16T) = 7.2t/s → 5.5배 빠름
+                "num_thread": 14,  # 16스레드 중 14개 사용 (2개는 OS/Docker 여유)
             },
         },
         ensure_ascii=False,
