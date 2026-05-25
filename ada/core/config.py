@@ -2,6 +2,7 @@
 
 .env 파일에서 자동 로딩. 코드 하드코딩 금지 (R-001).
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -39,10 +40,8 @@ class Settings(BaseSettings):
     minio_bucket: str = Field(default="autoai-artifacts", validation_alias="MINIO_BUCKET")
 
     # ----- MLflow -----
-    mlflow_tracking_uri: str = Field(default="http://mlflow:5000",
-                                     validation_alias="MLFLOW_TRACKING_URI")
-    mlflow_s3_endpoint_url: str = Field(default="http://minio:9000",
-                                        validation_alias="MLFLOW_S3_ENDPOINT_URL")
+    mlflow_tracking_uri: str = Field(default="http://mlflow:5000", validation_alias="MLFLOW_TRACKING_URI")
+    mlflow_s3_endpoint_url: str = Field(default="http://minio:9000", validation_alias="MLFLOW_S3_ENDPOINT_URL")
 
     # ----- Vault -----
     vault_addr: str = Field(default="http://vault:8200", validation_alias="VAULT_ADDR")
@@ -65,6 +64,20 @@ class Settings(BaseSettings):
     langfuse_host: str = Field(default="", validation_alias="LANGFUSE_HOST")
     langfuse_public_key: str = Field(default="", validation_alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str = Field(default="", validation_alias="LANGFUSE_SECRET_KEY")
+
+    # ----- 팀 KB 수집 (내부망 API 키) -----
+    kb_collect_secret: str = Field(default="", validation_alias="KB_COLLECT_SECRET")
+    # 리눅스 서버 주소 (Stop 훅 → 직접 전송 시 사용, 미설정이면 웹서버로 전송)
+    kb_linux_server_url: str = Field(default="", validation_alias="KB_LINUX_SERVER_URL")
+
+    # ----- Ollama (로컬 LLM 폴백) -----
+    # Docker API 컨테이너 → 호스트 Ollama 접근:  http://host.docker.internal:11434
+    # 호스트 직접 실행 시:                        http://localhost:11434
+    ollama_base_url: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL")
+    ollama_model: str = Field(default="qwen2.5:7b", validation_alias="OLLAMA_MODEL")
+    # 코드 오류 수정 전용 모델 (qwen2.5-coder 계열, diff 생성 특화)
+    # GTX 1060 3GB 환경: num_gpu=0 CPU 전용, Ryzen 7 3800XT 16T → ~7 t/s
+    ollama_coder_model: str = Field(default="qwen2.5-coder:7b", validation_alias="OLLAMA_CODER_MODEL")
 
     @property
     def database_url_async(self) -> str:

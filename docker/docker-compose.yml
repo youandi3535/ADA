@@ -34,7 +34,8 @@ volumes:
   minio_data:
   mlflow_data:
   vault_data:
-  models_cache:        # HuggingFace 사전학습 가중치 캐시 (한 번만 다운로드)
+  models_cache:        # HuggingFace 사전학습 가중치 캐시 (worker 전용)
+  hf_model_cache:      # HuggingFace 모델 캐시 (api 컨테이너 전용, 재시작 시 재다운로드 방지)
 
 services:
 
@@ -162,6 +163,14 @@ services:
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
+      # Ollama: 호스트 머신에서 실행 중인 Ollama 서버를 가리킴
+      # Windows/Mac Docker Desktop → host.docker.internal 자동 해석
+      # Linux → extra_hosts 의 host-gateway 가 처리
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "qwen2.5:7b"
+      OLLAMA_CODER_MODEL: "qwen2.5-coder:7b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 호환 (Windows/Mac은 자동)
     depends_on:
       postgres:
         condition: service_healthy
@@ -182,7 +191,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1500M
+          memory: 3500M                   # sentence-transformers 모델 로드 여유
     networks: [ada-net]
 
   frontend:

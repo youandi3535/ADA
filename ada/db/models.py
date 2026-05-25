@@ -443,6 +443,33 @@ class ModelArtifactCatalog(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+# =============================================================================
+# 팀 Q&A 수집 — Claude Code 대화 로그 (KB 학습 원천 데이터)
+# =============================================================================
+
+
+class ConversationLog(Base):
+    """팀원의 Claude Code 대화 1쌍 (질문 + 답변) 저장.
+
+    flow:
+        VS Code Stop 훅 → POST /kb/conversation → 이 테이블
+        리눅스 서버 동기화 → 임베딩 → SelfLearningKB → processed=True
+    """
+
+    __tablename__ = "conversation_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    team_member = Column(String(128))  # git user or env 설정
+    question = Column(Text, nullable=False)  # 팀원 질문
+    answer = Column(Text, nullable=False)  # Claude 답변
+    session_id = Column(String(64), index=True)  # Claude Code session ID
+    project = Column(String(255))  # 프로젝트명
+    source = Column(String(32), default="claude_code")  # claude_code / manual
+    processed = Column(Boolean, default=False, index=True)  # 임베딩 완료?
+    kb_id = Column(UUID(as_uuid=True), ForeignKey("self_learning_kb.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+
+
 __all__ = [
     "User",
     "Upload",
@@ -470,4 +497,5 @@ __all__ = [
     "GateDecisionMetric",
     "BackupCatalog",
     "ModelArtifactCatalog",
+    "ConversationLog",
 ]

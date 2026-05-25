@@ -117,6 +117,21 @@ from api.routes import admin as admin_routes  # noqa: E402
 
 app.include_router(admin_routes.router, tags=["Admin"])
 
+# 오류 자동처리 & KB 모니터링 대시보드
+from api.routes import error_dashboard as error_dashboard_routes  # noqa: E402
+
+app.include_router(error_dashboard_routes.router)
+
+# 팀 Q&A 수집 & 조회 (KB 학습 원천)
+from api.routes import conversation_kb as conversation_kb_routes  # noqa: E402
+
+app.include_router(conversation_kb_routes.router)
+
+# 팀 Q&A KB 검색 (1순위 KB, 2순위 Claude 폴백)
+from api.routes import kb_search as kb_search_routes  # noqa: E402
+
+app.include_router(kb_search_routes.router)
+
 
 # --- 메타 ---------------------------------------------------------------------
 @app.get("/health", tags=["meta"])

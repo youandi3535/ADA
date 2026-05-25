@@ -21,6 +21,11 @@ asyncpg==0.29.0
 alembic==1.13.1
 pgvector==0.2.5          # pgvector Python 클라이언트 (Day19 RAG)
 
+# KB 벡터 검색 — CPU 전용 torch 를 먼저 지정해 CUDA 패키지(~2GB) 방지
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.1+cpu
+sentence-transformers==2.7.0  # paraphrase-multilingual-mpnet-base-v2 (768dim)
+
 # LLM
 anthropic==0.28.0        # Claude API
 langgraph==0.1.5         # 그래프 resume (Day04)

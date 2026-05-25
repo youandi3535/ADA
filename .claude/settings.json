@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/query_kb_hook.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/collect_qa.py"
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "ada-team-kb": {
+      "command": "python",
+      "args": ["scripts/kb_mcp_server.py"],
+      "env": {}
+    }
+  }
+}

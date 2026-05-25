@@ -51,9 +51,9 @@ dist/
 build/
 *.egg-info/
 
-# Claude Code 로컬 설정
-.claude/
+# Claude Code 로컬 설정 (개인 파일은 무시, 팀 공유 설정은 추적)
+.claude/*
+!.claude/settings.json
 
 # 나연 개인 문서 (팀 공유 x, 깃허브 업로드 절대 금지)
 ny_docs/
-
