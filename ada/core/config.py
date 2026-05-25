@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     # 호스트 직접 실행 시:                        http://localhost:11434
     ollama_base_url: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="qwen2.5:7b", validation_alias="OLLAMA_MODEL")
+    # 코드 오류 수정 전용 모델 (qwen2.5-coder 계열, diff 생성 특화)
+    # GTX 1060 3GB 환경: num_gpu=0 CPU 전용, Ryzen 7 3800XT 16T → ~7 t/s
+    ollama_coder_model: str = Field(default="qwen2.5-coder:7b", validation_alias="OLLAMA_CODER_MODEL")
 
     @property
     def database_url_async(self) -> str:

@@ -168,6 +168,7 @@ services:
       # Linux → extra_hosts 의 host-gateway 가 처리
       OLLAMA_BASE_URL: "http://host.docker.internal:11434"
       OLLAMA_MODEL: "qwen2.5:7b"
+      OLLAMA_CODER_MODEL: "qwen2.5-coder:7b"
     extra_hosts:
       - "host.docker.internal:host-gateway"   # Linux 호환 (Windows/Mac은 자동)
     depends_on:
