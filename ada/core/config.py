@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     # 리눅스 서버 주소 (Stop 훅 → 직접 전송 시 사용, 미설정이면 웹서버로 전송)
     kb_linux_server_url: str = Field(default="", validation_alias="KB_LINUX_SERVER_URL")
 
+    # ----- Ollama (로컬 LLM 폴백) -----
+    # Docker API 컨테이너 → 호스트 Ollama 접근:  http://host.docker.internal:11434
+    # 호스트 직접 실행 시:                        http://localhost:11434
+    ollama_base_url: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL")
+    ollama_model: str = Field(default="qwen2.5:7b", validation_alias="OLLAMA_MODEL")
+
     @property
     def database_url_async(self) -> str:
         if self.database_url.startswith("postgresql://"):

@@ -216,6 +216,7 @@ def _handle_request(req: dict) -> None:
             similarity = result.get("similarity")
             elapsed_ms = result.get("elapsed_ms", 0)
             hits = result.get("hits", [])
+            model_used = result.get("model_used")
 
             if answered_by == "team_kb" and hits:
                 best = hits[0]
@@ -225,8 +226,10 @@ def _handle_request(req: dict) -> None:
                     f"---\n"
                     f"📌 출처: {best.get('team_member', 'unknown')} / {best.get('project', '?')}"
                 )
+            elif answered_by == "ollama_local":
+                text = f"**[Ollama 로컬 답변]** (모델: {model_used} | {elapsed_ms}ms)\n\n{answer}"
             else:
-                text = f"**[Claude 폴백]** (KB 미스 | {elapsed_ms}ms)\n\n{answer}"
+                text = f"**[Claude Opus 폴백]** (모델: {model_used or 'claude-opus-4-7'} | {elapsed_ms}ms)\n\n{answer}"
 
             _send(
                 {

@@ -163,6 +163,13 @@ services:
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
+      # Ollama: 호스트 머신에서 실행 중인 Ollama 서버를 가리킴
+      # Windows/Mac Docker Desktop → host.docker.internal 자동 해석
+      # Linux → extra_hosts 의 host-gateway 가 처리
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "qwen2.5:7b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 호환 (Windows/Mac은 자동)
     depends_on:
       postgres:
         condition: service_healthy
@@ -183,7 +190,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3500M                   # sentence-transformers 모델 로드 여유 (1500M → 3500M)
+          memory: 3500M                   # sentence-transformers 모델 로드 여유
     networks: [ada-net]
 
   frontend:
