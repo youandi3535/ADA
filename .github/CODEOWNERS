@@ -6,6 +6,23 @@
 #
 # 사용 전 .github/CODEOWNERS_TEAM_MAPPING 에 GitHub username 매핑 권장
 # 또는 아래 @youandi3535, @chang-seon, @oliviajain4-dev, @han00jh 를 실제 username 으로 교체.
+#
+# ★ 동작 원리 (GitHub "Require review from Code Owners" 옵션과 연동)
+#   - PR 작성자 == 변경 파일의 코드 오너  →  추가 승인 불필요, CI 통과 시 바로 머지 가능
+#   - PR 작성자 != 변경 파일의 코드 오너  →  해당 오너 승인 필수
+#   - GitHub는 파일별 마지막 매칭 규칙을 적용 (아래 specific 규칙이 * 보다 우선)
+#
+# ★ 브랜치 보호 규칙 설정 (GitHub → Settings → Branches → main)
+#   Required approving reviews : 0
+#   Require review from Code Owners : ✅ ON
+#   Include administrators : ☐ OFF  (관리자도 자기 영역은 바로 머지)
+
+# ============================================================
+# 0) 기본값 — 위 규칙에 매핑 안 된 모든 파일은 HJ 소유
+#    (README.md, .gitignore, pyproject.toml, .env.example 등 루트 파일 포함)
+#    NOTE: GitHub CODEOWNERS 는 마지막 매칭 규칙 우선 → 아래 specific 패턴이 이 줄을 덮어씀
+# ============================================================
+*                                          @youandi3535
 
 # ============================================================
 # 1) HJ — 시스템·메타·인프라·dispatcher 8종 (단독)
