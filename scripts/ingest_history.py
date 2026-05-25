@@ -1,17 +1,33 @@
 #!/usr/bin/env python3
-"""scripts/ingest_history.py — Claude Code 과거 대화 전체 일괄 수집
+"""scripts/ingest_history.py — Claude Code + Cowork 과거 대화 전체 일괄 수집
 
 현재 세션만 수집하는 Stop 훅(collect_qa.py)과 달리,
-~/.claude/projects/ 의 모든 JSONL 파일을 스캔해 과거 대화를 KB에 편입.
+모든 IDE/앱의 대화 이력을 스캔해 KB에 편입.
+
+지원 소스
+---------
+  VS Code Claude Code  ~/.claude/projects/**/*.jsonl
+  Cowork (Windows)     %APPDATA%\\Claude\\local-agent-mode-sessions\\**\\*.{txt,json,md}
+  Cowork (Mac)         ~/Library/Application Support/Claude/local-agent-mode-sessions/**
+
+수집 방식 차이
+--------------
+  VS Code Claude Code:
+    - Stop 훅(collect_qa.py)이 매 응답마다 최신 Q&A를 실시간 전송
+    - ingest_history.py는 "과거 이력"을 일괄 백필(backfill)하는 용도
+
+  Cowork (Claude Desktop App):
+    - 훅 메커니즘이 없음 → Stop 훅 불가
+    - ingest_history.py만이 유일한 수집 경로
+    - 5분 cron으로 주기적 실행 권장
 
 동작 흐름
 ---------
 1. ~/.ada_ingest_state.json 에서 처리 이력(파일별 mtime) 로드
-2. ~/.claude/projects/**/*.jsonl 스캔
-3. mtime 변경 파일만 처리 (증분 처리)
-4. 각 JSONL에서 모든 Q&A 쌍 추출 (Stop 훅은 마지막 1쌍만 수집)
-5. POST /kb/conversation 으로 전송 (source="history_ingest")
-6. 처리 이력 업데이트
+2. 전체 소스 디렉토리 스캔 (mtime 변경 파일만 처리)
+3. 파일 형식별 파서로 모든 Q&A 쌍 추출
+4. POST /kb/conversation 전송 (source 필드로 출처 구분)
+5. 처리 이력 업데이트
 
 실행 방법
 ---------
@@ -19,6 +35,17 @@
   python scripts/ingest_history.py --dry-run    # 전송 없이 파싱 결과만 출력
   python scripts/ingest_history.py --force      # 이력 무시, 전체 재처리
   python scripts/ingest_history.py --limit 200  # Q&A 최대 200건만 전송
+
+5분 cron 설정 (리눅스/Mac) — Cowork 실시간 학습
+-------------------------------------------------
+  */5 * * * * cd /path/to/ADA && python3 scripts/ingest_history.py >> /var/log/ada_ingest.log 2>&1
+
+Windows 작업 스케줄러 (PowerShell)
+-----------------------------------
+  # 5분마다 실행 등록 (관리자 권한 불필요)
+  $action = New-ScheduledTaskAction -Execute "python" -Argument "scripts/ingest_history.py" -WorkingDirectory "C:\\IT\\workspace_python\\ADA"
+  $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 5) -Once -At (Get-Date)
+  Register-ScheduledTask -TaskName "ADA-IngestHistory" -Action $action -Trigger $trigger
 
 환경변수
 --------
@@ -33,6 +60,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -48,17 +76,60 @@ logging.basicConfig(
 log = logging.getLogger("ingest_history")
 
 # ---------------------------------------------------------------------------
-# 경로 상수
+# 경로 상수 — VS Code Claude Code + Cowork 양쪽 지원
 # ---------------------------------------------------------------------------
 
 _HOME = Path.home()
-_CLAUDE_PROJECTS_DIR = _HOME / ".claude" / "projects"
 _STATE_FILE = _HOME / ".ada_ingest_state.json"
 _PROJECT_ROOT = Path(__file__).parent.parent
 
-# 처리 제외 디렉토리/파일 패턴
+# 처리 제외 디렉토리
 _SKIP_DIRS = {"outputs", "uploads", ".auto-memory", "node_modules", "__pycache__"}
-_MIN_FILE_BYTES = 100  # 100바이트 미만 파일 제외
+_MIN_FILE_BYTES = 100
+
+
+def _get_transcript_sources() -> list[tuple[Path, str]]:
+    """스캔할 (디렉토리, source_label) 목록 반환.
+
+    source_label 은 KB 에 저장될 conversation_logs.source 값.
+    존재하지 않는 디렉토리는 자동 제외.
+    """
+    sources: list[tuple[Path, str]] = []
+
+    # ── VS Code Claude Code ──────────────────────────────────────────────
+    claude_code_dir = _HOME / ".claude" / "projects"
+    if claude_code_dir.exists():
+        sources.append((claude_code_dir, "claude_code_history"))
+
+    # ── Cowork (Claude Desktop App) — Windows ────────────────────────────
+    # %APPDATA% = C:\Users\{user}\AppData\Roaming
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        cowork_win = Path(appdata) / "Claude" / "local-agent-mode-sessions"
+        if cowork_win.exists():
+            sources.append((cowork_win, "cowork"))
+
+    # %LOCALAPPDATA% 도 시도 (앱 버전에 따라 위치 다를 수 있음)
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    if localappdata:
+        cowork_win_local = Path(localappdata) / "Claude" / "local-agent-mode-sessions"
+        if cowork_win_local.exists():
+            sources.append((cowork_win_local, "cowork"))
+
+    # ── Cowork (Claude Desktop App) — Mac ────────────────────────────────
+    cowork_mac = _HOME / "Library" / "Application Support" / "Claude" / "local-agent-mode-sessions"
+    if cowork_mac.exists():
+        sources.append((cowork_mac, "cowork"))
+
+    # ── 사용자 정의 경로 (환경변수) ─────────────────────────────────────
+    extra = os.environ.get("ADA_TRANSCRIPT_DIR", "").strip()
+    if extra:
+        extra_path = Path(extra)
+        if extra_path.exists():
+            sources.append((extra_path, "custom"))
+
+    return sources
+
 
 # ---------------------------------------------------------------------------
 # 설정 로드
@@ -123,72 +194,144 @@ def _save_state(state: dict[str, float]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# JSONL 파서 (collect_qa._parse_entry 와 동일 로직, 전체 Q&A 추출)
+# 공통 유틸
 # ---------------------------------------------------------------------------
 
 
-def _extract_text(content: object) -> str:
+def _extract_content(content: object) -> str:
+    """content 필드(str / list[dict]) → 순수 텍스트."""
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):
         parts: list[str] = []
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
-                text = block.get("text", "")
-                if text:
-                    parts.append(text)
+                t = block.get("text", "")
+                if t:
+                    parts.append(t)
         return "\n".join(parts).strip()
     return ""
 
 
-def _parse_entry(raw_line: str) -> tuple[str, str] | None:
-    """JSONL 한 줄 → (role, text) 또는 None."""
+# ---------------------------------------------------------------------------
+# 파서 A: Claude Code JSONL  (.jsonl)
+# {"type":"human"|"assistant", "message": {"content": ...}}
+# ---------------------------------------------------------------------------
+
+
+def _parse_jsonl_entry(raw_line: str) -> tuple[str, str] | None:
     try:
         obj = json.loads(raw_line)
     except json.JSONDecodeError:
         return None
 
-    # 포맷 A: Claude Code 기본
     otype = obj.get("type", "")
     if otype in ("human", "assistant"):
         msg = obj.get("message", {})
         role = "user" if otype == "human" else "assistant"
-        text = _extract_text(msg.get("content", ""))
-        # 도구 호출만 있는 assistant 메시지 제외
-        if text and "(called " not in text[:50]:
+        text = _extract_content(msg.get("content", ""))
+        if text and "(called " not in text[:60]:
             return role, text
         return None
 
-    # 포맷 B: 단순
     role = obj.get("role", "")
     if role in ("user", "assistant"):
-        text = _extract_text(obj.get("content", ""))
-        if text and "(called " not in text[:50]:
+        text = _extract_content(obj.get("content", ""))
+        if text and "(called " not in text[:60]:
             return role, text
 
     return None
 
 
-def _extract_all_qa(jsonl_path: Path) -> list[tuple[str, str]]:
-    """JSONL 파일에서 모든 Q&A 쌍 추출."""
+def _extract_all_qa_jsonl(path: Path) -> list[tuple[str, str]]:
+    """JSONL 파일 → 모든 Q&A 쌍."""
     pairs: list[tuple[str, str]] = []
     pending_q = ""
-
     try:
-        content = jsonl_path.read_text(encoding="utf-8", errors="replace")
+        content = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return pairs
-
     for raw in content.splitlines():
         raw = raw.strip()
         if not raw:
             continue
-        parsed = _parse_entry(raw)
-        if parsed is None:
+        parsed = _parse_jsonl_entry(raw)
+        if not parsed:
             continue
         role, text = parsed
-
         if role == "user":
+            pending_q = text
+        elif role == "assistant" and pending_q:
+            pairs.append((pending_q, text))
+            pending_q = ""
+    return pairs
+
+
+# ---------------------------------------------------------------------------
+# 파서 B: Cowork 텍스트 형식  (.txt / .md)
+# [user]\n질문\n\n[assistant]\n답변\n\n[user]\n...
+# ---------------------------------------------------------------------------
+
+
+def _extract_all_qa_txt(path: Path) -> list[tuple[str, str]]:
+    """Cowork .txt/.md 형식 파서: [user] / [assistant] 마커로 Q&A 추출."""
+    pairs: list[tuple[str, str]] = []
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return pairs
+
+    # [user], [assistant], [human] 마커로 섹션 분리
+    sections = re.split(r"\[(user|assistant|human)\]", content, flags=re.IGNORECASE)
+
+    current_role: str | None = None
+    pending_q = ""
+
+    for section in sections:
+        s = section.strip().lower()
+        if s in ("user", "human"):
+            current_role = "user"
+        elif s == "assistant":
+            current_role = "assistant"
+        else:
+            text = section.strip()
+            if not text:
+                continue
+            if current_role == "user":
+                pending_q = text
+            elif current_role == "assistant" and pending_q:
+                pairs.append((pending_q, text))
+                pending_q = ""
+
+    return pairs
+
+
+# ---------------------------------------------------------------------------
+# 파서 C: 단일 JSON 객체 형식  (.json)
+# {"messages": [{"role": "user", "content": "..."}, ...]}
+# ---------------------------------------------------------------------------
+
+
+def _extract_all_qa_json(path: Path) -> list[tuple[str, str]]:
+    """단일 JSON 객체 형식 파서."""
+    pairs: list[tuple[str, str]] = []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (json.JSONDecodeError, OSError):
+        return pairs
+
+    messages = data.get("messages", [])
+    if not isinstance(messages, list):
+        return pairs
+
+    pending_q = ""
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        text = _extract_content(content) if not isinstance(content, str) else content.strip()
+        if not text:
+            continue
+        if role in ("user", "human"):
             pending_q = text
         elif role == "assistant" and pending_q:
             pairs.append((pending_q, text))
@@ -198,20 +341,42 @@ def _extract_all_qa(jsonl_path: Path) -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# JSONL 파일 스캔
+# 파일 형식 감지 & 파서 선택
 # ---------------------------------------------------------------------------
 
 
-def _scan_jsonl_files() -> Iterator[Path]:
-    """~/.claude/projects/ 하위 모든 JSONL 파일 반환."""
-    if not _CLAUDE_PROJECTS_DIR.exists():
-        return
+def _extract_all_qa(path: Path) -> list[tuple[str, str]]:
+    """파일 확장자에 따라 적절한 파서 선택."""
+    ext = path.suffix.lower()
+    if ext == ".jsonl":
+        return _extract_all_qa_jsonl(path)
+    if ext == ".json":
+        # JSONL 형식일 수도 있으므로 양쪽 시도
+        pairs = _extract_all_qa_json(path)
+        if not pairs:
+            pairs = _extract_all_qa_jsonl(path)
+        return pairs
+    if ext in (".txt", ".md"):
+        return _extract_all_qa_txt(path)
+    return []
 
-    for fpath in _CLAUDE_PROJECTS_DIR.rglob("*.jsonl"):
-        # 제외 디렉토리 체크
+
+# ---------------------------------------------------------------------------
+# 파일 스캔
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_EXTS = {".jsonl", ".json", ".txt", ".md"}
+
+
+def _scan_files(base_dir: Path) -> Iterator[Path]:
+    """디렉토리 하위의 지원 형식 파일 반환."""
+    for fpath in base_dir.rglob("*"):
+        if not fpath.is_file():
+            continue
+        if fpath.suffix.lower() not in _SUPPORTED_EXTS:
+            continue
         if any(skip in fpath.parts for skip in _SKIP_DIRS):
             continue
-        # 너무 작은 파일 제외
         try:
             if fpath.stat().st_size < _MIN_FILE_BYTES:
                 continue
@@ -232,15 +397,15 @@ def _post_qa(
     answer: str,
     team_member: str,
     session_id: str,
+    source: str,
 ) -> bool:
-    """POST /kb/conversation. 성공 True, 실패 False."""
     body = json.dumps(
         {
             "question": question[:8_000],
             "answer": answer[:40_000],
             "team_member": team_member,
             "session_id": session_id,
-            "source": "history_ingest",
+            "source": source,
         },
         ensure_ascii=False,
     ).encode("utf-8")
@@ -272,72 +437,72 @@ def _post_qa(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Claude Code 과거 대화 일괄 수집")
+    parser = argparse.ArgumentParser(description="Claude Code + Cowork 과거 대화 일괄 수집")
     parser.add_argument("--dry-run", action="store_true", help="전송 없이 파싱 결과만 출력")
     parser.add_argument("--force", action="store_true", help="이력 무시, 전체 재처리")
-    parser.add_argument("--limit", type=int, default=0, help="최대 전송 Q&A 수 (0 = 무제한)")
+    parser.add_argument("--limit", type=int, default=0, help="최대 전송 Q&A 수 (0=무제한)")
     args = parser.parse_args()
 
     server_url = _cfg("KB_SERVER_URL", "http://localhost:8000").rstrip("/")
     kb_secret = _cfg("KB_COLLECT_SECRET", "")
     team_member = _get_team_member()
 
-    if not _CLAUDE_PROJECTS_DIR.exists():
-        log.error("~/.claude/projects/ 디렉토리가 없습니다. Claude Code 설치 확인.")
+    sources = _get_transcript_sources()
+    if not sources:
+        log.error("수집 가능한 대화 디렉토리를 찾지 못했습니다.")
+        log.error("Claude Code: ~/.claude/projects/  Cowork: %%APPDATA%%\\Claude\\local-agent-mode-sessions\\")
         sys.exit(1)
 
+    log.info("수집 소스 %d개: %s", len(sources), [str(d) for d, _ in sources])
+
     state = {} if args.force else _load_state()
-    jsonl_files = list(_scan_jsonl_files())
-    log.info("스캔된 JSONL 파일: %d개", len(jsonl_files))
-
-    total_ok = total_skip = total_fail = 0
     new_state = dict(state)
+    total_ok = total_skip = total_fail = 0
 
-    for fpath in jsonl_files:
-        fkey = str(fpath)
-        try:
-            mtime = fpath.stat().st_mtime
-        except OSError:
-            continue
+    for base_dir, source_label in sources:
+        log.info("── 스캔 중: %s  [%s]", base_dir, source_label)
 
-        # 이미 처리된 파일이고 mtime 미변경 → 건너뜀
-        if not args.force and state.get(fkey) == mtime:
-            continue
-
-        pairs = _extract_all_qa(fpath)
-        if not pairs:
-            new_state[fkey] = mtime
-            continue
-
-        session_id = fpath.stem  # 파일명을 session_id 로 사용
-
-        log.info("처리 중: %s (%d쌍)", fpath.name, len(pairs))
-
-        for question, answer in pairs:
-            # 너무 짧은 Q/A 제외
-            if len(question) < 5 or len(answer) < 5:
-                total_skip += 1
+        for fpath in _scan_files(base_dir):
+            fkey = str(fpath)
+            try:
+                mtime = fpath.stat().st_mtime
+            except OSError:
                 continue
 
-            if args.dry_run:
-                log.info("  [DRY-RUN] Q: %s…", question[:60])
-                log.info("  [DRY-RUN] A: %s…", answer[:60])
-                total_ok += 1
-            else:
-                ok = _post_qa(server_url, kb_secret, question, answer, team_member, session_id)
-                if ok:
+            if not args.force and state.get(fkey) == mtime:
+                continue
+
+            pairs = _extract_all_qa(fpath)
+            if not pairs:
+                new_state[fkey] = mtime
+                continue
+
+            session_id = fpath.stem
+            log.info("  %s (%d쌍) [%s]", fpath.name, len(pairs), source_label)
+
+            for question, answer in pairs:
+                if len(question) < 5 or len(answer) < 5:
+                    total_skip += 1
+                    continue
+
+                if args.dry_run:
+                    log.info("    [DRY-RUN][%s] Q: %s…", source_label, question[:60])
                     total_ok += 1
                 else:
-                    total_fail += 1
+                    ok = _post_qa(server_url, kb_secret, question, answer, team_member, session_id, source_label)
+                    if ok:
+                        total_ok += 1
+                    else:
+                        total_fail += 1
 
-            # limit 도달 시 종료
-            if args.limit > 0 and total_ok >= args.limit:
-                log.info("=== limit %d 도달, 중단 ===", args.limit)
-                _save_state(new_state)
-                log.info("완료: ok=%d  skip=%d  fail=%d", total_ok, total_skip, total_fail)
-                return
+                if args.limit > 0 and total_ok >= args.limit:
+                    log.info("=== limit %d 도달, 중단 ===", args.limit)
+                    if not args.dry_run:
+                        _save_state(new_state)
+                    log.info("완료: ok=%d  skip=%d  fail=%d", total_ok, total_skip, total_fail)
+                    return
 
-        new_state[fkey] = mtime
+            new_state[fkey] = mtime
 
     if not args.dry_run:
         _save_state(new_state)
