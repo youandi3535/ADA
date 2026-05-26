@@ -38,6 +38,22 @@ function ada-mlflow-init {
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm worker-pipeline python scripts/mlflow_init.py
 }
 
+function ada-migrate {
+    Write-Host "[ADA] DB 마이그레이션 적용 (alembic upgrade head)..." -ForegroundColor Cyan
+    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic upgrade head
+}
+
+function ada-migrate-down {
+    Write-Host "[ADA] 가장 최근 1개 마이그레이션 롤백 (alembic downgrade -1)..." -ForegroundColor Yellow
+    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic downgrade -1
+}
+
+function ada-migrate-status {
+    Write-Host "[ADA] 현재 리비전 + 히스토리..." -ForegroundColor Cyan
+    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic current
+    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic history
+}
+
 function ada-help {
     Write-Host ""
     Write-Host "  ada-up             컨테이너 시작 (core)" -ForegroundColor Green
@@ -48,6 +64,10 @@ function ada-help {
     Write-Host "  ada-logs mlflow    mlflow 로그만" -ForegroundColor Green
     Write-Host "  ada-build          이미지 빌드" -ForegroundColor Green
     Write-Host "  ada-mlflow-init    MLflow 실험 초기화" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  ada-migrate         DB 마이그레이션 적용 (alembic upgrade head)" -ForegroundColor Green
+    Write-Host "  ada-migrate-down    가장 최근 1개 마이그레이션 롤백" -ForegroundColor Green
+    Write-Host "  ada-migrate-status  현재 리비전 + 히스토리" -ForegroundColor Green
     Write-Host ""
 }
 

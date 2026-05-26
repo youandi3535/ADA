@@ -7,6 +7,7 @@ R-004 LLM 호출은 ``_call_llm()`` 헬퍼만 사용.
 from __future__ import annotations
 
 import abc
+import asyncio
 import json
 import re
 import time
@@ -126,51 +127,138 @@ class BaseAgent(abc.ABC):
         model_name: Optional[str] = None,
         json_mode: bool = False,
     ) -> str:
-        """Anthropic Messages API 호출 단일 진입점.
+        """LLM 호출 단일 진입점 (R-004).
 
+        - 개발환경 (ANTHROPIC_API_KEY 미설정): Claude CLI 서브프로세스 호출 (무료)
+        - 운영환경 (ANTHROPIC_API_KEY 설정됨): AsyncAnthropic API 호출 (과금)
         - 페르소나 prefix 자동 주입 (시스템 프롬프트 앞)
         - 회로차단기로 보호 (R-709)
         - input/output 토큰 카운트 self.* 에 누적
         - JSON 모드: 응답 텍스트의 마크다운 fence 자동 제거
         """
-        if self._anthropic is None:
-            import anthropic  # noqa: WPS433
-
-            self._anthropic = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-
         prefix = f"{self.persona}\n\n" if self.persona else ""
         full_system = prefix + system_prompt
 
+        if settings.anthropic_api_key:
+            text = await self._call_llm_api(
+                system_prompt=full_system,
+                user_prompt=user_prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                model_name=model_name,
+            )
+        else:
+            text = await self._call_llm_cli(
+                system_prompt=full_system,
+                user_prompt=user_prompt,
+                max_tokens=max_tokens,
+            )
+
+        if json_mode:
+            text = self._strip_md_fence(text)
+        return text
+
+    async def _call_llm_api(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int,
+        temperature: float,
+        model_name: Optional[str],
+    ) -> str:
+        """운영환경: AsyncAnthropic API (non-blocking await)."""
+        import anthropic  # noqa: WPS433
+
+        if self._anthropic is None:
+            self._anthropic = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
         breaker = get_breaker("anthropic", fail_max=3, reset_timeout=30)
 
-        def _do_call() -> Any:
-            return self._anthropic.messages.create(
+        async def _do_call() -> Any:
+            return await self._anthropic.messages.create(
                 model=model_name or self.model_name,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                system=full_system,
+                system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
 
         try:
-            resp = breaker.call(_do_call)
+            resp = await breaker.call(_do_call) if asyncio.iscoroutinefunction(breaker.call) else await _do_call()
         except Exception as e:
-            self.logger.error("llm_call_failed", error=str(e))
+            self.logger.error("llm_api_call_failed", error=str(e))
             raise
 
-        # 사용량 누적
+        # 토큰 사용량 누적
         usage = getattr(resp, "usage", None)
         self._last_input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
         self._last_output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
+        try:
+            from ada.observability.metrics import record_llm_tokens
+
+            record_llm_tokens(
+                model_name or self.model_name,
+                self._last_input_tokens,
+                self._last_output_tokens,
+            )
+        except Exception:
+            pass
 
         text = ""
         for blk in resp.content:
             if getattr(blk, "type", None) == "text":
                 text += blk.text  # type: ignore[attr-defined]
-
-        if json_mode:
-            text = self._strip_md_fence(text)
         return text
+
+    async def _call_llm_cli(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int,
+    ) -> str:
+        """개발환경: Claude CLI 서브프로세스 호출 (API 키 불필요, 무료).
+
+        `claude -p "..." --output-format json` 을 asyncio.to_thread 로 실행.
+        CLI 미설치 시 RuntimeError 발생.
+        """
+        import asyncio
+        import json as _json
+        import shutil
+        import subprocess
+
+        if shutil.which("claude") is None:
+            raise RuntimeError(
+                "Claude CLI 미설치 (개발환경). `npm install -g @anthropic-ai/claude-code` 또는 ANTHROPIC_API_KEY 설정."
+            )
+
+        prompt = f"[SYSTEM]\n{system_prompt}\n\n[USER]\n{user_prompt}"
+
+        def _run() -> str:
+            proc = subprocess.run(
+                ["claude", "-p", prompt, "--output-format", "json", "--max-turns", "1"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            return proc.stdout
+
+        breaker = get_breaker("claude_cli", fail_max=3, reset_timeout=60)
+
+        try:
+            raw = await asyncio.to_thread(breaker.call, _run)
+        except Exception as e:
+            self.logger.error("llm_cli_call_failed", error=str(e))
+            raise
+
+        # Claude CLI JSON 출력에서 텍스트 추출
+        try:
+            data = _json.loads(raw)
+            # {"result": "...", "type": "result"} 포맷
+            return data.get("result") or data.get("content") or raw
+        except Exception:
+            return raw.strip()
 
     @staticmethod
     def _strip_md_fence(text: str) -> str:

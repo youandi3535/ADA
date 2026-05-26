@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import redis as redis_pkg
-
 from ada.core.config import settings
 from ada.core.state import PipelineState
 from ada.observability.metrics import record_kb_citation
@@ -62,8 +60,11 @@ class SupervisorAgent(BaseAgent):
             # 3) HITL — 자동 재시도 한도 초과 시 인간 개입
             if state.retry_count >= 2:
                 try:
-                    r = redis_pkg.Redis.from_url(settings.redis_url)
-                    r.set(f"ada:hitl:{state.job_id}", "1", ex=86400)
+                    import redis.asyncio as aioredis  # noqa: WPS433
+
+                    r = await aioredis.from_url(settings.redis_url)
+                    await r.set(f"ada:hitl:{state.job_id}", "1", ex=86400)
+                    await r.aclose()
                 except Exception:
                     pass
                 return state.with_update(
@@ -111,11 +112,14 @@ class SupervisorAgent(BaseAgent):
             kb = await self.session.scalar(select(ErrorKB).where(ErrorKB.error_hash == fp["hash"]))
             if kb is None or (kb.confidence or 0.0) < 0.7:
                 return None
+            # ErrorKB 의 JSONB 컬럼은 `fingerprint` 이며 `payload` 컬럼은 존재하지 않는다.
+            # recommended_recovery 가 저장돼 있지 않으면 기본값 "error_recovery" 사용.
+            kb_meta = kb.fingerprint or {}
             return {
                 "hash": fp["hash"],
                 "kb_id": str(kb.id),
                 "confidence": float(kb.confidence or 0.0),
-                "recommended_recovery": (kb.payload or {}).get("recommended_recovery", "error_recovery"),
+                "recommended_recovery": kb_meta.get("recommended_recovery", "error_recovery"),
             }
         except Exception as e:
             self.logger.warning("error_kb_lookup_failed", error=str(e))

@@ -93,11 +93,15 @@ class KBRAG:
     # ------------------------------------------------------------------
     async def index_lesson(self, kb_id: Any, summary: str) -> None:
         emb = self.embed(summary)
+        # ON CONFLICT (kb_id) DO UPDATE — 같은 kb_id 재색인 시 덮어쓰기 (중복 방지)
         await self.session.execute(
             text(
                 """
             INSERT INTO lesson_embeddings (kb_id, target, embedding)
             VALUES (:kb_id, :target, CAST(:emb AS vector))
+            ON CONFLICT (kb_id) DO UPDATE
+                SET target    = EXCLUDED.target,
+                    embedding = EXCLUDED.embedding
             """
             ),
             {"kb_id": str(kb_id), "target": summary[:1000], "emb": str(emb)},

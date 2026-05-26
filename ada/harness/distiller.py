@@ -41,12 +41,24 @@ class SelfLearningHarness:
         self.session = session
 
     # ------------------------------------------------------------------
-    async def distill_from_job(self, job_id: str) -> dict[str, int]:
-        """job 완료 시점에 5종 KB 후보 추출 → upsert."""
+    async def distill_from_job(self, job_id: str) -> dict[str, Any]:
+        """job 완료 시점에 5종 KB 후보 추출 → upsert.
+
+        반환::
+            {
+                "distilled":      int,           # 새로 삽입된 KB row 수
+                "created_kb_ids": list[str],     # 새 KB UUID 문자열 목록
+                "summaries":      dict[str,str], # kb_id → 요약 텍스트
+            }
+        """
         job = await self.session.scalar(select(Job).where(Job.id == uuid.UUID(job_id)))
         if job is None:
-            return {"distilled": 0}
+            return {"distilled": 0, "created_kb_ids": [], "summaries": {}}
+
         inserted = 0
+        created_kb_ids: list[str] = []
+        summaries: dict[str, str] = {}
+
         # 1) success_pattern — 성공 job 전체 메타
         if job.status == "completed":
             payload = {
@@ -55,12 +67,18 @@ class SelfLearningHarness:
                 "user_intent": job.user_intent or "",
                 "requested_outputs": job.requested_outputs or [],
             }
-            inserted += await self._upsert(
+            kb_id, is_new = await self._upsert(
                 kb_type="success_pattern",
                 category=job.category,
                 payload=payload,
                 source_job_id=job.id,
             )
+            if is_new and kb_id:
+                inserted += 1
+                created_kb_ids.append(str(kb_id))
+                summaries[str(kb_id)] = (
+                    f"성공 패턴: {job.category} / {job.target_column or ''} / {job.user_intent or ''}"
+                )[:500]
 
         # 2) failure_lesson — 실패 job
         if job.status == "failed":
@@ -69,15 +87,24 @@ class SelfLearningHarness:
                 "error": (job.error_message or "")[:1000],
                 "retry_count": job.retry_count,
             }
-            inserted += await self._upsert(
+            kb_id, is_new = await self._upsert(
                 kb_type="failure_lesson",
                 category=job.category,
                 payload=payload,
                 source_job_id=job.id,
                 confidence_init=0.6,
             )
+            if is_new and kb_id:
+                inserted += 1
+                created_kb_ids.append(str(kb_id))
+                summaries[str(kb_id)] = (f"실패 교훈: {job.category} / {(job.error_message or '')[:200]}")[:500]
+
         await self.session.commit()
-        return {"distilled": inserted}
+        return {
+            "distilled": inserted,
+            "created_kb_ids": created_kb_ids,
+            "summaries": summaries,
+        }
 
     # ------------------------------------------------------------------
     async def _upsert(
@@ -88,7 +115,8 @@ class SelfLearningHarness:
         payload: dict[str, Any],
         source_job_id: uuid.UUID,
         confidence_init: float = 0.5,
-    ) -> int:
+    ) -> tuple[uuid.UUID | None, bool]:
+        """KB row upsert. 반환: (kb_id, is_new)."""
         h = _hash_payload({**payload, "kb_type": kb_type})
         existing = await self.session.scalar(select(SelfLearningKB).where(SelfLearningKB.hash == h))
         if existing is not None:
@@ -97,9 +125,11 @@ class SelfLearningHarness:
                 CONFIDENCE_CAP,
                 (existing.confidence or 0.5) + 0.05,
             )
-            existing.source_job_ids = list(set((existing.source_job_ids or []) + [source_job_id]))
+            existing.source_job_ids = list(
+                set([str(j) for j in (existing.source_job_ids or [])] + [str(source_job_id)])
+            )
             existing.updated_at = datetime.utcnow()
-            ins = 0
+            return existing.id, False
         else:
             new = SelfLearningKB(
                 kb_type=kb_type,
@@ -108,11 +138,10 @@ class SelfLearningHarness:
                 payload=payload,
                 confidence=confidence_init,
                 success_count=1,
-                source_job_ids=[source_job_id],
+                source_job_ids=[str(source_job_id)],
             )
             self.session.add(new)
             await self.session.flush()
-            ins = 1
             self.session.add(
                 JobDistillationLog(
                     job_id=source_job_id,
@@ -120,7 +149,7 @@ class SelfLearningHarness:
                     kb_id=new.id,
                 )
             )
-        return ins
+            return new.id, True
 
     # ------------------------------------------------------------------
     async def record_outcome(self, kb_id: uuid.UUID, success: bool) -> None:
