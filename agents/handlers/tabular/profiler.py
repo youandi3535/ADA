@@ -6,7 +6,7 @@ from typing import Any
 
 
 def profile(df: Any, state: Any) -> dict[str, Any]:
-    """class balance, VIF (top 5), cardinality 등급."""
+    """class balance, VIF (top 5), correlation cluster, cardinality 등급."""
     import numpy as np  # noqa: WPS433
 
     extra: dict[str, Any] = {}
@@ -47,6 +47,35 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
                     extra["vif_top"] = {col: round(float(v), 2) for col, v in zip(num_cols, vif)}
             except LinAlgError:
                 pass
+
+        # 상관 클러스터 — |corr| >= 0.7 인 수치형 컬럼을 연결 컴포넌트로 묶기
+        if len(num_cols) >= 2:
+            corr_mat = df[num_cols].fillna(0).corr().abs()
+            # Union-Find 로 연결 컴포넌트 구성
+            parent = {c: c for c in num_cols}
+
+            def find(x: str) -> str:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+
+            for i, ci in enumerate(num_cols):
+                for cj in num_cols[i + 1 :]:
+                    if corr_mat.loc[ci, cj] >= 0.7:
+                        ri, rj = find(ci), find(cj)
+                        if ri != rj:
+                            parent[rj] = ri
+
+            clusters: dict[str, list[str]] = {}
+            for c in num_cols:
+                root = find(c)
+                clusters.setdefault(root, []).append(c)
+
+            # 단독 컬럼(클러스터 크기 1)은 제외하고 인덱스 재부여
+            grouped = [sorted(v) for v in clusters.values() if len(v) > 1]
+            extra["correlation_clusters"] = {f"cluster_{i}": g for i, g in enumerate(grouped)}
+
     except Exception as e:
         extra["tabular_warning"] = str(e)
     return extra
