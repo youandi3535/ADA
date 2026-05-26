@@ -313,7 +313,12 @@ class LessonEmbedding(Base):
     __tablename__ = "lesson_embeddings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    kb_id = Column(UUID(as_uuid=True), ForeignKey("self_learning_kb.id", ondelete="CASCADE"))
+    # UNIQUE — KBRAG.index_lesson 이 ON CONFLICT (kb_id) DO UPDATE 패턴 사용 (migration 0003).
+    kb_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("self_learning_kb.id", ondelete="CASCADE"),
+        unique=True,
+    )
     target = Column(Text)
     embedding = Column(Vector(768))
     created_by = Column(UUID(as_uuid=True))  # RLS
