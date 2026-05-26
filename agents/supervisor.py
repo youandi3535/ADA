@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import redis as redis_pkg
-
 from ada.core.config import settings
 from ada.core.state import PipelineState
 from ada.observability.metrics import record_kb_citation
@@ -62,8 +60,11 @@ class SupervisorAgent(BaseAgent):
             # 3) HITL — 자동 재시도 한도 초과 시 인간 개입
             if state.retry_count >= 2:
                 try:
-                    r = redis_pkg.Redis.from_url(settings.redis_url)
-                    r.set(f"ada:hitl:{state.job_id}", "1", ex=86400)
+                    import redis.asyncio as aioredis  # noqa: WPS433
+
+                    r = await aioredis.from_url(settings.redis_url)
+                    await r.set(f"ada:hitl:{state.job_id}", "1", ex=86400)
+                    await r.aclose()
                 except Exception:
                     pass
                 return state.with_update(

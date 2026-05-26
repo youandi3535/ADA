@@ -29,8 +29,8 @@ class SelfLearningAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning("distill_failed", error=str(e))
 
-            # Day 1 — distill 결과를 RAG 에 자동 색인
-            if distill_result:
+            # Day 1 — distill 결과를 RAG 에 자동 색인 (새 KB row 가 있을 때만)
+            if distill_result and distill_result.get("created_kb_ids"):
                 await self._auto_index_lessons(distill_result)
 
             return state.with_update(next_agent="END")

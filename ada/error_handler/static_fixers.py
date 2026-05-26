@@ -24,7 +24,12 @@ from typing import Any
 # 공통 유틸
 # =============================================================================
 
-_PROJECT_ROOT = Path("/app")  # Docker 컨테이너 내 경로
+# Docker 컨테이너는 /app, 로컬 개발 환경은 프로젝트 루트(이 파일 기준 3단계 상위)
+_PROJECT_ROOT: Path = (
+    Path("/app")
+    if Path("/app").exists()
+    else Path(__file__).resolve().parents[2]  # ada/error_handler/static_fixers.py → repo root
+)
 
 
 def _parse_last_file_and_line(stack_trace: str) -> tuple[Path | None, int]:
@@ -171,6 +176,11 @@ def _fix_none_slicing(error_message: str, stack_trace: str) -> dict[str, Any] | 
         return None
 
     line = lines[idx]
+
+    # 할당 좌변 패턴(var["key"] = ...) 은 건너뜀 — 변환하면 SyntaxError 발생
+    # e.g.  data["key"] = value  → (data or {}).get("key", "") = value  ← 불법
+    if re.match(r"^\s*\w+\[", line) and re.search(r"\]\s*=\s*(?!=)", line):
+        return None
 
     # 패턴 1: var["key"] 또는 var[0] → (var or {})["key"] / (var or [])[0]
     # 패턴 2: var["key"][:N] → (var or {}).get("key", "")[:N]
