@@ -48,6 +48,27 @@ celery_app.conf.update(
         "ada.output.*": {"queue": "output"},
         "ada.harness.*": {"queue": "harness"},
     },
+    # ── Celery Beat 주기 스케줄 ──────────────────────────────────────────
+    # decay  : R-505 — 60일 미사용 KB confidence 0.9× (1일 1회)
+    # retract: R-504 — confidence < 0.20 KB 비활성화 (1일 1회)
+    # error-handler-scan: Day02 AutoErrorHandler 폴링 (30초)
+    beat_schedule={
+        "ada-kb-decay-daily": {
+            "task": "ada.harness.decay",
+            "schedule": 86400.0,  # 24시간
+            "options": {"queue": "harness"},
+        },
+        "ada-kb-retract-daily": {
+            "task": "ada.harness.retract",
+            "schedule": 86400.0,  # 24시간
+            "options": {"queue": "harness"},
+        },
+        "ada-error-handler-scan": {
+            "task": "ada.error_handler.scan",
+            "schedule": 30.0,  # 30초
+            "options": {"queue": "harness"},
+        },
+    },
 )
 
 
