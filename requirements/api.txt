@@ -18,6 +18,7 @@ websockets==12.0         # WebSocket (Day18 대시보드)
 # DB
 sqlalchemy==2.0.30
 asyncpg==0.29.0
+psycopg2-binary==2.9.9   # alembic 동기 드라이버 (engine_from_config 필요)
 alembic==1.13.1
 pgvector==0.2.5          # pgvector Python 클라이언트 (Day19 RAG)
 
