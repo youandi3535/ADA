@@ -27,7 +27,8 @@ COPY . /app
 RUN useradd -m -u 1001 ada \
  && chown -R ada:ada /app \
  && mkdir -p /home/ada/.cache/huggingface \
- && chown -R ada:ada /home/ada/.cache
+ && chown -R ada:ada /home/ada/.cache \
+ && chmod +x /app/docker/api-entrypoint.sh
 USER ada
 
 EXPOSE 8000
