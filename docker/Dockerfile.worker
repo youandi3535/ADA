@@ -30,7 +30,7 @@ COPY requirements/base.txt requirements/worker.txt \
      requirements/handlers-timeseries.txt \
      requirements/handlers-anomaly.txt \
      /app/requirements/
-RUN pip install -r /app/requirements/worker.txt
+RUN pip install --timeout=600 --retries=5 -r /app/requirements/worker.txt
 
 COPY . /app
 
