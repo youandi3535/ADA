@@ -32,11 +32,26 @@ def prompt_payload(state: Any) -> dict[str, Any]:
 def fallback(state: Any) -> str:
     """LLM 실패시 fallback 텍스트."""
     bm = state.best_model or {}
-    trend = (state.data_profile or {}).get("trend", {})
+    profile = state.data_profile or {}
+    trend = profile.get("trend", {}) or {}
+    seasonality = profile.get("seasonality", {}) or {}
     direction = trend.get("direction", "혼합")
+    season_note = ""
+    if seasonality.get("has_seasonality"):
+        period = seasonality.get("period", "")
+        season_note = f" {period}일 주기 계절성이 관측되었습니다."
     return (
-        f"본 시계열 데이터는 전반적으로 {direction} 추세를 보입니다. "
+        f"본 시계열 데이터는 전반적으로 {direction} 추세를 보입니다.{season_note} "
         f"최적 모델은 {bm.get('model_name', '미정')} 으로 선택되었으며, "
         f"향후 단기 예측에 활용 가능합니다. "
         f"운영팀은 주간 단위로 모델 결과를 모니터링할 것을 권장합니다."
     )
+
+
+def generate(state: Any) -> str:
+    """HANDLER_REGISTRY 등록 진입점 — InsightAgent dispatcher 가 호출.
+
+    LLM 기반 생성은 dispatcher 가 담당하고, 여기서는 규칙 기반 fallback 을 반환한다.
+    dispatcher 가 LLM 응답을 받으면 이 결과 대신 LLM 결과를 사용한다.
+    """
+    return fallback(state)
