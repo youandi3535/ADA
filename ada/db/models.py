@@ -18,7 +18,9 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
+    LargeBinary,
     String,
     Text,
 )
@@ -182,6 +184,25 @@ class FailureLog(Base):
     auto_handled_by_kb = Column(Boolean, default=False)
     error_kb_id = Column(UUID(as_uuid=True), ForeignKey("error_kb.id"))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    # ADR-006 Phase 2-F (migration 0004):
+    # PII 보호 + 디버깅용 — 원본 에러는 AES-GCM 으로 raw_error_encrypted 에 저장,
+    # 평문 컬럼 (error_message / stack_trace) 에는 redactor 통과한 것만 들어감.
+    raw_error_encrypted = Column(LargeBinary)  # AES-GCM 암호화 원본 (KMS 키 분리)
+    redaction_types = Column(JSONB, default=list)  # ["EMAIL", "PHONE", ...] — audit 용
+    # 5종 분류 (transient/code_bug/config/data/user_input/unknown) — classifier.py
+    classified_as = Column(String(32))
+    # 심각도 (low/normal/high/critical) — 알림 라우팅 + SLA 우선순위
+    severity = Column(String(16), default="normal")
+
+    # 폴링 데몬 빠른 조회 — 미처리 (auto_handled_by_kb=False) 만 인덱싱
+    __table_args__ = (
+        Index(
+            "idx_failure_logs_hash_unhandled",
+            "error_hash",
+            postgresql_where=(auto_handled_by_kb.is_(False)),
+        ),
+    )
 
 
 class SuccessPattern(Base):
@@ -475,6 +496,42 @@ class ConversationLog(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
 
 
+# =============================================================================
+# ADR-006 Phase 2-F (migration 0004) — Auto Error Resolution audit
+# =============================================================================
+
+
+class PatchApplication(Base):
+    """패치 적용 시도 audit log — 누가/언제/무엇을/결과."""
+
+    __tablename__ = "patch_applications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pending_patch_id = Column(UUID(as_uuid=True), ForeignKey("pending_patches.id"))
+    error_kb_id = Column(UUID(as_uuid=True), ForeignKey("error_kb.id"))
+    applied_by = Column(String(64))  # "ada-auto-fix-bot" 또는 사람 user_id
+    applied_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    sandbox_validation = Column(JSONB)  # ValidationResult.to_dict()
+    git_commit_sha = Column(String(64))
+    rollback_commit_sha = Column(String(64))  # 롤백 시 채워짐
+    status = Column(String(16))  # success / rolled_back / failed
+    duration_ms = Column(Integer)
+
+
+class CircuitBreakerEvent(Base):
+    """회로 차단기 상태 전이 영구 기록 (Redis 외 모니터링용)."""
+
+    __tablename__ = "circuit_breaker_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    breaker_name = Column(String(64), nullable=False, index=True)  # ollama / claude_cli
+    event_type = Column(String(16))  # opened / half_open / closed
+    failure_count = Column(Integer)
+    opened_at = Column(DateTime(timezone=True))
+    closed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+
+
 __all__ = [
     "User",
     "Upload",
@@ -503,4 +560,7 @@ __all__ = [
     "BackupCatalog",
     "ModelArtifactCatalog",
     "ConversationLog",
+    # ADR-006 Phase 2-F
+    "PatchApplication",
+    "CircuitBreakerEvent",
 ]
