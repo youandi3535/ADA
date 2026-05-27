@@ -3,10 +3,10 @@
 #
 # 동작:
 #   1) feat/** 브랜치에 push 되면 실행
-#   2) 해당 브랜치의 PR이 없으면 자동 생성
+#   2) 해당 브랜치의 PR이 없으면 Draft PR 자동 생성
 #      - 제목: 마지막 커밋 메시지 (hj-day2: 한글요약 형식)
-#      - 본문: 커밋 목록 + PR 템플릿 구조 자동 채움
-#   3) PR이 이미 있으면 커밋 목록만 갱신
+#      - 본문: 커밋 목록 자동 채움 + PR 템플릿 구조 유지
+#   3) PR이 이미 있으면 커밋 목록 섹션만 갱신
 # =============================================================
 name: PR 자동 생성/갱신
 
@@ -28,29 +28,17 @@ jobs:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # 전체 히스토리 필요 (커밋 목록 생성)
+          fetch-depth: 0
 
       - name: PR 제목·본문 생성 및 PR 생성/갱신
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -e
           BRANCH="${GITHUB_REF_NAME}"
 
-          # ── 역할 추출 (브랜치명에서) ──────────────────────────
-          # feat/hj-day2 → HJ / feat/cs-day1 → CS 등
-          ROLE_RAW=$(echo "$BRANCH" | sed 's|feat/||' | cut -d'-' -f1 | tr '[:lower:]' '[:upper:]')
-          case "$ROLE_RAW" in
-            HJ)   ROLE="HJ — 시스템·메타·인프라" ; ROLE_CHECK="- [x] HJ — 시스템·메타·인프라" ;;
-            CS)   ROLE="CS — timeseries"          ; ROLE_CHECK="- [x] CS — timeseries" ;;
-            NY)   ROLE="NY — anomaly"             ; ROLE_CHECK="- [x] NY — anomaly" ;;
-            JH)   ROLE="jh — tabular"             ; ROLE_CHECK="- [x] jh — tabular" ;;
-            *)    ROLE="$ROLE_RAW"                ; ROLE_CHECK="- [ ] $ROLE_RAW" ;;
-          esac
-
-          # ── Day 추출 ──────────────────────────────────────────
-          # feat/hj-day2 → Day 2
+          # ── Day 추출 (feat/hj-day2 → 2) ──────────────────────
           DAY_NUM=$(echo "$BRANCH" | grep -oE 'day[0-9]+' | grep -oE '[0-9]+' || echo "?")
-          DAY="Day ${DAY_NUM}"
 
           # ── PR 제목: 마지막 커밋 메시지 첫 줄 ────────────────
           PR_TITLE=$(git log -1 --format="%s")
@@ -61,110 +49,103 @@ jobs:
             COMMIT_LIST="- (커밋 없음)"
           fi
 
-          # ── 변경 파일 목록 ────────────────────────────────────
-          CHANGED_FILES=$(git diff --stat origin/main..HEAD --name-only 2>/dev/null | head -20 | sed 's/^/  - /' || echo "  - (없음)")
-
-          # ── PR 본문 생성 ──────────────────────────────────────
-          PR_BODY=$(cat <<EOF
-          ## 📋 작업 정보
-
-          **Day**: ${DAY}
-
-          **역할** (하나만 체크):
-          - [ ] HJ — 시스템·메타·인프라
-          - [ ] CS — timeseries
-          - [ ] NY — anomaly
-          - [ ] jh — tabular
-
-          _→ 위 체크박스에서 본인 역할을 직접 체크해주세요_
-
-          **브랜치**: \`${BRANCH}\` → \`main\`
-
-          ---
-
-          ## 🎯 변경 요약
-
-          <!-- 이 PR에서 한 일을 2~3줄로 직접 작성해주세요 -->
-
-          -
-          -
-
-          ---
-
-          ## 📝 커밋 목록 (자동 생성)
-
-          ${COMMIT_LIST}
-
-          ---
-
-          ## ✅ DoD 체크리스트
-
-          > \`TEAM_10DAY_SCHEDULE.md\` 의 해당 Day · 본인 역할 행을 복붙하여 체크
-
-          - [ ]
-          - [ ]
-
-          ---
-
-          ## 🛡️ 영역 자가 검증 (필수)
-
-          \`\`\`bash
-          git diff --stat origin/main..HEAD
-          \`\`\`
-
-          - [ ] 본인 영역만 수정됨 ✅
-          - [ ] 공유 파일 수정 있음 ⚠️ — 사유:
-
-          ---
-
-          ## 🧪 테스트 결과
-
-          - [ ] \`pytest tests/handlers/{본인카테고리}/ -q\` 그린
-          - [ ] \`pytest tests/ -q\` (전체) 그린
-          - [ ] \`ruff check {본인영역}/\` 그린
-
-          ---
-
-          ## 🤝 Contract Day 여부
-
-          - [ ] **Day 4** — Guardrails 강화
-          - [ ] **Day 6** — \`state.best_params\` 추가
-          - [ ] **Day 8** — InsightAgent 가드레일
-          - [ ] **Day 9** — \`outputs/base.py\` 훅 시그니처
-
-          ---
-
-          ## 🔗 관련 (선택)
-
-          - 이슈 / 티켓:
-          - 관련 PR:
-
-          ---
-
-          > 🤖 이 PR은 push 시 자동 생성되었습니다. 위 내용을 검토 후 제출해주세요.
-          EOF
-          )
+          # ── PR 본문 생성 (heredoc 없이 파일로 작성) ──────────
+          BODY_FILE=$(mktemp)
+          {
+            echo "## 📋 작업 정보"
+            echo ""
+            echo "**Day**: Day ${DAY_NUM}"
+            echo ""
+            echo "**역할** (하나만 체크):"
+            echo "- [ ] HJ — 시스템·메타·인프라"
+            echo "- [ ] CS — timeseries"
+            echo "- [ ] NY — anomaly"
+            echo "- [ ] jh — tabular"
+            echo ""
+            echo "**브랜치**: \`${BRANCH}\` → \`main\`"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 🎯 변경 요약"
+            echo ""
+            echo "<!-- 이 PR에서 한 일을 2~3줄로 직접 작성해주세요 -->"
+            echo ""
+            echo "-"
+            echo "-"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 📝 커밋 목록 (자동 생성)"
+            echo ""
+            echo "${COMMIT_LIST}"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## ✅ DoD 체크리스트"
+            echo ""
+            echo "> \`TEAM_10DAY_SCHEDULE.md\` 의 해당 Day · 본인 역할 행을 복붙하여 체크"
+            echo ""
+            echo "- [ ]"
+            echo "- [ ]"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 🛡️ 영역 자가 검증 (필수)"
+            echo ""
+            echo "\`\`\`bash"
+            echo "git diff --stat origin/main..HEAD"
+            echo "\`\`\`"
+            echo ""
+            echo "- [ ] 본인 영역만 수정됨 ✅"
+            echo "- [ ] 공유 파일 수정 있음 ⚠️ — 사유:"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 🧪 테스트 결과"
+            echo ""
+            echo "- [ ] \`pytest tests/handlers/{본인카테고리}/ -q\` 그린"
+            echo "- [ ] \`pytest tests/ -q\` 그린"
+            echo "- [ ] \`ruff check {본인영역}/\` 그린"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 🤝 Contract Day 여부"
+            echo ""
+            echo "- [ ] **Day 4** — Guardrails 강화"
+            echo "- [ ] **Day 6** — \`state.best_params\` 추가"
+            echo "- [ ] **Day 8** — InsightAgent 가드레일"
+            echo "- [ ] **Day 9** — \`outputs/base.py\` 훅 시그니처"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 🔗 관련 (선택)"
+            echo ""
+            echo "- 이슈 / 티켓:"
+            echo "- 관련 PR:"
+            echo ""
+            echo "---"
+            echo ""
+            echo "> 🤖 이 PR은 push 시 자동 생성되었습니다. 위 내용을 검토 후 제출해주세요."
+          } > "$BODY_FILE"
 
           # ── 기존 PR 존재 여부 확인 ───────────────────────────
           EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
 
           if [ -z "$EXISTING_PR" ]; then
-            # PR 없음 → 새로 생성 (draft)
+            # PR 없음 → Draft PR 신규 생성
             gh pr create \
               --title "$PR_TITLE" \
-              --body "$PR_BODY" \
+              --body-file "$BODY_FILE" \
               --base main \
               --head "$BRANCH" \
               --draft
-            echo "✅ Draft PR 생성 완료: $PR_TITLE"
+            echo "✅ Draft PR 생성: ${PR_TITLE}"
           else
-            # PR 있음 → 커밋 목록 섹션만 갱신
-            CURRENT_BODY=$(gh pr view "$EXISTING_PR" --json body --jq '.body')
-            NEW_BODY=$(echo "$CURRENT_BODY" | awk -v commits="$COMMIT_LIST" '
-              /^## 📝 커밋 목록/ { print; print ""; print commits; skip=1; next }
-              skip && /^---/ { skip=0 }
-              !skip { print }
-            ')
-            gh pr edit "$EXISTING_PR" --body "$NEW_BODY"
-            echo "✅ 기존 PR #${EXISTING_PR} 커밋 목록 갱신 완료"
+            # PR 있음 → 제목 + 본문 전체 갱신 (커밋 목록 최신화)
+            gh pr edit "$EXISTING_PR" \
+              --title "$PR_TITLE" \
+              --body-file "$BODY_FILE"
+            echo "✅ PR #${EXISTING_PR} 갱신: ${PR_TITLE}"
           fi
+
+          rm -f "$BODY_FILE"
