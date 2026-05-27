@@ -5,12 +5,15 @@
 # GitHub Action (auto-pr.yml) 에서 호출됨
 #
 # 필요 환경변수:
-#   GH_TOKEN          - GitHub API 토큰
-#   ANTHROPIC_API_KEY - Claude API 키 (PR 제목 AI 생성용)
-#   PR_NUMBER         - PR 번호
-#   BASE_SHA          - base 브랜치 SHA
-#   HEAD_SHA          - head 브랜치 SHA
-#   BRANCH            - head 브랜치명 (예: feat/hj-day2)
+#   GH_TOKEN   - GitHub API 토큰 (PR 수정 + GitHub Models AI 호출 겸용)
+#   PR_NUMBER  - PR 번호
+#   BASE_SHA   - base 브랜치 SHA
+#   HEAD_SHA   - head 브랜치 SHA
+#   BRANCH     - head 브랜치명 (예: feat/hj-day2)
+#
+# GitHub Models API (models.inference.ai.azure.com):
+#   - GITHUB_TOKEN 으로 인증 → 별도 API 키 불필요
+#   - gpt-4o-mini 모델로 PR 제목 요약 생성
 # =============================================================
 set -e
 
@@ -29,8 +32,8 @@ fi
 echo "▶ 커밋 목록:"
 echo "$COMMIT_LIST" | sed 's/^/    /'
 
-# ── Claude API로 대표 제목 생성 ──────────────────────────────
-echo "▶ Claude API로 PR 제목 생성 중..."
+# ── GitHub Models AI로 대표 제목 생성 ───────────────────────
+echo "▶ GitHub Models AI로 PR 제목 생성 중..."
 
 # Python으로 API 호출 (JSON 이스케이프 문제 방지)
 PR_TITLE_BODY=$(python3 - <<PYEOF
@@ -55,17 +58,16 @@ prompt = f"""아래는 하나의 Pull Request에 포함된 커밋 메시지 목�
 제목만 출력 (다른 설명 없이):"""
 
 payload = {
-    "model": "claude-haiku-4-5-20251001",
+    "model": "gpt-4o-mini",
     "max_tokens": 100,
     "messages": [{"role": "user", "content": prompt}]
 }
 
 req = urllib.request.Request(
-    "https://api.anthropic.com/v1/messages",
+    "https://models.inference.ai.azure.com/chat/completions",
     data=json.dumps(payload).encode(),
     headers={
-        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
-        "anthropic-version": "2023-06-01",
+        "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
         "content-type": "application/json",
     }
 )
@@ -73,7 +75,7 @@ req = urllib.request.Request(
 try:
     with urllib.request.urlopen(req) as resp:
         result = json.loads(resp.read())
-        title = result["content"][0]["text"].strip().strip('"').strip("'")
+        title = result["choices"][0]["message"]["content"].strip().strip('"').strip("'")
         print(title)
 except urllib.error.HTTPError as e:
     print(f"API_ERROR: {e.read().decode()}", file=sys.stderr)
