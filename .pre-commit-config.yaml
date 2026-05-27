@@ -2,10 +2,11 @@
 # ADA v2 — pre-commit 훅 (클라이언트측 가드)
 # ============================================================
 # 매 git commit 시 자동 실행되어 영역 위반/포매팅 오류를 차단.
+# post-merge 훅: git pull 완료 시 테스트 의존성 자동 동기화.
 #
 # 최초 1회 설치:
 #   pip install pre-commit
-#   pre-commit install
+#   pre-commit install          ← pre-commit + post-merge 훅 모두 설치됨
 #
 # 수동 실행:
 #   pre-commit run --all-files
@@ -15,6 +16,9 @@
 #
 # 수정 권한: HJ 단독 (.github/CODEOWNERS 참조)
 # ============================================================
+
+# pre-commit install 한 번으로 아래 훅 타입 모두 자동 설치
+default_install_hook_types: [pre-commit, post-merge]
 
 repos:
   # ─────────────────────────────────────────────────────────
@@ -66,3 +70,19 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
         # 경고만 (exit 0). 차단은 CODEOWNERS 가 PR 단계에서 강제.
+
+      - id: ensure-post-merge-hook
+        name: "post-merge 훅 자동 설치 확인"
+        entry: bash -c 'if [ ! -f .git/hooks/post-merge ]; then pre-commit install --hook-type post-merge 2>/dev/null && echo "✅ post-merge 훅 설치됨 (이후 git pull 마다 자동 동기화)"; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        always_run: true
+
+      - id: sync-test-deps
+        name: "git pull 후 테스트 의존성 자동 동기화"
+        entry: bash -c 'PYTHONUTF8=1 pip install -q --upgrade-strategy only-if-needed -r requirements/test.txt && echo "✅ 의존성 동기화 완료"'
+        language: system
+        pass_filenames: false
+        stages: [post-merge]
+        always_run: true
