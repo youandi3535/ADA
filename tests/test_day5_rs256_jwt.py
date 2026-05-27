@@ -11,19 +11,27 @@ from __future__ import annotations
 
 import os
 import platform
-import re
 import subprocess
 
 import pytest
 
 
-def _bash_path(p: str) -> str:
-    """Windows 경로를 MSYS2/Git Bash 경로로 변환 (다른 OS 는 그대로 반환)."""
+def _bash_exe() -> str:
+    """플랫폼별 bash 실행 파일 경로.
+
+    Windows: Git Bash 를 우선 사용 (WSL bash 는 ``/c/...`` 경로 비호환).
+    Git Bash (MSYS2) 는 인자로 받은 Windows 경로를 자동 변환해줌.
+    """
     if platform.system() != "Windows":
-        return p
-    p = p.replace("\\", "/")
-    p = re.sub(r"^([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", p)
-    return p
+        return "bash"
+    for cand in (
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+    ):
+        if os.path.exists(cand):
+            return cand
+    return "bash"
 
 
 # ----- 1) keygen 스크립트 존재 + 실행 가능 ------------------------------------
@@ -32,10 +40,9 @@ def test_keygen_script_exists():
     p = os.path.join(repo, "scripts", "security", "jwt_keygen.sh")
     assert os.path.isfile(p)
     assert os.access(p, os.X_OK)
-    # Windows: MSYS2 경로 변환 + shell=True
+    # Windows: Git Bash 직접 호출 (Windows 경로 자동 변환). WSL bash 회피.
     r = subprocess.run(
-        f'bash -n "{_bash_path(p)}"',
-        shell=True,
+        [_bash_exe(), "-n", p],
         capture_output=True,
         text=True,
     )

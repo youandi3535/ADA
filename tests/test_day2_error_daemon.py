@@ -12,18 +12,27 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
-import re
 import subprocess
 from typing import Any
 
 
-def _bash_path(p: str) -> str:
-    """Windows 경로를 MSYS2/Git Bash 경로로 변환 (다른 OS 는 그대로 반환)."""
+def _bash_exe() -> str:
+    """플랫폼별 bash 실행 파일 경로.
+
+    Windows: Git Bash 를 우선 사용 (WSL bash 는 ``/c/...`` 경로를 인식하지 못하고,
+    또 Windows 네이티브 경로도 못 받는 환경이 있어 호환성 최악).
+    Git Bash (MSYS2) 는 인자로 받은 Windows 경로를 자동으로 ``/c/...`` 로 변환.
+    """
     if platform.system() != "Windows":
-        return p
-    p = p.replace("\\", "/")
-    p = re.sub(r"^([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", p)
-    return p
+        return "bash"
+    for cand in (
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+    ):
+        if os.path.exists(cand):
+            return cand
+    return "bash"  # PATH fallback
 
 
 # ----- 1) scan_new_failures_async — handler 호출 흐름 -----------------------------
@@ -137,10 +146,10 @@ def test_vault_migrate_script_exists_and_dry_run():
     path = os.path.join(repo, "scripts", "security", "vault_migrate_dev_to_raft.sh")
     assert os.path.isfile(path), f"missing: {path}"
     assert os.access(path, os.X_OK), f"not executable: {path}"
-    # bash -n 으로 syntax 검증 (Windows: MSYS2 경로 변환 + shell=True)
+    # bash -n 으로 syntax 검증.
+    # Windows: Git Bash 직접 호출 (Windows 경로 자동 변환됨). WSL bash 회피.
     r = subprocess.run(
-        f'bash -n "{_bash_path(path)}"',
-        shell=True,
+        [_bash_exe(), "-n", path],
         capture_output=True,
         text=True,
     )
