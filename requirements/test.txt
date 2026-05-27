@@ -1,0 +1,72 @@
+# Python: 3.10
+# =============================================================
+# test.txt  -  로컬 테스트 전용 (end_of_day.sh 에서 자동 설치)
+#
+# dev.txt 는 torch CPU/CUDA 충돌 + uvloop Windows 미지원으로
+# Windows 로컬 환경에서 설치 불가. 테스트 통과에 필요한 패키지만
+# 최소한으로 정의해 플랫폼 무관하게 동작하도록 함.
+#
+# 포함하지 않는 것:
+#   - torch / torchvision / torchaudio  (CPU↔CUDA 버전 충돌)
+#   - sentence-transformers             (torch 의존)
+#   - transformers / accelerate / peft  (torch 의존)
+#   - uvloop                            (Linux 전용)
+#   - spacy / presidio                  (무거운 NLP 모델)
+#   - locust / jupyterlab               (테스트 불필요)
+# =============================================================
+-r base.txt
+
+# 웹 프레임워크 (ada.api.* 임포트 위해 필요)
+fastapi==0.111.0
+uvicorn==0.29.0
+python-multipart==0.0.9
+aiofiles==23.2.1
+starlette==0.37.2
+sse-starlette==2.1.0
+websockets==12.0
+
+# DB
+sqlalchemy==2.0.30
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+alembic==1.13.1
+pgvector==0.2.5
+
+# 오케스트레이션
+celery==5.4.0
+redis==5.0.4
+
+# LLM / 에이전트 (ada/agents/* 임포트 위해 필요)
+anthropic==0.28.0
+langgraph==0.1.5
+langchain==0.2.3
+langchain-anthropic==0.1.13
+langsmith==0.1.77
+
+# 보안 (ada/security/* — hvac 미포함 시 vault 테스트 실패)
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+itsdangerous==2.2.0
+hvac==2.3.0
+slowapi==0.1.9
+
+# 관측
+prometheus-client==0.20.0
+langfuse==2.36.0
+
+# 데이터 (핸들러 테스트에서 pandas/numpy 직접 사용)
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.0
+scipy==1.13.0
+mlflow==2.13.0
+pyarrow==15.0.2
+
+# 테스트 도구
+pytest==8.2.1
+pytest-asyncio==0.23.7
+pytest-cov==5.0.0
+pytest-mock==3.14.0
+
+# 코드 품질 (ruff 는 pre-commit 이 관리 — 여기서 제외, 재설치 시 Windows 권한 오류 발생)
+# ruff 는 별도 설치: pip install ruff==0.4.5
