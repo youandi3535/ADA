@@ -64,6 +64,8 @@ def fingerprint(error_message: str, stack: str = "") -> dict[str, str]:
     )
     # IPv4 주소 (의미있는 숫자 - 호스트 식별자라 정규화)
     clean = re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<IP>", clean)
+    # ADR-006 Phase 2-A: redactor 가 partial mask (`192.x.x.x`) 로 남긴 형태도 통합
+    clean = re.sub(r"\b\d{1,3}\.x\.x\.x\b", "<IP>", clean)
     # 포트 번호 (콜론 뒤 숫자)
     clean = re.sub(r":(?:\d{2,5})\b", ":<PORT>", clean)
     # Python traceback line 번호
@@ -79,6 +81,7 @@ def fingerprint(error_message: str, stack: str = "") -> dict[str, str]:
     )
     norm_stack = re.sub(r"0x[0-9a-fA-F]+", "<ADDR>", norm_stack)
     norm_stack = re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<IP>", norm_stack)
+    norm_stack = re.sub(r"\b\d{1,3}\.x\.x\.x\b", "<IP>", norm_stack)
     norm_stack = re.sub(r"line \d+", "line <N>", norm_stack)
     norm_stack = re.sub(r"/[^/]+/site-packages/", "/<sp>/", norm_stack)
     # Windows 경로의 사용자명
@@ -179,7 +182,55 @@ class AutoErrorHandler:
         self.session = session
 
     async def handle(self, log_row: FailureLog) -> dict[str, Any]:
-        fp = fingerprint(log_row.error_message or "", log_row.stack_trace or "")
+        # ── ADR-006 Phase 2-A: PII / secret 마스킹 ──────────────────────────
+        from ada.error_handler.redactor import redact
+
+        raw_msg = log_row.error_message or ""
+        raw_stack = log_row.stack_trace or ""
+        clean_msg, msg_pii = redact(raw_msg)
+        clean_stack, stack_pii = redact(raw_stack)
+        if msg_pii or stack_pii:
+            log.info(
+                "pii_redacted_before_handler",
+                msg_types=msg_pii,
+                stack_types=stack_pii,
+            )
+            log_row.error_message = clean_msg[:2000]
+            log_row.stack_trace = clean_stack[:5000]
+
+        fp = fingerprint(clean_msg, clean_stack)
+
+        # ── ADR-006 Phase 2-B: 5종 분류 + 단축경로 ─────────────────────────
+        # TRANSIENT / CONFIG / DATA / USER_INPUT 은 LLM 호출 skip.
+        # CODE_BUG / UNKNOWN 만 Tier 0~3 폴백 진행.
+        from ada.error_handler.classifier import classify_with_reason, get_strategy, should_skip_llm
+
+        cls, reason = classify_with_reason(clean_msg, clean_stack)
+        strategy = get_strategy(cls)
+        log.info(
+            "error_classified",
+            classification=cls.value,
+            strategy=strategy.value,
+            reason=reason,
+            fingerprint=fp["hash"][:16],
+        )
+
+        if should_skip_llm(cls):
+            # LLM 호출 없이 즉시 분류 결과 반환.
+            # 그래프 / Agent 가 이 action 보고 적절히 처리:
+            #   transient → retry_with_backoff (supervisor 가 재시도)
+            #   config    → human_only         (error_recovery 가 사용자 안내)
+            #   data      → user_message       (error_recovery 가 데이터 수정 요청)
+            #   user_input→ user_message
+            log_row.error_category = cls.value
+            await self.session.flush()
+            return {
+                "action": f"classified_{cls.value}",  # 예: classified_transient
+                "classification": cls.value,
+                "strategy": strategy.value,
+                "reason": reason,
+                "llm_skipped": True,
+            }
 
         # ── Tier 0: 정적 결정론적 Fixer (LLM 비용 0, < 100ms) ──────────────
         try:
@@ -251,58 +302,133 @@ class AutoErrorHandler:
                 log.warning("approved_patch_lookup_failed", error=str(e))
 
         # ── Tier 2: Ollama qwen2.5-coder ───────────────────────────────────
+        # ADR-006 Phase 2-A: fp["signature"] 와 clean_stack 은 이미 redacted.
+        # ADR-006 Phase 2-C: circuit breaker 로 보호. 5분 OPEN 후 자동 HALF_OPEN.
+        from ada.error_handler.circuit_breaker import (
+            CircuitBreakerOpenError,
+            get_breaker,
+        )
+
+        _ollama_cb = get_breaker("ollama", failure_threshold=3, recovery_timeout=300)
         try:
-            patch = await _ollama_coder_fix(fp["signature"], log_row.stack_trace or "")
+            patch = await _ollama_cb.call(_ollama_coder_fix, fp["signature"], clean_stack)
             diff = (patch.get("diff") or "").strip()
             confidence = float(patch.get("confidence", 0.0))
 
             if diff and confidence >= 0.4:
-                # test_plan 앞에 출처 표시 (DB 스키마 변경 없이 소스 기록)
-                test_plan = f"[ollama:{getattr(settings, 'ollama_coder_model', 'qwen2.5-coder:7b')}] " + (
-                    patch.get("test_plan") or ""
-                )
-                self.session.add(
-                    PendingPatch(
-                        error_kb_id=(kb.id if kb else None),
-                        patch_diff=diff,
-                        test_plan=test_plan,
-                        confidence=confidence,
-                        review_status="pending",
+                # ADR-006 Phase 2-E: 영역 검증 (R-403) — HJ 영역 외 / 금지 파일 즉시 reject
+                from ada.error_handler.sandbox import PatchValidator
+
+                _validator = PatchValidator()
+                static_result = _validator.static_check(diff)
+                if not static_result.passed:
+                    log.warning(
+                        "ollama_patch_rejected_static",
+                        reason=static_result.reason,
+                        scope_violations=static_result.scope_violations,
+                        forbidden=static_result.forbidden_violations,
                     )
-                )
-                await self.session.flush()
-                log.info("ollama_patch_queued", chars=len(diff), confidence=confidence)
-                return {"action": "patch_queued_ollama", "patch_chars": len(diff)}
+                    # 큐에 적재하지 않고 다음 폴백 (Claude) 으로 진행
+                else:
+                    # test_plan 앞에 출처 표시
+                    test_plan = f"[ollama:{getattr(settings, 'ollama_coder_model', 'qwen2.5-coder:7b')}] " + (
+                        patch.get("test_plan") or ""
+                    )
+                    self.session.add(
+                        PendingPatch(
+                            error_kb_id=(kb.id if kb else None),
+                            patch_diff=diff,
+                            test_plan=test_plan,
+                            confidence=confidence,
+                            review_status="pending",
+                        )
+                    )
+                    await self.session.flush()
+                    log.info("ollama_patch_queued", chars=len(diff), confidence=confidence)
+                    return {"action": "patch_queued_ollama", "patch_chars": len(diff)}
 
             # diff 없거나 신뢰도 낮음 → Claude CLI 로 계속
             log.warning("ollama_low_confidence", confidence=confidence, has_diff=bool(diff))
 
+        except CircuitBreakerOpenError as e:
+            log.warning("ollama_circuit_open", retry_after_sec=e.retry_after_sec)
+            # 회로 OPEN → Claude CLI 로 폴백 (아래 Tier 3 진행)
         except urllib.error.URLError as e:
             log.warning("ollama_coder_offline", error=str(e))
         except Exception as e:  # noqa: BLE001
             log.warning("ollama_coder_failed", error=str(e))
 
         # ── Tier 3: Claude CLI Bridge ───────────────────────────────────────
+        # ADR-006 Phase 2-D: Claude CLI 호출 전 일일 예산 체크
+        # (Ollama 는 무료라 체크 skip)
+        from ada.error_handler.budget import get_budget_manager
+
+        budget = get_budget_manager()
+        if await budget.is_exceeded():
+            spend = await budget.get_today_spend()
+            log.warning("claude_budget_exceeded", today_spend_usd=round(spend, 4))
+            return {
+                "action": "budget_exceeded",
+                "today_spend_usd": round(spend, 4),
+                "remaining_usd": round(await budget.remaining_budget(), 4),
+            }
+
+        # ADR-006 Phase 2-C: Claude CLI 도 circuit breaker 보호.
+        _claude_cb = get_breaker("claude_cli", failure_threshold=3, recovery_timeout=180)
         try:
             from ada.error_handler.claude_cli_bridge import ClaudeCLIBridge
 
             bridge = ClaudeCLIBridge()
-            patch = await bridge.request_patch(
+            # ADR-006 Phase 2-A: redacted text 만 외부 API 로 전송.
+            patch = await _claude_cb.call(
+                bridge.request_patch,
                 error_signature=fp["signature"],
-                stack=log_row.stack_trace or "",
+                stack=clean_stack,
             )
+            # ADR-006 Phase 2-D: Claude 응답에 토큰 정보 있으면 비용 누적
+            input_tokens = int(patch.get("input_tokens", 0) or 0)
+            output_tokens = int(patch.get("output_tokens", 0) or 0)
+            if input_tokens or output_tokens:
+                await budget.track_call(
+                    model=patch.get("model", "claude-sonnet-4-6"),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+
+            # ADR-006 Phase 2-E: 영역 검증
+            from ada.error_handler.sandbox import PatchValidator
+
+            diff_str = patch.get("diff") or ""
+            _validator = PatchValidator()
+            static_result = _validator.static_check(diff_str)
+            if not static_result.passed:
+                log.warning(
+                    "claude_patch_rejected_static",
+                    reason=static_result.reason,
+                    scope_violations=static_result.scope_violations,
+                    forbidden=static_result.forbidden_violations,
+                )
+                return {
+                    "action": "patch_rejected_scope",
+                    "reason": static_result.reason,
+                    "violations": static_result.scope_violations + static_result.forbidden_violations,
+                }
+
             self.session.add(
                 PendingPatch(
                     error_kb_id=(kb.id if kb else None),
-                    patch_diff=patch.get("diff"),
+                    patch_diff=diff_str,
                     test_plan="[claude_cli] " + (patch.get("test_plan") or ""),
                     confidence=patch.get("confidence", 0.4),
                     review_status="pending",
                 )
             )
             await self.session.flush()
-            log.info("claude_patch_queued", chars=len(patch.get("diff") or ""))
-            return {"action": "patch_queued", "patch_chars": len(patch.get("diff") or "")}
+            log.info("claude_patch_queued", chars=len(diff_str))
+            return {"action": "patch_queued", "patch_chars": len(diff_str)}
+        except CircuitBreakerOpenError as e:
+            log.warning("claude_circuit_open", retry_after_sec=e.retry_after_sec)
+            return {"action": "circuit_open", "breaker": "claude_cli", "retry_after_sec": e.retry_after_sec}
         except Exception as e:
             log.warning("auto_handler_failed", error=str(e))
             return {"action": "noop", "error": str(e)}

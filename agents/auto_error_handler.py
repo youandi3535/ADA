@@ -25,7 +25,30 @@ from agents.base import BaseAgent
 # action 분류 (auto_handler.py 의 반환값 기준)
 RESOLVED_ACTIONS = frozenset({"auto_kb_match", "patch_reused_approved"})
 PATCH_QUEUED_ACTIONS = frozenset({"patch_queued_static", "patch_queued_ollama", "patch_queued"})
-FAILED_ACTIONS = frozenset({"noop", "debounced", "circuit_open"})
+# ADR-006 Phase 2-C/D/E: budget_exceeded / patch_rejected_scope 도 graceful degradation
+FAILED_ACTIONS = frozenset(
+    {
+        "noop",
+        "debounced",
+        "circuit_open",
+        "budget_exceeded",
+        "patch_rejected_scope",
+    }
+)
+
+# ADR-006 Phase 2-B: 분류기 단축경로 action
+# - TRANSIENT  → supervisor 가 retry 처리 (error 유지)
+# - CONFIG     → human-only, error_recovery 로 (error 유지)
+# - DATA       → user_message, error_recovery 로 (error 유지)
+# - USER_INPUT → 동일
+TRANSIENT_ACTIONS = frozenset({"classified_transient"})
+HUMAN_REQUIRED_ACTIONS = frozenset(
+    {
+        "classified_config",
+        "classified_data",
+        "classified_user_input",
+    }
+)
 
 
 class AutoErrorHandlerAgent(BaseAgent):
@@ -40,13 +63,22 @@ class AutoErrorHandlerAgent(BaseAgent):
                 return state
 
             from ada.error_handler.auto_handler import AutoErrorHandler, fingerprint
+            from ada.error_handler.redactor import redact
 
             try:
-                # ADR-006 Phase 1.4 & 1.5: 정상 fingerprint 사용 ('auto' 하드코딩 제거)
-                fp = fingerprint(
-                    state.error or "",
-                    state.error_traceback or "",
-                )
+                # ADR-006 Phase 2-A: PII / secret 마스킹 (FailureLog 저장 전)
+                # state.error 가 사용자 입력에서 유래한 PII 포함 가능 (예: 이메일 / 카드).
+                clean_error, error_pii = redact(state.error or "")
+                clean_traceback, tb_pii = redact(state.error_traceback or "")
+                if error_pii or tb_pii:
+                    self.logger.info(
+                        "pii_redacted_in_agent",
+                        error_types=error_pii,
+                        traceback_types=tb_pii,
+                    )
+
+                # ADR-006 Phase 1.4 & 1.5: redacted text 로 fingerprint
+                fp = fingerprint(clean_error, clean_traceback)
 
                 # job_id 가 str 인 경우 UUID 로 변환
                 job_id_val = state.job_id
@@ -59,8 +91,8 @@ class AutoErrorHandlerAgent(BaseAgent):
                 fl = FailureLog(
                     job_id=job_id_val,  # type: ignore[arg-type]
                     error_hash=fp["hash"],
-                    error_message=(state.error or "")[:2000],
-                    stack_trace=(state.error_traceback or "")[:5000],
+                    error_message=clean_error[:2000],
+                    stack_trace=clean_traceback[:5000],
                     error_category="auto",
                 )
                 self.session.add(fl)
@@ -68,6 +100,7 @@ class AutoErrorHandlerAgent(BaseAgent):
 
                 outcome = await AutoErrorHandler(self.session).handle(fl)
                 action = outcome.get("action", "")
+                classification = outcome.get("classification")
 
                 # 결과에 따라 state 갱신
                 if action in RESOLVED_ACTIONS:
@@ -82,7 +115,34 @@ class AutoErrorHandlerAgent(BaseAgent):
                         error=None,
                         error_traceback=None,
                         error_fingerprint=fp["hash"],
+                        error_classified_as=classification,
                         next_agent="supervisor",
+                    )
+
+                # ADR-006 Phase 2-B: 분류 단축경로
+                if action in TRANSIENT_ACTIONS:
+                    # 일시적 장애 → error 유지하되 supervisor 가 retry 결정.
+                    # error_classified_as 마킹 → SupervisorAgent / ErrorRecoveryAgent
+                    # 가 보고 retry/backoff 선택 가능.
+                    self.logger.info(
+                        "transient_classified",
+                        fingerprint=fp["hash"][:16],
+                    )
+                    return state.with_update(
+                        error_fingerprint=fp["hash"],
+                        error_classified_as=classification,
+                    )
+
+                if action in HUMAN_REQUIRED_ACTIONS:
+                    # CONFIG/DATA/USER_INPUT → LLM 못 고침. 즉시 사람 안내.
+                    self.logger.info(
+                        "human_required",
+                        classification=classification,
+                        fingerprint=fp["hash"][:16],
+                    )
+                    return state.with_update(
+                        error_fingerprint=fp["hash"],
+                        error_classified_as=classification,
                     )
 
                 # 그 외 (PATCH_QUEUED / FAILED): error 유지 → error_recovery 로
@@ -93,6 +153,7 @@ class AutoErrorHandlerAgent(BaseAgent):
                 )
                 return state.with_update(
                     error_fingerprint=fp["hash"],
+                    error_classified_as=classification,
                 )
 
             except Exception as e:
