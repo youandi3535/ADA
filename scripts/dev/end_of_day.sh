@@ -94,9 +94,9 @@ echo ""
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "▶ 2/6 로컬 테스트 (--skip-tests 로 건너뛰기 가능)"
     if [ -n "$CATEGORY" ]; then
-        pytest "tests/handlers/${CATEGORY}/" -q
+        python -m pytest "tests/handlers/${CATEGORY}/" -q
     else
-        pytest tests/ -q
+        python -m pytest tests/ -q
     fi
     echo ""
 else
@@ -137,9 +137,9 @@ fi
 if [ "$SKIP_TESTS" -eq 0 ] && [ "$NO_REBASE" -eq 0 ]; then
     echo "▶ 5/6 rebase 후 테스트 재확인"
     if [ -n "$CATEGORY" ]; then
-        pytest "tests/handlers/${CATEGORY}/" -q
+        python -m pytest "tests/handlers/${CATEGORY}/" -q
     else
-        pytest tests/ -q
+        python -m pytest tests/ -q
     fi
     echo ""
 else
