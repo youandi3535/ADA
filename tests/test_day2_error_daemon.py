@@ -11,8 +11,19 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
+import re
 import subprocess
 from typing import Any
+
+
+def _bash_path(p: str) -> str:
+    """Windows 경로를 MSYS2/Git Bash 경로로 변환 (다른 OS 는 그대로 반환)."""
+    if platform.system() != "Windows":
+        return p
+    p = p.replace("\\", "/")
+    p = re.sub(r"^([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", p)
+    return p
 
 
 # ----- 1) scan_new_failures_async — handler 호출 흐름 -----------------------------
@@ -126,8 +137,13 @@ def test_vault_migrate_script_exists_and_dry_run():
     path = os.path.join(repo, "scripts", "security", "vault_migrate_dev_to_raft.sh")
     assert os.path.isfile(path), f"missing: {path}"
     assert os.access(path, os.X_OK), f"not executable: {path}"
-    # bash -n 으로 syntax 검증
-    r = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+    # bash -n 으로 syntax 검증 (Windows: MSYS2 경로 변환 + shell=True)
+    r = subprocess.run(
+        f'bash -n "{_bash_path(path)}"',
+        shell=True,
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 0, f"syntax error: {r.stderr}"
     # 헤더에 dry-run 기본 표기
     with open(path, encoding="utf-8") as f:

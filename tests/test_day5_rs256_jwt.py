@@ -10,9 +10,20 @@ DoD:
 from __future__ import annotations
 
 import os
+import platform
+import re
 import subprocess
 
 import pytest
+
+
+def _bash_path(p: str) -> str:
+    """Windows 경로를 MSYS2/Git Bash 경로로 변환 (다른 OS 는 그대로 반환)."""
+    if platform.system() != "Windows":
+        return p
+    p = p.replace("\\", "/")
+    p = re.sub(r"^([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", p)
+    return p
 
 
 # ----- 1) keygen 스크립트 존재 + 실행 가능 ------------------------------------
@@ -21,7 +32,13 @@ def test_keygen_script_exists():
     p = os.path.join(repo, "scripts", "security", "jwt_keygen.sh")
     assert os.path.isfile(p)
     assert os.access(p, os.X_OK)
-    r = subprocess.run(["bash", "-n", p], capture_output=True, text=True)
+    # Windows: MSYS2 경로 변환 + shell=True
+    r = subprocess.run(
+        f'bash -n "{_bash_path(p)}"',
+        shell=True,
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 0, r.stderr
 
 

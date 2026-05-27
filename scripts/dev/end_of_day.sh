@@ -5,6 +5,7 @@
 # 하루 작업 마무리 자동화 스크립트.
 #
 # 실행 순서:
+#   0) 의존성 자동 동기화 (pip install -r requirements/dev.txt)
 #   1) 영역 검증 (check_scope.sh)
 #   2) 로컬 테스트 (pytest)
 #   3) origin/main 최신화 (fetch)
@@ -22,6 +23,19 @@
 # ============================================================
 
 set -e
+
+# ─── 의존성 자동 동기화 ───
+# requirements/dev.txt 는 base + api + worker 를 모두 포함하므로
+# 팀원이 별도로 pip install 을 하지 않아도 항상 CI 와 동일한 환경이 보장됩니다.
+TEST_REQS="requirements/test.txt"
+if [ -f "$TEST_REQS" ]; then
+    echo "▶ 테스트 의존성 동기화 중 (pip install -r $TEST_REQS) ..."
+    # PYTHONUTF8=1 : Windows 에서 requirements 파일의 한글 주석을 올바르게 읽기 위해 필요
+    # test.txt 는 torch/uvloop 등 플랫폼 비호환 패키지를 제외한 경량 파일
+    PYTHONUTF8=1 pip install -q --upgrade-strategy only-if-needed -r "$TEST_REQS"
+    echo "  완료"
+    echo ""
+fi
 
 # ─── 옵션 파싱 ───
 SKIP_TESTS=0

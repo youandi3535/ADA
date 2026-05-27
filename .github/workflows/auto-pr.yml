@@ -1,0 +1,40 @@
+# =============================================================
+# auto-pr.yml — PR 열리면 제목·본문 자동 채움
+#
+# 동작:
+#   PR opened / synchronize 시 실행
+#   → .github/scripts/fill_pr.sh 호출
+#   → 제목: 마지막 커밋 메시지 (hj-day2: 한글요약)
+#   → 본문: Day 번호 자동 채움 + 커밋 목록 섹션 삽입
+# =============================================================
+name: PR 제목·본문 자동 채움
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  models: read
+
+jobs:
+  fill-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: PR 제목·본문 자동 채움
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+        run: bash .github/scripts/fill_pr.sh
