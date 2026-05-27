@@ -117,16 +117,17 @@ def _parse_entry(raw_line: str) -> tuple[str, str] | None:
         return None
 
     # 포맷 A — "type" 키로 판별
+    # Claude Code 구버전: "human" / 신버전(2025+): "user"  # noqa: ERA001
     otype = obj.get("type", "")
-    if otype in ("human", "assistant"):
+    if otype in ("human", "user", "assistant"):
         msg = obj.get("message", {})
-        role = "user" if otype == "human" else "assistant"
+        role = "user" if otype in ("human", "user") else "assistant"
         text = _extract_text(msg.get("content", ""))
         if text:
             return role, text
         return None
 
-    # 포맷 B — "role" 키로 판별
+    # 포맷 B — "role" 키로 판별 (단순 포맷)
     role = obj.get("role", "")
     if role in ("user", "assistant"):
         text = _extract_text(obj.get("content", ""))

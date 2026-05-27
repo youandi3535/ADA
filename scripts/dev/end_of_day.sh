@@ -24,21 +24,28 @@
 
 set -e
 
-# ─── Python 실행 파일 감지 (Windows venv 호환) ────────────────
-# PowerShell 에서 bash 를 호출할 때 venv PATH 가 전달되지 않으므로
-# 프로젝트 루트의 venv 를 직접 탐색
-if [ -f "venv/Scripts/python.exe" ]; then
-    PYTHON="venv/Scripts/python.exe"       # Windows Git bash + venv (상대경로 실행 시 .exe 필수)
+# ─── Python 실행 파일 감지 (venv / .venv 모두 지원, 크로스 플랫폼) ────────────
+# PowerShell/bash 에서 호출 시 venv PATH 가 전달되지 않으므로 프로젝트 루트의 venv 를 직접 탐색.
+# 우선순위: .venv (DEV_SETUP_GUIDE 표준) → venv (HJ 기존 환경) → 시스템 python.
+if [ -f ".venv/Scripts/python.exe" ]; then
+    PYTHON=".venv/Scripts/python.exe"      # Windows + .venv (가이드 표준)
+elif [ -f ".venv/Scripts/python" ]; then
+    PYTHON=".venv/Scripts/python"          # Windows + .venv (비-exe)
+elif [ -f ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"              # Linux/macOS + .venv (팀원 표준)
+elif [ -f "venv/Scripts/python.exe" ]; then
+    PYTHON="venv/Scripts/python.exe"       # Windows + venv (HJ 호환)
 elif [ -f "venv/Scripts/python" ]; then
-    PYTHON="venv/Scripts/python"           # Windows 비-exe 케이스
+    PYTHON="venv/Scripts/python"           # Windows + venv (비-exe)
 elif [ -f "venv/bin/python" ]; then
     PYTHON="venv/bin/python"               # Linux/macOS + venv
 elif command -v python &>/dev/null; then
-    PYTHON="python"
+    PYTHON="python"                        # 시스템 폴백
 elif command -v python3 &>/dev/null; then
     PYTHON="python3"
 else
-    echo "❌ Python 을 찾을 수 없습니다. venv 가 생성되어 있는지 확인하세요."
+    echo "❌ Python 을 찾을 수 없습니다. .venv 또는 venv 가 생성되어 있는지 확인하세요."
+    echo "   생성: python3.10 -m venv .venv  (Ubuntu)  /  python -m venv .venv  (Windows)"
     exit 1
 fi
 echo "  Python: $PYTHON"
