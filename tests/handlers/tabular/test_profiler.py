@@ -178,3 +178,106 @@ def test_profile_no_target_column():
     extra = profile(df, state)
     assert isinstance(extra, dict)
     assert "class_imbalance_ratio" not in extra
+
+
+# ──────────────────────────────────────────────
+# preprocessing_thresholds_suggested
+# ──────────────────────────────────────────────
+
+
+def test_preprocessing_thresholds_key_exists(tab_state, tab_df):
+    extra = profile(tab_df, tab_state)
+    assert "preprocessing_thresholds_suggested" in extra
+
+
+def test_threshold_target_encoding_min_card_scales_with_n():
+    """n=400 → min_card=20(floor), n=10000 → min_card=100."""
+    from ada.core.state import PipelineState
+
+    rng = np.random.default_rng(0)
+
+    df_small = pd.DataFrame({"x": rng.standard_normal(400), "y": rng.integers(0, 2, 400)})
+    state = PipelineState(job_id="t-enc-s", file_id="t", category="tabular_ml", target_column="y")
+    t_small = profile(df_small, state)["preprocessing_thresholds_suggested"]
+    assert t_small["target_encoding_min_card"] == 20  # sqrt(400)=20, max(20,20)=20
+
+    df_large = pd.DataFrame({"x": rng.standard_normal(10000), "y": rng.integers(0, 2, 10000)})
+    state2 = PipelineState(job_id="t-enc-l", file_id="t", category="tabular_ml", target_column="y")
+    t_large = profile(df_large, state2)["preprocessing_thresholds_suggested"]
+    assert t_large["target_encoding_min_card"] == 100  # sqrt(10000)=100
+
+
+def test_threshold_id_col_unique_ratio_in_range(tab_state, tab_df):
+    t = profile(tab_df, tab_state)["preprocessing_thresholds_suggested"]
+    ratio = t["id_col_unique_ratio"]
+    assert 0.5 < ratio < 0.95
+
+
+def test_threshold_missing_drop_clipped():
+    """결측 없는 데이터 → clip 하한 0.3 적용."""
+    from ada.core.state import PipelineState
+
+    df = pd.DataFrame({"a": range(100), "b": range(100), "y": [0] * 50 + [1] * 50})
+    state = PipelineState(job_id="t-miss", file_id="t", category="tabular_ml", target_column="y")
+    t = profile(df, state)["preprocessing_thresholds_suggested"]
+    assert 0.3 <= t["missing_drop_threshold"] <= 0.9
+
+
+def test_threshold_smote_entropy_is_constant(tab_state, tab_df):
+    t = profile(tab_df, tab_state)["preprocessing_thresholds_suggested"]
+    assert t["smote_imbalance_entropy_threshold"] == 0.85
+
+
+def test_threshold_smote_mem_mb_positive(tab_state, tab_df):
+    t = profile(tab_df, tab_state)["preprocessing_thresholds_suggested"]
+    assert t["smote_max_synthetic_mem_mb"] > 0
+
+
+def test_threshold_vif_switches_on_condition_number():
+    """독립 컬럼 → vif_threshold=10.0, 강한 공선성 → 5.0."""
+    from ada.core.state import PipelineState
+
+    rng = np.random.default_rng(1)
+
+    # 독립 — condition number 낮음
+    df_indep = pd.DataFrame(
+        {
+            "a": rng.standard_normal(200),
+            "b": rng.standard_normal(200),
+            "c": rng.standard_normal(200),
+            "d": rng.standard_normal(200),
+            "e": rng.standard_normal(200),
+            "y": rng.integers(0, 2, 200),
+        }
+    )
+    state = PipelineState(job_id="t-vif-i", file_id="t", category="tabular_ml", target_column="y")
+    t_indep = profile(df_indep, state)["preprocessing_thresholds_suggested"]
+    assert t_indep["vif_threshold"] == 10.0
+
+    # 강한 공선성 — condition number 높음
+    base = rng.standard_normal(200)
+    df_collinear = pd.DataFrame(
+        {
+            "a": base,
+            "b": base + 0.001 * rng.standard_normal(200),
+            "c": base * 2 + 0.001 * rng.standard_normal(200),
+            "d": rng.standard_normal(200),
+            "y": rng.integers(0, 2, 200),
+        }
+    )
+    state2 = PipelineState(job_id="t-vif-c", file_id="t", category="tabular_ml", target_column="y")
+    t_col = profile(df_collinear, state2)["preprocessing_thresholds_suggested"]
+    assert t_col["vif_threshold"] == 5.0
+
+
+def test_threshold_vif_max_drop_ratio_in_range(tab_state, tab_df):
+    t = profile(tab_df, tab_state)["preprocessing_thresholds_suggested"]
+    ratio = t["vif_max_drop_ratio"]
+    assert 0 < ratio <= 0.3
+
+
+def test_threshold_computed_with_metadata(tab_state, tab_df):
+    t = profile(tab_df, tab_state)["preprocessing_thresholds_suggested"]
+    meta = t["_computed_with"]
+    for key in ("n_rows", "n_features", "available_ram_gb", "corr_condition_number"):
+        assert key in meta
