@@ -24,6 +24,25 @@
 
 set -e
 
+# ─── Python 실행 파일 감지 (Windows venv 호환) ────────────────
+# PowerShell 에서 bash 를 호출할 때 venv PATH 가 전달되지 않으므로
+# 프로젝트 루트의 venv 를 직접 탐색
+if [ -f "venv/Scripts/python.exe" ]; then
+    PYTHON="venv/Scripts/python.exe"       # Windows Git bash + venv (상대경로 실행 시 .exe 필수)
+elif [ -f "venv/Scripts/python" ]; then
+    PYTHON="venv/Scripts/python"           # Windows 비-exe 케이스
+elif [ -f "venv/bin/python" ]; then
+    PYTHON="venv/bin/python"               # Linux/macOS + venv
+elif command -v python &>/dev/null; then
+    PYTHON="python"
+elif command -v python3 &>/dev/null; then
+    PYTHON="python3"
+else
+    echo "❌ Python 을 찾을 수 없습니다. venv 가 생성되어 있는지 확인하세요."
+    exit 1
+fi
+echo "  Python: $PYTHON"
+
 # ─── 의존성 자동 동기화 ───
 # requirements/dev.txt 는 base + api + worker 를 모두 포함하므로
 # 팀원이 별도로 pip install 을 하지 않아도 항상 CI 와 동일한 환경이 보장됩니다.
@@ -32,7 +51,7 @@ if [ -f "$TEST_REQS" ]; then
     echo "▶ 테스트 의존성 동기화 중 (pip install -r $TEST_REQS) ..."
     # PYTHONUTF8=1 : Windows 에서 requirements 파일의 한글 주석을 올바르게 읽기 위해 필요
     # test.txt 는 torch/uvloop 등 플랫폼 비호환 패키지를 제외한 경량 파일
-    PYTHONUTF8=1 pip install -q --upgrade-strategy only-if-needed -r "$TEST_REQS"
+    $PYTHON -X utf8 -m pip install -q --upgrade-strategy only-if-needed -r "$TEST_REQS"
     echo "  완료"
     echo ""
 fi
@@ -94,9 +113,9 @@ echo ""
 if [ "$SKIP_TESTS" -eq 0 ]; then
     echo "▶ 2/6 로컬 테스트 (--skip-tests 로 건너뛰기 가능)"
     if [ -n "$CATEGORY" ]; then
-        pytest "tests/handlers/${CATEGORY}/" -q
+        $PYTHON -m pytest "tests/handlers/${CATEGORY}/" -q
     else
-        pytest tests/ -q
+        $PYTHON -m pytest tests/ -q
     fi
     echo ""
 else
@@ -137,9 +156,9 @@ fi
 if [ "$SKIP_TESTS" -eq 0 ] && [ "$NO_REBASE" -eq 0 ]; then
     echo "▶ 5/6 rebase 후 테스트 재확인"
     if [ -n "$CATEGORY" ]; then
-        pytest "tests/handlers/${CATEGORY}/" -q
+        $PYTHON -m pytest "tests/handlers/${CATEGORY}/" -q
     else
-        pytest tests/ -q
+        $PYTHON -m pytest tests/ -q
     fi
     echo ""
 else
