@@ -11,6 +11,7 @@ import asyncio
 import json
 import re
 import time
+import traceback
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Optional
@@ -84,6 +85,19 @@ class BaseAgent(abc.ABC):
         except Exception as e:
             status = "failed"
             error = f"{type(e).__name__}: {e}"[:2000]
+            # ADR-006 Phase 1: state 갱신을 예외 객체에 첨부.
+            # graph 의 safe_node 래퍼가 이걸 꺼내 state 로 반환 → 자동 라우팅.
+            # raise 후에도 호출자가 갱신된 state 를 받을 수 있게 하는 패턴.
+            try:
+                e._ada_state = state.with_update(  # type: ignore[attr-defined]
+                    error=error,
+                    error_traceback=traceback.format_exc()[:8000],
+                    auto_fix_attempts=state.auto_fix_attempts + 1,
+                    next_agent="auto_error_handler",
+                )
+            except Exception:
+                # state.with_update 자체가 깨졌으면 원본 예외 그대로 전파
+                pass
             raise
         finally:
             duration_ms = int((time.perf_counter() - start) * 1000)
