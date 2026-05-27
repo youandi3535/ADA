@@ -226,9 +226,10 @@ def _parse_jsonl_entry(raw_line: str) -> tuple[str, str] | None:
         return None
 
     otype = obj.get("type", "")
-    if otype in ("human", "assistant"):
+    # Claude Code 구버전: "human" / 신버전(2025+): "user"
+    if otype in ("human", "user", "assistant"):
         msg = obj.get("message", {})
-        role = "user" if otype == "human" else "assistant"
+        role = "user" if otype in ("human", "user") else "assistant"
         text = _extract_content(msg.get("content", ""))
         if text and "(called " not in text[:60]:
             return role, text
