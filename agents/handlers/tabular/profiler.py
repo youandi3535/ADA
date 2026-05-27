@@ -5,6 +5,69 @@ from __future__ import annotations
 from typing import Any
 
 
+def compute_preprocessing_thresholds_suggested(
+    df: Any,
+    profile: dict[str, Any],
+    hints: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """데이터 특성 기반 전처리 임계값 추천. preprocessor가 0-4 우선순위로 소비."""
+    import math
+
+    import numpy as np
+
+    n_rows = max(int(df.shape[0]), 1)
+    n_features = int(df.shape[1])
+
+    # available_ram_mb
+    try:
+        import psutil
+
+        available_ram_mb = psutil.virtual_memory().available // (1024 * 1024)
+    except Exception:
+        available_ram_mb = 2048
+
+    # corr_condition_number — numeric 컬럼 기반
+    try:
+        num_df = df.select_dtypes(include=[np.number])
+        if num_df.shape[1] >= 2:
+            corr_condition_number = float(np.linalg.cond(num_df.corr().values))
+        else:
+            corr_condition_number = 1.0
+    except Exception:
+        corr_condition_number = 1.0
+
+    # missing_pct — profile dict 우선, 없으면 직접 계산
+    missing_raw = profile.get("missing")
+    if missing_raw and isinstance(missing_raw, dict):
+        missing_vals = list(missing_raw.values())
+    else:
+        missing_vals = list(df.isna().mean().values)
+
+    if len(missing_vals) >= 2:
+        m_mean = float(np.mean(missing_vals))
+        m_std = float(np.std(missing_vals))
+        missing_drop_threshold = float(np.clip(m_mean + 2 * m_std, 0.3, 0.9))
+    else:
+        missing_drop_threshold = 0.3
+
+    return {
+        "target_encoding_min_card": max(20, int(math.sqrt(n_rows))),
+        "id_col_unique_ratio": round(1 - 1 / math.log(max(n_rows, 3)), 4),
+        "missing_drop_threshold": round(missing_drop_threshold, 4),
+        "smote_imbalance_entropy_threshold": 0.85,
+        "smote_max_synthetic_mem_mb": int(available_ram_mb * 0.30),
+        "vif_threshold": 5.0 if corr_condition_number > 30 else 10.0,
+        "vif_max_drop_ratio": round(min(0.3, 1 - 1 / math.sqrt(max(n_features, 4))), 4),
+        "balance_dod_pass_ratio": 0.9,
+        "_computed_with": {
+            "n_rows": n_rows,
+            "n_features": n_features,
+            "available_ram_gb": round(available_ram_mb / 1024, 2),
+            "corr_condition_number": round(corr_condition_number, 4),
+        },
+    }
+
+
 def profile(df: Any, state: Any) -> dict[str, Any]:
     """class balance, VIF (top 5), correlation cluster, cardinality 등급."""
     import numpy as np  # noqa: WPS433
@@ -78,4 +141,6 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
 
     except Exception as e:
         extra["tabular_warning"] = str(e)
+
+    extra["preprocessing_thresholds_suggested"] = compute_preprocessing_thresholds_suggested(df, extra)
     return extra
