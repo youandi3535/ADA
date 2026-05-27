@@ -71,6 +71,14 @@ repos:
         stages: [pre-commit]
         # 경고만 (exit 0). 차단은 CODEOWNERS 가 PR 단계에서 강제.
 
+      - id: ensure-post-merge-hook
+        name: "post-merge 훅 자동 설치 확인"
+        entry: bash -c 'if [ ! -f .git/hooks/post-merge ]; then pre-commit install --hook-type post-merge 2>/dev/null && echo "✅ post-merge 훅 설치됨 (이후 git pull 마다 자동 동기화)"; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        always_run: true
+
       - id: sync-test-deps
         name: "git pull 후 테스트 의존성 자동 동기화"
         entry: bash -c 'PYTHONUTF8=1 pip install -q --upgrade-strategy only-if-needed -r requirements/test.txt && echo "✅ 의존성 동기화 완료"'
