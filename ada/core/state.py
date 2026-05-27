@@ -79,6 +79,14 @@ class PipelineState(BaseModel):
     error: Optional[str] = None
     next_agent: Optional[str] = None
 
+    # ADR-006 Auto Error Resolution (Phase 1)
+    # 에러 발생 시 BaseAgent 가 traceback 캡처 + auto_error_handler 노드가 처리.
+    error_traceback: Optional[str] = None
+    error_classified_as: Optional[str] = None
+    error_fingerprint: Optional[str] = None
+    auto_fix_attempts: int = 0
+    max_auto_fix_attempts: int = 2
+
     # 자체학습 — KB 인용 (R-501)
     kb_citations: list[str] = Field(default_factory=list)
 

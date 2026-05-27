@@ -11,7 +11,7 @@
 
 환경변수 (팀원 로컬 .env 또는 시스템 환경변수)
 ---------------------------------------------
-    KB_SERVER_URL       웹서버 주소        (기본: http://localhost:8000)
+    KB_SERVER_URL       웹서버 주소        (기본: http://221.150.237.129/api  ← 팀 VPS)
     KB_COLLECT_SECRET   X-KB-Secret 헤더  (미설정 시 빈 문자열 → 개발모드 허용)
     TEAM_MEMBER         팀원 이름          (미설정 시 git config user.name 사용)
 
@@ -117,7 +117,7 @@ def _parse_entry(raw_line: str) -> tuple[str, str] | None:
         return None
 
     # 포맷 A — "type" 키로 판별
-    # Claude Code 구버전: "human" / 신버전(2025+): "user"
+    # Claude Code 구버전: "human" / 신버전(2025+): "user"  # noqa: ERA001
     otype = obj.get("type", "")
     if otype in ("human", "user", "assistant"):
         msg = obj.get("message", {})
@@ -127,7 +127,7 @@ def _parse_entry(raw_line: str) -> tuple[str, str] | None:
             return role, text
         return None
 
-    # 포맷 B — "role" 키로 판별
+    # 포맷 B — "role" 키로 판별 (단순 포맷)
     role = obj.get("role", "")
     if role in ("user", "assistant"):
         text = _extract_text(obj.get("content", ""))
@@ -206,7 +206,7 @@ def main() -> None:  # noqa: C901
     def _env(key: str, default: str = "") -> str:
         return os.environ.get(key, "").strip() or env_vals.get(key, default)
 
-    server_url = _env("KB_SERVER_URL", "http://localhost:8000").rstrip("/")
+    server_url = _env("KB_SERVER_URL", "http://221.150.237.129/api").rstrip("/")
     kb_secret = _env("KB_COLLECT_SECRET", "")
 
     # ── 3. 마지막 Q&A 추출 ───────────────────────────────────────────────

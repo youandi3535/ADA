@@ -34,18 +34,66 @@ log = get_logger("auto_handler")
 
 
 def fingerprint(error_message: str, stack: str = "") -> dict[str, str]:
-    """오류 시그니처 생성. 동일 패턴은 동일 hash."""
-    # 시간/메모리주소/UUID 등은 제거
-    clean = re.sub(r"0x[0-9a-fA-F]+", "<ADDR>", error_message)
+    """오류 시그니처 생성. 동일 패턴은 동일 hash.
+
+    ADR-006 Phase 1.5 — 정규화 정밀화:
+      - 메모리 주소 (0x...) → <ADDR>
+      - UUID → <UUID>
+      - ISO 타임스탬프 → <TS>
+      - traceback line 번호 ("line 42") → "line <N>"  (코드 위치만)
+      - venv 경로 (site-packages) → <sp>
+      - ❌ 기존 `\\d+` 전체 치환 제거 — Python 3.10 vs 3.11, HTTP 200 vs 500
+        같이 의미 있는 숫자까지 동일화되던 버그.
+
+    Stack 의 상위 3 프레임만 hash 에 반영 (deep stack 변동 무시).
+    """
+    # --- error_message 정규화 ---
+    # 순서가 중요: UUID 먼저 (8-4-4-4-12 형태) → 메모리주소 → 타임스탬프 → IP → 포트 → line 번호
+    clean = error_message
     clean = re.sub(
         r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
         r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         "<UUID>",
         clean,
     )
-    clean = re.sub(r"\d+", "<N>", clean)
-    h = hashlib.sha256(clean.encode("utf-8")).hexdigest()
-    return {"hash": h, "signature": clean[:500]}
+    clean = re.sub(r"0x[0-9a-fA-F]+", "<ADDR>", clean)
+    clean = re.sub(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?",
+        "<TS>",
+        clean,
+    )
+    # IPv4 주소 (의미있는 숫자 - 호스트 식별자라 정규화)
+    clean = re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<IP>", clean)
+    # 포트 번호 (콜론 뒤 숫자)
+    clean = re.sub(r":(?:\d{2,5})\b", ":<PORT>", clean)
+    # Python traceback line 번호
+    clean = re.sub(r"line \d+", "line <N>", clean)
+
+    # --- stack 정규화 ---
+    norm_stack = stack
+    norm_stack = re.sub(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        "<UUID>",
+        norm_stack,
+    )
+    norm_stack = re.sub(r"0x[0-9a-fA-F]+", "<ADDR>", norm_stack)
+    norm_stack = re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<IP>", norm_stack)
+    norm_stack = re.sub(r"line \d+", "line <N>", norm_stack)
+    norm_stack = re.sub(r"/[^/]+/site-packages/", "/<sp>/", norm_stack)
+    # Windows 경로의 사용자명
+    norm_stack = re.sub(r"[CD]:\\\\Users\\\\[^\\\\]+\\\\", r"C:\\\\Users\\\\<USER>\\\\", norm_stack)
+
+    # stack 상위 6줄만 hash 에 (Python 1 traceback frame = 2 lines)
+    stack_top = "\n".join(norm_stack.split("\n")[:6])
+    composite = f"{clean}\n---\n{stack_top}"
+
+    h = hashlib.sha256(composite.encode("utf-8")).hexdigest()
+    return {
+        "hash": h,
+        "signature": clean[:500],
+        "stack_top": stack_top[:1000],
+    }
 
 
 # =============================================================================

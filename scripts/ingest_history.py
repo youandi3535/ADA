@@ -49,7 +49,7 @@ Windows 작업 스케줄러 (PowerShell)
 
 환경변수
 --------
-  KB_SERVER_URL       웹서버 주소 (기본: http://localhost:8000)
+  KB_SERVER_URL       웹서버 주소 (기본: http://221.150.237.129/api  ← 팀 VPS)
   KB_COLLECT_SECRET   X-KB-Secret 헤더
   TEAM_MEMBER         팀원 이름 (미설정 시 git config user.name)
 """
@@ -444,7 +444,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=0, help="최대 전송 Q&A 수 (0=무제한)")
     args = parser.parse_args()
 
-    server_url = _cfg("KB_SERVER_URL", "http://localhost:8000").rstrip("/")
+    server_url = _cfg("KB_SERVER_URL", "http://221.150.237.129/api").rstrip("/")
     kb_secret = _cfg("KB_COLLECT_SECRET", "")
     team_member = _get_team_member()
 
