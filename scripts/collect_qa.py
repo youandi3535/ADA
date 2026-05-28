@@ -68,12 +68,17 @@ def _get_team_member(cwd: str) -> str:
     if env_name:
         return env_name
     try:
+        # Windows 에서 콘솔 창이 뜨지 않도록 CREATE_NO_WINDOW 플래그 설정
+        extra: dict = {}
+        if os.name == "nt":
+            extra["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = subprocess.run(
             ["git", "config", "user.name"],
             capture_output=True,
             text=True,
             timeout=5,
             cwd=cwd,
+            **extra,
         )
         name = proc.stdout.strip()
         if name:
