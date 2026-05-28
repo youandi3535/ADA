@@ -1,12 +1,9 @@
-"""agents.report_composer — Day 0 dispatcher 패턴.
-
-카테고리별 추가 자산은 ``handlers/{cat}/output_extras.assets(state)`` 에서 가져옴.
-수정 권한: **HJ 단독** (dispatcher).
-"""
+"""agents.report_composer — Day 0 dispatcher 패턴. ADR-008 L2 state 전달."""
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid as _uuid
 from typing import Any
 
@@ -26,7 +23,6 @@ class ReportComposerAgent(BaseAgent):
         async with self.log_agent_run(state):
             requested = state.requested_outputs or list(GENERATORS.keys())
 
-            # 카테고리별 추가 자산 (Day 9 에 generator 들이 활용)
             extras: dict[str, Any] = {}
             assets_handler = get_handler(state.category, "assets")
             if assets_handler is not None:
@@ -46,8 +42,10 @@ class ReportComposerAgent(BaseAgent):
                     if gen_cls is None:
                         return code, None
                     gen = gen_cls(state.job_id)
-                    path = await asyncio.to_thread(
-                        gen.generate,
+                    # ADR-008 L2 — state 전달 (carrier 가 _pii mapping 으로 reattach).
+                    # 미수신 carrier 호환을 위해 inspect.signature 분기.
+                    sig = inspect.signature(gen.generate)
+                    kwargs: dict[str, Any] = dict(
                         insights=state.insights or "",
                         best_model=state.best_model or {},
                         eda_charts=state.eda_charts,
@@ -55,6 +53,9 @@ class ReportComposerAgent(BaseAgent):
                         user_intent=state.user_intent or state.user_question or "",
                         eval_result=state.eval_result,
                     )
+                    if "state" in sig.parameters:
+                        kwargs["state"] = state
+                    path = await asyncio.to_thread(gen.generate, **kwargs)
                     return code, path
                 except Exception as e:
                     self.logger.warning("output_failed", code=code, error=str(e))
