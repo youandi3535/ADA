@@ -1,14 +1,13 @@
-"""outputs.ppt — OUT-01 PowerPoint 발표자료 (python-pptx) + Day 9 카테고리 테마/훅."""
+"""outputs.ppt — OUT-01 PowerPoint 발표자료 (python-pptx). ADR-008 L2 reattach 통합."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from outputs.base import OutputGenerator, get_theme
+from outputs.base import OutputGenerator, get_theme, reattach_pii
 
 
 def _set_title_color(slide: Any, rgb: tuple[int, int, int]) -> None:
-    """슬라이드 제목에 RGB 색상 적용 (실패 시 silent skip)."""
     try:
         from pptx.dml.color import RGBColor
 
@@ -20,7 +19,6 @@ def _set_title_color(slide: Any, rgb: tuple[int, int, int]) -> None:
 
 
 def _set_background(slide: Any, rgb: tuple[int, int, int]) -> None:
-    """슬라이드 배경 fill (subtle accent). 실패 시 skip."""
     try:
         from pptx.dml.color import RGBColor
 
@@ -44,8 +42,14 @@ class PresentationGenerator(OutputGenerator):
         category: str,
         user_intent: str,
         eval_result: dict[str, Any] | None,
-        state: Any = None,  # Day 9 — 카테고리 핸들러 호출에 사용 (선택)
+        state: Any = None,
     ) -> str:
+        # ADR-008 L2 — PII 마스킹
+        insights = reattach_pii(state, insights)
+        user_intent = reattach_pii(state, user_intent)
+        if eval_result:
+            eval_result = {**eval_result, "rationale": reattach_pii(state, eval_result.get("rationale"))}
+
         from pptx import Presentation
         from pptx.util import Inches, Pt
 
@@ -56,15 +60,13 @@ class PresentationGenerator(OutputGenerator):
 
         prs = Presentation()
 
-        # 1) 표지 — 카테고리 라벨 + accent 배경 띠
         slide = prs.slides.add_slide(prs.slide_layouts[0])
-        slide.shapes.title.text = "ADA 자동 분석 보고서"
-        slide.placeholders[1].text = f"카테고리: {label_ko} ({category})\n의도: {user_intent or '미지정'}"
+        slide.shapes.title.text = "ADA Auto Report"
+        slide.placeholders[1].text = f"Category: {label_ko} ({category})\nIntent: {user_intent or '-'}"
         _set_title_color(slide, primary)
 
-        # 2) 핵심 인사이트 — 제목 색상만 primary 적용 (본문은 가독성 유지)
         slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = "핵심 인사이트"
+        slide.shapes.title.text = "Insights"
         _set_title_color(slide, primary)
         tf = slide.placeholders[1].text_frame
         tf.text = (insights or "")[:1500]
@@ -72,18 +74,16 @@ class PresentationGenerator(OutputGenerator):
             for r in p.runs:
                 r.font.size = Pt(18)
 
-        # 3) Best Model
         slide = prs.slides.add_slide(prs.slide_layouts[1])
         slide.shapes.title.text = "Best Model"
         _set_title_color(slide, primary)
         body = slide.placeholders[1].text_frame
         bm = best_model or {}
-        body.text = f"모델: {bm.get('model_name', '-')}"
+        body.text = f"Model: {bm.get('model_name', '-')}"
         for k, v in (bm.get("metrics") or {}).items():
             p = body.add_paragraph()
             p.text = f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
 
-        # 4) EDA 차트
         for i, chart_path in enumerate(eda_charts[:4]):
             slide = prs.slides.add_slide(prs.slide_layouts[5])
             slide.shapes.title.text = f"EDA Chart #{i + 1}"
@@ -95,11 +95,10 @@ class PresentationGenerator(OutputGenerator):
                 except Exception:
                     pass
 
-        # 5) Day 9 — 카테고리 핸들러의 extras 임베드 (charts + tables + text_blocks)
         extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
         for j, chart_path in enumerate(extras.get("charts", [])[:4]):
             slide = prs.slides.add_slide(prs.slide_layouts[5])
-            slide.shapes.title.text = f"[{label_ko}] 카테고리 분석 #{j + 1}"
+            slide.shapes.title.text = f"[{label_ko}] Cat Analysis #{j + 1}"
             _set_title_color(slide, primary)
             tmp = self._download_chart(chart_path)
             if tmp:
@@ -110,7 +109,7 @@ class PresentationGenerator(OutputGenerator):
 
         for tbl in extras.get("tables", [])[:3]:
             slide = prs.slides.add_slide(prs.slide_layouts[5])
-            slide.shapes.title.text = str(tbl.get("title", f"[{label_ko}] 표"))
+            slide.shapes.title.text = str(tbl.get("title", f"[{label_ko}] Table"))
             _set_title_color(slide, primary)
             try:
                 rows = list(tbl.get("rows", []))
@@ -131,20 +130,20 @@ class PresentationGenerator(OutputGenerator):
                 pass
 
         for text_block in extras.get("text_blocks", [])[:3]:
+            safe_block = reattach_pii(state, str(text_block))
             slide = prs.slides.add_slide(prs.slide_layouts[1])
-            slide.shapes.title.text = f"[{label_ko}] 해설"
+            slide.shapes.title.text = f"[{label_ko}] Notes"
             _set_title_color(slide, primary)
             tf = slide.placeholders[1].text_frame
-            tf.text = str(text_block)[:1500]
+            tf.text = safe_block[:1500]
 
-        # 6) 평가 결과 (accent 배경 살짝)
         slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = "평가 / 향후 행동"
+        slide.shapes.title.text = "Evaluation"
         _set_title_color(slide, primary)
         _set_background(slide, accent)
         body = slide.placeholders[1].text_frame
         ev = eval_result or {}
-        body.text = f"passed: {ev.get('passed')}\n근거: {ev.get('rationale', '')[:300]}"
+        body.text = f"passed: {ev.get('passed')}\nrationale: {(ev.get('rationale') or '')[:300]}"
 
         local = self._tmp()
         prs.save(local)

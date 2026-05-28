@@ -1,25 +1,41 @@
-"""outputs.html_dashboard — OUT-04 정적 단일 파일 대시보드 (Chart.js inline)."""
+"""outputs.html_dashboard — OUT-04 정적 단일 파일 대시보드. ADR-008 L2 reattach 통합."""
+
 from __future__ import annotations
 
 import base64
 import json
 from typing import Any
 
-from outputs.base import OutputGenerator
+from outputs.base import OutputGenerator, reattach_pii
 
 
 class DashboardArtifactGenerator(OutputGenerator):
     output_code = "OUT-04"
     extension = "html"
 
-    def generate(self, *, insights: str, best_model: dict[str, Any],
-                 eda_charts: list[str], category: str, user_intent: str,
-                 eval_result: dict[str, Any] | None) -> str:
+    def generate(
+        self,
+        *,
+        insights: str,
+        best_model: dict[str, Any],
+        eda_charts: list[str],
+        category: str,
+        user_intent: str,
+        eval_result: dict[str, Any] | None,
+        state: Any = None,
+    ) -> str:
+        # ADR-008 L2 — PII 마스킹
+        insights = reattach_pii(state, insights)
+        user_intent = reattach_pii(state, user_intent)
+        if eval_result:
+            eval_result = {**eval_result, "rationale": reattach_pii(state, eval_result.get("rationale"))}
+
         from outputs import CATEGORY_COLORS
 
         chart_imgs = []
         try:
             from tools.minio_tool import get_minio_client
+
             mc = get_minio_client()
             for c in eda_charts[:4]:
                 key = c.replace(f"s3://{mc.bucket}/", "") if c.startswith("s3://") else c
@@ -41,11 +57,9 @@ class DashboardArtifactGenerator(OutputGenerator):
             for k, v in metrics.items()
         )
         charts_html = "".join(
-            f"<div class='chart'><img src='data:image/png;base64,{b64}' /></div>"
-            for b64 in chart_imgs
+            f"<div class='chart'><img src='data:image/png;base64,{b64}' /></div>" for b64 in chart_imgs
         )
 
-        # Chart.js 메트릭 차트
         chart_labels = [k for k, v in metrics.items() if isinstance(v, (int, float))]
         chart_values = [round(float(metrics[k]), 4) for k in chart_labels]
 
@@ -66,16 +80,16 @@ class DashboardArtifactGenerator(OutputGenerator):
 </head><body>
 <header>
   <h1>ADA 자동 분석 결과</h1>
-  <p><span class="pill">{category}</span> &nbsp; 의도: {user_intent or '미지정'}</p>
+  <p><span class="pill">{category}</span> &nbsp; 의도: {user_intent or "미지정"}</p>
 </header>
 
 <section>
   <h2>핵심 인사이트</h2>
-  <p>{(insights or '').replace(chr(10), '<br>')}</p>
+  <p>{(insights or "").replace(chr(10), "<br>")}</p>
 </section>
 
 <section>
-  <h2>Best Model: {bm.get('model_name', '-')}</h2>
+  <h2>Best Model: {bm.get("model_name", "-")}</h2>
   <table><tbody>{metric_rows}</tbody></table>
   <canvas id="metricsChart" height="120"></canvas>
 </section>
@@ -87,7 +101,7 @@ class DashboardArtifactGenerator(OutputGenerator):
 
 <section>
   <h2>평가</h2>
-  <p>passed: <b>{ev.get('passed')}</b><br>{ev.get('rationale', '')}</p>
+  <p>passed: <b>{ev.get("passed")}</b><br>{ev.get("rationale", "")}</p>
 </section>
 
 <script>

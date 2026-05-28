@@ -578,3 +578,54 @@ with tab6:
             st.dataframe(df_top, use_container_width=True, hide_index=True)
         else:
             st.info("ErrorKB 패턴 없음")
+
+
+# =============================================================================
+# ADR-008 L4 — PII 마스킹 통계 위젯
+# =============================================================================
+try:
+    import requests
+    import streamlit as st
+
+    with st.expander("🛡️ 오늘의 PII 마스킹 (ADR-008 L4)", expanded=False):
+        admin_jwt = st.text_input(
+            "Admin JWT (PII 통계 조회용)",
+            type="password",
+            key="pii_admin_jwt",
+        )
+        if admin_jwt:
+            try:
+                r = requests.get(
+                    f"{API_BASE}/admin/security/pii?since_hours=24",
+                    headers={"Authorization": f"Bearer {admin_jwt}"},
+                    timeout=5,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("마스킹된 토큰 (24h)", data.get("total_tokens_masked", 0))
+                    c2.metric("처리 요청 수", data.get("total_events", 0))
+                    avg = (data["total_tokens_masked"] / data["total_events"]) if data["total_events"] else 0
+                    c3.metric("요청당 평균 토큰", f"{avg:.2f}")
+
+                    if data.get("by_hour"):
+                        import pandas as pd
+
+                        df_h = pd.DataFrame(data["by_hour"])
+                        if not df_h.empty:
+                            df_h = df_h.set_index("hour")
+                            st.line_chart(df_h[["events", "tokens"]])
+
+                    if data.get("top_actors"):
+                        st.caption("상위 PII 처리 actor")
+                        st.dataframe(data["top_actors"][:5], use_container_width=True, hide_index=True)
+                elif r.status_code == 403:
+                    st.error("403 — admin role JWT 필요")
+                else:
+                    st.warning(f"조회 실패: HTTP {r.status_code}")
+            except Exception as e:
+                st.error(f"네트워크 오류: {e}")
+        else:
+            st.info("Admin JWT 입력 시 PII 마스킹 통계 표시")
+except Exception:
+    pass

@@ -1,34 +1,36 @@
 """ada.error_handler.redactor — PII / secret 마스킹 (ADR-006 Phase 2-A).
 
 R-103 (PII 로그 출력 금지) 완전 준수의 핵심.
-모든 에러 메시지·스택 트레이스가 다음 단계로 넘어가기 전 통과:
 
-    FailureLog INSERT 전        ← raw 저장 금지
-    fingerprint() 입력 전        ← 같은 PII 패턴은 같은 hash
-    Ollama 프롬프트 생성 전      ← 로컬 LLM 도 raw PII 보면 안 됨
-    Claude CLI 프롬프트 전       ← 외부 API 로 PII 유출 차단
-    ErrorKB.error_signature 전   ← KB 영구 저장에 PII 금지
+[의도 분리 — ada.security.guardrails.PIIAnonymizer 와의 차이]
+    redact()      : **일방향**. mapping 미보존. 디버깅성 우선.
+                    패턴 20+ (CARD/RRN/JWT/Stripe/AWS/PEM 등).
+                    -> 사용처: 에러 로그 / Ollama 프롬프트 / FailureLog 저장.
+    PIIAnonymizer : **양방향**. mapping 보존 -> reattach() 가능.
+                    패턴 4 (email/phone/card/rrn).
+                    -> 사용처: 사용자 인텐트 LLM 호출 -> 응답 *** 복원.
 
-원본은 별도 암호화 컬럼 (failure_logs.raw_error_encrypted, Phase 2-F 마이그)
-에 AES-GCM 으로 저장 → KMS 키로 분리 → 디버깅 시에만 복호화.
-
-본 모듈은 외부 의존성 0 (순수 stdlib re).
+    두 모듈을 통합하면 PIIAnonymizer.reattach() 가 깨진다 (mapping 키가
+    일반 토큰으로 바뀌면서 결정성 손실). ADR-008 ?4 의 결정 — 통합하지
+    않고 의도 분리 명시. 공유 정규식 (EMAIL/PHONE/CARD/RRN) 은
+    ada.security._pii_patterns 모듈로 추출 (L3.2).
 
 설계 원칙:
     1. False positive 비용 < False negative 비용
-       → 의심스러우면 마스킹. 에러 메시지 디버깅성보다 안전이 우선.
     2. 패턴 순서 = specificity 순
-       → 긴 패턴 (RRN, 카드) 먼저, 짧은 패턴 (IP, 숫자) 나중.
-    3. 모든 치환은 ``<TAG>`` 형식으로 통일
-       → fingerprint 안정성. 추후 토큰 길이 변경에도 hash 영향 0.
-    4. ``redact()`` 는 무엇이 마스킹됐는지 type 리스트도 반환
-       → audit log 에 "이 에러는 EMAIL/CARD 포함됐었음" 기록.
+    3. 모든 치환은 <TAG> 형식으로 통일 (fingerprint 안정성)
+    4. redact() 는 type 리스트도 반환 (audit log 용)
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any, Iterable
+
+# ADR-008 L3.2: shared PII patterns
+from ada.security._pii_patterns import (
+    EMAIL_RE as _SHARED_EMAIL_RE,
+)
 
 # =============================================================================
 # 정규식 패턴
@@ -153,7 +155,7 @@ REDACTION_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     # ── 3. 연락처 ───────────────────────────────────────────────────────
     # 이메일
     (
-        re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"),
+        _SHARED_EMAIL_RE,
         "<EMAIL>",
         "EMAIL",
     ),

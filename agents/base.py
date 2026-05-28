@@ -26,17 +26,9 @@ from agents.personas import get_persona
 
 
 class BaseAgent(abc.ABC):
-    """모든 에이전트의 공통 베이스.
+    """모든 에이전트의 공통 베이스."""
 
-    - 페르소나 자동 주입 (persona prefix 시스템 프롬프트)
-    - agent_runs 기록 (log_agent_run 컨텍스트 매니저)
-    - LLM 호출은 _call_llm() 한 곳에서만 — Langfuse trace 포함
-    """
-
-    #: 서브클래스에서 오버라이드 가능
     model_name: str = "claude-sonnet-4-6"
-
-    #: LLM 호출 없는 에이전트는 False
     uses_llm: bool = True
 
     def __init__(self, session: Optional[AsyncSession] = None) -> None:
@@ -45,27 +37,18 @@ class BaseAgent(abc.ABC):
         self.persona = get_persona(self.__class__.__name__)
         self._last_input_tokens: int = 0
         self._last_output_tokens: int = 0
-        self._anthropic: Any = None  # lazy
-        # ADR-007 L3.2 — 현재 처리 중인 job_id (track_llm metadata 전파)
+        self._anthropic: Any = None
         self._current_job_id: Optional[str] = None
 
-    # ------------------------------------------------------------------
-    # 추상 메서드
-    # ------------------------------------------------------------------
     @abc.abstractmethod
     async def __call__(self, state: PipelineState) -> PipelineState:
-        """그래프에서 호출되는 진입점. 상태 in → 상태 out."""
+        """진입점."""
 
-    # ------------------------------------------------------------------
-    # 공통 헬퍼
-    # ------------------------------------------------------------------
     @asynccontextmanager
     async def log_agent_run(self, state: PipelineState) -> AsyncIterator[None]:
-        """agent_runs 테이블에 running → completed/failed 기록."""
         from ada.db.models import AgentRun
 
         bind_context(job_id=state.job_id, agent_name=self.__class__.__name__)
-        # ADR-007 L3.2 — track_llm 가 사용할 수 있게 인스턴스에 세팅
         self._current_job_id = state.job_id
         start = time.perf_counter()
         run_id = uuid.uuid4()
@@ -89,18 +72,14 @@ class BaseAgent(abc.ABC):
         except Exception as e:
             status = "failed"
             error = f"{type(e).__name__}: {e}"[:2000]
-            # ADR-006 Phase 1: state 갱신을 예외 객체에 첨부.
-            # graph 의 safe_node 래퍼가 이걸 꺼내 state 로 반환 → 자동 라우팅.
-            # raise 후에도 호출자가 갱신된 state 를 받을 수 있게 하는 패턴.
             try:
-                e._ada_state = state.with_update(  # type: ignore[attr-defined]
+                e._ada_state = state.with_update(
                     error=error,
                     error_traceback=traceback.format_exc()[:8000],
                     auto_fix_attempts=state.auto_fix_attempts + 1,
                     next_agent="auto_error_handler",
                 )
             except Exception:
-                # state.with_update 자체가 깨졌으면 원본 예외 그대로 전파
                 pass
             raise
         finally:
@@ -114,7 +93,6 @@ class BaseAgent(abc.ABC):
                 output_tokens=self._last_output_tokens,
                 error=error,
             )
-            # Day 1 — Prometheus 메트릭 인스트루먼테이션 (단일 진입점)
             try:
                 from ada.observability.metrics import record_agent_run
 
@@ -134,7 +112,6 @@ class BaseAgent(abc.ABC):
                     row.error = error
                     await self.session.flush()
 
-    # ------------------------------------------------------------------
     async def _call_llm(
         self,
         *,
@@ -145,15 +122,6 @@ class BaseAgent(abc.ABC):
         model_name: Optional[str] = None,
         json_mode: bool = False,
     ) -> str:
-        """LLM 호출 단일 진입점 (R-004).
-
-        - 개발환경 (ANTHROPIC_API_KEY 미설정): Claude CLI 서브프로세스 호출 (무료)
-        - 운영환경 (ANTHROPIC_API_KEY 설정됨): AsyncAnthropic API 호출 (과금)
-        - 페르소나 prefix 자동 주입 (시스템 프롬프트 앞)
-        - 회로차단기로 보호 (R-709)
-        - input/output 토큰 카운트 self.* 에 누적
-        - JSON 모드: 응답 텍스트의 마크다운 fence 자동 제거
-        """
         prefix = f"{self.persona}\n\n" if self.persona else ""
         full_system = prefix + system_prompt
 
@@ -185,12 +153,7 @@ class BaseAgent(abc.ABC):
         temperature: float,
         model_name: Optional[str],
     ) -> str:
-        """운영환경: AsyncAnthropic API (non-blocking await).
-
-        ADR-007 L3: Langfuse ``track_llm`` 컨텍스트로 감싸 자동 trace.
-        키 없으면 no-op (track_llm 자체가 graceful — None span yield).
-        """
-        import anthropic  # noqa: WPS433
+        import anthropic
 
         from ada.core.langfuse_client import track_llm
 
@@ -226,12 +189,10 @@ class BaseAgent(abc.ABC):
                         pass
                 raise
 
-            # 토큰 사용량 누적
             usage = getattr(resp, "usage", None)
             self._last_input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
             self._last_output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
 
-            # ADR-007 L3: span 에 토큰 메타 기록 (best-effort)
             if span is not None and hasattr(span, "update"):
                 try:
                     span.update(
@@ -243,7 +204,6 @@ class BaseAgent(abc.ABC):
                 except Exception:
                     pass
 
-            # Prometheus 토큰 메트릭
             try:
                 from ada.observability.metrics import record_llm_tokens
 
@@ -258,7 +218,7 @@ class BaseAgent(abc.ABC):
         text = ""
         for blk in resp.content:
             if getattr(blk, "type", None) == "text":
-                text += blk.text  # type: ignore[attr-defined]
+                text += blk.text
         return text
 
     async def _call_llm_cli(
@@ -268,11 +228,6 @@ class BaseAgent(abc.ABC):
         user_prompt: str,
         max_tokens: int,
     ) -> str:
-        """개발환경: Claude CLI 서브프로세스 호출 (API 키 불필요, 무료).
-
-        `claude -p "..." --output-format json` 을 asyncio.to_thread 로 실행.
-        CLI 미설치 시 RuntimeError 발생.
-        """
         import asyncio
         import json as _json
         import shutil
@@ -280,7 +235,7 @@ class BaseAgent(abc.ABC):
 
         if shutil.which("claude") is None:
             raise RuntimeError(
-                "Claude CLI 미설치 (개발환경). `npm install -g @anthropic-ai/claude-code` 또는 ANTHROPIC_API_KEY 설정."
+                "Claude CLI missing. `npm install -g @anthropic-ai/claude-code` or set ANTHROPIC_API_KEY."
             )
 
         prompt = f"[SYSTEM]\n{system_prompt}\n\n[USER]\n{user_prompt}"
@@ -302,10 +257,8 @@ class BaseAgent(abc.ABC):
             self.logger.error("llm_cli_call_failed", error=str(e))
             raise
 
-        # Claude CLI JSON 출력에서 텍스트 추출
         try:
             data = _json.loads(raw)
-            # {"result": "...", "type": "result"} 포맷
             return data.get("result") or data.get("content") or raw
         except Exception:
             return raw.strip()

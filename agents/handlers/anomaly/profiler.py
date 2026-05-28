@@ -826,7 +826,7 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
 
 
 def _model_hints(extra: dict[str, Any]) -> list[str]:
-    """⑬ 모델 힌트."""
+    """Model hints based on contamination/time/PCA/n_rows."""
     hints: list[str] = []
     contam = float(extra.get("contamination_estimate", CONTAMINATION_DEFAULT))
     has_time = bool(extra.get("has_time_column", False))

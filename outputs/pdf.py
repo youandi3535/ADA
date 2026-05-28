@@ -1,14 +1,13 @@
-"""outputs.pdf — OUT-02 PDF 상세 리포트 (reportlab) + Day 9 카테고리 테마/훅."""
+"""outputs.pdf — OUT-02 PDF 상세 리포트 (reportlab). ADR-008 L2 reattach 통합."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from outputs.base import OutputGenerator, get_theme
+from outputs.base import OutputGenerator, get_theme, reattach_pii
 
 
 def _colored_para_style(styles: Any, name: str, base: str, rgb: tuple[int, int, int]) -> Any:
-    """primary 색상이 적용된 스타일 생성 (Heading 등)."""
     from reportlab.lib.colors import Color
     from reportlab.lib.styles import ParagraphStyle
 
@@ -33,8 +32,14 @@ class PDFReportGenerator(OutputGenerator):
         category: str,
         user_intent: str,
         eval_result: dict[str, Any] | None,
-        state: Any = None,  # Day 9 — extras 호출용
+        state: Any = None,
     ) -> str:
+        # ADR-008 L2 — PII 마스킹
+        insights = reattach_pii(state, insights)
+        user_intent = reattach_pii(state, user_intent)
+        if eval_result:
+            eval_result = {**eval_result, "rationale": reattach_pii(state, eval_result.get("rationale"))}
+
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet
@@ -63,27 +68,23 @@ class PDFReportGenerator(OutputGenerator):
         h2_style = _colored_para_style(styles, "H2Colored", "Heading2", primary)
         flow: list = []
 
-        # 표지 — 색상 적용 제목 + 카테고리 라벨
-        flow.append(Paragraph(f"ADA 자동 분석 보고서 — {label_ko}", title_style))
+        flow.append(Paragraph(f"ADA Report - {label_ko}", title_style))
         flow.append(Spacer(1, 1 * cm))
-        flow.append(Paragraph(f"<b>카테고리:</b> {label_ko} ({category})", styles["Normal"]))
-        flow.append(Paragraph(f"<b>사용자 의도:</b> {user_intent or '미지정'}", styles["Normal"]))
+        flow.append(Paragraph(f"<b>Category:</b> {label_ko} ({category})", styles["Normal"]))
+        flow.append(Paragraph(f"<b>Intent:</b> {user_intent or '-'}", styles["Normal"]))
         flow.append(Spacer(1, 0.5 * cm))
 
-        # 핵심 인사이트
-        flow.append(Paragraph("핵심 인사이트", h2_style))
+        flow.append(Paragraph("Insights", h2_style))
         flow.append(Paragraph((insights or "").replace("\n", "<br/>"), styles["BodyText"]))
         flow.append(PageBreak())
 
-        # Best Model
         flow.append(Paragraph("Best Model", h2_style))
         bm = best_model or {}
-        flow.append(Paragraph(f"모델: <b>{bm.get('model_name')}</b>", styles["BodyText"]))
+        flow.append(Paragraph(f"Model: <b>{bm.get('model_name')}</b>", styles["BodyText"]))
         for k, v in (bm.get("metrics") or {}).items():
             txt = f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
             flow.append(Paragraph(txt, styles["BodyText"]))
 
-        # EDA Charts
         flow.append(PageBreak())
         flow.append(Paragraph("EDA Charts", h2_style))
         for chart in eda_charts[:6]:
@@ -95,11 +96,10 @@ class PDFReportGenerator(OutputGenerator):
                 except Exception:
                     continue
 
-        # Day 9 — 카테고리 extras
         extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
         if any(extras.get(k) for k in ("charts", "tables", "text_blocks")):
             flow.append(PageBreak())
-            flow.append(Paragraph(f"[{label_ko}] 카테고리 분석", h2_style))
+            flow.append(Paragraph(f"[{label_ko}] Category Analysis", h2_style))
 
             for chart in extras.get("charts", [])[:4]:
                 tmp = self._download_chart(chart)
@@ -111,7 +111,7 @@ class PDFReportGenerator(OutputGenerator):
                         continue
 
             for tbl in extras.get("tables", [])[:3]:
-                title = str(tbl.get("title", "표"))
+                title = str(tbl.get("title", "Table"))
                 flow.append(Paragraph(f"<b>{title}</b>", styles["BodyText"]))
                 try:
                     rows = list(tbl.get("rows", []))
@@ -138,12 +138,12 @@ class PDFReportGenerator(OutputGenerator):
                     continue
 
             for text_block in extras.get("text_blocks", [])[:3]:
-                flow.append(Paragraph(str(text_block).replace("\n", "<br/>"), styles["BodyText"]))
+                safe_block = reattach_pii(state, str(text_block))
+                flow.append(Paragraph(safe_block.replace("\n", "<br/>"), styles["BodyText"]))
                 flow.append(Spacer(1, 0.3 * cm))
 
-        # 평가
         flow.append(PageBreak())
-        flow.append(Paragraph("평가", h2_style))
+        flow.append(Paragraph("Evaluation", h2_style))
         ev = eval_result or {}
         flow.append(Paragraph(f"passed: <b>{ev.get('passed')}</b>", styles["BodyText"]))
         flow.append(Paragraph(ev.get("rationale", ""), styles["BodyText"]))
