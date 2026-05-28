@@ -167,6 +167,12 @@ _AIR_PASSENGERS = [
 
 
 @pytest.fixture
+def require_statsmodels():
+    """statsmodels 미설치 환경(CI 최소 deps)에서 해당 테스트를 skip."""
+    pytest.importorskip("statsmodels")
+
+
+@pytest.fixture
 def ts_state():
     from ada.core.state import PipelineState
 

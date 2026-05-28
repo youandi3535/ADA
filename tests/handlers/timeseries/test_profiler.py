@@ -66,7 +66,7 @@ def test_freq_daily(ts_df, ts_state):
 # ── ③ stationarity ──────────────────────────────────────────────────────────
 
 
-def test_stationarity_has_adf_and_kpss(ts_df, ts_state):
+def test_stationarity_has_adf_and_kpss(ts_df, ts_state, require_statsmodels):
     from agents.handlers.timeseries.profiler import profile
 
     stat = profile(ts_df, ts_state)["stationarity"]
@@ -78,14 +78,14 @@ def test_stationarity_has_adf_and_kpss(ts_df, ts_state):
     assert isinstance(stat["is_stationary"], bool)
 
 
-def test_stationarity_p_value_range(ts_df, ts_state):
+def test_stationarity_p_value_range(ts_df, ts_state, require_statsmodels):
     from agents.handlers.timeseries.profiler import profile
 
     stat = profile(ts_df, ts_state)["stationarity"]
     assert 0.0 <= stat["adf_p_value"] <= 1.0
 
 
-def test_stationarity_consensus_valid(ts_df, ts_state):
+def test_stationarity_consensus_valid(ts_df, ts_state, require_statsmodels):
     """consensus 는 4가지 케이스 중 하나여야 함."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -94,7 +94,7 @@ def test_stationarity_consensus_valid(ts_df, ts_state):
     assert stat["consensus"] in ("stationary", "non_stationary", "trend_stationary", "diff_stationary")
 
 
-def test_stationarity_diff_order_valid(ts_df, ts_state):
+def test_stationarity_diff_order_valid(ts_df, ts_state, require_statsmodels):
     """diff_order 는 0·1·2 중 하나."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -103,7 +103,7 @@ def test_stationarity_diff_order_valid(ts_df, ts_state):
     assert stat["diff_order"] in (0, 1, 2)
 
 
-def test_stationarity_recommended_action_is_string(ts_df, ts_state):
+def test_stationarity_recommended_action_is_string(ts_df, ts_state, require_statsmodels):
     from agents.handlers.timeseries.profiler import profile
 
     stat = profile(ts_df, ts_state)["stationarity"]
@@ -114,7 +114,7 @@ def test_stationarity_recommended_action_is_string(ts_df, ts_state):
 # ── ④ acf_pacf ───────────────────────────────────────────────────────────────
 
 
-def test_acf_pacf_structure(ts_df, ts_state):
+def test_acf_pacf_structure(ts_df, ts_state, require_statsmodels):
     from agents.handlers.timeseries.profiler import profile
 
     ap = profile(ts_df, ts_state)["acf_pacf"]
@@ -123,7 +123,7 @@ def test_acf_pacf_structure(ts_df, ts_state):
     assert "significance_threshold" in ap
 
 
-def test_acf_pacf_length(ts_df, ts_state):
+def test_acf_pacf_length(ts_df, ts_state, require_statsmodels):
     """lag 0 포함 최소 2개 이상이어야 함."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -132,7 +132,7 @@ def test_acf_pacf_length(ts_df, ts_state):
     assert len(ap["pacf"]) >= 2
 
 
-def test_acf_lag0_is_one(ts_df, ts_state):
+def test_acf_lag0_is_one(ts_df, ts_state, require_statsmodels):
     """ACF lag=0 은 자기 자신과의 상관 → 항상 1.0."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -140,7 +140,7 @@ def test_acf_lag0_is_one(ts_df, ts_state):
     assert abs(ap["acf"][0] - 1.0) < 1e-3
 
 
-def test_acf_pacf_ar_ma_hints_are_int(ts_df, ts_state):
+def test_acf_pacf_ar_ma_hints_are_int(ts_df, ts_state, require_statsmodels):
     """ar_order_hint / ma_order_hint 는 음수 아닌 정수."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -149,7 +149,7 @@ def test_acf_pacf_ar_ma_hints_are_int(ts_df, ts_state):
     assert isinstance(ap["ma_order_hint"], int) and ap["ma_order_hint"] >= 0
 
 
-def test_acf_pacf_seasonal_lags_is_list(ts_df, ts_state):
+def test_acf_pacf_seasonal_lags_is_list(ts_df, ts_state, require_statsmodels):
     """seasonal_lags 는 정수 리스트 (period 배수 위치 spike)."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -159,7 +159,7 @@ def test_acf_pacf_seasonal_lags_is_list(ts_df, ts_state):
         assert isinstance(lag, int) and lag > 0
 
 
-def test_acf_pacf_ljung_box_p_range(ts_df, ts_state):
+def test_acf_pacf_ljung_box_p_range(ts_df, ts_state, require_statsmodels):
     """Ljung-Box p-value 는 None 이거나 [0, 1] 범위."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -168,7 +168,7 @@ def test_acf_pacf_ljung_box_p_range(ts_df, ts_state):
         assert 0.0 <= ap["ljung_box_p"] <= 1.0
 
 
-def test_acf_pacf_used_diff_order_matches_stationarity(ts_df, ts_state):
+def test_acf_pacf_used_diff_order_matches_stationarity(ts_df, ts_state, require_statsmodels):
     """used_diff_order 는 stationarity.diff_order 와 일치해야 함."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -179,7 +179,7 @@ def test_acf_pacf_used_diff_order_matches_stationarity(ts_df, ts_state):
 # ── ⑤ stl_decompose ──────────────────────────────────────────────────────────
 
 
-def test_stl_available(ts_df, ts_state):
+def test_stl_available(ts_df, ts_state, require_statsmodels):
     """120행 + period=7 → STL 분해 가능."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -187,7 +187,7 @@ def test_stl_available(ts_df, ts_state):
     assert stl["available"] is True
 
 
-def test_stl_has_strength_fields(ts_df, ts_state):
+def test_stl_has_strength_fields(ts_df, ts_state, require_statsmodels):
     from agents.handlers.timeseries.profiler import profile
 
     stl = profile(ts_df, ts_state)["stl_decompose"]
@@ -205,7 +205,7 @@ def test_stl_period_matches_freq(ts_df, ts_state):
     assert stl["period"] == 7
 
 
-def test_stl_has_resid_std(ts_df, ts_state):
+def test_stl_has_resid_std(ts_df, ts_state, require_statsmodels):
     """resid_std: 잔차 표준편차 — 음수 없음."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -214,7 +214,7 @@ def test_stl_has_resid_std(ts_df, ts_state):
     assert stl["resid_std"] >= 0.0
 
 
-def test_stl_total_var_is_sum(ts_df, ts_state):
+def test_stl_total_var_is_sum(ts_df, ts_state, require_statsmodels):
     """total_var ≈ trend_var + seasonal_var + resid_var."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -399,7 +399,7 @@ def test_airpassengers_stl_period_12(air_passengers_df, air_passengers_state):
     assert stl["period"] == 12
 
 
-def test_airpassengers_has_seasonality(air_passengers_df, air_passengers_state):
+def test_airpassengers_has_seasonality(air_passengers_df, air_passengers_state, require_statsmodels):
     """AirPassengers 는 강한 연간 계절성 → has_seasonality=True."""
     from agents.handlers.timeseries.profiler import profile
 
@@ -419,7 +419,7 @@ def test_airpassengers_trend_increasing(air_passengers_df, air_passengers_state)
 # ── ⑪ Phase 단위 (L1 unit) ───────────────────────────────────────────────────
 
 
-def test_phase2_white_noise_diff_order_zero():
+def test_phase2_white_noise_diff_order_zero(require_statsmodels):
     """백색잡음은 정상 시계열 → diff_order=0."""
     import numpy as np
     import pandas as pd
@@ -432,7 +432,7 @@ def test_phase2_white_noise_diff_order_zero():
     assert result["consensus"] in ("stationary", "trend_stationary")
 
 
-def test_phase2_random_walk_diff_order_at_least_one():
+def test_phase2_random_walk_diff_order_at_least_one(require_statsmodels):
     """랜덤워크는 I(1) → diff_order >= 1."""
     import numpy as np
     import pandas as pd
