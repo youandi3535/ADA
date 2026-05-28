@@ -46,6 +46,8 @@ class BaseAgent(abc.ABC):
         self._last_input_tokens: int = 0
         self._last_output_tokens: int = 0
         self._anthropic: Any = None  # lazy
+        # ADR-007 L3.2 — 현재 처리 중인 job_id (track_llm metadata 전파)
+        self._current_job_id: Optional[str] = None
 
     # ------------------------------------------------------------------
     # 추상 메서드
@@ -63,6 +65,8 @@ class BaseAgent(abc.ABC):
         from ada.db.models import AgentRun
 
         bind_context(job_id=state.job_id, agent_name=self.__class__.__name__)
+        # ADR-007 L3.2 — track_llm 가 사용할 수 있게 인스턴스에 세팅
+        self._current_job_id = state.job_id
         start = time.perf_counter()
         run_id = uuid.uuid4()
         if self.session is not None:
@@ -181,43 +185,75 @@ class BaseAgent(abc.ABC):
         temperature: float,
         model_name: Optional[str],
     ) -> str:
-        """운영환경: AsyncAnthropic API (non-blocking await)."""
+        """운영환경: AsyncAnthropic API (non-blocking await).
+
+        ADR-007 L3: Langfuse ``track_llm`` 컨텍스트로 감싸 자동 trace.
+        키 없으면 no-op (track_llm 자체가 graceful — None span yield).
+        """
         import anthropic  # noqa: WPS433
+
+        from ada.core.langfuse_client import track_llm
 
         if self._anthropic is None:
             self._anthropic = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
         breaker = get_breaker("anthropic", fail_max=3, reset_timeout=30)
+        actual_model = model_name or self.model_name
 
         async def _do_call() -> Any:
             return await self._anthropic.messages.create(
-                model=model_name or self.model_name,
+                model=actual_model,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
 
-        try:
-            resp = await breaker.call(_do_call) if asyncio.iscoroutinefunction(breaker.call) else await _do_call()
-        except Exception as e:
-            self.logger.error("llm_api_call_failed", error=str(e))
-            raise
+        with track_llm(
+            name=self.__class__.__name__,
+            model=actual_model,
+            job_id=getattr(self, "_current_job_id", None),
+            agent=self.__class__.__name__,
+        ) as span:
+            try:
+                resp = await breaker.call(_do_call) if asyncio.iscoroutinefunction(breaker.call) else await _do_call()
+            except Exception as e:
+                self.logger.error("llm_api_call_failed", error=str(e))
+                if span is not None and hasattr(span, "update"):
+                    try:
+                        span.update(level="ERROR", status_message=str(e)[:200])
+                    except Exception:
+                        pass
+                raise
 
-        # 토큰 사용량 누적
-        usage = getattr(resp, "usage", None)
-        self._last_input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
-        self._last_output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
-        try:
-            from ada.observability.metrics import record_llm_tokens
+            # 토큰 사용량 누적
+            usage = getattr(resp, "usage", None)
+            self._last_input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
+            self._last_output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
 
-            record_llm_tokens(
-                model_name or self.model_name,
-                self._last_input_tokens,
-                self._last_output_tokens,
-            )
-        except Exception:
-            pass
+            # ADR-007 L3: span 에 토큰 메타 기록 (best-effort)
+            if span is not None and hasattr(span, "update"):
+                try:
+                    span.update(
+                        metadata={
+                            "input_tokens": self._last_input_tokens,
+                            "output_tokens": self._last_output_tokens,
+                        },
+                    )
+                except Exception:
+                    pass
+
+            # Prometheus 토큰 메트릭
+            try:
+                from ada.observability.metrics import record_llm_tokens
+
+                record_llm_tokens(
+                    actual_model,
+                    self._last_input_tokens,
+                    self._last_output_tokens,
+                )
+            except Exception:
+                pass
 
         text = ""
         for blk in resp.content:

@@ -34,6 +34,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.warning("minio_init_failed", error=str(e))
     yield
     log.info("api_shutdown")
+    # ADR-007 L3.3 — Langfuse 버퍼 강제 전송 (graceful shutdown)
+    try:
+        from ada.core.langfuse_client import flush
+
+        flush(timeout_sec=5.0)
+    except Exception as e:
+        log.warning("langfuse_flush_failed_at_shutdown", error=str(e))
 
 
 app = FastAPI(
