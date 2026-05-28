@@ -39,5 +39,14 @@ vault kv put ada/jwt \
   jwt_secret="${JWT_SECRET:-}" \
   secret_key="${SECRET_KEY:-}"
 
+# Day 5 — RS256 키쌍을 위한 빈 placeholder. 실제 키는
+# scripts/security/jwt_keygen.sh --vault 로 덮어 쓴다.
+# 이 placeholder 가 있어야 jwt._load_rs_keys() 가 read_secret 시
+# Vault 404 가 아니라 빈 dict → HS256 fallback 으로 깨끗히 떨어진다.
+vault kv put secret/jwt/rs256 \
+  private_key="" \
+  public_key="" \
+  || echo "[skip] secret/jwt/rs256 placeholder (mount 'secret' may not exist yet)"
+
 echo "[done] Vault seeded:"
 vault kv list ada/

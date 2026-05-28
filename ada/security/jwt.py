@@ -64,15 +64,9 @@ def _sign_key() -> str:
     return settings.jwt_secret
 
 
-def _verify_keys() -> tuple[list[str], list[str]]:
-    """(허용 알고리즘 목록, 검증 키 후보 목록).
-
-    RS256 가 가능하면 RS256+HS256 모두 허용 (운영 전환 기간 호환).
-    """
-    rs = _load_rs_keys()
-    if rs.get("public_key"):
-        return ["RS256", "HS256"], [rs["public_key"], settings.jwt_secret]
-    return ["HS256"], [settings.jwt_secret]
+# 운영 전환 기간에는 RS256·HS256 두 알고리즘 모두 허용한다.
+# decode_token() 이 (key, algo) 쌍 리스트를 직접 만들어 시도하므로
+# 별도의 _verify_keys() 헬퍼는 두지 않는다 (호출처 없는 데드코드 제거 — Day 5).
 
 
 # ----- public API -------------------------------------------------------------
