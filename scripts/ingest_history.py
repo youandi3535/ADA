@@ -84,7 +84,7 @@ _STATE_FILE = _HOME / ".ada_ingest_state.json"
 _PROJECT_ROOT = Path(__file__).parent.parent
 
 # 처리 제외 디렉토리
-_SKIP_DIRS = {"outputs", "uploads", ".auto-memory", "node_modules", "__pycache__"}
+_SKIP_DIRS = {"outputs", "uploads", ".auto-memory", "node_modules", "__pycache__", ".claude"}
 _MIN_FILE_BYTES = 100
 
 
@@ -115,6 +115,16 @@ def _get_transcript_sources() -> list[tuple[Path, str]]:
         cowork_win_local = Path(localappdata) / "Claude" / "local-agent-mode-sessions"
         if cowork_win_local.exists():
             sources.append((cowork_win_local, "cowork"))
+
+        # Windows Store(MSIX) 패키지로 설치된 경우 — VFS 리다이렉트 경로
+        # %LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\local-agent-mode-sessions
+        packages_dir = Path(localappdata) / "Packages"
+        if packages_dir.exists():
+            for pkg in packages_dir.iterdir():
+                if pkg.is_dir() and pkg.name.startswith("Claude_"):
+                    msix_path = pkg / "LocalCache" / "Roaming" / "Claude" / "local-agent-mode-sessions"
+                    if msix_path.exists():
+                        sources.append((msix_path, "cowork"))
 
     # ── Cowork (Claude Desktop App) — Mac ────────────────────────────────
     cowork_mac = _HOME / "Library" / "Application Support" / "Claude" / "local-agent-mode-sessions"
@@ -223,6 +233,9 @@ def _parse_jsonl_entry(raw_line: str) -> tuple[str, str] | None:
     try:
         obj = json.loads(raw_line)
     except json.JSONDecodeError:
+        return None
+
+    if not isinstance(obj, dict):
         return None
 
     otype = obj.get("type", "")
@@ -371,19 +384,19 @@ _SUPPORTED_EXTS = {".jsonl", ".json", ".txt", ".md"}
 
 def _scan_files(base_dir: Path) -> Iterator[Path]:
     """디렉토리 하위의 지원 형식 파일 반환."""
-    for fpath in base_dir.rglob("*"):
-        if not fpath.is_file():
-            continue
-        if fpath.suffix.lower() not in _SUPPORTED_EXTS:
-            continue
-        if any(skip in fpath.parts for skip in _SKIP_DIRS):
-            continue
-        try:
-            if fpath.stat().st_size < _MIN_FILE_BYTES:
+    for root, dirs, files in os.walk(base_dir, onerror=lambda e: None):
+        # _SKIP_DIRS 에 해당하는 하위 디렉토리는 진입하지 않음 (in-place 수정)
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for fname in files:
+            fpath = Path(root) / fname
+            if fpath.suffix.lower() not in _SUPPORTED_EXTS:
                 continue
-        except OSError:
-            continue
-        yield fpath
+            try:
+                if fpath.stat().st_size < _MIN_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
+            yield fpath
 
 
 # ---------------------------------------------------------------------------
