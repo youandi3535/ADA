@@ -806,3 +806,71 @@ def test_contamination_accuracy_v2_improved(anomaly_state, anomaly_df):
     assert 0.02 <= extra["contamination_estimate"] <= 0.10, (
         f"v2 추정 {extra['contamination_estimate']} — 0.02~0.10 범위 벗어남"
     )
+
+
+# === V3 보강 필드 (2026-05-28 Day 1 설계 정합화) =====================
+
+
+def test_v3_n_features_categorical_present(anomaly_state, anomaly_df):
+    """v3 V1: n_features_categorical 필드 존재 + 정수 + 비음수."""
+    from agents.handlers.anomaly.profiler import profile
+
+    extra = profile(anomaly_df, anomaly_state)
+    assert "n_features_categorical" in extra
+    assert isinstance(extra["n_features_categorical"], int)
+    assert extra["n_features_categorical"] >= 0
+
+
+def test_v3_is_approximately_gaussian_present(anomaly_state, anomaly_df):
+    """v3 V2: is_approximately_gaussian 필드 존재 + bool."""
+    from agents.handlers.anomaly.profiler import profile
+
+    extra = profile(anomaly_df, anomaly_state)
+    assert "is_approximately_gaussian" in extra
+    assert isinstance(extra["is_approximately_gaussian"], bool)
+
+
+def test_v3_intrinsic_dim_ratio_present(anomaly_state, anomaly_df):
+    """v3 V3: intrinsic_dim_ratio 필드 [0,1]."""
+    from agents.handlers.anomaly.profiler import profile
+
+    extra = profile(anomaly_df, anomaly_state)
+    assert "intrinsic_dim_ratio" in extra
+    assert 0.0 <= extra["intrinsic_dim_ratio"] <= 1.0
+
+
+def test_v3_gaussian_flag_rejects_lognormal(anomaly_state):
+    """v3 V2 정확성: 로그정규 분포는 gaussian 아님 (skew 큼)."""
+    import numpy as np
+    import pandas as pd
+
+    from agents.handlers.anomaly.profiler import profile
+
+    rng = np.random.default_rng(42)
+    df = pd.DataFrame({f"f{i}": rng.lognormal(0, 1, 500) for i in range(3)})
+    extra = profile(df, anomaly_state)
+    assert extra["is_approximately_gaussian"] is False
+
+
+def test_v3_gaussian_flag_accepts_clean_gaussian(anomaly_state):
+    """v3 V2 양성: 표준 정규 분포는 is_approximately_gaussian == True."""
+    import numpy as np
+    import pandas as pd
+
+    from agents.handlers.anomaly.profiler import profile
+
+    rng = np.random.default_rng(42)
+    df = pd.DataFrame({f"f{i}": rng.normal(0, 1, 500) for i in range(3)})
+    extra = profile(df, anomaly_state)
+    assert extra["is_approximately_gaussian"] is True
+
+
+def test_v3_intrinsic_dim_ratio_correlated_data_compressible(anomaly_state, correlated_df):
+    """v3 V3 정확성: 상관 높은 데이터(corr ≈ 0.99)는 본질 차원 < 명목 차원."""
+    from agents.handlers.anomaly.profiler import profile
+
+    extra = profile(correlated_df, anomaly_state)
+    # x~y 가 강하게 상관 → 95% 설명 차원이 3보다 작아야
+    assert extra["pca_n_components_95"] < extra["pca_total_dims"]
+    # intrinsic_dim_ratio 도 1.0 미만
+    assert extra["intrinsic_dim_ratio"] < 1.0
