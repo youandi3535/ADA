@@ -11,7 +11,7 @@
 
 환경변수 (팀원 로컬 .env 또는 시스템 환경변수)
 ---------------------------------------------
-    KB_SERVER_URL       웹서버 주소        (기본: http://221.150.237.129/api  ← 팀 VPS)
+    KB_SERVER_URL       웹서버 주소        (기본: http://115.68.216.191/api  ← 팀 VPS)
     KB_COLLECT_SECRET   X-KB-Secret 헤더  (미설정 시 빈 문자열 → 개발모드 허용)
     TEAM_MEMBER         팀원 이름          (미설정 시 git config user.name 사용)
 
@@ -206,7 +206,7 @@ def main() -> None:  # noqa: C901
     def _env(key: str, default: str = "") -> str:
         return os.environ.get(key, "").strip() or env_vals.get(key, default)
 
-    server_url = _env("KB_SERVER_URL", "http://221.150.237.129/api").rstrip("/")
+    server_url = _env("KB_SERVER_URL", "http://115.68.216.191/api").rstrip("/")
     kb_secret = _env("KB_COLLECT_SECRET", "")
 
     # ── 3. 마지막 Q&A 추출 ───────────────────────────────────────────────
