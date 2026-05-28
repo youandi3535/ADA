@@ -1,8 +1,13 @@
-"""agents.handlers.anomaly.profiler — 이상탐지 데이터 프로파일 (NY 담당, v2).
+"""agents.handlers.anomaly.profiler — 이상탐지 데이터 프로파일 (NY 담당, v3).
 
-Day 1 v2 책임 — DataFrame 을 받아 44+ 키의 이상탐지 전용 프로파일 dict 반환.
+Day 1 v3 책임 — DataFrame 을 받아 47+ 키의 이상탐지 전용 프로파일 dict 반환.
 
-v2 추가 키 (Q4 의심 검증 후 패치):
+v3 추가 키 (2026-05-28 — Day 1 설계 정합화):
+  V1  ①  n_features_categorical          — 범주형 컬럼 수 (Day 2 preprocessor 분기)
+  V2  ⑥  is_approximately_gaussian       — Z-score 신뢰성 통합 플래그 (skew<1 ∧ |kurt|<3)
+  V3  ⑧  intrinsic_dim_ratio             — pca_n_components_95 / pca_total_dims
+
+v2 추가 키 (Q4 의심 검증 후 패치) — 모두 유지:
   P1  ②  outlier_ratios_iqr_strict       — 3×IQR (heavy-tail 보강)
   P2  ③  zscore_unreliable_cols          — std » MAD 가드
   P3  ④  modz_unreliable_cols            — high skew 가드
@@ -238,16 +243,18 @@ def profile(df: Any, state: Any) -> dict[str, Any]:  # noqa: ARG001
 
 
 def _basic_stats(df: Any, num_raw: Any, num_clean: Any, n_rows_raw: int) -> dict[str, Any]:
-    """① 기본 통계."""
+    """① 기본 통계 (v3: V1 n_features_categorical 추가)."""
     missing = {str(c): float(num_raw[c].isna().mean()) for c in num_raw.columns}
     constant: list[str] = []
     for c in num_clean.columns:
         if num_clean[c].nunique(dropna=True) <= 1:
             constant.append(str(c))
     dup_ratio = float(df.duplicated().mean()) if n_rows_raw > 0 else 0.0
+    n_cat = int(df.select_dtypes(include=["object", "category"]).shape[1])
     return {
         "n_rows": n_rows_raw,
         "n_numeric_cols": int(num_raw.shape[1]),
+        "n_features_categorical": n_cat,
         "missing_ratio_per_col": missing,
         "constant_cols": constant,
         "duplicate_row_ratio": round(dup_ratio, 4),
@@ -256,16 +263,18 @@ def _basic_stats(df: Any, num_raw: Any, num_clean: Any, n_rows_raw: int) -> dict
 
 
 def _distribution_shape(num_df: Any) -> dict[str, Any]:
-    """⑥ 분포 특성 (v2: ④ 앞으로 이동)."""
+    """⑥ 분포 특성 (v2: ④ 앞으로 이동, v3: V2 gaussian flag 추가)."""
     skew = {str(c): round(float(num_df[c].skew()), 3) for c in num_df.columns}
     kurt = {str(c): round(float(num_df[c].kurt()), 3) for c in num_df.columns}
     high_skew = [c for c, v in skew.items() if abs(v) > HIGH_SKEW_THRESHOLD]
     high_kurt = [c for c, v in kurt.items() if v > HIGH_KURTOSIS_THRESHOLD]
+    all_gaussian = bool(skew and all(abs(v) < 1.0 for v in skew.values()) and all(abs(v) < 3.0 for v in kurt.values()))
     return {
         "skewness_per_col": skew,
         "kurtosis_per_col": kurt,
         "high_skew_cols": high_skew,
         "high_kurtosis_cols": high_kurt,
+        "is_approximately_gaussian": all_gaussian,
     }
 
 
@@ -477,10 +486,13 @@ def _pca_analysis(num_df: Any) -> dict[str, Any]:
     # v2 엄격 조건: n90 ≤ n_cols/2 AND last_pc < 5%
     reduction_possible = n90 <= max(1, n_cols // 2) and last_pc_variance < PCA_LAST_PC_THRESHOLD
 
+    intrinsic_ratio = float(n95 / max(1, n_cols))
+
     return {
         "pca_n_components_95": n95,
         "pca_n_components_90": n90,
         "pca_total_dims": n_cols,
+        "intrinsic_dim_ratio": round(intrinsic_ratio, 4),
         "pca_explained_variance_ratio": [round(float(v), 4) for v in evr[:10]],
         "last_pc_variance": round(last_pc_variance, 4),
         "pca_dim_reduction_possible": reduction_possible,
