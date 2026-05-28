@@ -68,12 +68,17 @@ def _get_team_member(cwd: str) -> str:
     if env_name:
         return env_name
     try:
+        # Windows 에서 콘솔 창이 뜨지 않도록 CREATE_NO_WINDOW 플래그 설정
+        extra: dict = {}
+        if os.name == "nt":
+            extra["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = subprocess.run(
             ["git", "config", "user.name"],
             capture_output=True,
             text=True,
             timeout=5,
             cwd=cwd,
+            **extra,
         )
         name = proc.stdout.strip()
         if name:
@@ -179,6 +184,22 @@ def extract_last_qa(transcript_path: str) -> tuple[str, str] | None:
 # ---------------------------------------------------------------------------
 
 _MIN_LEN = 5  # 너무 짧은 Q/A 는 무시 (실수 클릭 등)
+_LOG_FILE = Path.home() / ".ada_hooks.log"
+
+
+def _log(msg: str) -> None:
+    """ADA_HOOK_DEBUG=1 일 때만 홈 디렉토리 로그 파일에 기록 (화면 출력 없음)."""
+    if not os.environ.get("ADA_HOOK_DEBUG"):
+        return
+    try:
+        from datetime import datetime
+
+        with _LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now():%H:%M:%S}] collect_qa: {msg}\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 _MAX_Q = 8_000
 _MAX_A = 40_000
 
@@ -252,17 +273,13 @@ def main() -> None:  # noqa: C901
         with urllib.request.urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read())
             record_id = result.get("id", "?")
-            print(
-                f"[collect_qa] ✅ 저장 완료 id={record_id[:8]}… ({team_member} / {project})",
-                file=sys.stderr,
-            )
+            _log(f"✅ 저장 완료 id={record_id[:8]}… ({team_member} / {project})")
     except urllib.error.HTTPError as e:
-        print(f"[collect_qa] ⚠️  HTTP {e.code}: {e.reason}", file=sys.stderr)
+        _log(f"⚠️  HTTP {e.code}: {e.reason}")
     except urllib.error.URLError as e:
-        # 서버 미기동 시 — 조용히 무시 (오프라인 작업 방해 금지)
-        print(f"[collect_qa] ⚠️  서버 연결 실패: {e.reason}", file=sys.stderr)
+        _log(f"⚠️  서버 연결 실패: {e.reason}")
     except Exception as e:  # noqa: BLE001
-        print(f"[collect_qa] ⚠️  예외: {e}", file=sys.stderr)
+        _log(f"⚠️  예외: {e}")
 
     sys.exit(0)
 

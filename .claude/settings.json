@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -X utf8 scripts/query_kb_hook.py || python3 -X utf8 scripts/query_kb_hook.py"
+            "command": "venv/Scripts/pythonw -X utf8 scripts/query_kb_hook.py"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -X utf8 scripts/collect_qa.py || python3 -X utf8 scripts/collect_qa.py"
+            "command": "venv/Scripts/pythonw -X utf8 scripts/collect_qa.py"
           }
         ]
       }
