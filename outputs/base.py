@@ -128,7 +128,8 @@ class OutputGenerator(abc.ABC):
         except Exception:
             return {}
 
-        fn = get_handler(state.category, "build") or get_handler(state.category, "assets")
+        category = (ctx or {}).get("category") or getattr(state, "category", None)
+        fn = get_handler(category, "build") or get_handler(category, "assets")
         if fn is None:
             return {}
         try:
