@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import subprocess; r=subprocess.run\\(['git','status','--porcelain=v1'],capture_output=True,text=True,encoding='utf-8'\\); print\\(r.stdout[:500]\\)\")",
+      "Bash(git config *)"
+    ]
+  },
   "hooks": {
     "UserPromptSubmit": [
       {
