@@ -360,3 +360,126 @@ def tab_state_with_intent_predict():
         user_intent="매출 예측 및 결과 해석",
         data_profile={"rows": 120, "columns": 4},
     )
+
+
+# ── Day 5 fixture ─────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def tab_state_with_g2_ml_light():
+    from ada.core.state import PipelineState
+
+    return PipelineState(
+        job_id="00000000-0000-0000-0000-000000000d50",
+        file_id="uploads/test/titanic.csv",
+        category="tabular_ml",
+        target_column="Survived",
+        user_intent="빠른 분류",
+        data_profile={"rows": 120, "columns": 5, "class_distribution": {0: 60, 1: 60}},
+        gate_responses={"g2": "g2_ml_light"},
+    )
+
+
+@pytest.fixture
+def tab_state_with_g2_dl_heavy():
+    from ada.core.state import PipelineState
+
+    return PipelineState(
+        job_id="00000000-0000-0000-0000-000000000d51",
+        file_id="uploads/test/large.csv",
+        category="tabular_ml",
+        target_column="label",
+        user_intent="정밀 분류",
+        data_profile={
+            "rows": 50000,
+            "columns": 20,
+            "class_distribution": {0: 25000, 1: 25000},
+        },
+        gate_responses={"g2": "g2_dl_heavy"},
+        category_extras={
+            "tabular": {
+                "eda_baseline": {"cv_score": 0.60, "metric": "f1_macro"},
+            }
+        },
+    )
+
+
+@pytest.fixture
+def tab_state_with_g1_segment():
+    from ada.core.state import PipelineState
+
+    return PipelineState(
+        job_id="00000000-0000-0000-0000-000000000d52",
+        file_id="uploads/test/titanic.csv",
+        category="tabular_ml",
+        target_column=None,
+        user_intent="데이터 군집 탐색",
+        data_profile={"rows": 500, "columns": 5},
+        gate_responses={"g1": "g1_segment"},
+    )
+
+
+@pytest.fixture
+def tab_state_medical_keywords():
+    from ada.core.state import PipelineState
+
+    return PipelineState(
+        job_id="00000000-0000-0000-0000-000000000d53",
+        file_id="uploads/test/titanic.csv",
+        category="tabular_ml",
+        target_column="Survived",
+        user_intent="환자의 진단 이유 설명",
+        data_profile={
+            "rows": 2000,
+            "columns": 10,
+            "class_distribution": {0: 1000, 1: 1000},
+            "column_names": ["patient_id", "diagnosis", "age", "Survived"],
+        },
+        gate_responses={"g2": "g2_ml_standard"},
+        category_extras={
+            "tabular": {
+                "eda_baseline": {"cv_score": 0.72, "metric": "f1_macro"},
+            }
+        },
+    )
+
+
+@pytest.fixture
+def mock_recipes_list():
+    return [
+        {
+            "hash": "recipe_abc001",
+            "model": "XGBoost",
+            "profile": {"rows": 2000, "columns": 10, "n_classes": 2, "imbalance_ratio": 1.0},
+            "best_params": {"n_estimators": 200, "max_depth": 5, "learning_rate": 0.05, "subsample": 0.9},
+            "quality_score": 0.90,
+        },
+        {
+            "hash": "recipe_abc002",
+            "model": "LightGBM",
+            "profile": {"rows": 1800, "columns": 12, "n_classes": 2, "imbalance_ratio": 1.2},
+            "best_params": {"n_estimators": 150, "num_leaves": 63, "learning_rate": 0.05, "min_child_samples": 30},
+            "quality_score": 0.88,
+        },
+        {
+            "hash": "recipe_abc003",
+            "model": "CatBoost",
+            "profile": {"rows": 500000, "columns": 30, "n_classes": 5, "imbalance_ratio": 3.0},
+            "best_params": {"iterations": 300, "depth": 8, "learning_rate": 0.05},
+            "quality_score": 0.55,
+        },
+        {
+            "hash": "recipe_abc004",
+            "model": "XGBoost",
+            "profile": {"rows": 100, "columns": 5, "n_classes": 10, "imbalance_ratio": 5.0},
+            "best_params": {"n_estimators": 50, "max_depth": 3, "learning_rate": 0.2, "subsample": 0.7},
+            "quality_score": 0.40,
+        },
+        {
+            "hash": "recipe_abc005",
+            "model": "LightGBM",
+            "profile": {"rows": 2500, "columns": 11, "n_classes": 2, "imbalance_ratio": 1.1},
+            "best_params": {"n_estimators": 180, "num_leaves": 50, "learning_rate": 0.07, "min_child_samples": 25},
+            "quality_score": 0.85,
+        },
+    ]
