@@ -116,7 +116,7 @@ def _get_transcript_sources() -> list[tuple[Path, str]]:
         if cowork_win_local.exists():
             sources.append((cowork_win_local, "cowork"))
 
-        # Windows Store(MSIX) 패키지로 설치된 경우 — VFS 리다이렉트 경로
+        # Windows Store(MSIX) 패키지 설치 경로 자동 탐지
         # %LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\local-agent-mode-sessions
         packages_dir = Path(localappdata) / "Packages"
         if packages_dir.exists():
@@ -385,7 +385,6 @@ _SUPPORTED_EXTS = {".jsonl", ".json", ".txt", ".md"}
 def _scan_files(base_dir: Path) -> Iterator[Path]:
     """디렉토리 하위의 지원 형식 파일 반환."""
     for root, dirs, files in os.walk(base_dir, onerror=lambda e: None):
-        # _SKIP_DIRS 에 해당하는 하위 디렉토리는 진입하지 않음 (in-place 수정)
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for fname in files:
             fpath = Path(root) / fname
