@@ -279,6 +279,42 @@ OUTPUT_EXTRAS_KEYS = ("charts", "tables", "text_blocks")
 Day 9 에 HJ 는 `OutputGenerator._call_extras()` 메서드를 본구현으로 채우기만
 하면 됨 (현재는 stub). 팀원 작업과 머지 순서 의존성 제거.
 
+#### 🚨 Day 9 HJ PR 머지 후 — CS / NY / jh **반드시** 액션 (자기 Day 9 차례 오면)
+
+현재 각 카테고리 `output_extras.py` 의 `assets()` 는 **stub** 상태로,
+HJ 가 정한 Protocol 시그니처와 어긋나 있음:
+
+| 위치 | 현재 (잘못) | 요구 (Day 9 HJ PR 후) |
+|---|---|---|
+| `agents/handlers/timeseries/output_extras.py` | `def assets(state):` | `def assets(state, ctx):` |
+| `agents/handlers/tabular/output_extras.py` | `def assets(state):` | `def assets(state, ctx):` |
+| `agents/handlers/anomaly/output_extras.py` | `def assets(state):` | `def assets(state, ctx):` |
+| 반환 키 | `{category_label, category_color, extra_charts, extra_tables}` | `{charts, tables, text_blocks}` |
+
+**증상 (안 고치면)**: carrier 가 호출 시 `TypeError` → `_call_extras` 의 try/except 가 silent 로 흡수 → **카테고리 extras 가 PPT/PDF 에 영원히 안 들어감** (오류는 안 나지만 dead code).
+
+**자기 Day 9 작업 시 해야 할 것 (CS/NY/jh 각자)**:
+
+```python
+# agents/handlers/{cat}/output_extras.py
+from typing import Any
+
+def assets(state: Any, ctx: dict[str, Any]) -> dict[str, Any]:
+    """ctx 키:
+       - output_code: "OUT-01" (PPT) | "OUT-02" (PDF) | ...
+       - category:    state.category 복사
+    """
+    return {
+        "charts":      [...],   # list[str]   — MinIO 경로 (PNG)
+        "tables":      [...],   # list[dict]  — {title, columns, rows}
+        "text_blocks": [...],   # list[str]   — 한국어 문단
+    }
+```
+
+- 화이트리스트 밖 키 (`category_label`, `extra_*` 등) 는 자동 drop
+- `ctx["output_code"]` 로 carrier 별 분기 가능 (PPT vs PDF 다른 차트 등)
+- `build()` 라는 이름으로도 등록 가능 — `assets()` 보다 우선 호출됨
+
 ## 11. 향후 보강 (선택)
 
 다음은 운영해보다 필요시 보강:
