@@ -40,7 +40,6 @@ def time_series_df():
     """시간 컬럼 포함 DataFrame."""
     rng = np.random.default_rng(99)
     dates = pd.date_range("2024-01-01", periods=200, freq="1h")
-    # 시간 간격 이상: 10개 행에 큰 갭 삽입
     df = pd.DataFrame(
         {
             "timestamp": dates,
@@ -58,7 +57,7 @@ def correlated_df():
     return pd.DataFrame(
         {
             "x": x,
-            "y": x * 0.95 + rng.normal(0, 0.1, 300),  # corr ≈ 0.99
+            "y": x * 0.95 + rng.normal(0, 0.1, 300),
             "z": rng.normal(0, 1, 300),
         }
     )
@@ -115,7 +114,7 @@ def test_outlier_iqr_present(anomaly_state, anomaly_df):
     assert "outlier_ratios_iqr" in extra
     ratios = extra["outlier_ratios_iqr"]
     assert "amount" in ratios and "freq" in ratios
-    assert ratios["amount"] > 0, "이상치 950/50 분포이므로 IQR 비율 > 0이어야 함"
+    assert ratios["amount"] > 0
 
 
 def test_outlier_zscore_present(anomaly_state, anomaly_df):
@@ -147,7 +146,7 @@ def test_outlier_ratios_range(anomaly_state, anomaly_df, key):
 
     extra = profile(anomaly_df, anomaly_state)
     for v in extra[key].values():
-        assert 0.0 <= v <= 1.0, f"{key}: 비율 범위 위반 {v}"
+        assert 0.0 <= v <= 1.0
 
 
 # ── C. 투표 이상치 ─────────────────────────────────────────────────────────────
@@ -164,7 +163,7 @@ def test_outlier_vote_present(anomaly_state, anomaly_df):
 
 
 def test_vote_less_than_any_single_method(anomaly_state, anomaly_df):
-    """투표 비율은 보수적 — 단일 방법 최솟값 이하이거나 비슷해야 함."""
+    """투표 비율은 보수적 — 단일 방법 최댓값 이하."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -189,7 +188,6 @@ def test_skewness_kurtosis_present(anomaly_state, anomaly_df):
 
 
 def test_high_skew_detected(anomaly_state):
-    """오른쪽으로 심하게 편향된 분포를 감지."""
     from agents.handlers.anomaly.profiler import profile
 
     rng = np.random.default_rng(0)
@@ -234,7 +232,6 @@ def test_pca_basic(anomaly_state, anomaly_df):
 
 
 def test_pca_high_dim_reduction(anomaly_state, high_dim_df):
-    """상관된 20차원 데이터 → 95% 설명 차원이 20보다 작아야 함."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(high_dim_df, anomaly_state)
@@ -242,7 +239,6 @@ def test_pca_high_dim_reduction(anomaly_state, high_dim_df):
 
 
 def test_pca_single_col(anomaly_state):
-    """단일 컬럼: PCA 건너뜀, 기본값 반환."""
     from agents.handlers.anomaly.profiler import profile
 
     df = pd.DataFrame({"a": np.random.normal(0, 1, 100)})
@@ -275,7 +271,6 @@ def test_isolation_overall_ratio(anomaly_state, anomaly_df):
 
 
 def test_most_anomalous_dim(anomaly_state, anomaly_df):
-    """amount 컬럼이 이상치 주 원인 — most_anomalous_dim 에 등장해야 함."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -316,7 +311,6 @@ def test_time_range_days(anomaly_state, time_series_df):
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(time_series_df, anomaly_state)
-    # 200시간 = 약 8.33일
     assert "time_range_days" in extra
     assert 8 <= extra["time_range_days"] <= 9
 
@@ -342,13 +336,11 @@ def test_contamination_confidence(anomaly_state, anomaly_df):
 
 
 def test_contamination_accuracy(anomaly_state, anomaly_df):
-    """실제 오염 비율 5% (50/1000) 에 대해 추정치가 0.02~0.15 범위여야 함."""
+    """실제 오염 5% (50/1000) → 추정치 0.02~0.15."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
-    assert 0.02 <= extra["contamination_estimate"] <= 0.15, (
-        f"추정치 {extra['contamination_estimate']} 가 실제 5%와 너무 멀다"
-    )
+    assert 0.02 <= extra["contamination_estimate"] <= 0.15
 
 
 # ── K. 모델 힌트 ───────────────────────────────────────────────────────────────
@@ -396,7 +388,6 @@ def test_all_nan_col_handled(anomaly_state):
 
 
 def test_single_unique_value_col(anomaly_state):
-    """상수 컬럼이 있어도 전체 프로파일 중단 없이 경고만."""
     from agents.handlers.anomaly.profiler import profile
 
     df = pd.DataFrame({"const": np.ones(200), "vary": np.random.normal(0, 1, 200)})
@@ -424,7 +415,7 @@ def test_small_dataset_warning(anomaly_state):
 
 
 def test_reproducibility_same_seed(anomaly_state, anomaly_df):
-    """같은 입력 두 번 → 같은 contamination_estimate (random_state 고정 효과)."""
+    """같은 입력 두 번 → 같은 contamination_estimate."""
     from agents.handlers.anomaly.profiler import profile
 
     out1 = profile(anomaly_df.copy(), anomaly_state)
@@ -434,7 +425,7 @@ def test_reproducibility_same_seed(anomaly_state, anomaly_df):
 
 
 def test_module_constants_present():
-    """상수 모듈 변수가 외부 import 가능해야 함 (테스트·다른 모듈에서 참조)."""
+    """상수 외부 import 가능."""
     from agents.handlers.anomaly import profiler
 
     assert profiler.RANDOM_STATE == 42
@@ -443,7 +434,7 @@ def test_module_constants_present():
 
 
 def test_no_numeric_returns_minimal_dict(anomaly_state):
-    """수치 컬럼 0개 → anomaly_warning + n_rows + profile_warnings."""
+    """수치 0 → anomaly_warning + 조기 종료."""
     from agents.handlers.anomaly.profiler import profile
 
     df = pd.DataFrame({"a": ["x", "y", "z"]})
@@ -451,12 +442,11 @@ def test_no_numeric_returns_minimal_dict(anomaly_state):
     assert "anomaly_warning" in extra
     assert extra["n_numeric_cols"] == 0
     assert "profile_warnings" in extra
-    # contamination_estimate 등 다른 키는 없어야 (조기 종료)
     assert "contamination_estimate" not in extra
 
 
 def test_rows_alias_equals_n_rows(anomaly_state, anomaly_df):
-    """selector 호환을 위해 rows == n_rows 보장."""
+    """selector 호환 — rows == n_rows."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -464,7 +454,7 @@ def test_rows_alias_equals_n_rows(anomaly_state, anomaly_df):
 
 
 def test_high_correlation_pairs_format(anomaly_state, correlated_df):
-    """high_correlation_pairs 의 각 원소가 (col1, col2, float) tuple 형식."""
+    """(col1, col2, float) tuple 형식."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(correlated_df, anomaly_state)
@@ -476,7 +466,6 @@ def test_high_correlation_pairs_format(anomaly_state, correlated_df):
 
 
 def test_isolation_depth_includes_all_numeric_cols(anomaly_state, anomaly_df):
-    """수치 컬럼이 모두 isolation_depth_per_dim 에 들어가야 함."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -485,7 +474,7 @@ def test_isolation_depth_includes_all_numeric_cols(anomaly_state, anomaly_df):
 
 
 def test_pca_dim_reduction_flag_consistency(anomaly_state, high_dim_df):
-    """pca_dim_reduction_possible 가 n95 < total*0.8 일 때만 True."""
+    """n95 < total*0.8 일 때만 True."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(high_dim_df, anomaly_state)
@@ -496,7 +485,6 @@ def test_pca_dim_reduction_flag_consistency(anomaly_state, high_dim_df):
 
 
 def test_model_hints_dedupe(anomaly_state, anomaly_df):
-    """recommended_model_hints 에 중복이 없어야."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -505,7 +493,7 @@ def test_model_hints_dedupe(anomaly_state, anomaly_df):
 
 
 def test_model_hints_iforest_first(anomaly_state, anomaly_df):
-    """안전 디폴트 — IsolationForest 가 항상 첫 번째."""
+    """안전 디폴트 — IsolationForest 첫 번째."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -513,7 +501,7 @@ def test_model_hints_iforest_first(anomaly_state, anomaly_df):
 
 
 def test_outlier_ratios_skip_constant_col(anomaly_state):
-    """상수 컬럼은 outlier_ratios_iqr 에 안 들어가야 함 (분산 0 → 스킵)."""
+    """상수 컬럼 = outlier_ratios 안 들어감 (분산 0 스킵)."""
     from agents.handlers.anomaly.profiler import profile
 
     df = pd.DataFrame(
@@ -523,25 +511,22 @@ def test_outlier_ratios_skip_constant_col(anomaly_state):
         }
     )
     extra = profile(df, anomaly_state)
-    # IQR/Z/ModZ 모두 const 컬럼 스킵 — vary 만 남음
     assert "const" not in extra.get("outlier_ratios_iqr", {})
     assert "vary" in extra.get("outlier_ratios_iqr", {})
 
 
 def test_mahalanobis_skipped_when_rows_lt_cols_plus_1(anomaly_state):
-    """행 수 < 컬럼수+1 이면 mahalanobis_outlier_ratio = None + 경고."""
+    """25행 × 30컬럼 → mahalanobis None."""
     from agents.handlers.anomaly.profiler import profile
 
     rng = np.random.default_rng(0)
-    # 25 행 × 30 컬럼 (행 < 컬럼+1) — 다만 multivariate 가드 충족 (>=20행, >=2컬럼)
     df = pd.DataFrame(rng.normal(0, 1, (25, 30)), columns=[f"c{i}" for i in range(30)])
     extra = profile(df, anomaly_state)
-    # 다변량 분석은 돌긴 함 (행수>=20, 컬럼>=2) — 다만 mahalanobis 만 None
     assert extra.get("mahalanobis_outlier_ratio") is None
 
 
 def test_time_column_via_object_dtype(anomaly_state):
-    """object dtype 의 날짜 문자열도 시간 컬럼으로 감지."""
+    """object 날짜 문자열도 시간 컬럼 감지."""
     from agents.handlers.anomaly.profiler import profile
 
     dates = pd.date_range("2024-01-01", periods=100, freq="1h").strftime("%Y-%m-%d %H:%M:%S")
@@ -557,16 +542,15 @@ def test_time_column_via_object_dtype(anomaly_state):
 
 
 def test_contamination_sources_used_increments_with_methods(anomaly_state, anomaly_df):
-    """1000행 + 2 수치 컬럼 → 6 소스 모두 활성, sources_used == 6."""
+    """6 소스 모두 활성, sources_used ≥ 5."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
-    # IQR/Z/ModZ/vote/IF/LOF = 6 소스 모두 활성 기대
     assert extra["contamination_sources_used"] >= 5
 
 
 def test_pca_explained_variance_length_limited(anomaly_state, high_dim_df):
-    """explained_variance_ratio 는 최대 10 컴포넌트까지만 보관 (페이로드 보호)."""
+    """≤ 10 컴포넌트만 보관."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(high_dim_df, anomaly_state)
@@ -574,7 +558,6 @@ def test_pca_explained_variance_length_limited(anomaly_state, high_dim_df):
 
 
 def test_returns_dict_type(anomaly_state, anomaly_df):
-    """profile() 반환 타입은 항상 dict."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -582,7 +565,7 @@ def test_returns_dict_type(anomaly_state, anomaly_df):
 
 
 def test_profile_warnings_strings(anomaly_state):
-    """profile_warnings 의 모든 원소는 str."""
+    """모든 원소 str."""
     from agents.handlers.anomaly.profiler import profile
 
     df = pd.DataFrame({"a": np.random.normal(0, 1, 8)})
@@ -592,19 +575,19 @@ def test_profile_warnings_strings(anomaly_state):
 
 
 def test_no_pandas_deprecation_warning(anomaly_state, time_series_df, recwarn):
-    """pandas 2.x deprecation 경고 없음 (infer_datetime_format 등)."""
+    """infer_datetime_format 미사용."""
     from agents.handlers.anomaly.profiler import profile
 
     profile(time_series_df, anomaly_state)
     bad = [w for w in recwarn.list if "infer_datetime_format" in str(w.message).lower()]
-    assert not bad, f"deprecated 경고 발견: {[str(w.message) for w in bad]}"
+    assert not bad
 
 
-# ── N. v2 패치 검증 (Q4-1 ~ Q4-10 권고 14건) ──────────────────────────────────
+# ── N. v2 패치 검증 (P1~P13) ──────────────────────────────────────────────────
 
 
 def test_iqr_strict_key_present(anomaly_state, anomaly_df):
-    """P1 — outlier_ratios_iqr_strict (3×IQR) 키 존재 + 값이 1.5×IQR 이하."""
+    """P1 — 3×IQR 키 + strict ≤ 1.5×IQR."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -612,16 +595,14 @@ def test_iqr_strict_key_present(anomaly_state, anomaly_df):
     strict = extra["outlier_ratios_iqr_strict"]
     iqr15 = extra["outlier_ratios_iqr"]
     for c in strict:
-        # 3×IQR 컷이 더 보수적 → 같은 컬럼에서 ratio_strict ≤ ratio_15
-        assert strict[c] <= iqr15[c] + 1e-6, f"{c}: strict={strict[c]} > 1.5x={iqr15[c]}"
+        assert strict[c] <= iqr15[c] + 1e-6
 
 
 def test_zscore_unreliable_cols_detected(anomaly_state):
-    """P2 — std » MAD 컬럼이 zscore_unreliable_cols 에 들어가야."""
+    """P2 — std » MAD 컬럼 감지."""
     from agents.handlers.anomaly.profiler import profile
 
     rng = np.random.default_rng(0)
-    # std 가 MAD 보다 5배 이상 큰 데이터 (소수 극단치)
     df = pd.DataFrame(
         {
             "normal": rng.normal(0, 1, 1000),
@@ -634,36 +615,33 @@ def test_zscore_unreliable_cols_detected(anomaly_state):
 
 
 def test_modz_excludes_high_skew_in_contamination(anomaly_state):
-    """P3 — high_skew_cols 의 컬럼은 modz_unreliable_cols 에 자동 포함."""
+    """P3 — high_skew → modz_unreliable 자동."""
     from agents.handlers.anomaly.profiler import profile
 
     rng = np.random.default_rng(0)
-    # skewed 컬럼 1개 + 정규 컬럼 1개
     df = pd.DataFrame(
         {
-            "skewed": np.exp(rng.normal(0, 2, 500)),  # LogNormal — skew 매우 큼
+            "skewed": np.exp(rng.normal(0, 2, 500)),
             "normal": rng.normal(0, 1, 500),
         }
     )
     extra = profile(df, anomaly_state)
     assert "skewed" in extra["high_skew_cols"]
-    # high_skew → modz_unreliable 자동 포함
     assert "skewed" in extra["modz_unreliable_cols"]
 
 
 def test_mahalanobis_threshold_dynamic_present(anomaly_state, anomaly_df):
-    """P4 — mahalanobis_threshold_dynamic 키 존재 + 값이 p975 보다 낮음 (5% 오염)."""
+    """P4 — dynamic ≤ p975 (5% 오염)."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
     assert "mahalanobis_threshold_dynamic" in extra
     assert extra["mahalanobis_threshold_dynamic"] is not None
-    # 5% 오염이라 contamination ~0.05 → 95p 컷 사용 → p975 보다 낮음
     assert extra["mahalanobis_threshold_dynamic"] <= extra["mahalanobis_threshold_p975"]
 
 
 def test_pca_n_components_90_present(anomaly_state, high_dim_df):
-    """P5 — pca_n_components_90 키 존재 + last_pc_variance 키 존재."""
+    """P5 — n90 + last_pc_variance."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(high_dim_df, anomaly_state)
@@ -673,44 +651,40 @@ def test_pca_n_components_90_present(anomaly_state, high_dim_df):
 
 
 def test_pca_reduction_stricter_v2(anomaly_state):
-    """P5 — v2 엄격 조건: n90 ≤ n/2 AND last_pc < 0.05 일 때만 True."""
+    """P5 — n90 ≤ n/2 AND last_pc < 0.05."""
     from agents.handlers.anomaly.profiler import profile
 
-    # 5D 데이터, 모두 독립 (compression 불가) — v2 에선 False 여야
     rng = np.random.default_rng(0)
     df = pd.DataFrame(rng.normal(0, 1, (500, 5)), columns=[f"c{i}" for i in range(5)])
     extra = profile(df, anomaly_state)
-    # 독립 5D 면 last_pc_variance 가 0.05 이상 (각 컴포넌트 ~0.2)
     if extra.get("last_pc_variance", 0) >= 0.05:
         assert extra["pca_dim_reduction_possible"] is False
 
 
 def test_contamination_method_field_present(anomaly_state, anomaly_df):
-    """P7 — contamination_method 키 존재 + 'trimmed_mean' (4+ 소스)."""
+    """P7 — 'trimmed_mean' (4+ 소스)."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
     assert "contamination_method" in extra
-    # 정상 케이스 (4+ 소스) → trimmed_mean
     if extra["contamination_sources_used"] >= 4:
         assert extra["contamination_method"] == "trimmed_mean"
 
 
 def test_contamination_breakdown_present(anomaly_state, anomaly_df):
-    """P7 — contamination_source_breakdown 키 존재 + 6 소스 모두 포함."""
+    """P7 — 6 소스 breakdown dict."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
     bd = extra["contamination_source_breakdown"]
     assert isinstance(bd, dict)
-    # 핵심 소스 4개 이상 존재
     expected_keys = {"iqr_mean", "zscore_mean", "modz_mean", "vote_mean", "if_ratio", "lof_ratio"}
     present = expected_keys & set(bd.keys())
     assert len(present) >= 4
 
 
 def test_high_contamination_suspected_flag(anomaly_state):
-    """P8 — high_contamination_suspected 키 존재 (보통은 False)."""
+    """P8 — bool 키 존재."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(pd.DataFrame({"a": np.random.default_rng(0).normal(0, 1, 200)}), anomaly_state)
@@ -719,7 +693,7 @@ def test_high_contamination_suspected_flag(anomaly_state):
 
 
 def test_year_column_false_positive_risk(anomaly_state):
-    """P9 — 연도-숫자 컬럼이 time_column_false_positive_risk 에 잡혀야."""
+    """P9 — 연도-숫자 fp_risk 등록."""
     from agents.handlers.anomaly.profiler import profile
 
     df = pd.DataFrame(
@@ -729,17 +703,15 @@ def test_year_column_false_positive_risk(anomaly_state):
         }
     )
     extra = profile(df, anomaly_state)
-    # 연도만 있는 컬럼 → time_candidates 에 들어가지만 FP risk 도 표시
     if "year_id" in extra["time_column_candidates"]:
         assert "year_id" in extra["time_column_false_positive_risk"]
 
 
 def test_unix_epoch_int_detected(anomaly_state):
-    """P11 — Unix epoch int 컬럼이 시간 컬럼으로 감지."""
+    """P11 — Unix epoch int 시간 감지."""
     from agents.handlers.anomaly.profiler import profile
 
-    # 2024-01-01 부터 1시간 간격 100개
-    base = 1_704_067_200  # 2024-01-01 00:00:00 UTC
+    base = 1_704_067_200
     epochs = [base + i * 3600 for i in range(100)]
     df = pd.DataFrame(
         {
@@ -753,31 +725,29 @@ def test_unix_epoch_int_detected(anomaly_state):
 
 
 def test_most_anomalous_dim_permutation_present(anomaly_state, anomaly_df):
-    """P12 — most_anomalous_dim_permutation 키 존재 + 값이 정답 컬럼."""
+    """P12 — permutation 키 + 정답 컬럼."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
     assert "most_anomalous_dim_permutation" in extra
-    # amount 가 더 강한 이상치 → permutation 도 amount 골라야
     assert extra["most_anomalous_dim_permutation"] in ("amount", "freq")
 
 
 def test_most_anomalous_dim_permutation_accuracy(anomaly_state):
-    """P12 — 정답 컬럼을 permutation 이 정확히 식별 (3개 컬럼 중 A 만 이상)."""
+    """P12 — A 컬럼만 이상 → A 정답."""
     from agents.handlers.anomaly.profiler import profile
 
     rng = np.random.default_rng(42)
     normal = rng.normal(0, 1, (950, 3))
     anom = rng.normal(0, 1, (50, 3))
-    anom[:, 0] += 8  # A 컬럼에만 강한 이상치
+    anom[:, 0] += 8
     df = pd.DataFrame(np.vstack([normal, anom]), columns=["A", "B", "C"])
     extra = profile(df, anomaly_state)
-    # permutation 은 A 를 정확히 식별해야 함
-    assert extra["most_anomalous_dim_permutation"] == "A", f"기대: A, 실제: {extra['most_anomalous_dim_permutation']}"
+    assert extra["most_anomalous_dim_permutation"] == "A"
 
 
 def test_most_anomalous_dim_confidence_field(anomaly_state, anomaly_df):
-    """P13 — most_anomalous_dim_confidence 키 존재 + 'high/medium/low' 중 하나."""
+    """P13 — confidence 키 (high/medium/low)."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -786,7 +756,7 @@ def test_most_anomalous_dim_confidence_field(anomaly_state, anomaly_df):
 
 
 def test_permutation_importance_per_dim_present(anomaly_state, anomaly_df):
-    """P12 — permutation_importance_per_dim dict 가 모든 수치 컬럼 포함."""
+    """P12 — 모든 수치 컬럼 importance."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -794,25 +764,22 @@ def test_permutation_importance_per_dim_present(anomaly_state, anomaly_df):
     perm = extra["permutation_importance_per_dim"]
     assert set(perm.keys()) == {"amount", "freq"}
     for v in perm.values():
-        assert v >= 0  # importance 는 절댓값 평균이라 음수 없음
+        assert v >= 0
 
 
 def test_contamination_accuracy_v2_improved(anomaly_state, anomaly_df):
-    """v2 trimmed mean — 실제 5% 오염 데이터에서 추정치 정확도 (목표 0.02~0.10)."""
+    """v2 trimmed mean — 0.02~0.10."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
-    # v1 보다 더 엄격한 범위 (trimmed mean MSE -18%)
-    assert 0.02 <= extra["contamination_estimate"] <= 0.10, (
-        f"v2 추정 {extra['contamination_estimate']} — 0.02~0.10 범위 벗어남"
-    )
+    assert 0.02 <= extra["contamination_estimate"] <= 0.10
 
 
-# === V3 보강 필드 (2026-05-28 Day 1 설계 정합화) =====================
+# === V3 보강 필드 (Day 1 설계 정합화) ============================
 
 
 def test_v3_n_features_categorical_present(anomaly_state, anomaly_df):
-    """v3 V1: n_features_categorical 필드 존재 + 정수 + 비음수."""
+    """V1 — int ≥ 0."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -822,7 +789,7 @@ def test_v3_n_features_categorical_present(anomaly_state, anomaly_df):
 
 
 def test_v3_is_approximately_gaussian_present(anomaly_state, anomaly_df):
-    """v3 V2: is_approximately_gaussian 필드 존재 + bool."""
+    """V2 — bool."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -831,7 +798,7 @@ def test_v3_is_approximately_gaussian_present(anomaly_state, anomaly_df):
 
 
 def test_v3_intrinsic_dim_ratio_present(anomaly_state, anomaly_df):
-    """v3 V3: intrinsic_dim_ratio 필드 [0,1]."""
+    """V3 — [0,1]."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
@@ -840,10 +807,7 @@ def test_v3_intrinsic_dim_ratio_present(anomaly_state, anomaly_df):
 
 
 def test_v3_gaussian_flag_rejects_lognormal(anomaly_state):
-    """v3 V2 정확성: 로그정규 분포는 gaussian 아님 (skew 큼)."""
-    import numpy as np
-    import pandas as pd
-
+    """V2 — LogNormal → False."""
     from agents.handlers.anomaly.profiler import profile
 
     rng = np.random.default_rng(42)
@@ -853,10 +817,7 @@ def test_v3_gaussian_flag_rejects_lognormal(anomaly_state):
 
 
 def test_v3_gaussian_flag_accepts_clean_gaussian(anomaly_state):
-    """v3 V2 양성: 표준 정규 분포는 is_approximately_gaussian == True."""
-    import numpy as np
-    import pandas as pd
-
+    """V2 — 정규 → True."""
     from agents.handlers.anomaly.profiler import profile
 
     rng = np.random.default_rng(42)
@@ -866,11 +827,23 @@ def test_v3_gaussian_flag_accepts_clean_gaussian(anomaly_state):
 
 
 def test_v3_intrinsic_dim_ratio_correlated_data_compressible(anomaly_state, correlated_df):
-    """v3 V3 정확성: 상관 높은 데이터(corr ≈ 0.99)는 본질 차원 < 명목 차원."""
+    """V3 — 상관 데이터 → n95 < total."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(correlated_df, anomaly_state)
-    # x~y 가 강하게 상관 → 95% 설명 차원이 3보다 작아야
     assert extra["pca_n_components_95"] < extra["pca_total_dims"]
-    # intrinsic_dim_ratio 도 1.0 미만
     assert extra["intrinsic_dim_ratio"] < 1.0
+
+
+# === 서브카테고리 (판단기준 §부록 A, 2026-05-29) ===
+
+
+def test_subcategory_fields_present(anomaly_state, anomaly_df):
+    """eval_labels_available(bool) + anomaly_subcategory(C1~C4) 존재."""
+    from agents.handlers.anomaly.profiler import profile
+
+    extra = profile(anomaly_df, anomaly_state)
+    assert "eval_labels_available" in extra
+    assert "anomaly_subcategory" in extra
+    assert isinstance(extra["eval_labels_available"], bool)
+    assert extra["anomaly_subcategory"] in {"C1", "C2", "C3", "C4"}

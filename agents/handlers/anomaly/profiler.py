@@ -84,7 +84,7 @@ UNIX_EPOCH_MAX = 10_000_000_000  # 2286-11-20
 # ── 공개 진입점 ─────────────────────────────────────────────────────────────
 
 
-def profile(df: Any, state: Any) -> dict[str, Any]:  # noqa: ARG001
+def profile(df: Any, state: Any) -> dict[str, Any]:  # state 사용 (서브카테고리 라벨축)
     """DataFrame → 이상탐지 전용 프로파일 dict (v2)."""
     import numpy as np
     import pandas as pd
@@ -234,6 +234,14 @@ def profile(df: Any, state: Any) -> dict[str, Any]:  # noqa: ARG001
     # ⑬ 모델 힌트
     extra["recommended_model_hints"] = _model_hints(extra)
 
+    # ⑭ anomaly 서브카테고리 (판단기준 §부록 A — additive, 2026-05-29)
+    #    축1 시간성(has_time_column) × 축2 라벨(target_column 유무) → C1~C4.
+    #    하류 Day 4~9 가 셀에 맞는 게이트·지표·모델군 적용. 누락 시 소비처는 .get 방어.
+    has_time = bool(extra.get("has_time_column", False))
+    labels_avail = bool(getattr(state, "target_column", None))
+    extra["eval_labels_available"] = labels_avail
+    extra["anomaly_subcategory"] = ("C3" if labels_avail else "C4") if has_time else ("C1" if labels_avail else "C2")
+
     extra["rows"] = n_rows_raw
     extra["profile_warnings"] = warnings
     return extra
@@ -332,15 +340,11 @@ def _outlier_zscore(num_df: Any) -> dict[str, Any]:
 
 
 def _outlier_modified_z(num_df: Any, high_skew_cols: list[str]) -> dict[str, Any]:
-    """④ Modified Z (v2 P3: high skew 컬럼 unreliable).
-
-    Q4-2 검증: 0.6745 가 LogNormal/Cauchy 에서 σ̂ 과소추정 → false positive 폭증.
-    → high_skew_cols 인 컬럼은 modz_unreliable_cols 에 기록, ⑫ 에서 제외.
-    """
+    """④ Modified Z (v2 P3: high skew 컬럼 unreliable)."""
     import numpy as np
 
     ratios: dict[str, float] = {}
-    unreliable: list[str] = list(map(str, high_skew_cols))  # high skew 컬럼은 자동 unreliable
+    unreliable: list[str] = list(map(str, high_skew_cols))
     skew_set = set(unreliable)
     for c in num_df.columns:
         vals = num_df[c].to_numpy(dtype=float, copy=False)
@@ -352,7 +356,6 @@ def _outlier_modified_z(num_df: Any, high_skew_cols: list[str]) -> dict[str, Any
             continue
         mz = MAD_NORMAL_CONSTANT * np.abs(vals - median) / mad
         ratios[str(c)] = round(float((mz > MODIFIED_Z_THRESHOLD).mean()), 4)
-        # 별도 ratio 가 너무 높으면 (>0.20) 도 unreliable 후보
         if str(c) not in skew_set and ratios[str(c)] > 0.20:
             unreliable.append(str(c))
     return {
@@ -448,7 +451,6 @@ def _multivariate(num_df: Any, warnings: list[str]) -> dict[str, Any]:
             threshold = float(np.percentile(mahal, MAHALANOBIS_PERCENTILE))
             result["mahalanobis_outlier_ratio"] = round(float((mahal > threshold).mean()), 4)
             result["mahalanobis_threshold_p975"] = round(threshold, 4)
-            # v2 P4: 동적 임계 계산용 distances 저장 (private, 후처리에서 pop)
             result["_mahalanobis_distances"] = mahal.tolist()
     except Exception as e:  # noqa: BLE001
         warnings.append(f"마할라노비스 거리 계산 실패: {e}")
@@ -483,9 +485,7 @@ def _pca_analysis(num_df: Any) -> dict[str, Any]:
 
     last_pc_variance = float(evr[-1]) if len(evr) > 0 else 0.0
 
-    # v2 엄격 조건: n90 ≤ n_cols/2 AND last_pc < 5%
     reduction_possible = n90 <= max(1, n_cols // 2) and last_pc_variance < PCA_LAST_PC_THRESHOLD
-
     intrinsic_ratio = float(n95 / max(1, n_cols))
 
     return {
@@ -506,7 +506,7 @@ def _isolation_analysis(num_df: Any, warnings: list[str]) -> dict[str, Any]:
 
     result: dict[str, Any] = {}
 
-    # 컬럼별 1D (v1 유지)
+    # 컬럼별 1D
     dim_scores: dict[str, float] = {}
     for c in num_df.columns:
         vals = num_df[[c]].to_numpy(dtype=float, copy=False)
@@ -532,7 +532,7 @@ def _isolation_analysis(num_df: Any, warnings: list[str]) -> dict[str, Any]:
     else:
         result["most_anomalous_dim"] = None
 
-    # 전체 다변량
+    # 전체 다변량 + permutation importance
     try:
         X = num_df.to_numpy(dtype=float, copy=False)
         if X.shape[0] > IF_SUBSAMPLE_THRESHOLD:
@@ -553,7 +553,6 @@ def _isolation_analysis(num_df: Any, warnings: list[str]) -> dict[str, Any]:
         preds = ifo_all.predict(X)
         result["isolation_outlier_ratio"] = round(float((preds == -1).mean()), 4)
 
-        # v2 P12: Permutation importance (다변량 IF 사용)
         try:
             baseline = ifo_all.score_samples(X)
             perm_imp: dict[str, float] = {}
@@ -568,7 +567,6 @@ def _isolation_analysis(num_df: Any, warnings: list[str]) -> dict[str, Any]:
             if perm_imp:
                 most_perm = max(perm_imp, key=lambda k: perm_imp[k])
                 result["most_anomalous_dim_permutation"] = most_perm
-                # v2 P13: confidence from spread
                 vals = list(perm_imp.values())
                 spread = max(vals) - min(vals)
                 if spread > MOST_ANOMALOUS_DIM_SPREAD_HIGH:
@@ -638,7 +636,7 @@ def _time_column_analysis(df: Any) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 continue
 
-    # v2 P11: Unix epoch int 감지
+    # Unix epoch int 감지
     for c in df.columns:
         if str(c) in time_candidates:
             continue
@@ -655,13 +653,12 @@ def _time_column_analysis(df: Any) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 continue
 
-    # v2 P9: false positive 위험 컬럼 식별
+    # false positive 위험 컬럼
     fp_risk: list[str] = []
     for c in time_candidates:
         try:
             col = df[c]
             if pd.api.types.is_integer_dtype(col):
-                # Unix int 는 fp_risk 검사 스킵 (정상 timestamp 가정)
                 continue
             parsed = pd.to_datetime(col, errors="coerce").dropna()
             if len(parsed) >= TIME_PARSE_MIN_HITS:
@@ -709,11 +706,7 @@ def _time_column_analysis(df: Any) -> dict[str, Any]:
 
 
 def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any]:
-    """⑫ Contamination (v2 P7·P8: trimmed mean + 고오염 경고).
-
-    v1 단순 평균 → v2 trimmed mean. Q4-7 MSE -18% 개선.
-    unreliable_cols 는 평균에서 자동 제외.
-    """
+    """⑫ Contamination (v2 P7·P8: trimmed mean + 고오염 경고)."""
     sources: list[float] = []
     breakdown: dict[str, float] = {}
 
@@ -724,7 +717,7 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
         sources.append(v)
         breakdown["iqr_mean"] = round(v, 4)
 
-    # IQR×3.0 (보수적 — 보조 정보로만 breakdown 에 보관, 소스에는 미포함)
+    # IQR×3.0 (보조 — breakdown 만, 소스 미포함)
     iqr3_vals = list((extra.get("outlier_ratios_iqr_strict") or {}).values())
     if iqr3_vals:
         breakdown["iqr_strict_mean"] = round(float(sum(iqr3_vals) / len(iqr3_vals)), 4)
@@ -782,7 +775,7 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
             "high_contamination_suspected": False,
         }
 
-    # v2 P7: trimmed mean (4+ 소스일 때만)
+    # P7: trimmed mean (4+ 소스)
     if n_src >= TRIMMED_MEAN_MIN_SOURCES:
         srcs_sorted = sorted(sources)
         trimmed = srcs_sorted[1:-1]
@@ -794,7 +787,6 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
 
     estimate = round(max(CONTAMINATION_MIN, min(CONTAMINATION_MAX, estimate)), 4)
 
-    # 신뢰도
     if n_src >= 5 and n_rows >= 500:
         confidence = "high"
     elif n_src >= 3 and n_rows >= 100:
@@ -802,7 +794,7 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
     else:
         confidence = "low"
 
-    # v2 P8: 고오염 의심
+    # P8: 고오염 의심
     univariate_low = all(
         breakdown.get(k, 1.0) < HIGH_CONTAM_UNIVARIATE_THRESHOLD
         for k in ("iqr_mean", "zscore_mean", "modz_mean")
@@ -826,7 +818,7 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
 
 
 def _model_hints(extra: dict[str, Any]) -> list[str]:
-    """Model hints based on contamination/time/PCA/n_rows."""
+    """⑬ Model hints based on contamination/time/PCA/n_rows."""
     hints: list[str] = []
     contam = float(extra.get("contamination_estimate", CONTAMINATION_DEFAULT))
     has_time = bool(extra.get("has_time_column", False))
