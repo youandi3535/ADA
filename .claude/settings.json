@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(python -c \"import subprocess; r=subprocess.run\\(['git','status','--porcelain=v1'],capture_output=True,text=True,encoding='utf-8'\\); print\\(r.stdout[:500]\\)\")",
-      "Bash(git config *)"
+      "Bash(git config *)",
+      "Bash(python -c \"from agents.handlers.tabular.output_extras import assets; print\\('OK'\\)\")",
+      "Bash(python -m ruff check agents/handlers/tabular/output_extras.py --fix)",
+      "Bash(python -m pytest tests/handlers/tabular/ -q --tb=no)",
+      "Bash(python -c \"import sys; lines=sys.stdin.readlines\\(\\); jh=[l for l in lines if any\\(l[3:].strip\\(\\).startswith\\(p\\) for p in \\('agents/handlers/tabular/','pipelines/tabular_ml/','pipelines/tabular_dl/','tests/handlers/tabular/','requirements/handlers-tabular'\\)\\)]; other=[l for l in lines if l not in jh and l.strip\\(\\)]; print\\('jh 영역:', len\\(jh\\)\\); [print\\(' ',l.rstrip\\(\\)\\) for l in jh]; print\\('외부 영역:', len\\(other\\)\\)\")"
     ]
   },
   "hooks": {
