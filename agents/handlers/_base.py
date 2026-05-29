@@ -52,8 +52,13 @@ def get_handler(category: str, capability: str) -> Callable[..., Any] | None:
 
 
 def _auto_register_from_module(category: str, module: Any) -> None:
-    """모듈의 'profile/plan/apply/charts/score/evaluate/generate/assets/g1/g2' 함수를
-    자동으로 카테고리 핸들러에 등록."""
+    """모듈의 'profile/plan/apply/charts/score/evaluate/generate/assets/build/g1/g2'
+    함수를 자동으로 카테고리 핸들러에 등록.
+
+    Day 9 V3 P1 보강: 'build' 추가 — outputs/base.py 의 _call_extras 가
+    get_handler(.., 'build') 를 먼저 시도하므로, 카테고리 모듈이 build() 를
+    노출하면 자동 등록되어야 함 (monkeypatch 외 운영 경로 보장).
+    """
     capabilities = (
         "profile",
         "plan",
@@ -63,6 +68,7 @@ def _auto_register_from_module(category: str, module: Any) -> None:
         "evaluate",
         "generate",
         "assets",
+        "build",  # Day 9 V3 P1
         "g1",
         "g2",
     )
