@@ -73,7 +73,7 @@ def test_rs256_roundtrip_via_env(monkeypatch):
     workdir = tempfile.mkdtemp()
     repo = os.path.dirname(os.path.dirname(__file__))
     script = os.path.join(repo, "scripts", "security", "jwt_keygen.sh")
-    sp.run(["bash", script], cwd=workdir, check=True, capture_output=True)
+    sp.run([_bash_exe(), script], cwd=workdir, check=True, capture_output=True)
 
     with open(os.path.join(workdir, "jwt_private.pem")) as f:
         priv = f.read()
@@ -111,7 +111,7 @@ def test_decode_accepts_both_when_rs_available(monkeypatch):
     workdir = tempfile.mkdtemp()
     repo = os.path.dirname(os.path.dirname(__file__))
     script = os.path.join(repo, "scripts", "security", "jwt_keygen.sh")
-    sp.run(["bash", script], cwd=workdir, check=True, capture_output=True)
+    sp.run([_bash_exe(), script], cwd=workdir, check=True, capture_output=True)
 
     with open(os.path.join(workdir, "jwt_private.pem")) as f:
         priv = f.read()

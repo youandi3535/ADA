@@ -238,6 +238,11 @@ class TestTimeSeriesPipeline:
         )
         assert model is not None
 
+    @pytest.mark.xfail(
+        condition=__import__("sys").platform == "win32",
+        reason="prophet_model.bin Windows 바이너리가 특정 TBB 빌드에 의존 — Linux CI에서만 통과",
+        strict=False,
+    )
     def test_prophet_train(self, pipe, ts_data):
         pytest.importorskip("prophet")
         import pandas as pd

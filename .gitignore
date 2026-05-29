@@ -61,3 +61,6 @@ ny_docs/
 
 # MLflow 로컬 실험 데이터
 mlruns/
+
+# CatBoost 학습 로그
+catboost_info/
