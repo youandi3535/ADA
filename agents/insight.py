@@ -96,6 +96,15 @@ class InsightAgent(BaseAgent):
 
             # 2) 가드 검증
             verdict = insight_must_cite(text, metric_names=metric_names, top_features=top_feats)
+            self.logger.info(
+                "insight_guard_attempt",
+                job_id=state.job_id,
+                attempt=1,
+                passed=verdict["passed"],
+                violations=verdict["violations"],
+                n_sentences=verdict["n_sentences"],
+                text_len=len(text),
+            )
             if not verdict["passed"]:
                 self.logger.warning("insight_guard_fail_first", violations=verdict["violations"])
                 # retry 1회 — 가드 위반 사유를 system prompt 에 덧붙임
@@ -109,6 +118,15 @@ class InsightAgent(BaseAgent):
                     metric_names=metric_names,
                 )
                 verdict2 = insight_must_cite(text2, metric_names=metric_names, top_features=top_feats)
+                self.logger.info(
+                    "insight_guard_attempt",
+                    job_id=state.job_id,
+                    attempt=2,
+                    passed=verdict2["passed"],
+                    violations=verdict2["violations"],
+                    n_sentences=verdict2["n_sentences"],
+                    text_len=len(text2),
+                )
                 if verdict2["passed"]:
                     text = text2
                 else:
@@ -117,8 +135,10 @@ class InsightAgent(BaseAgent):
                     if callable(fallback_fn):
                         try:
                             text = fallback_fn(state)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # P3 보강: silent pass → logger.warning
+                            self.logger.warning("insight_fallback_failed", error=str(e))
+                            text = ""
 
             if not text:
                 text = "이번 분석 결과는 추가 검토가 필요합니다."
@@ -131,8 +151,9 @@ class InsightAgent(BaseAgent):
                     from agents.security_guard import SecurityGuardAgent
 
                     text = SecurityGuardAgent.reattach_for_user(text, mapping)
-            except Exception:
-                pass
+            except Exception as e:
+                # P3 보강: silent pass → logger.warning (PII 누출 추적용)
+                self.logger.warning("insight_pii_reattach_failed", error=str(e))
 
             return state.with_update(insights=text.strip(), next_agent="gate_outputs")
 

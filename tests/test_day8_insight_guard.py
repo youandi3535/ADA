@@ -168,3 +168,136 @@ def test_insight_reattaches_pii(monkeypatch):
     assert "<PII:" not in (out.insights or "")
     assert "x@y.com" not in (out.insights or "")
     assert "***" in (out.insights or "")
+
+
+# ─── Day 8 V3 보강 테스트 (P1/P2 가드 + ★A-5/A-6/A-7 회귀) ─────────────────
+
+
+# ----- P1) require_metric_keyword 옵트인 — 의미 없는 숫자 거부 -------------------
+def test_guard_require_metric_keyword_rejects_orphan_numbers():
+    from ada.security.guardrails import insight_must_cite
+
+    text = "이 모델은 좋습니다. 분석 항목 1 번, 2 번, 3 번 모두 통과. age 피처 영향 큼."
+    # metric_names 가 텍스트에 없음 — require_metric_keyword=True 면 fail
+    r = insight_must_cite(
+        text,
+        metric_names=["val_f1", "val_roc_auc"],
+        top_features=["age"],
+        require_metric_keyword=True,
+    )
+    assert r["passed"] is False
+    assert any("메트릭 키" in v for v in r["violations"])
+
+
+def test_guard_require_metric_keyword_passes_when_metric_present():
+    from ada.security.guardrails import insight_must_cite
+
+    text = (
+        "val_f1 점수는 0.83 입니다. age 피처가 32% 기여합니다. "
+        "추가 SHAP 분석을 권장합니다. 다음 분기 재학습 예정입니다."
+    )
+    r = insight_must_cite(
+        text,
+        metric_names=["val_f1"],
+        top_features=["age"],
+        require_metric_keyword=True,
+    )
+    assert r["passed"], r
+
+
+# ----- P2) 소수점 안전 split — "0.83" 이 문장 구분자로 오인되지 않음 ------------
+def test_guard_decimal_does_not_inflate_sentence_count():
+    from ada.security.guardrails import insight_must_cite
+
+    # 소수점 3개 들어있지만 실제 문장은 3개
+    text = "F1 점수는 0.83 입니다. AUC 는 0.92 입니다. age 피처 32.5% 기여."
+    r = insight_must_cite(text, top_features=["age"])
+    # P2 보강 전: n_sentences 가 6 정도로 부풀려져 "문장 초과" fail
+    # P2 보강 후: n_sentences == 3, passed
+    assert r["n_sentences"] == 3, r
+    assert r["passed"], r
+
+
+# ----- ★A-5) LLM 양쪽 raise + handler.fallback 도 raise → default 메시지 ------
+def test_insight_agent_default_when_llm_and_fallback_raise(monkeypatch):
+    from agents import insight as ins_mod
+    from agents.insight import InsightAgent
+
+    async def fake_llm_raise(self, **k):
+        raise RuntimeError("upstream down")
+
+    # tabular handler 의 fallback 도 raise 하도록 monkeypatch
+    def fake_fallback(state):
+        raise ValueError("fallback also broken")
+
+    monkeypatch.setattr(InsightAgent, "_call_llm", fake_llm_raise)
+    # tabular handler 모듈 자체의 fallback 을 갈아끼움
+    import agents.handlers.tabular.insight as tab_ins
+
+    monkeypatch.setattr(tab_ins, "fallback", fake_fallback)
+
+    state = PipelineState(
+        job_id="00000000-0000-0000-0000-000000000001",
+        file_id="f.csv",
+        category="tabular_ml",
+        target_column="y",
+        eval_result={"feature_importance": {"age": 0.32}},
+        best_model={"model_name": "X", "metrics": {"val_f1": 0.83}},
+    )
+    out = asyncio.run(InsightAgent()(state))
+    # 모든 경로 실패해도 빈 문자열이 아닌 default 한국어 메시지
+    assert out.insights
+    assert "추가 검토" in (out.insights or "") or "필요" in (out.insights or "")
+    assert out.next_agent == "gate_outputs"
+
+
+# ----- ★A-6) 미지원 카테고리 → handler import 실패 → default SP 로 graceful ---
+def test_insight_agent_unknown_category_degrades_gracefully(monkeypatch):
+    from agents.insight import InsightAgent
+
+    good = "F1 점수 0.83 우수합니다. age 피처가 핵심입니다. 다음 분기 재학습 권장합니다. 추가 SHAP 분석 필요합니다."
+
+    async def fake_llm(self, **k):
+        return good
+
+    monkeypatch.setattr(InsightAgent, "_call_llm", fake_llm)
+
+    state = PipelineState(
+        job_id="00000000-0000-0000-0000-000000000001",
+        file_id="f.csv",
+        category="unknown_category",  # 매핑에 없음
+        target_column="y",
+        eval_result={"feature_importance": {"age": 0.32}},
+        best_model={"model_name": "X", "metrics": {"val_f1": 0.83}},
+    )
+    out = asyncio.run(InsightAgent()(state))
+    # handler 없어도 default SYSTEM_PROMPT 로 동작해 가드 통과
+    assert "0.83" in (out.insights or "")
+    assert out.next_agent == "gate_outputs"
+
+
+# ----- ★A-7) top_features 빈 리스트 → G-b skip, 다른 가드만 평가 ---------------
+def test_insight_agent_empty_top_features_skips_feature_guard(monkeypatch):
+    from agents.insight import InsightAgent
+
+    text_without_feature = (
+        "이 모델의 정확도는 85% 입니다. F1 점수는 0.83 입니다. 추가 검증이 필요합니다. 다음 분기 재학습 예정입니다."
+    )
+
+    async def fake_llm(self, **k):
+        return text_without_feature
+
+    monkeypatch.setattr(InsightAgent, "_call_llm", fake_llm)
+
+    # eval_result/explanations 비어있음 → top_features 없음
+    state = PipelineState(
+        job_id="00000000-0000-0000-0000-000000000001",
+        file_id="f.csv",
+        category="tabular_ml",
+        target_column="y",
+        best_model={"model_name": "X", "metrics": {"val_f1": 0.83}},
+    )
+    out = asyncio.run(InsightAgent()(state))
+    # G-b skip — 다른 가드 만족하므로 통과
+    assert "0.83" in (out.insights or "")
+    assert out.next_agent == "gate_outputs"
