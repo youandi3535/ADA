@@ -79,7 +79,13 @@ class TabularDLPipeline(BasePipeline):
 
         data_cfg = DataConfig(target=["target"], continuous_cols=cont_cols)
         trainer_cfg = TrainerConfig(
-            max_epochs=params.get("epochs", 20), batch_size=params.get("batch_size", 256), accelerator="auto"
+            max_epochs=50,  # Day 6 안전 cap
+            batch_size=params.get("batch_size", 256),
+            accelerator="cpu",  # Day 6 작업지시서 명시
+            early_stopping="val_loss",
+            early_stopping_patience=3,
+            early_stopping_min_delta=0.001,
+            progress_bar="none",
         )
         opt_cfg = OptimizerConfig(optimizer="Adam", optimizer_params={"lr": params.get("lr", 1e-3)})
         model_cfg = TabTransformerConfig() if model_name == "TabTransformer" else FTTransformerConfig()

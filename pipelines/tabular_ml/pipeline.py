@@ -49,10 +49,20 @@ def _build_model(model_name: str, task: str, params: dict[str, Any]) -> Any:
     raise ValueError(f"Unknown model: {model_name}")
 
 
+def _eval_metric(task: str, entropy_ratio: float) -> str:
+    if task == "regression":
+        return "rmse"
+    return "aucpr" if entropy_ratio < 0.5 else "logloss"
+
+
+def _adaptive_rounds(n_train: int) -> int:
+    return max(10, n_train // 1000)
+
+
 class TabularMLPipeline(BasePipeline):
     experiment_name = "ada-tabular-ml"
 
-    SUPPORTED_MODELS = ("RandomForest", "XGBoost", "LightGBM", "CatBoost")
+    SUPPORTED_MODELS = ("RandomForest", "XGBoost", "LightGBM", "CatBoost", "LogisticRegression", "DecisionTree")
 
     def train(self, X_train: Any, y_train: Any, model_name: str, params: dict[str, Any]) -> Any:
         task = "classification" if _is_classification(y_train) else "regression"
@@ -66,6 +76,162 @@ class TabularMLPipeline(BasePipeline):
             model = _build_model(model_name, task, params)
             model.fit(X_train, y_train)
             return model
+
+    def train_with_early_stopping(  # noqa: WPS231
+        self,
+        X: Any,
+        y: Any,
+        model_name: str,
+        params: dict[str, Any],
+        *,
+        X_val: Any = None,
+        y_val: Any = None,
+        task: str | None = None,
+        state: Any = None,
+    ) -> dict[str, Any]:
+        """Early stopping + MLflow best_iteration 기록 학습.
+
+        Returns dict with: model, model_name, params_used, metrics,
+                           best_iteration, mlflow_run_id, status.
+        """
+        from sklearn.model_selection import train_test_split  # noqa: WPS433
+
+        if task is None:
+            task = "classification" if _is_classification(y) else "regression"
+
+        # train/val split
+        if X_val is None:
+            split_indices = getattr(state, "split_indices", None) if state else None
+            if split_indices and "train" in split_indices and "val" in split_indices:
+                tr_idx = split_indices["train"]
+                vl_idx = split_indices["val"]
+                if hasattr(X, "iloc"):
+                    X_tr, X_vl = X.iloc[tr_idx], X.iloc[vl_idx]
+                    y_tr, y_vl = y.iloc[tr_idx], y.iloc[vl_idx]
+                else:
+                    X_tr, X_vl = X[tr_idx], X[vl_idx]
+                    y_tr, y_vl = y[tr_idx], y[vl_idx]
+            else:
+                strat = y if task == "classification" else None
+                try:
+                    tr_idx, vl_idx = train_test_split(range(len(X)), test_size=0.2, stratify=strat, random_state=42)
+                except Exception:
+                    tr_idx, vl_idx = train_test_split(range(len(X)), test_size=0.2, random_state=42)
+                if hasattr(X, "iloc"):
+                    X_tr, X_vl = X.iloc[list(tr_idx)], X.iloc[list(vl_idx)]
+                    y_tr, y_vl = y.iloc[list(tr_idx)], y.iloc[list(vl_idx)]
+                else:
+                    X_tr, X_vl = X[list(tr_idx)], X[list(vl_idx)]
+                    y_tr, y_vl = y[list(tr_idx)], y[list(vl_idx)]
+        else:
+            X_tr, X_vl, y_tr, y_vl = X, X_val, y, y_val
+
+        # eval_metric 결정
+        profile = {}
+        if state and hasattr(state, "data_profile") and isinstance(state.data_profile, dict):
+            profile = state.data_profile
+        entropy = float(profile.get("class_entropy_ratio", 1.0) or 1.0)
+        metric = _eval_metric(task, entropy)
+
+        # adaptive early stopping rounds
+        n_train = len(X_tr)
+        rounds = _adaptive_rounds(n_train)
+
+        # class_weight 적용 (Day 2 산출물)
+        clean_params = dict(params)
+        for k in ("_source", "_recipe_score"):
+            clean_params.pop(k, None)
+
+        # 모델 생성
+        model = _build_model(model_name, task, clean_params)
+
+        # class_weight
+        class_weight_info = {}
+        if state:
+            ce = getattr(state, "category_extras", {}) or {}
+            arts = ce.get("tabular", {}).get("preprocess_artifacts", {}) or {}
+            class_weight_info = arts.get("class_weight") or {}
+        if class_weight_info.get("strategy") == "balanced":
+            weights = class_weight_info.get("weights", {})
+            try:
+                if model_name == "XGBoost" and task == "classification" and 0 in weights and 1 in weights:
+                    model.set_params(scale_pos_weight=weights[1] / weights[0])
+                elif model_name == "LightGBM":
+                    model.set_params(class_weight=weights)
+                elif model_name == "CatBoost":
+                    model.set_params(class_weights=[weights[c] for c in sorted(weights)])
+                elif model_name in ("RandomForest", "LogisticRegression"):
+                    model.set_params(class_weight=weights)
+            except Exception:
+                pass
+
+        best_iter: int | None = None
+        try:
+            if model_name == "XGBoost":
+                model.fit(
+                    X_tr,
+                    y_tr,
+                    eval_set=[(X_vl, y_vl)],
+                    early_stopping_rounds=rounds,
+                    verbose=False,
+                )
+                best_iter = getattr(model, "best_iteration", None)
+            elif model_name == "LightGBM":
+                import lightgbm as lgb  # noqa: WPS433
+
+                model.fit(
+                    X_tr,
+                    y_tr,
+                    eval_set=[(X_vl, y_vl)],
+                    callbacks=[lgb.early_stopping(rounds, verbose=False)],
+                )
+                best_iter = getattr(model, "best_iteration_", None)
+            elif model_name == "CatBoost":
+                model.fit(
+                    X_tr,
+                    y_tr,
+                    eval_set=(X_vl, y_vl),
+                    early_stopping_rounds=rounds,
+                    verbose=False,
+                )
+                best_iter = model.get_best_iteration() if hasattr(model, "get_best_iteration") else None
+            else:
+                model.fit(X_tr, y_tr)
+        except Exception as exc:
+            return {"status": "failed", "reason": str(exc)}
+
+        metrics = self.evaluate(model, X_vl, y_vl, task)
+
+        # MLflow 기록 (R-201)
+        run_id: str | None = None
+        job_id = getattr(state, "job_id", "unknown") if state else "unknown"
+        try:
+            import mlflow  # noqa: WPS433
+
+            with mlflow.start_run(run_name=f"{model_name}_{job_id}"):
+                mlflow.log_params({k: v for k, v in clean_params.items() if not isinstance(v, (list, dict))})
+                mlflow.log_metrics({k: v for k, v in metrics.items() if v is not None})
+                if best_iter is not None:
+                    mlflow.log_metric("best_iteration", best_iter)
+                mlflow.set_tag("model_family", model_name)
+                mlflow.set_tag("category", "tabular_ml")
+                mlflow.set_tag("job_id", str(job_id))
+                mlflow.set_tag("eval_metric", metric)
+                mlflow.set_tag("early_stopping_rounds", str(rounds))
+                run = mlflow.active_run()
+                run_id = run.info.run_id if run else None
+        except Exception:
+            pass
+
+        return {
+            "model": model,
+            "model_name": model_name,
+            "params_used": clean_params,
+            "metrics": metrics,
+            "best_iteration": best_iter,
+            "mlflow_run_id": run_id,
+            "status": "success",
+        }
 
     def predict(self, model: Any, X: Any) -> np.ndarray:
         return model.predict(X)
