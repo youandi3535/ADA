@@ -85,7 +85,7 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
         # 시계열 모델 - PyOD 가상, 미구현 시 ImportError
         raise ImportError(f"{model_name} 미구현 (Day 7+ 본격화 예정)")
 
-    raise ValueError(f"Unknown model: {model_name}")
+    raise ValueError(f"Unknown anomaly model: {model_name}")
 
 
 def _get_anomaly_scores(model: Any, X: np.ndarray, model_name: str) -> np.ndarray:
@@ -251,11 +251,15 @@ class AnomalyPipeline(BasePipeline):
             try:
                 from sklearn.metrics import roc_auc_score
 
-                metrics["auc"] = float(roc_auc_score(y_val, scores))
+                auc_val = float(roc_auc_score(y_val, scores))
+                metrics["auc"] = auc_val
+                metrics["val_auc"] = auc_val
             except Exception:
                 metrics["auc"] = None
+                metrics["val_auc"] = None
         else:
             metrics["auc"] = None
+            metrics["val_auc"] = None
         return metrics
 
     # static 헬퍼 (public — Day 7·9 도 사용)
