@@ -1,4 +1,4 @@
-{
+﻿{
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "venv/Scripts/pythonw -X utf8 scripts/query_kb_hook.py"
+            "command": ".venv/Scripts/pythonw -X utf8 scripts/query_kb_hook.py"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "venv/Scripts/pythonw -X utf8 scripts/collect_qa.py"
+            "command": ".venv/Scripts/pythonw -X utf8 scripts/collect_qa.py"
           }
         ]
       }
@@ -26,7 +26,11 @@
   "mcpServers": {
     "ada-team-kb": {
       "command": "python",
-      "args": ["-X", "utf8", "scripts/kb_mcp_server.py"],
+      "args": [
+        "-X",
+        "utf8",
+        "scripts/kb_mcp_server.py"
+      ],
       "env": {}
     }
   }
