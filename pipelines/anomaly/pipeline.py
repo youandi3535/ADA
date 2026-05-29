@@ -85,7 +85,7 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
         # 시계열 모델 - PyOD 가상, 미구현 시 ImportError
         raise ImportError(f"{model_name} 미구현 (Day 7+ 본격화 예정)")
 
-    raise ValueError(f"Unknown anomaly model: {model_name}")
+    raise ValueError(f"Unknown model: {model_name}")
 
 
 def _get_anomaly_scores(model: Any, X: np.ndarray, model_name: str) -> np.ndarray:
@@ -251,15 +251,11 @@ class AnomalyPipeline(BasePipeline):
             try:
                 from sklearn.metrics import roc_auc_score
 
-                auc_val = float(roc_auc_score(y_val, scores))
-                metrics["auc"] = auc_val
-                metrics["val_auc"] = auc_val
+                metrics["auc"] = float(roc_auc_score(y_val, scores))
             except Exception:
                 metrics["auc"] = None
-                metrics["val_auc"] = None
         else:
             metrics["auc"] = None
-            metrics["val_auc"] = None
         return metrics
 
     # static 헬퍼 (public — Day 7·9 도 사용)
@@ -296,11 +292,7 @@ class AnomalyPipeline(BasePipeline):
 
 
 def _otsu_threshold_with_validation(scores: np.ndarray, contamination: float = 0.1) -> tuple[float, dict[str, Any]]:
-    """★ A-2 (Day 6, 2026-05-29) — Otsu 와 contamination 임계 비교 후 sanity check.
-
-    반환: (선택 임계, meta 딕셔너리). meta = {method, reason, otsu_value, contam_value}
-    method ∈ {"otsu", "contamination"} — Otsu 이상치 비율이 contamination 의 5 배 초과 시 contamination 폴백.
-    """
+    """A-2 (Day 6, 2026-05-29) — Otsu vs contamination sanity."""
     scores = np.asarray(scores, dtype=float).ravel()
     if scores.size == 0:
         return 0.0, {"method": "otsu", "reason": "empty", "otsu_value": 0.0, "contam_value": 0.0}
@@ -310,13 +302,8 @@ def _otsu_threshold_with_validation(scores: np.ndarray, contamination: float = 0
     if otsu_ratio > 5.0 * max(contamination, 1e-6):
         return contam_v, {
             "method": "contamination",
-            "reason": f"otsu_ratio {otsu_ratio:.3f} > 5×contam {contamination:.3f}",
+            "reason": f"otsu_ratio {otsu_ratio:.3f} > 5x",
             "otsu_value": otsu_v,
             "contam_value": contam_v,
         }
-    return otsu_v, {
-        "method": "otsu",
-        "reason": "within sanity range",
-        "otsu_value": otsu_v,
-        "contam_value": contam_v,
-    }
+    return otsu_v, {"method": "otsu", "reason": "within range", "otsu_value": otsu_v, "contam_value": contam_v}

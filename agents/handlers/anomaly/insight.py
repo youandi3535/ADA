@@ -39,7 +39,10 @@ def _extract_top_n_anomalies(state: Any, n: int = TOP_N_DEFAULT) -> list[dict]:
     """Day 6 ensemble_scores → top N 이상치 사례."""
     import numpy as np
 
-    pipeline = getattr(state, "eval_result", None) or {}  # ★ X-3/X-6: per-row 는 eval_result
+    # X-3/X-6 우선 + category_extras fallback (테스트 호환)
+    pipeline = getattr(state, "eval_result", None) or {}
+    if not pipeline:
+        pipeline = (getattr(state, "category_extras", {}) or {}).get("anomaly", {}).get("pipeline", {}) or {}
     scores = pipeline.get("ensemble_scores")
     predicted = pipeline.get("predicted_anomalies")
 
@@ -137,7 +140,7 @@ def _build_korean_template(
     if not has_scores or not eval_result:
         sentences.append("주의: 평가 결과(이상 점수)가 누락되어 부분 정보만 제공됩니다.")
 
-    # 1문장: contamination + AUC (수치 인용, 소수점 회피 — split('.') 무손)
+    # 1문장: contamination + AUC (수치 인용)
     auc_int = int(round(float(auc) * 100)) if auc is not None else None
     auc_str = f"AUC {auc_int}점대" if auc_int is not None else "AUC 미측정"
     contam_int = int(round(float(contam) * 100))

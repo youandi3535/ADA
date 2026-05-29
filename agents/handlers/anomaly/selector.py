@@ -206,20 +206,16 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
     #    tuner/executor 가 model_name 문자열로 사용 (AnomalyPipeline.train(model_name=...)).
     #    카드 상세(rationale/score_breakdown)는 "cards" 키로 분리.
 
-    cards: list[dict[str, Any]] = []
-    top3_names: list[str] = []
+    cards = []
+    top3_names = []
     for rank, (name, breakdown) in enumerate(sorted_models[:3], start=1):
         cards.append(_build_card(rank, name, breakdown))
         top3_names.append(name)
 
-    # ★ A-1 결정: rationale = top3 카드 rationale 요약 (한국어).
-    rationale_lines: list[str] = []
-    for c in cards:
-        rationale_lines.append(f"{c['id']}. {c['title']} — {c['rationale']}")
+    rationale_lines = [f"{c['id']}. {c['title']} — {c['rationale']}" for c in cards]
     rationale = "\n".join(rationale_lines) if rationale_lines else "후보 없음"
 
-    # ★ R-501 결정: citations = recipes hash 인용 (KB).
-    citations: list[str] = [r["hash"] for r in (recipes or []) if r.get("hash")]
+    citations = [r["hash"] for r in (recipes or []) if r.get("hash")]
 
     return {
         "top3": top3_names,
