@@ -30,6 +30,25 @@ class InsightSummaryGenerator(OutputGenerator):
 
         bm = best_model or {}
         metrics = bm.get("metrics") or {}
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        extra_chart_lines = "\n".join(f"- {c}" for c in (extras.get("charts") or [])) or "_(분석 차트 없음)_"
+
+        def _md_table(tbl: dict[str, Any]) -> str:
+            cols = tbl.get("columns") or []
+            rows = tbl.get("rows") or []
+            if not cols:
+                return ""
+            head = "| " + " | ".join(str(c) for c in cols) + " |"
+            sep = "| " + " | ".join("---" for _ in cols) + " |"
+            body = []
+            for r in rows[:15]:
+                cells = r if isinstance(r, (list, tuple)) else [r.get(c, "") for c in cols]
+                body.append("| " + " | ".join(reattach_pii(state, str(x)) for x in cells) + " |")
+            title = reattach_pii(state, str(tbl.get("title", "")))
+            return f"**{title}**\n\n" + "\n".join([head, sep, *body])
+
+        extra_tables_md = "\n\n".join(t for t in (_md_table(x) for x in (extras.get("tables") or [])) if t)
+        extra_text_md = "\n\n".join(reattach_pii(state, str(t)) for t in (extras.get("text_blocks") or []))
         metric_lines = "\n".join(
             f"- **{k}**: {v if isinstance(v, str) else (f'{v:.4f}' if isinstance(v, float) else v)}"
             for k, v in metrics.items()
@@ -55,6 +74,13 @@ class InsightSummaryGenerator(OutputGenerator):
 
 ## EDA Charts (MinIO 경로)
 {chr(10).join(f"- {c}" for c in eda_charts) if eda_charts else "_(차트 없음)_"}
+
+## 모델 분석 차트
+{extra_chart_lines}
+
+{extra_tables_md}
+
+{extra_text_md}
 """
         local = self._tmp()
         with open(local, "w", encoding="utf-8") as f:

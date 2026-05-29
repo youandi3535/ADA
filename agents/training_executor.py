@@ -40,6 +40,17 @@ class TrainingExecutorAgent(BaseAgent):
                 return state.with_update(error=f"학습 데이터 로딩 실패: {e}", next_agent="error_recovery")
 
             X, y = _split_xy(df, state.target_column)
+            try:
+                if state.target_column and state.target_column in df.columns:
+                    feature_names = (
+                        df.drop(columns=[state.target_column])
+                        .select_dtypes(include=[np.number, "bool"])
+                        .columns.tolist()
+                    )
+                else:
+                    feature_names = df.select_dtypes(include=[np.number]).columns.tolist()
+            except Exception:
+                feature_names = None
             # train/val split — 시계열은 시간순 split, 그 외 random
             if state.category == "timeseries":
                 split = int(len(X) * 0.8)
@@ -70,6 +81,7 @@ class TrainingExecutorAgent(BaseAgent):
                 task = "anomaly_detection"
 
             trained: list[dict[str, Any]] = []
+            preds_by_model: dict[str, Any] = {}
             for model_name in state.model_candidates:
                 # Day 6 계약: HyperparameterTuner 가 채운 best_params 우선 사용.
                 params = (state.best_params or {}).get(model_name, {}) or {}
@@ -82,10 +94,31 @@ class TrainingExecutorAgent(BaseAgent):
                         "mlflow_run_id": pipeline.mlflow_run_id,
                         "params_used": params,
                     }
+                    # Day 9 H2: 차트/평가용 예측 + 피처중요도 수집 (tabular)
+                    if state.category in ("tabular_ml", "tabular_dl") and hasattr(pipeline, "collect_artifacts"):
+                        try:
+                            arts = pipeline.collect_artifacts(model, X_val, y_val, task, feature_names)
+                            info["feature_importances"] = arts.get("feature_importances")
+                            info["feature_names"] = arts.get("feature_names")
+                            info["task_type"] = arts.get("task_type")
+                            preds_by_model[model_name] = {
+                                "y_true": arts.get("y_true"),
+                                "y_pred": arts.get("y_pred"),
+                                "y_prob": arts.get("y_prob"),
+                            }
+                        except Exception as e:
+                            self.logger.warning("collect_artifacts_failed", model=model_name, error=str(e))
                     if state.category == "tabular_ml":
                         save = pipeline.save_model(model, state.job_id, model_name)
                         info.update(save)
                     trained.append(info)
                 except Exception as e:
                     self.logger.warning("train_failed", model=model_name, error=str(e))
-            return state.with_update(trained_models=trained, next_agent="training_monitor")
+            new_extras = dict(state.category_extras or {})
+            if state.category in ("tabular_ml", "tabular_dl") and preds_by_model:
+                tab = dict(new_extras.get("tabular", {}) or {})
+                tab["predictions_by_model"] = preds_by_model
+                new_extras["tabular"] = tab
+            return state.with_update(
+                trained_models=trained, category_extras=new_extras, next_agent="training_monitor"
+            )

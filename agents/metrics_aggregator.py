@@ -43,4 +43,16 @@ class MetricsAggregatorAgent(BaseAgent):
             best["is_best"] = True
             best["objective_metric"] = metric_key
             best["objective_value"] = scored[0][0]
-            return state.with_update(best_model=best, next_agent="gate_best_model")
+            new_extras = dict(state.category_extras or {})
+            if state.category in ("tabular_ml", "tabular_dl"):
+                tab = dict(new_extras.get("tabular", {}) or {})
+                pbm = tab.get("predictions_by_model") or {}
+                best_pred = pbm.get(best.get("model_name"))
+                if best_pred and any(
+                    best_pred.get(k) is not None for k in ("y_true", "y_pred", "y_prob")
+                ):
+                    tab["predictions"] = best_pred
+                    new_extras["tabular"] = tab
+            return state.with_update(
+                best_model=best, category_extras=new_extras, next_agent="gate_best_model"
+            )

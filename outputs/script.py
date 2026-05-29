@@ -28,6 +28,14 @@ class ScriptGenerator(OutputGenerator):
 
         bm = best_model or {}
         ev = eval_result or {}
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        extra_points = " ".join(reattach_pii(state, str(t)) for t in (extras.get("text_blocks") or []))
+        n_extra_charts = len(extras.get("charts") or [])
+        extra_narration = ""
+        if extra_points:
+            extra_narration += f"\n추가 분석 포인트입니다. {extra_points}\n"
+        if n_extra_charts:
+            extra_narration += f"또한 분석 차트 {n_extra_charts}종을 함께 준비했습니다.\n"
         body = f"""[ADA 발표 대본]
 
 여러분 안녕하세요. 오늘은 '{user_intent or "자동 분석"}' 주제로
@@ -40,7 +48,7 @@ class ScriptGenerator(OutputGenerator):
 핵심 인사이트는 다음과 같습니다.
 
 {insights}
-
+{extra_narration}
 평가 결과는 {"통과" if ev.get("passed") else "보완 필요"} 입니다.
 이상으로 발표를 마치겠습니다. 감사합니다.
 """

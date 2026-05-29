@@ -112,3 +112,8 @@ class TabularDLPipeline(BasePipeline):
         from pipelines.tabular_ml.pipeline import TabularMLPipeline as _TMP
 
         return _TMP().evaluate(model, X_val, y_val, task)
+
+    def collect_artifacts(self, model: Any, X_val: Any, y_val: Any, task: str, feature_names: Any = None) -> dict[str, Any]:
+        from pipelines.tabular_ml.pipeline import TabularMLPipeline as _TMP
+
+        return _TMP().collect_artifacts(model, X_val, y_val, task, feature_names)

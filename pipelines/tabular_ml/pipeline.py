@@ -285,6 +285,69 @@ class TabularMLPipeline(BasePipeline):
             pass
         return metrics
 
+    def collect_artifacts(
+        self,
+        model: Any,
+        X_val: Any,
+        y_val: Any,
+        task: str,
+        feature_names: Any = None,
+    ) -> dict[str, Any]:
+        """Day 9 H2 — 차트/평가용 예측 + 피처중요도 수집.
+
+        Returns {task_type, y_true, y_pred, y_prob, feature_importances, feature_names}.
+        예외/누락은 None 으로 graceful degrade (carrier 가 죽지 않게).
+        """
+        import numpy as _np  # noqa: WPS433
+
+        out: dict[str, Any] = {
+            "task_type": None,
+            "y_true": None,
+            "y_pred": None,
+            "y_prob": None,
+            "feature_importances": None,
+            "feature_names": None,
+        }
+        try:
+            y_pred = _np.asarray(model.predict(X_val))
+            out["y_true"] = _np.asarray(y_val).tolist()
+            out["y_pred"] = y_pred.tolist()
+        except Exception:
+            return out
+
+        if task == "classification":
+            n_uniq = len(set(_np.asarray(y_val).ravel().tolist()))
+            out["task_type"] = "binary" if n_uniq == 2 else "multiclass"
+            try:
+                if hasattr(model, "predict_proba"):
+                    proba = _np.asarray(model.predict_proba(X_val), dtype=float)
+                    if proba.ndim == 2 and proba.shape[1] == 2:
+                        out["y_prob"] = proba[:, 1].tolist()
+                    elif proba.ndim == 2:
+                        out["y_prob"] = [list(map(float, r)) for r in proba]
+            except Exception:
+                pass
+        elif task == "regression":
+            out["task_type"] = "regression"
+
+        try:
+            fi = getattr(model, "feature_importances_", None)
+            if fi is None:
+                coef = getattr(model, "coef_", None)
+                if coef is not None:
+                    arr = _np.asarray(coef, dtype=float)
+                    fi = _np.abs(arr).mean(axis=0) if arr.ndim > 1 else _np.abs(arr)
+            if fi is not None:
+                fi = _np.asarray(fi, dtype=float).ravel()
+                out["feature_importances"] = fi.tolist()
+                if feature_names is not None and len(list(feature_names)) == len(fi):
+                    out["feature_names"] = [str(n) for n in feature_names]
+                else:
+                    out["feature_names"] = [f"f{i}" for i in range(len(fi))]
+        except Exception:
+            pass
+        return out
+
     def save_model(self, model: Any, job_id: str, model_name: str) -> dict[str, str]:
         """MinIO 저장 + MLflow 로깅 + SHA256."""
         import joblib  # noqa: WPS433

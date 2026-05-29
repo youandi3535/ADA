@@ -47,6 +47,42 @@ class DashboardArtifactGenerator(OutputGenerator):
         except Exception:
             pass
 
+        # Day 9 H1 — 카테고리 핸들러 extras (분석 차트/테이블/텍스트)
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        extra_b64: list[str] = []
+        try:
+            from tools.minio_tool import get_minio_client
+
+            mc2 = get_minio_client()
+            for c in (extras.get("charts") or [])[:8]:
+                key = c.replace(f"s3://{mc2.bucket}/", "") if isinstance(c, str) and c.startswith("s3://") else c
+                try:
+                    body = mc2.download_bytes(key)
+                    extra_b64.append(base64.b64encode(body).decode("ascii"))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        extra_charts_html = "".join(
+            f"<div class='chart'><img src='data:image/png;base64,{b64}' /></div>" for b64 in extra_b64
+        )
+
+        def _render_table(tbl: dict[str, Any]) -> str:
+            cols = tbl.get("columns") or []
+            rows = tbl.get("rows") or []
+            head = "".join(f"<th>{c}</th>" for c in cols)
+            body_rows = []
+            for r in rows[:15]:
+                cells = r if isinstance(r, (list, tuple)) else [r.get(c, "") for c in cols]
+                body_rows.append("<tr>" + "".join(f"<td>{reattach_pii(state, str(x))}</td>" for x in cells) + "</tr>")
+            title = reattach_pii(state, str(tbl.get("title", "")))
+            return f"<h3>{title}</h3><table><thead><tr>{head}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
+
+        extra_tables_html = "".join(_render_table(t) for t in (extras.get("tables") or [])[:5])
+        extra_text_html = "".join(
+            f"<p>{reattach_pii(state, str(t))}</p>" for t in (extras.get("text_blocks") or [])[:5]
+        )
+
         bm = best_model or {}
         ev = eval_result or {}
         metrics = bm.get("metrics") or {}
@@ -97,6 +133,13 @@ class DashboardArtifactGenerator(OutputGenerator):
 <section>
   <h2>EDA Charts</h2>
   {charts_html}
+</section>
+
+<section>
+  <h2>모델 분석 차트</h2>
+  {extra_charts_html or "<p><em>표시할 분석 차트가 없습니다.</em></p>"}
+  {extra_tables_html}
+  {extra_text_html}
 </section>
 
 <section>
