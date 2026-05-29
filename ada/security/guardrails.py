@@ -178,6 +178,8 @@ class PIIAnonymizer:
 # ==============================================================
 HANGUL_RE = re.compile(r"[\uac00-\ud7a3]")
 NUM_RE = re.compile(r"-?\d+(?:[.,]\d+)?\s*%?")
+# P2 (Day 8 V3): \uc22b\uc790 \uc0ac\uc774\uc758 . \ub294 split \ub300\uc0c1 \uc81c\uc678 \u2014 "0.83" \uc774 \ubb38\uc7a5 \uad6c\ubd84\uc790\ub85c \uc624\uc778\ub418\uc9c0 \uc54a\ub3c4\ub85d.
+_SENT_SPLIT_RE = re.compile(r"(?<!\d)[.!?](?!\d)\s*")
 
 
 def insight_must_cite(
@@ -187,8 +189,17 @@ def insight_must_cite(
     top_features: Iterable[str] = (),
     min_sentences: int = 3,
     max_sentences: int = 5,
+    require_metric_keyword: bool = False,
 ) -> dict[str, Any]:
-    """Day 8 guard - check text has (a) numeric value, (b) top feature, (c) 3-5 sentences, (d) Korean."""
+    """Day 8 guard — (a) numeric, (b) top feature, (c) 3-5 sentences, (d) Korean.
+
+    Contract (Day 8): keyword-only default 인자만 추가 허용. 위치 인자 / 반환 키
+    변경 금지 (CS/NY/jh 핸들러 호환성 보호).
+
+    Args:
+        require_metric_keyword: True 면 "수치는 있으나 metric_names 와 무관한 숫자"
+            도 거부 (P1 보강 옵트인). 기본 False — 기존 호출자 호환.
+    """
     text = (text or "").strip()
     violations: list[str] = []
 
@@ -198,15 +209,20 @@ def insight_must_cite(
     nums = NUM_RE.findall(text)
     if not nums:
         violations.append("수치 미인용 (예: 12%, 0.83)")
-    elif metric_names:
-        _ = [n for n in metric_names if n.lower() in text.lower()]
+    elif require_metric_keyword and metric_names:
+        # P1 옵트인: metric 키워드 중 하나라도 텍스트에 나타나야 함 — 의미 없는 숫자 차단
+        names = [str(n) for n in metric_names if n]
+        lower = text.lower()
+        if names and not any(n.lower() in lower for n in names):
+            violations.append(f"수치는 있으나 메트릭 키 미인용 (예상 후보: {names[:3]})")
 
     if top_features:
         feats = [str(f) for f in top_features if f]
         if feats and not any(f in text for f in feats):
             violations.append(f"피처 미인용 (예상 후보: {feats[:3]})")
 
-    sentences = [s for s in re.split(r"[.!?]\s*", text) if s.strip()]
+    # P2 적용: 숫자 사이 . 제외 split (_SENT_SPLIT_RE 정의는 파일 상단)
+    sentences = [s for s in _SENT_SPLIT_RE.split(text) if s.strip()]
     if len(sentences) < min_sentences:
         violations.append(f"문장 부족 ({len(sentences)}<{min_sentences})")
     elif len(sentences) > max_sentences:
