@@ -14,7 +14,10 @@
       "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json CLAUDE.md api/routes/kb_search.py scripts/query_kb_hook.py)",
       "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add docs/)",
       "Bash(git -C 'c:\\\\IT\\\\workspace_python\\\\ADA' commit -m ' *)",
-      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json CLAUDE.md api/routes/kb_search.py scripts/query_kb_hook.py docs/)"
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json CLAUDE.md api/routes/kb_search.py scripts/query_kb_hook.py docs/)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add scripts/query_kb_hook.py)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add scripts/query_kb_hook.py CLAUDE.md)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json)"
     ]
   },
   "hooks": {
