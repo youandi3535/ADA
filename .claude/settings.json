@@ -1,4 +1,22 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" ls-files docs/ --others --cached)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" status docs/)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" ls-files --error-unmatch docs/PARALLEL_WORK_GUARDS.md)",
+      "Bash(Test-Path \"c:\\\\IT\\\\workspace_python\\\\ADA\\\\migrations\\\\versions\\\\004_intent_dataset_unique.py\")",
+      "Bash(Test-Path \"c:\\\\IT\\\\workspace_python\\\\ADA\\\\migrations\\\\versions\\\\005_self_learning_kb_fail_count.py\")",
+      "Bash(Get-ChildItem \"c:\\\\IT\\\\workspace_python\\\\ADA\\\\migrations\\\\versions\\\\\" -Name 2>&1)",
+      "Bash(Get-ChildItem \"c:\\\\IT\\\\workspace_python\\\\ADA\\\\migrations\\\\versions\\\\\" -Name)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" status)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" diff)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" log --oneline -5)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json CLAUDE.md api/routes/kb_search.py scripts/query_kb_hook.py)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add docs/)",
+      "Bash(git -C 'c:\\\\IT\\\\workspace_python\\\\ADA' commit -m ' *)",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json CLAUDE.md api/routes/kb_search.py scripts/query_kb_hook.py docs/)"
+    ]
+  },
   "hooks": {
     "UserPromptSubmit": [
       {

@@ -42,6 +42,20 @@ router = APIRouter(prefix="/kb/search", tags=["KBSearch"])
 _DEFAULT_THRESHOLD = 0.82
 _TOP_K = 5  # 최대 검색 후보 수
 
+_SOURCE_BADGE: dict[str, str] = {
+    "team_kb": "1순위 🗂️ Team KB  |  💚 무료",
+    "ollama_local": "2순위 🤖 Ollama   |  💚 무료",
+    "claude_opus": "3순위 ☁️ Claude   |  💸 유료",
+    "error": "❌ 폴백 오류",
+}
+
+
+def _with_badge(answered_by: str, answer: str, *, extra: str = "") -> str:
+    label = _SOURCE_BADGE.get(answered_by, answered_by)
+    if extra:
+        label = f"{label}  |  {extra}"
+    return f"[{label}]\n\n{answer}"
+
 
 # =============================================================================
 # 인증 (conversation_kb 와 동일)
@@ -327,7 +341,7 @@ async def search_kb(
         )
         return SearchOut(
             answered_by=answered_by,
-            answer=answer,
+            answer=_with_badge(answered_by, answer, extra=model_used or ""),
             similarity=None,
             hits=[],
             elapsed_ms=int((time.monotonic() - t0) * 1000),
@@ -368,7 +382,7 @@ async def search_kb(
         asyncio.create_task(_increment_success_count(db, best.kb_id))
         return SearchOut(
             answered_by="team_kb",
-            answer=best.answer,
+            answer=_with_badge("team_kb", best.answer, extra=f"유사도 {best.similarity:.3f}"),
             similarity=best.similarity,
             hits=hits,
             elapsed_ms=int((time.monotonic() - t0) * 1000),
@@ -382,7 +396,7 @@ async def search_kb(
 
     return SearchOut(
         answered_by=answered_by,
-        answer=answer,
+        answer=_with_badge(answered_by, answer, extra=model_used or ""),
         similarity=None,
         hits=[],
         elapsed_ms=int((time.monotonic() - t0) * 1000),

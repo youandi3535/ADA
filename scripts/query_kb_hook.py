@@ -90,8 +90,8 @@ def main() -> None:
     threshold = float(_env("KB_HOOK_THRESHOLD", "0.85"))
     min_hits = int(_env("KB_HOOK_MIN_HITS", "3"))
 
-    # ── 3. POST /kb/search (KB 전용, 폴백 비활성화) ─────────────────────
-    body = json.dumps(
+    # ── 3-A. 1순위: KB 전용 빠른 체크 (타임아웃 5초) ────────────────────
+    body_kb = json.dumps(
         {
             "question": prompt,
             "threshold": threshold,
@@ -103,9 +103,9 @@ def main() -> None:
         ensure_ascii=False,
     ).encode("utf-8")
 
-    req = urllib.request.Request(
+    req_kb = urllib.request.Request(
         f"{server_url}/kb/search",
-        data=body,
+        data=body_kb,
         headers={
             "Content-Type": "application/json; charset=utf-8",
             "X-KB-Secret": kb_secret,
@@ -114,26 +114,50 @@ def main() -> None:
     )
 
     try:
-        # 타임아웃 5초 — UserPromptSubmit 은 응답 속도가 중요
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req_kb, timeout=5) as resp:
             result = json.loads(resp.read())
-    except urllib.error.URLError:
-        # 서버 미기동 / 타임아웃 → 조용히 Claude 처리
-        sys.exit(0)
+        if result.get("answered_by") == "team_kb" and result.get("answer", "").strip():
+            # ✅ 1순위 KB 히트 → exit 2
+            print(result["answer"].strip(), flush=True)
+            sys.exit(2)
     except Exception:  # noqa: BLE001
-        sys.exit(0)
+        pass  # 서버 미기동 or 타임아웃 → Ollama 시도
 
-    # ── 4. 판정 ─────────────────────────────────────────────────────────
-    answered_by = result.get("answered_by", "")
-    answer = result.get("answer", "").strip()
-    similarity = result.get("similarity") or 0.0
+    # ── 3-B. 2순위: Ollama 체크 (타임아웃 90초) ──────────────────────────
+    body_ollama = json.dumps(
+        {
+            "question": prompt,
+            "threshold": threshold,
+            "min_hit_count": min_hits,
+            "min_word_overlap": 0.5,
+            "use_ollama_fallback": True,
+            "use_claude_fallback": False,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
 
-    if answered_by == "team_kb" and answer:
-        # ✅ KB 히트 → 답변 출력 후 exit 2 (Claude 호출 차단)
-        print(f"[🗂️ 팀 KB 답변 | 유사도 {similarity:.3f}]\n\n{answer}", flush=True)
-        sys.exit(2)
+    req_ollama = urllib.request.Request(
+        f"{server_url}/kb/search",
+        data=body_ollama,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "X-KB-Secret": kb_secret,
+        },
+        method="POST",
+    )
 
-    # ❌ KB 미스 or 게이트 미통과 → exit 0 (Claude 처리)
+    try:
+        with urllib.request.urlopen(req_ollama, timeout=90) as resp:
+            result = json.loads(resp.read())
+        if result.get("answered_by") == "ollama_local" and result.get("answer", "").strip():
+            # ✅ 2순위 Ollama 히트 → exit 2
+            print(result["answer"].strip(), flush=True)
+            sys.exit(2)
+    except Exception:  # noqa: BLE001
+        pass  # Ollama 오프라인 or 타임아웃 → Claude 처리
+
+    # ── 4. 3순위: Claude 처리 알림 후 exit 0 ────────────────────────────
+    print("[3순위 ☁️ Claude  |  💸 유료]", flush=True)
     sys.exit(0)
 
 
