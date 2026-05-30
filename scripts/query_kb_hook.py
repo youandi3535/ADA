@@ -156,8 +156,12 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         pass  # Ollama 오프라인 or 타임아웃 → Claude 처리
 
-    # ── 4. 3순위: Claude 처리 알림 후 exit 0 ────────────────────────────
-    print("[3순위 ☁️ Claude  |  💸 유료]", flush=True)
+    # ── 4. 3순위: Claude 처리 — 배지를 강제 지시문으로 주입 후 exit 0 ──
+    print(
+        "[INSTRUCTION] 답변의 첫 줄에 반드시 아래 배지를 그대로 출력하세요 (절대 생략 금지):\n"
+        "[3순위 ☁️ Claude  |  💸 유료]",
+        flush=True,
+    )
     sys.exit(0)
 
 
