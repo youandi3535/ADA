@@ -65,8 +65,11 @@ def _load_env_file(cwd: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+_BADGE_3 = "[3순위 ☁️ Claude  |  💸 유료]"
+
+
 def _call_claude(prompt: str, cwd: str) -> str | None:
-    """claude -p 로 Claude LLM 직접 호출. 실패 시 None 반환."""
+    """claude -p --continue 로 Claude LLM 직접 호출 (대화 히스토리 유지). 실패 시 None 반환."""
     extra: dict = {}
     if os.name == "nt":
         extra["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -74,7 +77,7 @@ def _call_claude(prompt: str, cwd: str) -> str | None:
     env["ADA_HOOK_SKIP"] = "1"  # 재귀 방지
     try:
         proc = subprocess.run(
-            ["claude", "-p", prompt],
+            ["claude", "-p", "--continue", prompt],
             capture_output=True,
             text=True,
             timeout=120,
@@ -83,7 +86,11 @@ def _call_claude(prompt: str, cwd: str) -> str | None:
             **extra,
         )
         if proc.returncode == 0 and proc.stdout.strip():
-            return proc.stdout.strip()
+            answer = proc.stdout.strip()
+            # 이중 배지 방지: sub-claude 가 CLAUDE.md 규칙으로 배지를 이미 붙인 경우 제거
+            if answer.startswith(_BADGE_3):
+                answer = answer[len(_BADGE_3) :].lstrip("\n")
+            return answer or None
     except Exception:  # noqa: BLE001
         pass
     return None
