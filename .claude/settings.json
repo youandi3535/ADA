@@ -17,7 +17,24 @@
       "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json CLAUDE.md api/routes/kb_search.py scripts/query_kb_hook.py docs/)",
       "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add scripts/query_kb_hook.py)",
       "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add scripts/query_kb_hook.py CLAUDE.md)",
-      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json)"
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" add .claude/settings.json)",
+      "Bash(claude -p \"테스트\" --help)",
+      "Bash(echo '{\"prompt\": \"파이썬에서 리스트와 튜플의 차이는?\", \"cwd\": \"c:\\\\\\\\IT\\\\\\\\workspace_python\\\\\\\\ADA\", \"session_id\": \"test-001\"}')",
+      "Bash(echo \"EXIT CODE: $?\")",
+      "Bash(claude -p --continue \"테스트 질문입니다\")",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(claude -p \"테스트: 1+1은?\")",
+      "Bash(Get-Content \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--IT-workspace-python-ADA\\\\ce52da38-5bb9-41cf-b6a8-b0c595110ae8\\\\tasks\\\\bqlt2wz16.output\")",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(where claude *)",
+      "Bash(echo '{\"prompt\": \"파이썬 리스트와 튜플의 차이는?\", \"cwd\": \"c:\\\\\\\\IT\\\\\\\\workspace_python\\\\\\\\ADA\", \"session_id\": \"test-001\"}')",
+      "Bash(Get-Content test_hook_out.txt -Encoding UTF8)",
+      "Bash(ls -la test_hook_out.txt)",
+      "Bash(echo '{\"prompt\": \"1+1은?\", \"cwd\": \"c:\\\\\\\\IT\\\\\\\\workspace_python\\\\\\\\ADA\", \"session_id\": \"test-001\"}')",
+      "Bash(.venv/Scripts/python -X utf8 -c ' *)",
+      "Bash(ADA_HOOK_DEBUG=1 echo '{\"prompt\": \"응 써봐\", \"cwd\": \"c:/IT/workspace_python/ADA\", \"session_id\": \"test\"}')",
+      "Bash(.venv/Scripts/python -X utf8 scripts/query_kb_hook.py)",
+      "Bash(echo \"EXIT=$?\")"
     ]
   },
   "hooks": {
@@ -27,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".venv/Scripts/pythonw -X utf8 scripts/query_kb_hook.py"
+            "command": ".venv/Scripts/python -X utf8 scripts/query_kb_hook.py"
           }
         ]
       }
@@ -38,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".venv/Scripts/pythonw -X utf8 scripts/collect_qa.py"
+            "command": ".venv/Scripts/python -X utf8 scripts/collect_qa.py"
           }
         ]
       }
