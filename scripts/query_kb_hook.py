@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -70,16 +71,27 @@ _BADGE_3 = "[3순위 ☁️ Claude  |  💸 유료]"
 
 def _call_claude(prompt: str, cwd: str) -> str | None:
     """claude -p --continue 로 Claude LLM 직접 호출 (대화 히스토리 유지). 실패 시 None 반환."""
-    extra: dict = {}
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        return None
+
+    # Windows: .cmd 파일은 cmd /c 로 실행해야 subprocess 에서 인식됨
     if os.name == "nt":
-        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
+        cmd = ["cmd", "/c", claude_bin, "-p", "--continue", prompt]
+        extra: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
+    else:
+        cmd = [claude_bin, "-p", "--continue", prompt]
+        extra = {}
+
     env = os.environ.copy()
     env["ADA_HOOK_SKIP"] = "1"  # 재귀 방지
     try:
         proc = subprocess.run(
-            ["claude", "-p", "--continue", prompt],
+            cmd,
+            stdin=subprocess.DEVNULL,  # hook이 stdin 소진 후 EOF 상속 방지
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             cwd=cwd,
             env=env,
