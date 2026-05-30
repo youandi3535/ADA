@@ -195,7 +195,7 @@ def main() -> None:
     )
 
     try:
-        with urllib.request.urlopen(req_ollama, timeout=90) as resp:
+        with urllib.request.urlopen(req_ollama, timeout=5) as resp:
             result = json.loads(resp.read())
         if result.get("answered_by") == "ollama_local" and result.get("answer", "").strip():
             # ✅ 2순위 Ollama 히트 → exit 2
