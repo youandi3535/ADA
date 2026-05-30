@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """scripts/query_kb_hook.py — Claude Code UserPromptSubmit 훅
 
-KB에 고신뢰도 답변이 있으면 Claude 호출을 차단하고 즉시 KB 답변 반환.
+모든 질문을 1/2/3순위로 판단 후 배지와 함께 답변 출력.
 
 동작 흐름
 ---------
 1. Claude Code 가 질문을 전송하기 직전 → stdin 으로 페이로드 수신
-2. POST /kb/search (KB 전용, 타임아웃 5초)
-3. 다중 게이트 모두 통과 시 → stdout 에 답변 출력 → exit 2 (Claude 차단, API 비용 0)
-4. KB 미스 or 게이트 실패 → exit 0 (Claude 가 처리)
+2. 1순위: POST /kb/search → KB 히트 시 [1순위 🗄️ KB] 배지 + 답변 → exit 2
+3. 2순위: Ollama 히트 시 [2순위 🦙 Ollama] 배지 + 답변 → exit 2
+4. 3순위: claude -p 로 Claude LLM 직접 호출 → [3순위 ☁️ Claude] 배지 + 답변 → exit 2
+   (claude CLI 실패 시 exit 0 폴백 — Claude Code 가 처리)
 
-다중 게이트 (query_kb_hook 전용 엄격 기준):
-  - 코사인 유사도 ≥ KB_HOOK_THRESHOLD (기본 0.85)
-  - success_count ≥ KB_HOOK_MIN_HITS (기본 3)  ← 최소 3번 검증된 답변만 차단
-  - 단어 겹침 비율 ≥ 0.5
-  - 유사도 ≥ 0.98 (사실상 동일 문장) → hit_count/overlap 게이트 면제
+재귀 방지
+---------
+  hook 내 claude -p 호출 시 ADA_HOOK_SKIP=1 을 환경변수로 전달.
+  hook 진입 시 이 변수가 있으면 즉시 exit 0.
 
 환경변수
 --------
@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -64,7 +66,53 @@ def _load_env_file(cwd: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+_BADGE_3 = "[3순위 ☁️ Claude  |  💸 유료]"
+
+
+def _call_claude(prompt: str, cwd: str) -> str | None:
+    """claude -p --continue 로 Claude LLM 직접 호출 (대화 히스토리 유지). 실패 시 None 반환."""
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        return None
+
+    # Windows: .cmd 파일은 cmd /c 로 실행해야 subprocess 에서 인식됨
+    if os.name == "nt":
+        cmd = ["cmd", "/c", claude_bin, "-p", "--continue", prompt]
+        extra: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
+    else:
+        cmd = [claude_bin, "-p", "--continue", prompt]
+        extra = {}
+
+    env = os.environ.copy()
+    env["ADA_HOOK_SKIP"] = "1"  # 재귀 방지
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,  # hook이 stdin 소진 후 EOF 상속 방지
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            cwd=cwd,
+            env=env,
+            **extra,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            answer = proc.stdout.strip()
+            # 이중 배지 방지: sub-claude 가 CLAUDE.md 규칙으로 배지를 이미 붙인 경우 제거
+            if answer.startswith(_BADGE_3):
+                answer = answer[len(_BADGE_3) :].lstrip("\n")
+            return answer or None
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def main() -> None:
+    # ── 0. 재귀 호출 방지 ──────────────────────────────────────────────
+    if os.environ.get("ADA_HOOK_SKIP"):
+        sys.exit(0)
+
     # ── 1. stdin 페이로드 수신 ──────────────────────────────────────────
     try:
         raw = sys.stdin.read()
@@ -75,8 +123,8 @@ def main() -> None:
     prompt: str = payload.get("prompt", "").strip()
     cwd: str = payload.get("cwd", "") or os.getcwd()
 
-    # 너무 짧은 질문 (5자 미만) → Claude 처리
-    if len(prompt) < 5:
+    # 너무 짧은 질문 (2자 미만) → Claude 처리
+    if len(prompt) < 2:
         sys.exit(0)
 
     # ── 2. 설정 로드 ────────────────────────────────────────────────────
@@ -90,8 +138,8 @@ def main() -> None:
     threshold = float(_env("KB_HOOK_THRESHOLD", "0.85"))
     min_hits = int(_env("KB_HOOK_MIN_HITS", "3"))
 
-    # ── 3. POST /kb/search (KB 전용, 폴백 비활성화) ─────────────────────
-    body = json.dumps(
+    # ── 3-A. 1순위: KB 전용 빠른 체크 (타임아웃 5초) ────────────────────
+    body_kb = json.dumps(
         {
             "question": prompt,
             "threshold": threshold,
@@ -103,9 +151,9 @@ def main() -> None:
         ensure_ascii=False,
     ).encode("utf-8")
 
-    req = urllib.request.Request(
+    req_kb = urllib.request.Request(
         f"{server_url}/kb/search",
-        data=body,
+        data=body_kb,
         headers={
             "Content-Type": "application/json; charset=utf-8",
             "X-KB-Secret": kb_secret,
@@ -114,26 +162,55 @@ def main() -> None:
     )
 
     try:
-        # 타임아웃 5초 — UserPromptSubmit 은 응답 속도가 중요
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req_kb, timeout=5) as resp:
             result = json.loads(resp.read())
-    except urllib.error.URLError:
-        # 서버 미기동 / 타임아웃 → 조용히 Claude 처리
-        sys.exit(0)
+        if result.get("answered_by") == "team_kb" and result.get("answer", "").strip():
+            # ✅ 1순위 KB 히트 → exit 2
+            print(f"[1순위 🗄️ KB  |  💰 무료]\n{result['answer'].strip()}", flush=True)
+            sys.exit(2)
     except Exception:  # noqa: BLE001
-        sys.exit(0)
+        pass  # 서버 미기동 or 타임아웃 → Ollama 시도
 
-    # ── 4. 판정 ─────────────────────────────────────────────────────────
-    answered_by = result.get("answered_by", "")
-    answer = result.get("answer", "").strip()
-    similarity = result.get("similarity") or 0.0
+    # ── 3-B. 2순위: Ollama 체크 (타임아웃 90초) ──────────────────────────
+    body_ollama = json.dumps(
+        {
+            "question": prompt,
+            "threshold": threshold,
+            "min_hit_count": min_hits,
+            "min_word_overlap": 0.5,
+            "use_ollama_fallback": True,
+            "use_claude_fallback": False,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
 
-    if answered_by == "team_kb" and answer:
-        # ✅ KB 히트 → 답변 출력 후 exit 2 (Claude 호출 차단)
-        print(f"[🗂️ 팀 KB 답변 | 유사도 {similarity:.3f}]\n\n{answer}", flush=True)
+    req_ollama = urllib.request.Request(
+        f"{server_url}/kb/search",
+        data=body_ollama,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "X-KB-Secret": kb_secret,
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req_ollama, timeout=90) as resp:
+            result = json.loads(resp.read())
+        if result.get("answered_by") == "ollama_local" and result.get("answer", "").strip():
+            # ✅ 2순위 Ollama 히트 → exit 2
+            print(f"[2순위 🦙 Ollama  |  💰 무료]\n{result['answer'].strip()}", flush=True)
+            sys.exit(2)
+    except Exception:  # noqa: BLE001
+        pass  # Ollama 오프라인 or 타임아웃 → Claude 처리
+
+    # ── 4. 3순위: Claude CLI 직접 호출 → 배지 강제 삽입 후 exit 2 ───────
+    answer = _call_claude(prompt, cwd)
+    if answer:
+        print(f"[3순위 ☁️ Claude  |  💸 유료]\n{answer}", flush=True)
         sys.exit(2)
 
-    # ❌ KB 미스 or 게이트 미통과 → exit 0 (Claude 처리)
+    # claude CLI 실패 시 → exit 0 폴백 (Claude Code 가 일반 처리)
     sys.exit(0)
 
 
