@@ -123,8 +123,8 @@ def main() -> None:
     prompt: str = payload.get("prompt", "").strip()
     cwd: str = payload.get("cwd", "") or os.getcwd()
 
-    # 너무 짧은 질문 (5자 미만) → Claude 처리
-    if len(prompt) < 5:
+    # 너무 짧은 질문 (2자 미만) → Claude 처리
+    if len(prompt) < 2:
         sys.exit(0)
 
     # ── 2. 설정 로드 ────────────────────────────────────────────────────
