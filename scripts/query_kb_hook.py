@@ -118,7 +118,7 @@ def main() -> None:
             result = json.loads(resp.read())
         if result.get("answered_by") == "team_kb" and result.get("answer", "").strip():
             # ✅ 1순위 KB 히트 → exit 2
-            print(result["answer"].strip(), flush=True)
+            print(f"[1순위 🗄️ KB  |  💰 무료]\n{result['answer'].strip()}", flush=True)
             sys.exit(2)
     except Exception:  # noqa: BLE001
         pass  # 서버 미기동 or 타임아웃 → Ollama 시도
@@ -151,7 +151,7 @@ def main() -> None:
             result = json.loads(resp.read())
         if result.get("answered_by") == "ollama_local" and result.get("answer", "").strip():
             # ✅ 2순위 Ollama 히트 → exit 2
-            print(result["answer"].strip(), flush=True)
+            print(f"[2순위 🦙 Ollama  |  💰 무료]\n{result['answer'].strip()}", flush=True)
             sys.exit(2)
     except Exception:  # noqa: BLE001
         pass  # Ollama 오프라인 or 타임아웃 → Claude 처리
