@@ -46,7 +46,9 @@ def anomaly_state_with_time(anomaly_state):
     state = deepcopy(anomaly_state)
     state.data_profile = {
         "has_time_column": True,
+        # profiler 는 time_column_candidates(list) 를 내보낸다 (eda 가 읽는 정식 키)
         "time_column": "timestamp",
+        "time_column_candidates": ["timestamp"],
         "isolation_depth_per_dim": {"amount": 0.5, "freq": 0.3},
     }
     return state
