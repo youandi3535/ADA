@@ -12,7 +12,7 @@
 | 역할 | 담당자 |
 |---|---|
 | 시스템·메타·인프라 (HJ) | youandi3535 |
-| 에이전트 로직 — timeseries (CS) | CS |
+| 에이전트 로직 — timeseries (CS) | chang-seon |
 | 에이전트 로직 — anomaly (NY) | NY |
 | 에이전트 로직 — tabular (jh) | jh |
 
@@ -139,21 +139,21 @@ CPU 친화적이고 GTX 1060 3GB VRAM 환경에서도 안정 동작하는 정형
 | Day | 제목 | 핵심 산출물 |
 |---|---|---|
 | 01 | Docker 환경 설정 | 13 컨테이너 (v1 8 + sidecar + vault + pgvector + 큐 4종 분리) · Python 3.10 |
-| 02 | DB 및 인프라 | 24+ 테이블 · pgvector IVFFlat · RLS · agent_registry 시드 27행 · MLflow 실험 4종 |
-| 03 | 공통 모듈 + CI/CD | PipelineStateV2 · BaseAgent 페르소나 자동 주입 · personas.py 27종 · security 패키지 |
-| 04 | LangGraph + Celery | 25 노드 그래프 · PostgresSaver · 5게이트 interrupt · AgentRegistry |
-| 05 | 데이터 처리 에이전트 | 멀티 포맷 로더 8종 (csv/xlsx/parquet/json/zip/pdf/txt/html) · PII 스캔 + G0_PII 미니게이트 · dataset_embeddings |
-| 06 | Supervisor + FastAPI 기본 | IntentElicitor (G0) · AnalysisProposer (G1) · /decision 엔드포인트 |
-| 07 | 정형 ML + Model Selection | 4 모델 파이프라인 · MethodologyProposer (G2) · TRANSFORMER_REGISTRY (8종) |
+| 02 | DB + 인프라 + 자동 오류 처리 기반 | 24+ 테이블 · pgvector IVFFlat · RLS · agent_registry 시드 27행 · MLflow 실험 4종 · 자동 오류 감지·해결 파이프라인 Phase 1~2 |
+| 03 | 공통 모듈 + Langfuse + audit 라우트 | PipelineStateV2 · BaseAgent 페르소나 자동 주입 · Langfuse 깊이 통합 (track_llm) · audit 라우트 4종 (failure_logs/patch/circuit/budget) · ADR-007 |
+| 04 | LangGraph + PII + LLM Guard | 25 노드 그래프 · PostgresSaver · 5게이트 interrupt · PII anonymize·re-attach · LLM Guard 풀 통합 · 캐리어 5종 output_extras 훅 |
+| 05 | 보안 + 파이프라인 학습 검증 | JWT RS256 전환 · HashiCorp Vault 시드 · 파이프라인 E2E 학습 테스트 4종 (tabular-ml/dl/timeseries/anomaly) · Windows 훅 터미널 창 숨김 |
+| 06 | Cowork 통합 + KB 파서 | Cowork JSONL 파서 안정화 · Windows Store 앱 경로 자동 감지 · ADR-010 구현 가이드 |
+| 07 | 환경 표준화 + 테스트 보정 | venv→.venv 전환 · 훅·스크립트 Windows 환경 보정 · 테스트 3건 수정 |
 
 ### 주 2 — Modeling + Self-Learning
 
 | Day | 제목 | 핵심 산출물 |
 |---|---|---|
-| 08 | 학습 실행 에이전트 4종 | HPTuner warm-start · TrainingExecutor · Monitor · MetricsAgg (Top-3 강제) |
-| 09 | Harness Engineering | EvalAgent · RulesManager · Auditor · SelfLearning/AutoError 인터페이스 |
-| 10 | 전처리 + EDA + UI | PreprocStrategist · FeatureEng · EDA · PreprocChoice 미니게이트 |
-| 11 | 해석력 + 인사이트 | ModelStrategyProposer (G3) · ModelComparisonReporter (G4) · 재루프 검증 |
+| 08 | InsightAgent Guardrails | InsightAgent 메트릭 수치 인용 강제 Guardrails 본구현 · 테스트 15건 GREEN |
+| 09 | OUT carrier 훅 완성 | OUT-01~07 carrier output_extras 훅 본구현 · 테스트 11건 GREEN |
+| 10 ✅ | E2E 검증 + KPI + 카테고리별 데모 | **HJ**: KPI 자동 측정 (ada/observability/kpi.py) · Streamlit Tab5 대시보드 · hook 3-tier 배지 시스템 완성 · harness distiller/rag 확장 · anomaly_demo.py<br>**CS**: timeseries E2E 5시나리오 (ScenarioResult·롤백 R1/R2/R3·OUT-04) · test_e2e<br>**jh**: tabular E2E 3시나리오 (Titanic·Iris·Adult) + 데모<br>**NY**: anomaly 전체 핸들러 완성 · EDA 시간축 차트 · profiler 이음새 수정 |
+| 11 🔄 | hook 버그 수정 (진행 중) | hook 배지 누락 버그 수정 (suppressOriginalPrompt 제거 · Ollama timeout 단축) |
 | 12 | 산출물 + 확장 파이프라인 | 정형 DL / 시계열 / 이상탐지 트랜스포머 파이프라인 8종 + LoRA |
 | 13 | 오류 처리 + API 완성 | ErrorRecovery 폴백화 · v2 신규 ~15 엔드포인트 · JWT 미들웨어 |
 | 14 | 테스트 + 검증 + 데모 (v1 KPI) | v1 KPI 측정 · v2 골격 검증 · Day15~21 핸드오프 |
@@ -366,6 +366,13 @@ ADA/
 │   ├── ingest_history.py    # VS Code + Cowork 과거 이력 일괄 수집
 │   ├── kb_mcp_server.py     # MCP 서버 (Claude 내 KB 직접 조회)
 │   ├── linux_kb_sync.py     # 리눅스 서버 KB 동기화
+│   ├── kpi_measure.py       # KPI 11개 자동 측정 (ada/observability/kpi.py 위임)
+│   ├── run_hook.py          # hook 수동 실행 유틸
+│   ├── demo/
+│   │   ├── timeseries_demo.py  # AirPassengers E2E 데모 (5시나리오·ScenarioResult·OUT-04)
+│   │   ├── anomaly_demo.py     # anomaly E2E 데모
+│   │   └── tabular_demo.py     # tabular E2E 데모 (Titanic·Iris·Adult)
+│   ├── security/            # 보안 검증 스크립트
 │   └── dev/
 │       ├── end_of_day.sh    # 하루 마무리 (영역검증→테스트→rebase→push)
 │       └── check_scope.sh   # 영역 외 수정 차단
@@ -471,15 +478,19 @@ bash scripts/dev/end_of_day.sh   # 자동 (영역검증 → 테스트 → rebase
 | 역할 & 작업 규칙 | [CLAUDE.md](CLAUDE.md) |
 | 병렬 작업 가드 | [docs/PARALLEL_WORK_GUARDS.md](docs/PARALLEL_WORK_GUARDS.md) |
 | 10일 병렬 일정 | [TEAM_10DAY_SCHEDULE.md](TEAM_10DAY_SCHEDULE.md) |
+| KPI 측정 가이드 | [docs/KPI_MEASUREMENT.md](docs/KPI_MEASUREMENT.md) |
+| KPI ADR-010 | [docs/ADR-010-kpi-measurement.md](docs/ADR-010-kpi-measurement.md) |
+| HJ Day10 설계서 | [docs/HJ_DAY10_DESIGN.md](docs/HJ_DAY10_DESIGN.md) |
 | Notion 요약 인덱스 | [work-orders/NOTION_요약_v2.md](work-orders/NOTION_요약_v2.md) |
 | Linux + Docker 셋업 가이드 | [LINUX_DOCKER_SETUP_GUIDE.md](LINUX_DOCKER_SETUP_GUIDE.md) |
 | 개발 환경 셋업 (Windows/WSL) | [DEV_SETUP_GUIDE.md](DEV_SETUP_GUIDE.md) |
 
 ---
 
-> 설계 스냅샷: v2.2 · 2026-05-25
+> 설계 스냅샷: v2.3 · 2026-06-01  |  현재 진행: **Day 11** (HJ 진행 중 🔄)
 > 변경 이력:
 > - v1.0 (14일) — 기초 파이프라인
 > - v2.0 (21일) — 5게이트 · 3-Stack SL · AutoError · 보안 풀스택 · 27 에이전트
 > - v2.1 (2026-05-18) — 정형 데이터 중심 스코프 축소 (카테고리 6→4, 산출물 13→5)
 > - v2.2 (2026-05-25) — Guardian v2 · 팀 집단지성 KB · 3-Tier Q&A · Cowork 지원 · 5-Tier 자동 오류 수정
+> - v2.3 (2026-06-01) — Day 10 완료: KPI 자동 측정 · Streamlit Tab5 · hook 3-tier 배지 시스템 · E2E 데모 3종 (timeseries/tabular/anomaly) · anomaly 핸들러 전체 완성 · scripts/demo/ 추가
