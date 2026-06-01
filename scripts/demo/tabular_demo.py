@@ -32,8 +32,7 @@ _TASK_DISP = {"titanic": "classification", "iris": "multiclass", "adult": "regre
 
 def render_header() -> str:
     return (
-        f"{'시나리오':<10} {'task':<14} {'model':<13} "
-        f"{'metric':<8} {'value':>6} {'임계':>5}  {'결과':<5} {'시간':>6}"
+        f"{'시나리오':<10} {'task':<14} {'model':<13} {'metric':<8} {'value':>6} {'임계':>5}  {'결과':<5} {'시간':>6}"
     )
 
 
@@ -49,8 +48,8 @@ def render_row(r: dict) -> str:
 def maybe_emit_out04(name: str) -> list[str]:
     """--out: OUT-04 용 자산 경로(있으면) 출력. 핸들러 미구현/실패 시 빈 목록."""
     try:
-        from agents.handlers import get_handler
         from ada.core.state import PipelineState
+        from agents.handlers import get_handler
 
         df, target, task = load_scenario(name)
         state = PipelineState(
