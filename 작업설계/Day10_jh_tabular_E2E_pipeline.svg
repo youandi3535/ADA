@@ -1,0 +1,97 @@
+<svg width="100%" viewBox="0 0 680 706" role="img" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, 'Segoe UI', 'Malgun Gothic', sans-serif">
+  <title>Day 10 jh tabular E2E 파이프라인 상세 흐름도</title>
+  <desc>3 데이터셋(Titanic 분류, Iris 다중분류, Adult 회귀)이 오프라인 안전 로더를 거쳐 공통 E2E 엔진(S3 profile→S4 preprocess→S5 split→S6 train RF→S7 evaluate)으로 들어가고, 임계 게이트 통과 후 test_e2e.py와 tabular_demo.py로 갈라져 WSL2/CI에서 검증된다.</desc>
+
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+    <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+  </defs>
+
+  <rect x="0" y="0" width="680" height="706" fill="#ffffff"/>
+
+  <!-- header -->
+  <text x="28" y="30" font-size="17" font-weight="800" fill="#111827">Day 10 · jh — tabular E2E 파이프라인</text>
+  <text x="28" y="49" font-size="12" fill="#6b7280">Titanic 분류 · Iris 다중분류 · Adult 회귀  →  val_f1 / val_r2 게이트</text>
+
+  <!-- input tier -->
+  <text x="28" y="78" font-size="12" font-weight="600" fill="#6b7280">입력 · 3 시나리오</text>
+  <g>
+    <rect x="28"  y="90" width="188" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="122" y="115" text-anchor="middle" font-size="15" font-weight="700" fill="#111827">Titanic</text>
+    <text x="122" y="134" text-anchor="middle" font-size="11.5" fill="#475569">분류 · val_f1 ≥ 0.75</text>
+    <rect x="246" y="90" width="188" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="340" y="115" text-anchor="middle" font-size="15" font-weight="700" fill="#111827">Iris</text>
+    <text x="340" y="134" text-anchor="middle" font-size="11.5" fill="#475569">다중분류 · val_f1 ≥ 0.85</text>
+    <rect x="464" y="90" width="188" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="558" y="115" text-anchor="middle" font-size="15" font-weight="700" fill="#111827">Adult</text>
+    <text x="558" y="134" text-anchor="middle" font-size="11.5" fill="#475569">회귀 · val_r2 ≥ 0.30</text>
+  </g>
+
+  <path d="M122,146 L122,176 L340,176" fill="none" stroke="#6b7280" stroke-width="1.4"/>
+  <path d="M558,146 L558,176 L340,176" fill="none" stroke="#6b7280" stroke-width="1.4"/>
+  <path d="M340,146 L340,200" fill="none" stroke="#6b7280" stroke-width="1.4" marker-end="url(#ah)"/>
+
+  <!-- load -->
+  <rect x="190" y="202" width="300" height="54" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.4"/>
+  <text x="340" y="226" text-anchor="middle" font-size="14" font-weight="700" fill="#111827">load_scenario()</text>
+  <text x="340" y="244" text-anchor="middle" font-size="11.5" fill="#475569">오프라인 안전: CSV → fetch(--real) → 합성(seed=42)</text>
+
+  <path d="M340,256 L340,294" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ahb)"/>
+
+  <!-- engine -->
+  <rect x="24" y="296" width="632" height="100" rx="12" fill="#f8faff" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="40" y="316" font-size="12" font-weight="700" fill="#2563eb">공통 E2E 엔진 — RandomForest · 인프라 0 · MLflow 선택</text>
+  <g font-size="12" font-weight="600">
+    <rect x="36"  y="332" width="112" height="50" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="92"  y="354" text-anchor="middle" fill="#111827">S3 profile</text>
+    <text x="92"  y="370" text-anchor="middle" font-size="9.5" font-weight="400" fill="#64748b">profiler</text>
+    <rect x="160" y="332" width="112" height="50" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="216" y="354" text-anchor="middle" fill="#111827">S4 preprocess</text>
+    <text x="216" y="370" text-anchor="middle" font-size="9.5" font-weight="400" fill="#64748b">handler · fallback</text>
+    <rect x="284" y="332" width="112" height="50" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="340" y="354" text-anchor="middle" fill="#111827">S5 split</text>
+    <text x="340" y="370" text-anchor="middle" font-size="9.5" font-weight="400" fill="#64748b">stratified</text>
+    <rect x="408" y="332" width="112" height="50" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="464" y="354" text-anchor="middle" fill="#111827">S6 train</text>
+    <text x="464" y="370" text-anchor="middle" font-size="9.5" font-weight="400" fill="#64748b">Pipeline.train</text>
+    <rect x="532" y="332" width="112" height="50" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="588" y="354" text-anchor="middle" fill="#111827">S7 evaluate</text>
+    <text x="588" y="370" text-anchor="middle" font-size="9.5" font-weight="400" fill="#64748b">val_f1 / val_r2</text>
+  </g>
+  <g stroke="#6b7280" stroke-width="1.3" fill="none">
+    <path d="M148,357 L160,357" marker-end="url(#ah)"/>
+    <path d="M272,357 L284,357" marker-end="url(#ah)"/>
+    <path d="M396,357 L408,357" marker-end="url(#ah)"/>
+    <path d="M520,357 L532,357" marker-end="url(#ah)"/>
+  </g>
+
+  <path d="M340,396 L340,408" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ahb)"/>
+
+  <!-- gate -->
+  <polygon points="340,408 430,450 340,492 250,450" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="340" y="446" text-anchor="middle" font-size="12.5" font-weight="700" fill="#111827">임계 게이트</text>
+  <text x="340" y="462" text-anchor="middle" font-size="10.5" fill="#475569">val_f1 / val_r2</text>
+
+  <path d="M298,478 L200,512" fill="none" stroke="#6b7280" stroke-width="1.4" marker-end="url(#ah)"/>
+  <path d="M382,478 L480,512" fill="none" stroke="#6b7280" stroke-width="1.4" marker-end="url(#ah)"/>
+
+  <!-- outputs -->
+  <rect x="80"  y="514" width="240" height="58" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="200" y="539" text-anchor="middle" font-size="13.5" font-weight="700" fill="#111827" font-family="ui-monospace, 'Cascadia Code', monospace">test_e2e.py</text>
+  <text x="200" y="557" text-anchor="middle" font-size="11.5" fill="#475569">pytest assert · 6~7 TC</text>
+  <rect x="360" y="514" width="240" height="58" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="480" y="539" text-anchor="middle" font-size="13.5" font-weight="700" fill="#111827" font-family="ui-monospace, 'Cascadia Code', monospace">tabular_demo.py</text>
+  <text x="480" y="557" text-anchor="middle" font-size="11.5" fill="#475569">콘솔 표 · OUT-04 · ≤5분</text>
+
+  <path d="M200,572 L200,596 L340,596" fill="none" stroke="#6b7280" stroke-width="1.4"/>
+  <path d="M480,572 L480,596 L340,596" fill="none" stroke="#6b7280" stroke-width="1.4"/>
+  <path d="M340,596 L340,620" fill="none" stroke="#6b7280" stroke-width="1.4" marker-end="url(#ah)"/>
+
+  <!-- verify -->
+  <rect x="190" y="622" width="300" height="52" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="340" y="645" text-anchor="middle" font-size="13.5" font-weight="700" fill="#111827">WSL2 / CI 검증</text>
+  <text x="340" y="663" text-anchor="middle" font-size="11.5" fill="#475569">py_compile · pytest tests/ -q</text>
+
+  <!-- P0 footnote -->
+  <text x="28" y="696" font-size="11" font-weight="600" fill="#b91c1c">⚠ P0 선결: agents/handlers/tabular/ 무결성 복구(preprocessor truncation + NUL 패딩 5파일) 후에야 import·E2E 가능</text>
+</svg>
