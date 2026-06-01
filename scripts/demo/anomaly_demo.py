@@ -20,11 +20,12 @@ Public API (tests/handlers/anomaly/test_e2e.py 에서 호출):
         }
 
 사용:
-    python scripts/demo/anomaly_demo.py                    # 5종 전부
+    python scripts/demo/anomaly_demo.py                    # 5종 전부 (standalone)
     python scripts/demo/anomaly_demo.py --scenario S1
     python scripts/demo/anomaly_demo.py --quiet
     python scripts/demo/anomaly_demo.py --json
     python scripts/demo/anomaly_demo.py --out-dir /tmp/ada_demo
+    python scripts/demo/anomaly_demo.py --e2e              # LangGraph E2E 모드 (docker 스택 필요)
 """
 
 from __future__ import annotations
@@ -137,17 +138,27 @@ _SCENARIO_META: dict[str, dict[str, Any]] = {
 # TOP_N 임계 — 이상치 리포트 최소 행
 TOP_N = 10
 
+# 라벨 있는 시나리오 (AUC 측정 대상)
+LABELLED = {"S2", "S4"}
 
-# ── 합성 데이터 생성 ────────────────────────────────────────────────
+# ── E2E 게이트 자동응답 (--e2e 모드 전용) ────────────────────────────
+# 5 게이트: G1 방향 · G2 방법론 · G3 모델전략 · G4 best_model · G5 출력.
+GATE_AUTO: dict[str, dict[str, Any]] = {
+    "G1": {"accept": True, "choice_index": 0},
+    "G2": {"accept": True, "choice_index": 0},
+    "G3": {"accept": True, "choice_index": 0},
+    "G4": {"requires_finetune": False},
+    "G5": {"accept": True, "output_codes": ["OUT-04"]},
+}
+
+
+# ── 합성 데이터 생성 (standalone 모드) ──────────────────────────────
 
 
 def _make_dataset(meta: dict[str, Any], seed: int = 42) -> tuple[Any, Any, Any]:
     """합성 이상탐지 데이터 생성.
 
     반환: (df, X_normal, y_labels_or_None)
-      - df: pandas DataFrame (수치 컬럼 + 선택적 time 컬럼)
-      - X_normal: ndarray (n_rows, n_features) — 정규화된 수치 행렬
-      - y_labels: ndarray[int] 또는 None (1=이상, 0=정상)
     """
     import numpy as np
     import pandas as pd
@@ -159,30 +170,18 @@ def _make_dataset(meta: dict[str, Any], seed: int = 42) -> tuple[Any, Any, Any]:
     n_anom = max(1, int(n * r))
     n_norm = n - n_anom
 
-    # 정상 데이터: 다변량 가우시안 (공분산: 대칭 PSD 보장)
     _A = rng.random((f, f)) * 0.3
     _cov = np.eye(f) + (_A + _A.T) / 2
-    X_norm = rng.multivariate_normal(
-        mean=np.zeros(f),
-        cov=_cov,
-        size=n_norm,
-    )
-    # 이상 데이터: 평균 오프셋 3~5
-    X_anom = rng.multivariate_normal(
-        mean=rng.uniform(3, 5, size=f),
-        cov=np.eye(f),
-        size=n_anom,
-    )
+    X_norm = rng.multivariate_normal(mean=np.zeros(f), cov=_cov, size=n_norm)
+    X_anom = rng.multivariate_normal(mean=rng.uniform(3, 5, size=f), cov=np.eye(f), size=n_anom)
 
     X_all = np.vstack([X_norm, X_anom])
     y_all = np.array([0] * n_norm + [1] * n_anom, dtype=int)
 
-    # 셔플
     perm = rng.permutation(n)
     X_all = X_all[perm]
     y_all = y_all[perm]
 
-    # pandas DataFrame 구성
     cols = [f"feat_{i}" for i in range(f)]
     df = pd.DataFrame(X_all, columns=cols)
 
@@ -194,14 +193,67 @@ def _make_dataset(meta: dict[str, Any], seed: int = 42) -> tuple[Any, Any, Any]:
     return df, X_all, y_labels
 
 
-# ── 단일 모델 학습·점수화 ────────────────────────────────────────────
+# ── E2E 모드용 시나리오별 합성 데이터 빌더 ────────────────────────────
+
+
+def build_scenario(scenario_id: str) -> tuple[Any, str | None]:
+    """E2E 모드: (df, target_column) 반환. C1~C4 + 엣지."""
+    import numpy as np
+    import pandas as pd
+
+    if scenario_id == "S1":
+        r = np.random.default_rng(1)
+        df = pd.DataFrame(
+            {
+                "amount": np.concatenate([r.normal(100, 10, 950), r.normal(500, 60, 50)]),
+                "freq": np.concatenate([r.normal(5, 1, 950), r.normal(22, 5, 50)]),
+            }
+        )
+        return df, None
+    if scenario_id == "S2":
+        r = np.random.default_rng(2)
+        n0, n1 = 950, 50
+        df = pd.DataFrame(
+            {
+                "amount": np.concatenate([r.normal(100, 10, n0), r.normal(500, 60, n1)]),
+                "freq": np.concatenate([r.normal(5, 1, n0), r.normal(22, 5, n1)]),
+                "is_anomaly": np.concatenate([np.zeros(n0, int), np.ones(n1, int)]),
+            }
+        )
+        return df.sample(frac=1, random_state=2).reset_index(drop=True), "is_anomaly"
+    if scenario_id == "S3":
+        r = np.random.default_rng(3)
+        n = 1000
+        ts = pd.date_range("2026-01-01", periods=n, freq="h")
+        val = np.sin(np.arange(n) / 24 * 2 * np.pi) * 10 + r.normal(0, 1, n)
+        val[500:510] += 30
+        return pd.DataFrame({"timestamp": ts, "value": val}), None
+    if scenario_id == "S4":
+        r = np.random.default_rng(4)
+        n = 1000
+        ts = pd.date_range("2026-01-01", periods=n, freq="h")
+        val = np.sin(np.arange(n) / 24 * 2 * np.pi) * 10 + r.normal(0, 1, n)
+        lab = np.zeros(n, int)
+        val[500:510] += 30
+        lab[500:510] = 1
+        return pd.DataFrame({"timestamp": ts, "value": val, "is_anomaly": lab}), "is_anomaly"
+    if scenario_id == "S5":
+        r = np.random.default_rng(5)
+        n0, n1 = 600, 400
+        df = pd.DataFrame(
+            {
+                "amount": np.concatenate([r.normal(100, 10, n0), r.normal(300, 80, n1)]),
+                "freq": np.concatenate([r.normal(5, 1, n0), r.normal(15, 6, n1)]),
+            }
+        )
+        return df, None
+    raise ValueError(f"unknown scenario: {scenario_id}")
+
+
+# ── 단일 모델 학습·점수화 (standalone 모드) ──────────────────────────
 
 
 def _fit_and_score(model_name: str, X_train: Any, params: dict[str, Any]) -> tuple[Any, Any]:
-    """모델 학습 → anomaly score 반환.
-
-    반환: (model, scores: ndarray[float], 높을수록 이상)
-    """
     from pipelines.anomaly.pipeline import AnomalyPipeline, _get_anomaly_scores
 
     pipeline = AnomalyPipeline()
@@ -214,7 +266,6 @@ def _fit_and_score(model_name: str, X_train: Any, params: dict[str, Any]) -> tup
 
 
 def _top_n_table(df: Any, scores: Any, n: int = TOP_N) -> list[dict[str, Any]]:
-    """점수 내림차순으로 상위 N 행 반환."""
     import numpy as np
 
     n = min(n, len(scores))
@@ -222,7 +273,6 @@ def _top_n_table(df: Any, scores: Any, n: int = TOP_N) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for i, idx in enumerate(top_idx):
         row: dict[str, Any] = {"rank": i + 1, "row_index": int(idx), "anomaly_score": round(float(scores[idx]), 4)}
-        # 수치 컬럼 첫 3 개 포함 (HTML 표 용)
         num_cols = df.select_dtypes(include=["number"]).columns.tolist()[:3]
         for c in num_cols:
             row[c] = round(float(df.iloc[int(idx)][c]), 4)
@@ -254,14 +304,12 @@ def _render_html(
     elapsed_sec: float,
     out_dir: Path,
 ) -> Path:
-    """경량 standalone HTML → out_dir/anomaly_{sid}_OUT-04.html"""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     sid = meta["sid"]
 
     auc_cell = f"{auc:.4f}" if auc is not None else "N/A (비지도)"
     n_anomalies_cell = len(top_rows)
 
-    # top-N 표 헤더 (첫 행 키 기준)
     headers = list(top_rows[0].keys()) if top_rows else ["rank", "row_index", "anomaly_score"]
     th_cells = "".join(f"<th>{h}</th>" for h in headers)
     tr_rows = ""
@@ -316,15 +364,10 @@ def _render_html(
     return out_path
 
 
-# ── 단일 시나리오 실행 ───────────────────────────────────────────────
+# ── standalone 모드: 단일 시나리오 실행 ──────────────────────────────
 
 
 def _run_one(sid: str, out_dir: Path) -> dict[str, Any]:
-    """단일 시나리오 실행 → result dict.
-
-    반환 키:
-        scenario, error, out04_path, top_n_rows, auc
-    """
     meta = _SCENARIO_META[sid]
     _head(f"시나리오 {sid} — {meta['name']}")
     t0 = time.perf_counter()
@@ -338,7 +381,6 @@ def _run_one(sid: str, out_dir: Path) -> dict[str, Any]:
     }
 
     try:
-        # 1. 데이터 생성
         _info(
             f"합성 데이터 생성: n={meta['n_rows']}, feat={meta['n_features']}, "
             f"labelled={meta['labelled']}, has_time={meta['has_time']}"
@@ -346,30 +388,25 @@ def _run_one(sid: str, out_dir: Path) -> dict[str, Any]:
         df, X_all, y_labels = _make_dataset(meta)
         _ok(f"데이터 생성 완료 ({len(df)} 행)")
 
-        # 2. 수치 행렬 추출 (time 컬럼 제외)
         import numpy as np
 
         num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         X = df[num_cols].values.astype(float)
 
-        # 3. 모델 학습 + 점수화
         _info(f"모델 학습: {meta['model']}")
         params: dict[str, Any] = {"contamination": meta["anomaly_ratio"]}
         _model, scores = _fit_and_score(meta["model"], X, params)
         _ok("학습 완료")
 
-        # 4. AUC (라벨 있는 시나리오만)
         auc = _calc_auc(y_labels, scores)
         result["auc"] = auc
         if auc is not None:
             _ok(f"AUC = {auc:.4f}")
 
-        # 5. Top-N 이상치 추출
         top_rows = _top_n_table(df, scores, n=TOP_N)
         result["top_n_rows"] = len(top_rows)
         _ok(f"Top-N 이상치 {len(top_rows)} 행")
 
-        # 6. OUT-04 HTML 생성
         elapsed = time.perf_counter() - t0
         out_path = _render_html(meta, top_rows, auc, elapsed, out_dir)
         result["out04_path"] = str(out_path)
@@ -384,7 +421,7 @@ def _run_one(sid: str, out_dir: Path) -> dict[str, Any]:
     return result
 
 
-# ── Public API ────────────────────────────────────────────────────────
+# ── Public API (standalone 모드) ──────────────────────────────────────
 
 
 def run_scenario(sid: str) -> dict[str, Any]:
@@ -406,6 +443,113 @@ def run_scenario(sid: str) -> dict[str, Any]:
     return _run_one(sid, out_dir)
 
 
+# ── E2E 모드 전용 헬퍼 (docker 스택 필요) ────────────────────────────
+
+
+def _upload_dataset(df: Any, scenario_id: str) -> str:
+    from tools.minio_tool import get_minio_client
+
+    file_id = f"uploads/demo/{scenario_id.lower()}.csv"
+    get_minio_client().save_dataframe(df, file_id, fmt="csv")
+    return file_id
+
+
+async def _run_pipeline_e2e(file_id: str, target_column: str | None, job_id: str) -> Any:
+    from ada.core.state import PipelineState
+    from orchestrator.graph import build_graph
+
+    try:
+        from langgraph.checkpoint.memory import MemorySaver
+    except Exception:
+        from langgraph.checkpoint import MemorySaver  # type: ignore
+
+    graph = build_graph(checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": job_id}}
+    state = PipelineState(
+        job_id=job_id,
+        file_id=file_id,
+        category="anomaly_detection",
+        target_column=target_column,
+        user_intent="이상 탐지 데모",
+    )
+
+    await graph.ainvoke(state, config=config)
+    for _ in range(12):
+        snap = await graph.aget_state(config)
+        if not snap.next:
+            break
+        cur = snap.values
+        gate = cur.get("current_gate") if isinstance(cur, dict) else getattr(cur, "current_gate", None)
+        existing = cur.get("gate_responses") if isinstance(cur, dict) else cur.gate_responses
+        responses = dict(existing or {})
+        if gate:
+            responses[gate] = {**responses.get(gate, {}), "user_choice": GATE_AUTO.get(gate, {"accept": True})}
+        await graph.aupdate_state(config, {"gate_responses": responses, "current_gate": None})
+        await graph.ainvoke(None, config=config)
+
+    snap = await graph.aget_state(config)
+    vals = snap.values
+    return PipelineState(**vals) if isinstance(vals, dict) else vals
+
+
+def run_scenario_e2e(sid: str) -> dict[str, Any]:
+    """E2E 모드 시나리오 실행 (docker 스택 필요).
+
+    반환 형식은 run_scenario() 와 동일 (+ "elapsed_sec", "eval_passed").
+    """
+    import asyncio
+    import uuid
+
+    t0 = time.time()
+    result: dict[str, Any] = {
+        "scenario": sid,
+        "error": None,
+        "out04_path": None,
+        "top_n_rows": 0,
+        "auc": None,
+    }
+    try:
+        df, target = build_scenario(sid)
+        job_id = str(uuid.uuid4())
+        file_id = _upload_dataset(df, sid)
+        final = asyncio.run(_run_pipeline_e2e(file_id, target, job_id))
+
+        from agents.handlers import get_handler
+        from outputs import GENERATORS
+
+        gen = GENERATORS["OUT-04"](job_id=job_id)
+        out04 = gen.generate(
+            insights=getattr(final, "insights", "") or "",
+            best_model=getattr(final, "best_model", {}) or {},
+            eda_charts=getattr(final, "eda_charts", []) or [],
+            category=final.category,
+            user_intent=final.user_intent,
+            eval_result=getattr(final, "eval_result", None),
+            state=final,
+        )
+        assets_fn = get_handler(final.category, "assets") or get_handler(final.category, "build")
+        ctx = {"output_code": "OUT-04", "category": final.category}
+        assets = assets_fn(final, ctx) if assets_fn else {}
+        tables = (assets or {}).get("tables") or []
+        top_n = tables[0] if tables else None
+
+        eval_result = getattr(final, "eval_result", None) or {}
+        result.update(
+            {
+                "out04_path": out04,
+                "top_n_rows": len(top_n["rows"]) if top_n else 0,
+                "auc": eval_result.get("auc") or (eval_result.get("metrics") or {}).get("val_auc"),
+                "error": getattr(final, "error", None),
+                "elapsed_sec": round(time.time() - t0, 1),
+                "eval_passed": eval_result.get("passed"),
+            }
+        )
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _warn(f"E2E 시나리오 {sid} 실패: {result['error']}")
+    return result
+
+
 # ── main ──────────────────────────────────────────────────────────────
 
 
@@ -413,19 +557,12 @@ def main(argv: list[str] | None = None) -> int:
     global _VERBOSE  # noqa: PLW0603
 
     parser = argparse.ArgumentParser(description="ADA v2 anomaly E2E 데모 (Day 10 NY)")
-    parser.add_argument(
-        "--scenario",
-        choices=SCENARIOS,
-        default=None,
-        help="단일 시나리오 (S1~S5), 생략 시 전체",
-    )
+    parser.add_argument("--scenario", choices=SCENARIOS, default=None, help="단일 시나리오 (S1~S5), 생략 시 전체")
     parser.add_argument("--quiet", action="store_true", help="최소 출력 (테스트 시 사용)")
     parser.add_argument("--json", action="store_true", help="결과를 JSON 으로 출력")
-    parser.add_argument(
-        "--out-dir",
-        default=str(_REPO_ROOT / "out"),
-        help="HTML 출력 디렉토리 (기본: <repo>/out/)",
-    )
+    parser.add_argument("--out-dir", default=str(_REPO_ROOT / "out"), help="HTML 출력 디렉토리")
+    parser.add_argument("--e2e", action="store_true", help="LangGraph E2E 모드 (docker 스택 필요)")
+    parser.add_argument("--budget", type=float, default=300.0, help="E2E 모드 총 시간 예산(초)")
     args = parser.parse_args(argv)
 
     if args.quiet:
@@ -437,20 +574,23 @@ def main(argv: list[str] | None = None) -> int:
     targets = [args.scenario] if args.scenario else SCENARIOS
 
     if _VERBOSE:
+        mode_label = "E2E (LangGraph)" if args.e2e else "standalone"
         print(_c("1;37", "=" * 60))
-        print(_c("1;37", "  ADA v2 · anomaly E2E 데모"))
+        print(_c("1;37", f"  ADA v2 · anomaly 데모 [{mode_label}]"))
         print(_c("1;37", "=" * 60))
         print(_c("36", f"  출력 디렉토리: {out_dir}"))
 
     t_total = time.perf_counter()
     results: list[dict[str, Any]] = []
     for sid in targets:
-        r = run_scenario(sid)
+        if args.e2e:
+            r = run_scenario_e2e(sid)
+        else:
+            r = run_scenario(sid)
         results.append(r)
 
     total_elapsed = time.perf_counter() - t_total
 
-    # 요약 출력
     _head("요약")
     n_pass = 0
     for r in results:
@@ -468,7 +608,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n  전체 소요: {total_elapsed:.1f}s  ({len(results)}개 시나리오)")
         print(f"  결과: {n_pass}/{len(results)} PASS")
 
-    # JSON 요약 저장
     summary = {
         "run_at": datetime.now(timezone.utc).isoformat(),
         "total_elapsed_sec": round(total_elapsed, 2),

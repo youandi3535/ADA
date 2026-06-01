@@ -22,6 +22,9 @@ TIME_BONUS = 0.3  # D8
 OCSVM_LOW_CONTAM_BONUS = 0.4  # D3 · DoD
 NEEDS_REVIEW_DEFAULT = False  # D7
 
+# ★ D1 불변식 키 (ny-day10 후속): 시계열 전용 모델 — 시간 컬럼 없으면 절대 금지.
+_TIME_SERIES_MODELS = frozenset({"TranAD", "AnomalyTransformer"})
+
 
 # ── 공통 헬퍼 ─────────────────────────────────────────────────────
 def _get_profile(state: Any) -> dict:
@@ -202,6 +205,12 @@ def g2(state: Any) -> list[dict[str, Any]]:
                 "시계열 트랜스포머 — self-attention 기반",
             )
         )
+
+    # ★ D1 불변식 (회귀 방지): 시간 컬럼이 없으면 시계열 트랜스포머는 절대 포함 금지.
+    # score 헬퍼가 미래에 바뀌거나 머지 충돌로 카드가 새도 no-time 경로는
+    # 반드시 base 4 종(IForest·LOF·OCSVM·AE)만 남도록 구조적으로 강제.
+    if not profile.get("has_time_column"):
+        cards = [c for c in cards if c["title"] not in _TIME_SERIES_MODELS]
 
     # score 0 제외 + 정렬 (내림차순)
     cards = [c for c in cards if c["score"] > 0]
