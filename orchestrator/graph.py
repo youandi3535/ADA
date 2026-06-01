@@ -177,9 +177,18 @@ def route_after_g5(state: PipelineState) -> str:
 
 
 def route_after_error_recovery(state: PipelineState) -> str:
+    """ADR-006 — 회복 후 라우팅.
+
+    회복 노드의 조건부 엣지에는 'supervisor' / 'END' 두 키만 매핑돼 있다.
+    state.next_agent 가 임의 노드명을 담고 있어도 미등록 키로 라우팅해
+    LangGraph KeyError 가 나지 않도록 화이트리스트로 클램프한다.
+    """
     if state.retry_count >= state.max_retries:
         return "END"
-    return state.next_agent or "supervisor"
+    if state.next_agent == "END":
+        return "END"
+    # supervisor / 빈값 / 그 외 임의 next_agent → supervisor 로 안전 복귀
+    return "supervisor"
 
 
 # ---------------------------------------------------------------------------

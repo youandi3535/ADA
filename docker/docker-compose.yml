@@ -412,6 +412,11 @@ services:
     image: ada/claude-cli-sidecar:latest
     container_name: ada-claude-sidecar
     restart: unless-stopped
+    # 사이드카는 idle 로 대기한다 → 오류 처리기가
+    #   docker exec ada-claude-sidecar claude -p "..." --allowed-tools Read,Grep,Glob
+    # 형태로 호출한다. 이미지 ENTRYPOINT=claude 는 TTY 없는 컨테이너에서 --print
+    # 모드로 전환→입력 없음→즉시 종료→restart 루프를 유발하므로 여기서 override.
+    entrypoint: ["sleep", "infinity"]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:

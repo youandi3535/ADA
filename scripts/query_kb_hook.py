@@ -1,45 +1,43 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""scripts/query_kb_hook.py — Claude Code UserPromptSubmit 훅 (Day 11 최종판).
+"""scripts/query_kb_hook.py — Claude Code UserPromptSubmit 훅.
 
 동작 흐름
 ---------
-질문이 들어오면 1/2/3 순위로 처리:
+질문이 들어오면 1/2 순위로 처리:
 
-  1순위 (KB 히트)    → JSON {decision:block, reason:[1순위]+답변, suppressOriginalPrompt:true}
-                        + plain stdout 백업 (이중 안전망)
-                        exit 0  → 사용자 화면에 답변 노출 + parent Claude 차단
-  2순위 (Ollama 응답) → 동일 패턴 ([2순위] 배지)
-  3순위 (폴백)        → JSON·stdout 미출력 + exit 0  → parent Claude 가 직접 답변
-                        (CLAUDE.md §7-5 규칙으로 [3순위 ☁️ Claude] 배지 자동)
+  1순위 (KB 히트)  → JSON {"decision":"block","reason":"[1순위]+답변"} + exit 0
+                      → 사용자 화면에 답변 노출 + parent Claude 차단
+  2순위 (폴백)     → stdout 미출력 + exit 0
+                      → parent Claude 가 직접 답변
+                      (CLAUDE.md §7-5 규칙으로 [3순위 ☁️ Claude] 배지 자동)
 
-핵심 수정 (이전 버그)
----------------------
-이전 코드:  print(answer) + sys.exit(2)
-공식 사양:  exit 2 는 stdout 무시, stderr 만 사용자에게 노출 + 프롬프트 차단.
-            결과 → 사용자 화면 비어있음 (질문 차단 + 답변 손실).
+  ※ Ollama 는 hook 에서 제거됨 (num_predict=512 @ 7.2t/s → 최대 71s 대기,
+     타임아웃 25s 로도 화면 공백 28s 발생).
+     Ollama 응답을 원할 경우 OLLAMA_HOOK_ENABLE=1 환경변수로 활성화 가능.
 
-지금 :  exit 0 + JSON {"decision":"block","reason":"..."} 패턴 (표준 사양만 사용).
-        - reason → 사용자에게 표시
-        - hookSpecificOutput / suppressOriginalPrompt 제거 (비표준 → 답변 사라짐 버그)
-        - Ollama timeout 25s (Claude Code hook 제한 60s 이하로 유지)
+핵심 설계 원칙
+--------------
+  - KB 응답(최대 3s): 빠름 → 차단 방식 유지
+  - KB 미스: 즉시 passthrough → Claude 가 바로 실행됨 (대기 없음)
+  - Ollama 기본 비활성: hook 총 대기 = max 3s (KB timeout)
 
 디버그 모드
 -----------
   ADA_HOOK_DEBUG=1 환경변수 설정 시 모든 단계가
   ``<repo>/.ada_hook_debug.log`` 에 append 로 기록됨.
-  훅이 동작하지 않을 때 이 파일부터 확인.
 
 환경변수
 --------
-  KB_SERVER_URL       (기본: http://localhost:8000)
-  KB_COLLECT_SECRET   X-KB-Secret 헤더
-  KB_HOOK_THRESHOLD   유사도 임계값 (기본: 0.85)
-  KB_HOOK_MIN_HITS    최소 success_count (기본: 3)
-  OLLAMA_BASE_URL     (기본: http://localhost:11434)
-  OLLAMA_MODEL        (기본: qwen2.5:7b)
-  ADA_HOOK_SKIP=1     hook 즉시 통과 (재귀 방지용)
-  ADA_HOOK_DEBUG=1    파일 로깅 활성
+  KB_SERVER_URL        (기본: http://localhost:8000)
+  KB_COLLECT_SECRET    X-KB-Secret 헤더
+  KB_HOOK_THRESHOLD    유사도 임계값 (기본: 0.85)
+  KB_HOOK_MIN_HITS     최소 success_count (기본: 3)
+  OLLAMA_HOOK_ENABLE=1 Ollama 2순위 활성화 (기본: 비활성)
+  OLLAMA_BASE_URL      (기본: http://localhost:11434)
+  OLLAMA_MODEL         (기본: qwen2.5:7b)
+  ADA_HOOK_SKIP=1      hook 즉시 통과 (재귀 방지용)
+  ADA_HOOK_DEBUG=1     파일 로깅 활성
 
 참조: https://docs.claude.com/en/docs/claude-code/hooks
 """
@@ -107,33 +105,64 @@ def _strip_badge_lines(text: str) -> str:
     return "\n".join(cleaned).strip()
 
 
+# 비답변(사과·되묻기·모름류) 패턴 — 이런 응답으로는 Claude 를 차단하지 않는다
+_NON_ANSWER_PAT = re.compile(
+    r"죄송|이해하기\s*어렵|질문을\s*명확|잘\s*모르겠|모르겠습니다|답변(?:할|하기)\s*(?:수\s*없|어렵)|확실하지\s*않"
+)
+
+
+def _is_low_quality_answer(answer: str) -> bool:
+    """차단(block)해도 좋을 만큼 '진짜 답변'인지 판정.
+
+    너무 짧거나(<8자) 사과/되묻기/모름류 비답변이면 True.
+    → 이 경우 차단하지 않고 passthrough 하여 Claude 가 직접 답하게 한다
+      (화면 공백·무의미 답변으로 답이 사라지는 것을 원천 차단).
+    """
+    a = (answer or "").strip()
+    if len(a) < 8:
+        return True
+    return bool(_NON_ANSWER_PAT.search(a))
+
+
 # ---------------------------------------------------------------------------
 # UserPromptSubmit 응답 헬퍼
 # ---------------------------------------------------------------------------
 
 
 def _emit_block_with_answer(badge: str, answer: str, cwd: str = "") -> None:
-    """답변을 사용자에게 표시 + parent Claude 차단. exit 0.
+    """KB/Ollama 답변을 additionalContext 로 주입 → Claude 가 채팅에 표시. exit 0.
 
-    공식 사양 (UserPromptSubmit):
-        - exit 0 + JSON {"decision":"block","reason":"..."} 만 사용.
-        - reason 이 사용자 화면에 표시됨.
-        - hookSpecificOutput / suppressOriginalPrompt 는 비표준 필드 → 사용 금지.
-          (suppression 필드가 reason 표시까지 억제해 답변이 사라지는 버그 원인)
+    변경 이유
+    ---------
+    VS Code 익스텐션에서 {"decision":"block","reason":"..."} 방식은
+    reason 이 채팅 화면에 렌더링되지 않아 사용자에게 답변이 보이지 않는 버그.
+    → additionalContext 주입 방식으로 전환:
+      Claude 가 차단되지 않고 KB 답변을 컨텍스트로 받아 채팅에 직접 출력.
     """
-    body = f"{badge}\n{answer}"
+    ans = (answer or "").strip()
+    # 안전장치: 빈/저품질 답변으로는 컨텍스트 주입하지 않는다.
+    if _is_low_quality_answer(ans):
+        _debug(f"low_quality_answer → passthrough (len={len(ans)})", cwd)
+        _emit_passthrough(cwd, reason="low_quality_answer")
+        return
 
-    payload = {
-        "decision": "block",
-        "reason": body,
-    }
+    # Claude 에게 KB 답변을 컨텍스트로 전달 + 배지·출력 지시
+    context = (
+        f"[KB 답변 주입 — Claude 에 대한 지시]\n"
+        f"아래는 ADA 팀 KB에서 검색된 답변입니다. 이 내용을 그대로 출력하되:\n"
+        f"1) 반드시 첫 줄에 '{badge}' 배지를 그대로 출력하세요.\n"
+        f"2) 3순위 Claude 배지([3순위 ☁️ Claude | 💸 유료])는 붙이지 마세요.\n"
+        f"3) KB 답변 이외의 추가 설명은 최소화하세요.\n\n"
+        f"KB 답변 내용:\n{ans}"
+    )
+
+    payload = {"additionalContext": context}
     out = json.dumps(payload, ensure_ascii=False)
 
-    _debug(f"emit_block: badge={badge!r}, answer_len={len(answer)}", cwd)
-    _debug(f"emit_block: stdout_json={out[:300]}", cwd)
+    _debug(f"emit_context_inject: badge={badge!r}, answer_len={len(ans)}", cwd)
+    _debug(f"emit_context_inject: stdout_json={out[:300]}", cwd)
 
     try:
-        # buffer 레벨에서 UTF-8 직접 출력 — Windows 에서 sys.stdout 인코딩 오류 방지
         sys.stdout.buffer.write(out.encode("utf-8"))
         sys.stdout.buffer.flush()
     except Exception as e:  # noqa: BLE001
@@ -163,12 +192,26 @@ def _emit_error_fail_safe(msg: str, cwd: str = "") -> None:
 
 
 def _call_ollama(prompt: str, ollama_url: str, ollama_model: str, cwd: str) -> str | None:
+    """Ollama streaming 호출. 최대 50s 내 수집한 내용 반환.
+
+    stream=True 사용 이유
+    --------------------
+    stream=False + timeout=25s 방식은 Ollama가 모든 토큰을 생성한 뒤에야 HTTP 응답을 보냄.
+    num_predict=512 @ 7.2t/s = 최대 71s → 25s timeout 에 걸려 항상 응답 손실.
+
+    stream=True 방식:
+    - 토큰 생성 즉시 수신 → 50s deadline 내 수집한 내용으로 답변 구성
+    - 7.2t/s × 50s ≈ 360 토큰 수집 가능 (일반 답변 충분)
+    - KB(3s) + health(1s) + streaming(50s) = 54s < Claude Code hook 60s 제한 ✓
+    """
+    import time
+
     base = ollama_url.rstrip("/")
 
-    # 헬스체크 (3초)
+    # 헬스체크 (1초)
     try:
         req = urllib.request.Request(f"{base}/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=3):
+        with urllib.request.urlopen(req, timeout=1):
             pass
     except Exception as e:  # noqa: BLE001
         _debug(f"ollama_health_failed: {type(e).__name__}: {e}", cwd)
@@ -187,7 +230,7 @@ def _call_ollama(prompt: str, ollama_url: str, ollama_model: str, cwd: str) -> s
                 },
                 {"role": "user", "content": prompt},
             ],
-            "stream": False,
+            "stream": True,
             "options": {
                 "num_predict": 512,
                 "temperature": 0.3,
@@ -199,6 +242,11 @@ def _call_ollama(prompt: str, ollama_url: str, ollama_model: str, cwd: str) -> s
         ensure_ascii=False,
     ).encode("utf-8")
 
+    # KB(3s) + health(1s) + streaming(50s) = 54s < Claude Code hook 60s 제한
+    _STREAM_BUDGET = 50
+    deadline = time.monotonic() + _STREAM_BUDGET
+    collected: list[str] = []
+
     try:
         req = urllib.request.Request(
             f"{base}/api/chat",
@@ -206,15 +254,29 @@ def _call_ollama(prompt: str, ollama_url: str, ollama_model: str, cwd: str) -> s
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        # timeout=25: Claude Code hook 제한(60s) 안에 KB(5s)+헬스(3s)+Ollama(25s) 완료 가능
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            data = json.loads(resp.read())
-        answer = (data.get("message", {}).get("content", "") or "").strip()
-        _debug(f"ollama_response_len={len(answer)}", cwd)
-        return answer or None
+        with urllib.request.urlopen(req, timeout=_STREAM_BUDGET) as resp:
+            while time.monotonic() < deadline:
+                line = resp.readline()
+                if not line:
+                    break
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                token = chunk.get("message", {}).get("content", "")
+                if token:
+                    collected.append(token)
+                if chunk.get("done"):
+                    break
     except Exception as e:  # noqa: BLE001
-        _debug(f"ollama_call_failed: {type(e).__name__}: {e}", cwd)
+        _debug(f"ollama_stream_failed: {type(e).__name__}: {e}", cwd)
+
+    if not collected:
         return None
+
+    answer = "".join(collected).strip()
+    _debug(f"ollama_tokens={len(collected)}, chars={len(answer)}", cwd)
+    return answer or None
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +308,7 @@ def _call_kb(server_url: str, secret: str, prompt: str, threshold: float, min_hi
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=3) as resp:
             result = json.loads(resp.read())
     except Exception as e:  # noqa: BLE001
         _debug(f"kb_call_failed: {type(e).__name__}: {e}", cwd)
@@ -312,13 +374,15 @@ def main() -> None:
         if kb_answer:
             _emit_block_with_answer("[1순위 🗄️ KB  |  💰 무료]", kb_answer, cwd)
 
-        # 3-B) 2순위 Ollama
-        ollama_answer = _call_ollama(prompt, ollama_url, ollama_model, cwd)
-        if ollama_answer:
-            _emit_block_with_answer("[2순위 🦙 Ollama  |  💰 무료]", ollama_answer, cwd)
+        # 3-B) 2순위 Ollama (기본 비활성 — OLLAMA_HOOK_ENABLE=1 로 활성화)
+        # 이유: num_predict=512 @ 7.2t/s → 최대 71s 대기, timeout=25s 로도 28s 화면 공백 발생
+        if _env("OLLAMA_HOOK_ENABLE") == "1":
+            ollama_answer = _call_ollama(prompt, ollama_url, ollama_model, cwd)
+            if ollama_answer:
+                _emit_block_with_answer("[2순위 🦙 Ollama  |  💰 무료]", ollama_answer, cwd)
 
         # 4) 3순위 — parent Claude 가 직접 처리 (CLAUDE.md §7-5 로 배지 자동)
-        _emit_passthrough(cwd, reason="kb_and_ollama_miss")
+        _emit_passthrough(cwd, reason="kb_miss_no_ollama")
 
     except SystemExit:
         # _emit_* 헬퍼가 호출한 정상 종료 — 그대로 전파

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,6 +17,10 @@ from ada.security.jwt import create_access_token
 
 router = APIRouter()
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# 셀프 가입은 기본 비활성 (운영 보안). 명시적으로 켤 때만 허용.
+# 관리자 계정은 DB 시드(ada.db.seeds) 또는 별도 스크립트로 생성한다.
+_ALLOW_SELF_REG = os.environ.get("ADA_ALLOW_SELF_REGISTRATION", "false").lower() in ("1", "true", "yes")
 
 
 class LoginRequest(BaseModel):
@@ -42,6 +47,11 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)) -> LoginR
 
 @router.post("/register", response_model=LoginResponse)
 async def register(req: LoginRequest, db: AsyncSession = Depends(get_db)) -> LoginResponse:
+    if not _ALLOW_SELF_REG:
+        raise HTTPException(
+            403,
+            detail="self-registration disabled; set ADA_ALLOW_SELF_REGISTRATION=true or ask an admin",
+        )
     existing = await db.scalar(select(User).where(User.email == req.email))
     if existing is not None:
         raise HTTPException(409, detail="email exists")

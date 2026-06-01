@@ -124,14 +124,14 @@ def test_g2_includes_transformers_when_time_column(state_with_time_column):
 
 
 def test_g2_excludes_transformers_when_no_time(state_no_time):
-    """#6 — D1: no time → TranAD·AT 제외 (정확히 4 종)."""
+    """#6 — D1: no time → TranAD·AT 제외. COPOD 정식 배선 후 base 5 종(IForest/LOF/OCSVM/AutoEncoder/COPOD)."""
     from agents.handlers.anomaly.proposer import g2
 
     result = g2(state_no_time)
     titles = {c["title"] for c in result}
     assert "TranAD" not in titles
     assert "AnomalyTransformer" not in titles
-    assert len(result) == 4
+    assert len(result) == 5
 
 
 # === E. 엣지 ======================================================

@@ -59,7 +59,11 @@
       "PowerShell(.venv\\\\Scripts\\\\python scripts/demo/timeseries_demo.py --scenario anomaly 2>&1)",
       "PowerShell(.venv\\\\Scripts\\\\python scripts/demo/timeseries_demo.py --scenario 1d 2>&1)",
       "Bash(rm -f .git/index.lock && echo \"lock 제거 완료\")",
-      "PowerShell(.venv\\\\Scripts\\\\python -c \"import ast; ast.parse\\(open\\('scripts/query_kb_hook.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "PowerShell(.venv\\\\Scripts\\\\python -c \"import ast; ast.parse\\(open\\('scripts/query_kb_hook.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "PowerShell(cd \"c:\\\\IT\\\\workspace_python\\\\ADA\"; $payload = '{\"prompt\": \"PipelineState 직접 수정하면 안되는 이유가 뭐야?\", \"cwd\": \"c:/IT/workspace_python/ADA\", \"session_id\": \"test-001\"}'; $out = $payload | .venv/Scripts/python -X utf8 scripts/query_kb_hook.py; Write-Host \"EXIT: $LASTEXITCODE\"; Write-Host \"STDOUT_LEN: $\\($out.Length\\)\"; Write-Host \"STDOUT: [$out]\")",
+      "PowerShell(python3 --version 2>&1; Write-Host \"python3 exit: $LASTEXITCODE\")",
+      "Bash(claude --version)",
+      "Bash(Remove-Item _bashprobe_sync.py, _probe_xyz -Force)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"
@@ -72,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".venv/Scripts/python -X utf8 scripts/query_kb_hook.py"
+            "command": "python -X utf8 scripts/run_hook.py query_kb_hook.py"
           }
         ]
       }
@@ -83,7 +87,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".venv/Scripts/python -X utf8 scripts/collect_qa.py"
+            "command": "python -X utf8 scripts/run_hook.py collect_qa.py"
           }
         ]
       }

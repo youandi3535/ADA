@@ -2,11 +2,13 @@
 
 Day02 §3 + v2.2 RLS 미들웨어 진입점.
 """
+
 from __future__ import annotations
 
 import os
 from typing import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -75,8 +77,10 @@ async def set_rls_user(session: AsyncSession, user_id: str | None, role: str = "
     """
     if user_id:
         await session.execute(
-            f"SELECT set_config('ada.current_user', '{user_id}', true)"
+            text("SELECT set_config('ada.current_user', :uid, true)"),
+            {"uid": user_id},
         )
     await session.execute(
-        f"SELECT set_config('ada.role', '{role}', true)"
+        text("SELECT set_config('ada.role', :role, true)"),
+        {"role": role},
     )

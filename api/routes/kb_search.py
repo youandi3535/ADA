@@ -297,17 +297,28 @@ async def _ollama_fallback(question: str) -> tuple[str, str]:
 
 
 async def _claude_opus_fallback(question: str) -> str:
-    """Claude Opus-4-7 API 호출 (Ollama 실패 시 최후 수단)."""
-    try:
-        import anthropic
+    """Claude Opus 최후 폴백 — R-004 준수.
 
-        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        msg = await client.messages.create(
-            model="claude-opus-4-7",
+    직접 anthropic SDK 를 호출하지 않고 BaseAgent._call_llm() 단일 진입점을
+    경유한다 (서킷 브레이커 + Langfuse 트레이싱 + 토큰 메트릭이 자동 적용됨).
+    """
+    try:
+        from agents.base import BaseAgent
+
+        class _KBFallbackAgent(BaseAgent):
+            """KB 검색 폴백 전용 경량 에이전트 (페르소나 미등록 → 프리픽스 없음)."""
+
+            model_name = "claude-opus-4-7"
+
+            async def __call__(self, state):  # pragma: no cover - 진입점 미사용
+                raise NotImplementedError
+
+        agent = _KBFallbackAgent()
+        return await agent._call_llm(
+            system_prompt="당신은 ADA 팀 지식베이스 어시스턴트입니다. 한국어로 간결하고 정확하게 답하세요.",
+            user_prompt=question,
             max_tokens=4096,
-            messages=[{"role": "user", "content": question}],
         )
-        return msg.content[0].text if msg.content else "(Claude 응답 없음)"
     except Exception as e:  # noqa: BLE001
         return f"(Claude Opus 폴백 실패: {e})"
 

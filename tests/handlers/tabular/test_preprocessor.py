@@ -605,24 +605,25 @@ class TestRobustScaling:
 
 class TestTransformRegistry:
     def test_registry_count_15(self):
-        """TRANSFORM_REGISTRY == 15 (implemented 8 + planned 7)."""
+        """TRANSFORM_REGISTRY == 15 (transform 7종 추가 구현 후 전부 implemented)."""
         from agents.handlers.tabular.preprocessor import TRANSFORM_REGISTRY
 
         assert len(TRANSFORM_REGISTRY) == 15
 
-    def test_registry_implemented_8(self):
-        """implemented status == 8."""
+    def test_registry_all_implemented(self):
+        """transform 7종(missing_indicator/hash_encoding/quantile_transform/polynomial_features/
+        interaction_terms/correlation_drop/pca_preview) 추가 구현 → 15종 전부 implemented."""
         from agents.handlers.tabular.preprocessor import TRANSFORM_REGISTRY
 
         implemented = [s for s in TRANSFORM_REGISTRY.values() if s.status == "implemented"]
-        assert len(implemented) == 8
+        assert len(implemented) == 15
 
-    def test_registry_planned_7(self):
-        """planned status == 7."""
+    def test_registry_no_planned(self):
+        """7종 구현 완료 → planned 0종."""
         from agents.handlers.tabular.preprocessor import TRANSFORM_REGISTRY
 
         planned = [s for s in TRANSFORM_REGISTRY.values() if s.status == "planned"]
-        assert len(planned) == 7
+        assert len(planned) == 0
 
 
 # ---------------------------------------------------------------------------

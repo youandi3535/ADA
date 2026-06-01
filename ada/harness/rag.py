@@ -37,8 +37,15 @@ class KBRAG:
             from sentence_transformers import SentenceTransformer  # type: ignore
 
             self._embedder = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
-        except Exception:
+        except Exception as e:
+            # 임베더 미설치/로드 실패 → 0 벡터 폴백. silent 가 아니라 명시적으로 경고한다
+            # (KB 벡터검색이 무력화되어 R-501 인용 품질이 보장되지 않는 상태 신호).
             self._embedder = None
+            log.warning(
+                "rag_embedder_unavailable",
+                error=str(e),
+                impact="zero-vector fallback — KB vector search unreliable, citations not guaranteed",
+            )
         return self._embedder
 
     def embed(self, text_in: str) -> list[float]:
@@ -63,6 +70,7 @@ class KBRAG:
             FROM lesson_embeddings le
             JOIN self_learning_kb kb ON kb.id = le.kb_id
             WHERE kb.kb_type = 'failure_lesson'
+              AND COALESCE((kb.payload ->> 'retracted')::boolean, false) = false
             ORDER BY le.embedding <=> CAST(:emb AS vector)
             LIMIT :k
             """
@@ -88,6 +96,8 @@ class KBRAG:
         return [
             {"hash": r.hash, "payload": r.payload, "confidence": r.confidence, "success_count": r.success_count}
             for r in rows
+            # R-504 — retracted KB 제외 (폐기된 레시피는 인용 금지)
+            if not (isinstance(r.payload, dict) and r.payload.get("retracted"))
         ]
 
     # ------------------------------------------------------------------
