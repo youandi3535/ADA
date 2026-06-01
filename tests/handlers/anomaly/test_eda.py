@@ -149,6 +149,28 @@ def test_time_anomaly_chart_created(anomaly_state_with_time, anomaly_df_with_tim
     assert any("time_anomaly" in p for p in result)
 
 
+def test_time_anomaly_chart_uses_profiler_candidates(anomaly_state, anomaly_df_with_time):
+    """#5b ★ 이음새 회귀 — profiler 실제 출력(단수 time_column 키 없음, candidates 만)에서도 ③ 생성.
+
+    기존엔 profile['time_column'] 만 읽어 실제 파이프라인에선 항상 None → 차트 미생성.
+    profiler 계약(time_column_candidates) 폴백을 검증한다.
+    """
+    from copy import deepcopy
+
+    from agents.handlers.anomaly.eda import charts
+
+    state = deepcopy(anomaly_state)
+    state.data_profile = {
+        "has_time_column": True,
+        # ★ 단수 'time_column' 키 없음 — profiler 실제 출력 형태
+        "time_column_candidates": ["timestamp"],
+        "time_column_false_positive_risk": [],
+        "isolation_depth_per_dim": {"amount": 0.5, "freq": 0.3},
+    }
+    result = charts(anomaly_df_with_time, state)
+    assert any("time_anomaly" in p for p in result)
+
+
 # === D. 분기 ======================================================
 
 

@@ -185,9 +185,13 @@ def _chart_time_anomaly(df: Any, state: Any, job_id: str) -> str | None:
     profile = getattr(state, "data_profile", None) or {}
     if not profile.get("has_time_column"):
         return None
-    # profiler emits `time_column_candidates` (list), NOT `time_column` — use first element
-    _candidates = profile.get("time_column_candidates") or []
-    time_col = _candidates[0] if _candidates else None
+    # profiler 는 'time_column'(단수) 키 없이 'time_column_candidates'(리스트)만 제공.
+    # 단수 키 우선, 없으면 false_positive_risk 필터링 후 candidates 폴백.
+    time_col = profile.get("time_column")
+    if time_col is None:
+        fp_risk = set(profile.get("time_column_false_positive_risk", []))
+        candidates = [c for c in profile.get("time_column_candidates", []) if c not in fp_risk]
+        time_col = candidates[0] if candidates else None
     if time_col is None or time_col not in df.columns:
         return None
 
@@ -203,10 +207,13 @@ def _chart_time_anomaly(df: Any, state: Any, job_id: str) -> str | None:
     iso.fit(num_df)
     scores = -iso.decision_function(num_df)
 
-    time_series = pd.to_datetime(df.loc[num_df.index, time_col])
-    sort_idx = time_series.argsort()
-    time_sorted = time_series.iloc[sort_idx]
-    scores_sorted = scores[sort_idx.values]
+    # ★ D2-fix (ny-day10 후속): pandas 버전에 따라 Series.iloc[Series] 가
+    # 예외를 던져 charts() 의 except 에 묻혀 "차트 미생성"이 되던 결함 제거.
+    # numpy 위치기반 정렬로 교체 — 모든 pandas 버전에서 안정.
+    time_values = pd.to_datetime(df.loc[num_df.index, time_col]).to_numpy()
+    order = np.argsort(time_values)
+    time_sorted = time_values[order]
+    scores_sorted = scores[order]
 
     fig, ax = plt.subplots(figsize=CHART_FIGSIZE_WIDE, dpi=CHART_DPI)
     ax.plot(time_sorted, scores_sorted, color="crimson", linewidth=0.8)
