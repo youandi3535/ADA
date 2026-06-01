@@ -34,7 +34,16 @@
       "Bash(.venv/Scripts/python -X utf8 -c ' *)",
       "Bash(ADA_HOOK_DEBUG=1 echo '{\"prompt\": \"응 써봐\", \"cwd\": \"c:/IT/workspace_python/ADA\", \"session_id\": \"test\"}')",
       "Bash(.venv/Scripts/python -X utf8 scripts/query_kb_hook.py)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(git -C \"c:\\\\IT\\\\workspace_python\\\\ADA\" log main..feat/hj-day10 --oneline)",
+      "PowerShell(cd \"c:\\\\IT\\\\workspace_python\\\\ADA\"; $env:ADA_HOOK_SKIP=\"\"; $payload = '{\"prompt\": \"1:1은 뭐야?\", \"cwd\": \"c:/IT/workspace_python/ADA\", \"session_id\": \"test-001\"}'; $result = $payload | .venv/Scripts/python -X utf8 scripts/query_kb_hook.py; Write-Host \"EXIT: $LASTEXITCODE\"; Write-Host \"OUTPUT: [$result]\")",
+      "PowerShell(cd \"c:\\\\IT\\\\workspace_python\\\\ADA\"; $env:ADA_HOOK_SKIP=\"1\"; $result = & cmd /c claude -p --continue \"1:1은 뭐야? 한 줄로 답해줘\" 2>&1; Write-Host \"EXIT: $LASTEXITCODE\"; Write-Host \"STDOUT_LEN: $\\($result.Length\\)\"; Write-Host \"OUTPUT: [$result]\")",
+      "PowerShell(cd \"c:\\\\IT\\\\workspace_python\\\\ADA\"; $env:ADA_HOOK_SKIP=\"\"; python -c \"import json,sys; sys.stdout.buffer.write\\(json.dumps\\({'prompt':'1:1은 뭐야?','cwd':'c:/IT/workspace_python/ADA','session_id':'test'}\\).encode\\('utf-8'\\)\\)\" | .venv/Scripts/python -X utf8 scripts/query_kb_hook.py; Write-Host \"`nEXIT: $LASTEXITCODE\")",
+      "Bash(ADA_HOOK_SKIP=\"\" .venv/Scripts/python -X utf8 scripts/query_kb_hook.py)",
+      "Bash(ADA_HOOK_SKIP=\"\" KB_SERVER_URL=\"http://localhost:9999\" .venv/Scripts/python -X utf8 scripts/query_kb_hook.py)",
+      "Bash(curl -s http://localhost:11434/api/tags)",
+      "Bash(ADA_HOOK_SKIP='' .venv/Scripts/python -X utf8 -c ' *)",
+      "Bash(ADA_HOOK_SKIP=\"\" KB_SERVER_URL=\"http://localhost:9999\" OLLAMA_BASE_URL=\"http://localhost:19999\" .venv/Scripts/python -X utf8 scripts/query_kb_hook.py)"
     ]
   },
   "hooks": {
