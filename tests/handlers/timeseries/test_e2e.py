@@ -33,7 +33,7 @@ def all_results():
     results = {}
     t0 = time.time()
     for sc in demo.SCENARIOS:
-        results[sc.sid] = demo.run_scenario(sc)
+        results[sc["sid"]] = demo.run_scenario(sc)
     elapsed = time.time() - t0
     return {"results": results, "elapsed": elapsed}
 
