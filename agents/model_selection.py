@@ -80,6 +80,16 @@ class ModelSelectionAgent(BaseAgent):
                 top3 = ["XGBoost"]
                 rationale = "최후 fallback"
 
+            # Day 11 — KB 인용 시 per-agent 카운터 증가 (KP9 측정 정확도)
+            if citations:
+                try:
+                    from ada.observability.metrics import record_kb_citation
+
+                    for _ in citations:
+                        record_kb_citation(source="self_learning_kb")
+                except Exception:
+                    pass
+
             return state.with_update(
                 model_candidates=top3,
                 kb_citations=list(set(state.kb_citations + citations)),

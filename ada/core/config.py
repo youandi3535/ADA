@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # GTX 1060 3GB 환경: num_gpu=0 CPU 전용, Ryzen 7 3800XT 16T → ~7 t/s
     ollama_coder_model: str = Field(default="qwen2.5-coder:7b", validation_alias="OLLAMA_CODER_MODEL")
 
+    # ----- KPI 측정 (Day 10) -----
+    kpi_cache_ttl_seconds: int = Field(default=60, validation_alias="KPI_CACHE_TTL_SECONDS")
+    kpi_default_window_hours: int = Field(default=24, validation_alias="KPI_DEFAULT_WINDOW_HOURS")
+    # 외부 Prometheus 서버 (옵션). 미설정 시 in-process registry 사용.
+    kpi_prometheus_url: str = Field(default="", validation_alias="KPI_PROMETHEUS_URL")
+
     @property
     def database_url_async(self) -> str:
         if self.database_url.startswith("postgresql://"):

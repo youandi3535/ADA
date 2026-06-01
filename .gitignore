@@ -52,6 +52,9 @@ dist/
 build/
 *.egg-info/
 
+# 데모 로컬 출력물 (scripts/demo 실행 결과)
+out/
+
 # Claude Code 로컬 설정 (개인 파일은 무시, 팀 공유 설정은 추적)
 .claude/*
 !.claude/settings.json

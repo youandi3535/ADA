@@ -43,7 +43,25 @@
       "Bash(ADA_HOOK_SKIP=\"\" KB_SERVER_URL=\"http://localhost:9999\" .venv/Scripts/python -X utf8 scripts/query_kb_hook.py)",
       "Bash(curl -s http://localhost:11434/api/tags)",
       "Bash(ADA_HOOK_SKIP='' .venv/Scripts/python -X utf8 -c ' *)",
-      "Bash(ADA_HOOK_SKIP=\"\" KB_SERVER_URL=\"http://localhost:9999\" OLLAMA_BASE_URL=\"http://localhost:19999\" .venv/Scripts/python -X utf8 scripts/query_kb_hook.py)"
+      "Bash(ADA_HOOK_SKIP=\"\" KB_SERVER_URL=\"http://localhost:9999\" OLLAMA_BASE_URL=\"http://localhost:19999\" .venv/Scripts/python -X utf8 scripts/query_kb_hook.py)",
+      "PowerShell(.venv\\\\Scripts\\\\ruff check ada/observability/kpi.py api/routes/observability.py scripts/kpi_measure.py frontend/app.py tests/test_kpi_compute.py tests/integration/test_observability_kpi_api.py 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\ruff check ada/observability/kpi.py api/routes/observability.py scripts/kpi_measure.py frontend/app.py tests/test_kpi_compute.py tests/integration/test_observability_kpi_api.py --fix 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\pytest tests/test_kpi_compute.py -v 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\pytest tests/integration/test_observability_kpi_api.py -v 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python scripts/kpi_measure.py --since 24 --json 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\pytest tests/ -q --tb=no 2>&1)",
+      "PowerShell(tail -5)",
+      "Bash(.venv/Scripts/pytest tests/ -q --tb=line)",
+      "PowerShell(.venv\\\\Scripts\\\\pytest tests/test_day11_kb_citation_payload.py -v 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\ruff check ada/observability/metrics.py agents/base.py agents/model_selection.py 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\ruff check scripts/demo/timeseries_demo.py 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python scripts/demo/timeseries_demo.py --scenario anomaly --json 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python scripts/demo/timeseries_demo.py --scenario anomaly 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python scripts/demo/timeseries_demo.py --scenario 1d 2>&1)",
+      "Bash(rm -f .git/index.lock && echo \"lock 제거 완료\")"
+    ],
+    "additionalDirectories": [
+      "C:\\IT\\workspace_python\\ADA\\.git"
     ]
   },
   "hooks": {
