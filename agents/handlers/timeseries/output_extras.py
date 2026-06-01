@@ -1,19 +1,325 @@
-"""agents.handlers.timeseries.output_extras — 시계열 산출물 추가 자산 (CS 담당).
+"""agents.handlers.timeseries.output_extras — 시계열 산출물 추가 자산 (CS 담당, cs-day9 v2).
 
-OUT-01(PPT) / OUT-04(HTML) 에 임베드할 시계열 전용 차트 / 표.
-Day 9 (CS): 예측 곡선 + 신뢰구간 + STL 4단 그래프.
+OUT-01(PPT) / OUT-02(PDF) / OUT-04(HTML) carrier 가 임베드할 시계열 전용 차트·표·텍스트.
+
+진입함수 (dispatcher 자동 등록):
+  - build(state, ctx=None) -> dict   {charts, tables, text_blocks}  ★ base.py _call_extras 가 우선 호출
+  - assets(state, ctx=None) -> dict  build 호환 래퍼 (구 인터페이스 유지)
+
+DoD: charts 에 forecast_chart + decomposition 둘 다 포함 (OUT-04 임베드).
+
+5 단 forecast (B) + 3 단 decomposition (C):
+  B-1 PI 확인 / B-2 y 재로드 / B-3 모델별 PI 재추출 / B-4 matplotlib / B-5 MinIO
+  C-1 STL 경로 확인 / C-2 재사용 vs 신규 / C-3 통합
+
+핵심 설계 원칙:
+  - 인라인 안전 우선 — 모든 차트 try/except (matplotlib/MinIO 실패 → path=None)
+  - PI 3 단 분기 — 저장 활용 (B-1a) / 모델 객체 재추출 (B-3a) / point only (B-3b)
+  - STL 재사용 우선 — cs-day3 결과 활용 · 신규는 fallback
+  - insights 재사용 (cs-day8) — text_blocks 에 그대로
+  - 행동권고 규칙 기반 — MASE/improvement 기반 (LLM 호출 없음)
+  - OUTPUT_EXTRAS_KEYS 3 키만 반환 (category_label/color 은 base.py CATEGORY_THEME)
+  - 롤백 1 개만 — best_model 부재 시 빈 dict
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import matplotlib  # noqa: WPS433
 
-def assets(state: Any) -> dict[str, Any]:
-    """ReportComposer 가 각 산출물 생성기에 전달하는 추가 자산."""
+matplotlib.use("Agg")  # GUI 없는 환경(서버/Docker) 대비 — pyplot import 전에 1회만
+
+logger = logging.getLogger(__name__)
+
+# E-1 freq → 한국어 단위
+FREQ_UNIT_KO = {"D": "일", "W": "주", "M": "개월", "MS": "개월", "H": "시간"}
+MAX_FORECAST_ROWS = 20  # E-1 표 최대 행
+SEASONAL_FALLBACK = 7  # C-2b default period
+
+
+# ════════════════════════════════════════════════════════════════
+# 모델별 PI 재추출 (cs-day6 §F-Extension F-ext-2.2 와 일관)
+# ════════════════════════════════════════════════════════════════
+def _extract_pi_from_model(model: Any, n_steps: int, alpha: float = 0.05):
+    """모델별 95% PI 추출 — SARIMA / Prophet / NeuralForecast 분기."""
+    import numpy as np  # noqa: WPS433
+
+    if hasattr(model, "get_forecast"):  # SARIMA/SARIMAX
+        fc = model.get_forecast(steps=n_steps)
+        ci = fc.conf_int(alpha=alpha)
+        lower = np.asarray(ci.iloc[:, 0] if hasattr(ci, "iloc") else ci[:, 0])
+        upper = np.asarray(ci.iloc[:, 1] if hasattr(ci, "iloc") else ci[:, 1])
+        return lower, upper
+    if hasattr(model, "predict") and hasattr(model, "make_future_dataframe"):  # Prophet
+        future = model.make_future_dataframe(periods=n_steps)
+        forecast = model.predict(future)
+        return forecast["yhat_lower"].values[-n_steps:], forecast["yhat_upper"].values[-n_steps:]
+    if hasattr(model, "predict_intervals"):  # NeuralForecast
+        pi_df = model.predict_intervals(level=[95])
+        return pi_df["lower_95"].values[:n_steps], pi_df["upper_95"].values[:n_steps]
+    raise ValueError("PI 추출 불가 모델")
+
+
+# ════════════════════════════════════════════════════════════════
+# §D-2. 행동권고 (규칙 기반 — LLM 호출 없음)
+# ════════════════════════════════════════════════════════════════
+def _build_recommendations(metrics: dict, freq: str, eda: dict) -> str:
+    """규칙 기반 행동권고 — MASE / improvement / seasonal_period 기반."""
+    lines: list[str] = []
+
+    mase = metrics.get("MASE")
+    if mase is not None:
+        if mase < 0.5:
+            lines.append("모델 성능 매우 우수 (MASE<0.5) — 운영 안정 단계, 재고는 정상 수준 유지 권장.")
+        elif mase < 1.0:
+            lines.append(f"모델 성능 양호 (MASE={mase:.2f}) — 주간 단위 모니터링 + 분기별 검토 권장.")
+        else:
+            lines.append(f"모델 성능 주의 (MASE={mase:.2f} >= 1.0) — 재학습 권장 + 입력 데이터 점검.")
+
+    improvement = metrics.get("rmse_improvement_vs_naive")
+    if improvement is not None and improvement < 0:
+        lines.append(f"naïve 대비 {improvement:+.1%} 열위 — 다른 모델 후보 검토 권장.")
+
+    s = eda.get("seasonal_period")
+    if s and s in (7, 12, 30, 365):
+        unit_map = {7: "주간", 12: "월간", 30: "월간 (일별)", 365: "연간"}
+        lines.append(f"{unit_map[s]} 계절성 명확 — 해당 주기 단위 의사결정에 우선 활용.")
+
+    return "\n".join(lines) if lines else ""
+
+
+def _eda_dict(state: Any) -> dict:
+    raw = getattr(state, "eda_summary", None)
+    return raw if isinstance(raw, dict) else {}
+
+
+# ════════════════════════════════════════════════════════════════
+# §A~§F. build — 메인 진입점
+# ════════════════════════════════════════════════════════════════
+def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+    """OUT-01/02/04 carrier 추가 자산 (charts·tables·text_blocks). 설계도 cs-day9 §A~§F."""
+    # ── A-1 : best_model 가드 ──
+    bm = getattr(state, "best_model", None) or {}
+    if not bm or not isinstance(bm, dict):
+        return {}  # → RB-1 빈 dict 응급 (carrier 가 처리)
+
+    # ── A-2 : eda_summary 가드 ──
+    eda = _eda_dict(state)
+
+    # ── A-3 : ctx 정규화 + 변수 추출 ──
+    ctx = ctx or {}
+    figsize = ctx.get("figsize", (12, 5))
+    dpi = ctx.get("dpi", 100)
+    metrics = bm.get("metrics") or {}
+    freq = (getattr(state, "category_extras", None) or {}).get("timeseries", {}).get("freq", "D")
+    model_name = bm.get("model_name", "Unknown")
+
+    charts: list[str] = []
+    tables: list[dict] = []
+    text_blocks: list[dict] = []
+
+    import numpy as np  # noqa: WPS433
+
+    # ════════════════════════════════════════════════════════════
+    # §B. forecast_chart 5 단 (★ DoD 1)
+    # ════════════════════════════════════════════════════════════
+    # ── B-1 : PI 정보 확인 ──
+    lower = metrics.get("pi_lower")
+    upper = metrics.get("pi_upper")
+    if isinstance(lower, list) and isinstance(upper, list):
+        lower = np.asarray(lower)  # B-1a
+        upper = np.asarray(upper)
+    else:
+        lower = upper = None  # B-1b
+
+    # ── B-2 : y_train / y_val / y_pred 재로드 ──
+    y_pred = metrics.get("y_pred_val")
+    y_train = y_val = None
+    forecast_path = None
+
+    if y_pred is None:
+        try:
+            from agents.handlers.common.shared import load_dataframe_from_state
+            from agents.training_executor import _split_xy
+
+            df = load_dataframe_from_state(state)
+            X, y = _split_xy(df, getattr(state, "target_column", None))
+            split = int(len(y) * 0.8)
+            y_train, y_val = y[:split], y[split:]
+            model_obj = bm.get("model_obj")
+            if model_obj is not None:
+                from pipelines.factory import PipelineFactory
+
+                pipe = PipelineFactory.create(state.category)
+                y_pred = pipe.predict(model_obj, X[split:])
+        except Exception as e:
+            logger.warning("y_reload_failed: %s", e)
+    else:
+        y_val = metrics.get("y_val_actual")
+        y_train = metrics.get("y_train_tail")
+
+    # ── B-3 : 모델 객체로 PI 재추출 ──
+    if lower is None and bm.get("model_obj") is not None and y_val is not None:
+        try:
+            lower, upper = _extract_pi_from_model(bm["model_obj"], n_steps=len(y_val))  # B-3a
+        except Exception:
+            lower = upper = None  # B-3b
+
+    # ── B-4 : matplotlib 차트 ──
+    if y_pred is not None and y_val is not None:
+        try:
+            import matplotlib.pyplot as plt  # noqa: WPS433
+            import pandas as pd  # noqa: WPS433
+
+            y_pred_arr = np.asarray(y_pred).flatten()
+            y_val_arr = np.asarray(y_val).flatten()
+
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+            n_train = len(y_train) if y_train is not None else 0
+            if y_train is not None:
+                idx_train = pd.RangeIndex(start=0, stop=n_train)
+                ax.plot(idx_train, np.asarray(y_train).flatten(), color="black", label="과거", linewidth=1)
+
+            idx_val = pd.RangeIndex(start=n_train, stop=n_train + len(y_val_arr))
+            ax.plot(idx_val, y_val_arr[: len(idx_val)], color="blue", label="실제 (val)", linewidth=1.5)
+            ax.plot(idx_val[: len(y_pred_arr)], y_pred_arr, color="orange", label="예측", linewidth=1.5)
+
+            # 95% PI 음영 (B-1a or B-3a 활용)
+            if lower is not None and upper is not None:
+                L = min(len(lower), len(upper), len(idx_val))
+                ax.fill_between(idx_val[:L], lower[:L], upper[:L], alpha=0.2, color="orange", label="95% PI")
+
+            ax.set_title(f"Forecast — {model_name}")
+            ax.set_xlabel("time")
+            ax.set_ylabel(getattr(state, "target_column", None) or "y")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+            # ── B-5 : MinIO 저장 ──
+            from agents.handlers.common.shared import save_chart_to_minio
+
+            forecast_path = save_chart_to_minio(fig, kind="timeseries/forecast", job_id=getattr(state, "job_id", ""))
+        except Exception as e:
+            logger.warning("forecast_chart_failed: %s", e)
+            forecast_path = None  # 인라인 안전
+
+    if forecast_path:
+        charts.append(forecast_path)
+
+    # ════════════════════════════════════════════════════════════
+    # §C. decomposition 3 단 (★ DoD 2)
+    # ════════════════════════════════════════════════════════════
+    decomp_path = None
+    stl_paths = [c for c in (eda.get("charts") or []) if isinstance(c, str) and "/stl" in c]
+
+    if stl_paths:
+        decomp_path = stl_paths[0]  # C-2a 재사용 (간단 + 효율)
+    else:
+        try:  # C-2b 신규 생성
+            import matplotlib.pyplot as plt  # noqa: WPS433
+            from statsmodels.tsa.seasonal import seasonal_decompose  # noqa: WPS433
+
+            from agents.handlers.common.shared import load_dataframe_from_state, save_chart_to_minio
+
+            df = load_dataframe_from_state(state)
+            y = df[state.target_column].dropna()
+            s = eda.get("seasonal_period") or SEASONAL_FALLBACK
+
+            if len(y) >= 2 * s and y.var() > 0:  # 가드
+                res = seasonal_decompose(y, period=s, model="additive")
+
+                fig, axes = plt.subplots(4, 1, figsize=(12, 8), sharex=True, dpi=dpi)
+                res.observed.plot(ax=axes[0], title="Observed")
+                res.trend.plot(ax=axes[1], title="Trend")
+                res.seasonal.plot(ax=axes[2], title="Seasonal")
+                res.resid.plot(ax=axes[3], title="Residual")
+                plt.tight_layout()
+
+                decomp_path = save_chart_to_minio(
+                    fig, kind="timeseries/decomposition", job_id=getattr(state, "job_id", "")
+                )
+        except Exception as e:
+            logger.warning("decomp_chart_failed: %s", e)
+            decomp_path = None  # 인라인 안전
+
+    # ── C-3 : charts 통합 ──
+    if decomp_path:
+        charts.append(decomp_path)
+
+    # ════════════════════════════════════════════════════════════
+    # §D. text_blocks
+    # ════════════════════════════════════════════════════════════
+    # ── D-1 : insights 재사용 (cs-day8) ──
+    insights = getattr(state, "insights", None)
+    if insights and isinstance(insights, str) and insights.strip():
+        text_blocks.append({"type": "insight", "title": "분석 인사이트", "body": insights.strip()})
+
+    # ── D-2 : 행동권고 카드 ──
+    recommendations = _build_recommendations(metrics, freq, eda)
+    if recommendations:
+        text_blocks.append({"type": "action", "title": "권장 액션", "body": recommendations})
+
+    # ════════════════════════════════════════════════════════════
+    # §E. tables
+    # ════════════════════════════════════════════════════════════
+    # ── E-1 : forecast 값 표 ──
+    if y_pred is not None:
+        y_pred_arr = np.asarray(y_pred).flatten()
+        if len(y_pred_arr) > 0:
+            unit_ko = FREQ_UNIT_KO.get(freq, "주기")
+            horizon = len(y_pred_arr)
+            rows = []
+            for i, pred in enumerate(y_pred_arr[: min(MAX_FORECAST_ROWS, horizon)]):
+                row = [f"t+{i + 1}", f"{float(pred):.2f}"]
+                if lower is not None and i < len(lower):
+                    row.extend([f"{float(lower[i]):.2f}", f"{float(upper[i]):.2f}"])
+                else:
+                    row.extend(["-", "-"])
+                rows.append(row)
+            tables.append(
+                {
+                    "title": f"다음 {horizon}{unit_ko} 예측",
+                    "columns": ["시점", "예측값", "하한 (95%)", "상한 (95%)"],
+                    "rows": rows,
+                }
+            )
+
+    # ── E-2 : 모델 성능 카드 ──
+    perf_rows = []
+    for key, label in [
+        ("val_rmse", "RMSE"),
+        ("val_mae", "MAE"),
+        ("MASE", "MASE"),
+        ("sMAPE", "sMAPE (%)"),
+        ("rmse_improvement_vs_naive", "개선율 vs naïve"),
+    ]:
+        v = metrics.get(key)
+        if v is not None:
+            if key == "rmse_improvement_vs_naive":
+                perf_rows.append([label, f"{v:+.1%}"])
+            elif key == "sMAPE":
+                perf_rows.append([label, f"{v:.1f}"])
+            else:
+                perf_rows.append([label, f"{v:.3f}"])
+    if perf_rows:
+        tables.append({"title": "모델 성능 요약", "columns": ["메트릭", "값"], "rows": perf_rows})
+
+    # ════════════════════════════════════════════════════════════
+    # §F. 반환 (OUTPUT_EXTRAS_KEYS 3 키)
+    # ════════════════════════════════════════════════════════════
     return {
-        "category_label": "시계열",
-        "category_color": "#16a34a",  # 초록 (v2 4색)
-        "extra_charts": [],  # Day 9 에서 실제 forecast plot 채움
-        "extra_tables": [],
+        "charts": charts,
+        "tables": tables,
+        "text_blocks": text_blocks,
     }
+
+
+# ════════════════════════════════════════════════════════════════
+# assets — build 호환 래퍼 (구 인터페이스 유지)
+# ════════════════════════════════════════════════════════════════
+def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+    """carrier 가 수신하는 추가 자산 — build 위임 (base.py 는 build 우선 호출)."""
+    return build(state, ctx)
