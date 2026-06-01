@@ -1,40 +1,800 @@
 """agents.handlers.timeseries.preprocessor — 시계열 전처리 (CS 담당).
 
-- plan(state): LLM 실패시 fallback 계획
-- apply(df, plan, state): lag·rolling 등 시계열 step 적용
+━━━ 실행 순서와 그 이유 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Day 1 (CS): diff·boxcox·exog 추가 예정.
+Phase 0  sort_by_time
+  shift/rolling 이 "시간 순서"를 전제하므로 날짜 컬럼 기준 오름차순
+  정렬을 가장 먼저 수행한다. 정렬 없이 shift(1) 하면 다른 날짜를
+  가리킬 수 있어 누설·오연산이 발생한다.
+
+Phase 1  fill_missing
+  lag/rolling/diff 는 결측치를 연쇄 전파시키므로 특성 생성 전에
+  결측을 제거한다. ffill(limit=7) → bfill(limit=3) → linear
+  interpolate 순서. mean/median imputation 은 전체 통계를 써서
+  미래 누설 발생 — 사용 금지.
+
+Phase 2  boxcox
+  분산 안정화 변환을 lag/rolling 보다 반드시 먼저 수행한다.
+  이유: lag·rolling 을 "변환된 스케일"에서 만들어야 모델 입력이
+  일관된 스케일을 갖는다. boxcox 를 나중에 적용하면 target 은
+  변환됐는데 lag1 은 원본 스케일 → 스케일 불일치.
+  전략: 원본 target 보존 + {target}_bc 컬럼 추가.
+  이후 lag/rolling 은 _bc 기준으로 계산.
+
+Phase 3  diff
+  "추가 특성(feature)"으로 취급 (target 변환 아님 → 원본 보존).
+  shifted = target.shift(1) 후 diff(d) 적용.
+  shift(1) 선행 이유: diff(t, t-1) 직접 계산 시 t 값 사용 → 누설.
+  {target}_diff1 = target[t-1] - target[t-2] (이미 관측된 값).
+
+Phase 4  lag_features
+  boxcox 적용 여부에 따라 _bc 또는 원본 target 기준.
+  lags 결정: 계절성 period 있으면 [1, p, 2p],
+             없으면 일별 기본 [1, 7, 14].
+  최대 lag 상한 = min(n//4, 28) — lag > n/4 면 유효 행 75% 미만.
+
+Phase 5a  rolling_mean
+  shift(1) 후 rolling(w, min_periods=max(2, w//2)).mean().
+  min_periods=w//2: 짧은 시계열에서 window 절반 이상이면 계산 허용.
+
+Phase 5b  rolling_std
+  계절성 여부와 무관하게 항상 포함 (변동폭은 보편적 특성).
+  min_periods = max(2, w//2): std 는 최소 2개 관측치 필요.
+
+Phase 5c  ewm_mean
+  shift(1) 후 ewm(alpha, adjust=False).mean().
+  alpha=0.3 빠른 반응(반감 ≈ 2시점), alpha=0.1 느린 반응(반감 ≈ 7시점).
+  adjust=False: 재귀식 — 긴 시계열에서 수치 안정.
+
+Phase 6  exog
+  category_extras["timeseries"]["exog_columns"] 에 명시된 외생변수에
+  target 과 동일한 lag·rolling_mean 적용. 없는 컬럼은 skip.
+
+Phase 7  fill_feature_nans
+  lag/rolling/diff 생성 후 앞 max_warmup 행에 구조적 NaN 발생.
+  strategy="drop" : warmup 행 제거 (기본).
+  strategy="zero" : 0 으로 채움 (LSTM 등 패딩 0 모델).
+  strategy="none" : NaN 유지 (LightGBM 등 자체 처리).
+
+Phase 8  time_order_split
+  항상 마지막. shuffle 없음.
+  gap 파라미터: train 마지막과 test 첫 행 사이 제거할 행 수.
+  look-ahead bias 방지용. _split 값: "train" | "gap" | "test".
+
+규칙
+----
+R-005 : state.with_update() — state 직접 수정 금지
+R-103 : PII 로그 출력 금지
+leakage_safe : 모든 집계(rolling/ewm/lag)는 shift(1) 이후 적용
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+# ════════════════════════════════════════════════════════
+# data_profile 조회 헬퍼
+# ════════════════════════════════════════════════════════
+
+
+def _adf_p_value(state: Any) -> float:
+    """ADF p-value 조회. 없으면 1.0 (비정상으로 간주)."""
+    try:
+        return float(state.data_profile["stationarity"]["adf_p_value"])
+    except (TypeError, KeyError):
+        return 1.0
+
+
+def _is_stationary(state: Any) -> bool:
+    return _adf_p_value(state) < 0.05
+
+
+def _seasonality_period(state: Any) -> int | None:
+    try:
+        info = state.data_profile["seasonality"]
+        if info.get("has_seasonality"):
+            p = info.get("period")
+            return int(p) if p and int(p) >= 2 else None
+        return None
+    except (TypeError, KeyError):
+        return None
+
+
+def _detect_date_col(state: Any, df: Any) -> str | None:
+    try:
+        col = state.data_profile.get("date_col")
+        if col and col in df.columns:
+            return col
+    except (TypeError, AttributeError):
+        pass
+    import pandas as pd
+
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            return col
+    return None
+
+
+def _exog_columns(state: Any) -> list[str]:
+    try:
+        return list(state.category_extras.get("timeseries", {}).get("exog_columns", []))
+    except (TypeError, AttributeError):
+        return []
+
+
+def _decide_lags(state: Any, n_rows: int) -> list[int]:
+    """data_profile 기반 lag 목록 결정.
+
+    - [1] 항상 포함 (직전 시점).
+    - 계절성 period p: [p, 2*p] 추가.
+    - period 없으면: [7, 14] (일별 기본).
+    - 최대 lag 상한 = min(n//4, 28).
+    """
+    max_lag = min(n_rows // 4, 28) if n_rows >= 8 else 2
+    period = _seasonality_period(state)
+    candidates = sorted({1, period, period * 2}) if period else [1, 7, 14]
+    return [lag for lag in candidates if lag <= max_lag]
+
+
+def _decide_windows(n_rows: int) -> list[int]:
+    """행 수 기반 rolling window 결정.
+
+    - 기본: [7, 14].
+    - n >= 60 이면 28 추가 (월간 추세).
+    - 최대 window 상한 = n//4.
+    """
+    max_w = n_rows // 4 if n_rows >= 8 else 2
+    candidates = [7, 14] + ([28] if n_rows >= 60 else [])
+    return [w for w in candidates if w <= max_w]
+
+
+# ════════════════════════════════════════════════════════
+# plan()
+# ════════════════════════════════════════════════════════
 
 
 def plan(state: Any) -> list[dict[str, Any]]:
-    """시계열 기본 전처리 계획. 시간 누설 가드 포함."""
-    return [
-        {"name": "lag_features", "lags": [1, 7, 14], "needs_review": False, "leakage_safe": True},
-        {"name": "rolling_mean", "windows": [7, 14], "needs_review": False, "leakage_safe": True},
-    ]
+    """시계열 전처리 계획 생성 (LLM 실패 시 fallback).
+
+    Phase 순서는 모듈 docstring 이유를 그대로 따른다.
+    모든 파라미터는 data_profile 로부터 동적으로 결정한다.
+    """
+    try:
+        n_rows = int(state.data_profile.get("rows", 120))
+    except (TypeError, AttributeError):
+        n_rows = 120
+
+    stationary = _is_stationary(state)
+    period = _seasonality_period(state)
+    lags = _decide_lags(state, n_rows)
+    windows = _decide_windows(n_rows)
+    exog_cols = _exog_columns(state)
+    max_warmup = (max(lags) if lags else 14) + (max(windows) if windows else 14)
+
+    steps: list[dict[str, Any]] = []
+
+    # Phase 0
+    steps.append({"name": "sort_by_time", "leakage_safe": True, "needs_review": False})
+
+    # Phase 1
+    steps.append(
+        {
+            "name": "fill_missing",
+            "ffill_limit": 7,  # 최대 7시점 연속 결측 → 이전 값 복사
+            "bfill_limit": 3,  # ffill 못 채운 앞부분 보정 (최소 사용)
+            "leakage_safe": True,
+            "needs_review": False,
+        }
+    )
+
+    # Phase 2: 비정상 or 계절성 있을 때 분산 안정화
+    # lag/rolling 보다 반드시 앞에 위치해야 스케일 일관성 보장
+    if not stationary or period is not None:
+        steps.append(
+            {
+                "name": "boxcox",
+                "shift_min": True,  # min<=0 이면 offset=|min|+1 자동 추가
+                "lambda_clip": (-5.0, 5.0),  # 수치 오버플로 방지 lambda 범위
+                "fallback": "log1p",  # boxcox 실패(상수 시리즈 등) 시 대체
+                "leakage_safe": True,
+                "needs_review": True,
+            }
+        )
+
+    # Phase 3: 변화량 특성 (target 변환 아님, 추가 feature)
+    # ADF p > 0.1(강하게 비정상)이면 2차 차분도 추가
+    diff_orders = [1] + ([2] if _adf_p_value(state) > 0.1 else [])
+    steps.append(
+        {
+            "name": "diff",
+            "orders": diff_orders,
+            "leakage_safe": True,
+            "needs_review": False,
+        }
+    )
+
+    # Phase 4: boxcox 적용 여부에 따라 _bc 또는 원본 기준 lag 생성
+    steps.append(
+        {
+            "name": "lag_features",
+            "lags": lags,
+            "use_bc_if_available": True,
+            "leakage_safe": True,
+            "needs_review": False,
+        }
+    )
+
+    # Phase 5a: 추세 평활
+    steps.append(
+        {
+            "name": "rolling_mean",
+            "windows": windows,
+            "min_periods_ratio": 0.5,  # min_periods = max(2, int(w*ratio))
+            "use_bc_if_available": True,
+            "leakage_safe": True,
+            "needs_review": False,
+        }
+    )
+
+    # Phase 5b: 변동폭 — 계절성 무관하게 항상 포함
+    steps.append(
+        {
+            "name": "rolling_std",
+            "windows": windows,
+            "min_periods_ratio": 0.5,
+            "use_bc_if_available": True,
+            "leakage_safe": True,
+            "needs_review": False,
+        }
+    )
+
+    # Phase 5c: 지수 가중 이동 평균
+    steps.append(
+        {
+            "name": "ewm_mean",
+            "alphas": [0.3, 0.1],  # 0.3=빠른 반응, 0.1=느린 반응
+            "use_bc_if_available": True,
+            "leakage_safe": True,
+            "needs_review": False,
+        }
+    )
+
+    # Phase 6: 외생변수 (target 특성 생성 이후)
+    if exog_cols:
+        exog_windows = [w for w in windows if w <= 14]
+        steps.append(
+            {
+                "name": "exog",
+                "columns": exog_cols,
+                "lags": lags,
+                "rolling_windows": exog_windows or [7],
+                "leakage_safe": True,
+                "needs_review": False,
+            }
+        )
+
+    # Phase 7: 특성 생성 후 구조적 NaN 처리
+    steps.append(
+        {
+            "name": "fill_feature_nans",
+            "strategy": "drop",  # "drop"|"zero"|"none"
+            "max_warmup": max_warmup,  # max(lags) + max(windows)
+            "protect_target": True,
+            "leakage_safe": True,
+            "needs_review": False,
+        }
+    )
+
+    # Phase 8: 항상 마지막
+    steps.append(
+        {
+            "name": "time_order_split",
+            "test_ratio": 0.2,
+            "gap": 0,  # look-ahead bias 방지: gap=예측horizon
+            "leakage_safe": True,
+            "needs_review": False,
+        }
+    )
+
+    return steps
+
+
+# ════════════════════════════════════════════════════════
+# apply()
+# ════════════════════════════════════════════════════════
 
 
 def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
-    """시계열 전용 step 적용 — 미래값 누설 금지 (shift(1) 후 rolling)."""
+    """Phase 0~8 순서대로 step 실행.
+
+    - 각 step 은 독립 실패해도 WARNING 후 continue.
+    - target 컬럼은 어떤 step 도 덮어쓰지 않는다.
+    - boxcox 적용 여부는 {target}_bc 존재 여부로 판단한다.
+    """
     out = df.copy()
-    target = state.target_column
+    target: str | None = state.target_column
+
     if not target or target not in out.columns:
+        logger.warning("target_column=%r 이 df 에 없음 — 전처리 건너뜀", target)
         return out
 
     for step in plan_steps:
         name = step.get("name")
         try:
-            if name == "lag_features":
-                for lag in step.get("lags", [1, 7, 14]):
-                    out[f"{target}_lag{lag}"] = out[target].shift(lag)
+            if name == "sort_by_time":
+                out = _apply_sort_by_time(out, state)
+
+            elif name == "fill_missing":
+                out = _apply_fill_missing(
+                    out,
+                    target,
+                    ffill_limit=step.get("ffill_limit", 7),
+                    bfill_limit=step.get("bfill_limit", 3),
+                )
+
+            elif name == "boxcox":
+                out = _apply_boxcox(
+                    out,
+                    target,
+                    shift_min=step.get("shift_min", True),
+                    lambda_clip=step.get("lambda_clip", (-5.0, 5.0)),
+                    fallback=step.get("fallback", "log1p"),
+                )
+
+            elif name == "diff":
+                out = _apply_diff(out, target, orders=step.get("orders", [1]))
+
+            elif name == "lag_features":
+                src = _bc_col_or_target(out, target, step.get("use_bc_if_available", True))
+                out = _apply_lag(out, src, lags=step.get("lags", [1, 7, 14]), label_base=target)
+
             elif name == "rolling_mean":
-                for w in step.get("windows", [7, 14]):
-                    out[f"{target}_rmean{w}"] = out[target].shift(1).rolling(w).mean()
-        except Exception:
+                src = _bc_col_or_target(out, target, step.get("use_bc_if_available", True))
+                out = _apply_rolling_mean(
+                    out,
+                    src,
+                    windows=step.get("windows", [7, 14]),
+                    min_periods_ratio=step.get("min_periods_ratio", 0.5),
+                    label_base=target,
+                )
+
+            elif name == "rolling_std":
+                src = _bc_col_or_target(out, target, step.get("use_bc_if_available", True))
+                out = _apply_rolling_std(
+                    out,
+                    src,
+                    windows=step.get("windows", [7, 14]),
+                    min_periods_ratio=step.get("min_periods_ratio", 0.5),
+                    label_base=target,
+                )
+
+            elif name == "ewm_mean":
+                src = _bc_col_or_target(out, target, step.get("use_bc_if_available", True))
+                out = _apply_ewm_mean(
+                    out,
+                    src,
+                    alphas=step.get("alphas", [0.3, 0.1]),
+                    label_base=target,
+                )
+
+            elif name == "exog":
+                out = _apply_exog(
+                    out,
+                    columns=step.get("columns", []),
+                    lags=step.get("lags", [1, 7]),
+                    rolling_windows=step.get("rolling_windows", [7]),
+                )
+
+            elif name == "fill_feature_nans":
+                out = _apply_fill_feature_nans(
+                    out,
+                    target=target,
+                    strategy=step.get("strategy", "drop"),
+                    max_warmup=step.get("max_warmup", 28),
+                    protect_target=step.get("protect_target", True),
+                )
+
+            elif name == "time_order_split":
+                out = _apply_time_order_split(
+                    out,
+                    test_ratio=step.get("test_ratio", 0.2),
+                    gap=step.get("gap", 0),
+                )
+
+            else:
+                logger.debug("알 수 없는 step=%r — 건너뜀", name)
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("step=%r 실패: %s — 건너뜀", name, exc)
             continue
+
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# 내부 유틸
+# ════════════════════════════════════════════════════════
+
+
+def _bc_col_or_target(df: Any, target: str, use_bc: bool) -> str:
+    bc = f"{target}_bc"
+    return bc if (use_bc and bc in df.columns) else target
+
+
+# ════════════════════════════════════════════════════════
+# Phase 0 — sort_by_time
+# ════════════════════════════════════════════════════════
+
+
+def _apply_sort_by_time(df: Any, state: Any) -> Any:
+    """날짜 컬럼 오름차순 정렬 + reset_index.
+
+    정렬 후 reset_index(drop=True) 이유: 이후 iloc 기반 연산
+    (fill_feature_nans, time_order_split) 의 안정성 확보.
+    날짜 컬럼이 없으면 현재 순서가 시간 순이라 가정하고 pass.
+    """
+    date_col = _detect_date_col(state, df)
+    if date_col is None:
+        logger.debug("sort_by_time: 날짜 컬럼 미감지 — 현재 순서 유지")
+        return df.copy()
+    return df.sort_values(date_col).reset_index(drop=True)
+
+
+# ════════════════════════════════════════════════════════
+# Phase 1 — fill_missing
+# ════════════════════════════════════════════════════════
+
+
+def _apply_fill_missing(
+    df: Any,
+    target: str,
+    ffill_limit: int = 7,
+    bfill_limit: int = 3,
+) -> Any:
+    """수치 컬럼 결측치 시계열 특화 처리.
+
+    처리 순서:
+    1. ffill(limit=ffill_limit): 이전 관측값 복사. 한계: ffill_limit.
+       limit 없는 ffill 은 길게 결측된 구간을 과거 값으로 채워
+       모델이 변화를 감지하지 못함 → limit 필수.
+    2. bfill(limit=bfill_limit): 시작 구간 NaN 보정. 최소 사용.
+       bfill 은 미래 값을 과거에 채우므로 limit 으로 제한.
+    3. interpolate(linear): 중간 결측 선형 보간. 양 끝점만 사용.
+    target 의 남은 NaN 은 유지 (모델 단 처리).
+    """
+    import numpy as np  # noqa: WPS433
+
+    out = df.copy()
+    num_cols = out.select_dtypes(include=[np.number]).columns.tolist()
+    for col in num_cols:
+        if out[col].isna().sum() == 0:
+            continue
+        out[col] = (
+            out[col]
+            .ffill(limit=ffill_limit)
+            .bfill(limit=bfill_limit)
+            .interpolate(method="linear", limit_direction="both")
+        )
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 2 — boxcox
+# ════════════════════════════════════════════════════════
+
+
+def _apply_boxcox(
+    df: Any,
+    target: str,
+    shift_min: bool = True,
+    lambda_clip: tuple[float, float] = (-5.0, 5.0),
+    fallback: str = "log1p",
+) -> Any:
+    """{target}_bc 컬럼 생성. 원본 target 절대 수정 안 함.
+
+    양수 보장:
+    - shift_min=True: min <= 0 이면 offset = abs(min) + 1.0.
+      예) min=-3 → offset=4 → 최솟값=1.
+
+    lambda 클리핑:
+    - scipy 반환 lambda 가 lambda_clip 밖이면 클리핑.
+      |lambda| > 5 면 변환값이 수치 오버플로 위험.
+
+    fallback="log1p":
+    - boxcox 실패(상수 시리즈, scipy 미설치) 시 log1p 적용.
+      log1p 는 lambda=0 인 boxcox 의 근사.
+
+    역변환 메타:
+    - df.attrs 에 boxcox_lambda, boxcox_offset, boxcox_target 저장.
+    """
+    import numpy as np  # noqa: WPS433
+
+    out = df.copy()
+    series = out[target].dropna().astype(float)
+    if len(series) < 3:
+        logger.warning("boxcox: 유효 관측치 %d개 — 건너뜀", len(series))
+        return out
+
+    offset = 0.0
+    if shift_min:
+        min_val = float(series.min())
+        if min_val <= 0:
+            offset = abs(min_val) + 1.0
+
+    shifted = series + offset
+    bc_col = f"{target}_bc"
+
+    try:
+        from scipy.stats import boxcox  # noqa: WPS433
+
+        transformed_arr, lam = boxcox(shifted)
+        lam = float(np.clip(lam, lambda_clip[0], lambda_clip[1]))
+        transformed = transformed_arr
+    except Exception as exc:
+        logger.warning("boxcox 실패(%s) → fallback=%r", exc, fallback)
+        if fallback == "log1p":
+            transformed = np.log1p(shifted.values)
+            lam = 0.0
+        else:
+            return out
+
+    out[bc_col] = float("nan")
+    out.loc[series.index, bc_col] = transformed
+    out.attrs["boxcox_lambda"] = lam
+    out.attrs["boxcox_offset"] = offset
+    out.attrs["boxcox_target"] = target
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 3 — diff
+# ════════════════════════════════════════════════════════
+
+
+def _apply_diff(df: Any, target: str, orders: list[int]) -> Any:
+    """{target}_diff{d} 컬럼 생성 (추가 feature, target 수정 없음).
+
+    leakage_safe 구현:
+    shifted = target.shift(1) 후 diff(d).
+    {target}_diff1 = target[t-1] - target[t-2] → t-1, t-2 모두 과거값.
+
+    NaN 발생: shift(1) → 앞 1행 NaN, diff(d) → 추가 d행 NaN.
+    총 앞 d+1 행 NaN → Phase 7 fill_feature_nans 에서 처리.
+    """
+    out = df.copy()
+    shifted = out[target].shift(1)
+    for d in orders:
+        out[f"{target}_diff{d}"] = shifted.diff(d)
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 4 — lag_features
+# ════════════════════════════════════════════════════════
+
+
+def _apply_lag(
+    df: Any,
+    src_col: str,
+    lags: list[int],
+    label_base: str,
+) -> Any:
+    """{label_base}_lag{n} 컬럼 생성.
+
+    src_col: 실제 연산 대상 (boxcox 있으면 _bc, 없으면 원본 target).
+    label_base: 컬럼명 기저 — 항상 target 명 사용하여 일관성 유지.
+    shift(lag): 정확히 lag 시점 이전 값. rolling 없음 → NaN 최소.
+    """
+    out = df.copy()
+    for lag in lags:
+        out[f"{label_base}_lag{lag}"] = out[src_col].shift(lag)
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 5a — rolling_mean
+# ════════════════════════════════════════════════════════
+
+
+def _apply_rolling_mean(
+    df: Any,
+    src_col: str,
+    windows: list[int],
+    min_periods_ratio: float = 0.5,
+    label_base: str = "",
+) -> Any:
+    """{label_base}_rmean{w} 컬럼 생성.
+
+    shift(1) 후 rolling(w, min_periods).mean():
+    - shift(1): t-1 시점부터 집계 → t 값 제외 → leakage_safe.
+    - min_periods = max(2, int(w * ratio)):
+        w=7, ratio=0.5 → min_periods=3.
+        window 절반 이상 채워지면 계산 허용 → 짧은 시계열 지원.
+        min_periods=1 은 단일 값 "평균" 생성 → 정보량 낮아 ratio=0.5 사용.
+    """
+    out = df.copy()
+    shifted = out[src_col].shift(1)
+    base = label_base or src_col
+    for w in windows:
+        mp = max(2, int(w * min_periods_ratio))
+        out[f"{base}_rmean{w}"] = shifted.rolling(w, min_periods=mp).mean()
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 5b — rolling_std
+# ════════════════════════════════════════════════════════
+
+
+def _apply_rolling_std(
+    df: Any,
+    src_col: str,
+    windows: list[int],
+    min_periods_ratio: float = 0.5,
+    label_base: str = "",
+) -> Any:
+    """{label_base}_rstd{w} 컬럼 생성.
+
+    shift(1) 후 rolling(w, min_periods).std():
+    - min_periods = max(2, int(w * ratio)):
+        std 는 분산의 제곱근, ddof=1 기준 최소 2개 관측치 필요.
+        min_periods < 2 면 std=NaN (pandas 기본 동작).
+    """
+    out = df.copy()
+    shifted = out[src_col].shift(1)
+    base = label_base or src_col
+    for w in windows:
+        mp = max(2, int(w * min_periods_ratio))
+        out[f"{base}_rstd{w}"] = shifted.rolling(w, min_periods=mp).std()
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 5c — ewm_mean
+# ════════════════════════════════════════════════════════
+
+
+def _apply_ewm_mean(
+    df: Any,
+    src_col: str,
+    alphas: list[float],
+    label_base: str = "",
+) -> Any:
+    """{label_base}_ewm{alpha_pct} 컬럼 생성.
+
+    shift(1) 후 ewm(alpha, adjust=False).mean():
+    - shift(1): leakage_safe.
+    - adjust=False: 재귀식 w_t = alpha*x_t + (1-alpha)*w_{t-1}.
+        True 는 초기 가중치 보정 방식. 긴 시계열에서 두 방식 수렴.
+        False 가 메모리 효율적이고 수치 안정.
+    - 컬럼명: alpha 를 정수 퍼센트로 표현.
+        alpha=0.3 → _ewm30, alpha=0.1 → _ewm10.
+    """
+    out = df.copy()
+    shifted = out[src_col].shift(1)
+    base = label_base or src_col
+    for alpha in alphas:
+        suffix = int(round(alpha * 100))
+        out[f"{base}_ewm{suffix}"] = shifted.ewm(alpha=alpha, adjust=False).mean()
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 6 — exog
+# ════════════════════════════════════════════════════════
+
+
+def _apply_exog(
+    df: Any,
+    columns: list[str],
+    lags: list[int],
+    rolling_windows: list[int],
+) -> Any:
+    """외생변수에 lag·rolling_mean 적용 (leakage_safe).
+
+    각 exog 컬럼:
+    - lag: shift(lag) — target lag 와 동일 로직.
+    - rolling_mean: shift(1) 후 rolling(w, min_periods=max(2, w//2)).mean().
+    없는 컬럼은 WARNING 후 skip — 파이프라인 중단 없음.
+    """
+    out = df.copy()
+    for col in columns:
+        if col not in out.columns:
+            logger.warning("exog 열 %r 이 df 에 없음 — 건너뜀", col)
+            continue
+        for lag in lags:
+            out[f"{col}_lag{lag}"] = out[col].shift(lag)
+        shifted = out[col].shift(1)
+        for w in rolling_windows:
+            mp = max(2, w // 2)
+            out[f"{col}_rmean{w}"] = shifted.rolling(w, min_periods=mp).mean()
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 7 — fill_feature_nans
+# ════════════════════════════════════════════════════════
+
+
+def _apply_fill_feature_nans(
+    df: Any,
+    target: str,
+    strategy: str = "drop",
+    max_warmup: int = 28,
+    protect_target: bool = True,
+) -> Any:
+    """특성 생성 후 구조적 NaN 처리.
+
+    strategy="drop":
+    앞 max_warmup 행 중 특성 컬럼에 NaN 있는 행 제거.
+    max_warmup = max(lags) + max(windows) — warmup 구간 최대 범위.
+    drop 후 reset_index(drop=True) → 이후 iloc 연산 안전.
+
+    strategy="zero":
+    특성 컬럼 NaN → 0.0.
+    protect_target=True 이면 target 컬럼 NaN 보존.
+    사용 케이스: LSTM 등 패딩을 0 으로 표현하는 모델.
+
+    strategy="none":
+    아무것도 안 함. LightGBM 등 NaN 자체 처리 모델.
+    """
+    out = df.copy()
+    feature_cols = [c for c in out.columns if c != target and c != "_split"]
+
+    if strategy == "drop":
+        warmup_range = out.iloc[:max_warmup]
+        has_nan = warmup_range[feature_cols].isna().any(axis=1)
+        drop_idx = warmup_range.index[has_nan]
+        out = out.drop(index=drop_idx).reset_index(drop=True)
+
+    elif strategy == "zero":
+        fill_cols = feature_cols if protect_target else [c for c in feature_cols if c != target]
+        for col in fill_cols:
+            out[col] = out[col].fillna(0.0)
+
+    elif strategy == "none":
+        pass
+
+    else:
+        logger.warning("fill_feature_nans: 알 수 없는 strategy=%r — none 처리", strategy)
+
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 8 — time_order_split
+# ════════════════════════════════════════════════════════
+
+
+def _apply_time_order_split(
+    df: Any,
+    test_ratio: float = 0.2,
+    gap: int = 0,
+) -> Any:
+    """시간 순서 보존 분할 → _split 컬럼 ("train"|"gap"|"test").
+
+    분할 로직:
+    - split_idx = max(1, int(n * (1 - test_ratio))).
+      예) n=100, ratio=0.2 → split_idx=80.
+    - [0, split_idx): "train"
+    - [split_idx, split_idx+gap): "gap"  (gap>0 시)
+      이유: 예측 horizon h 만큼의 행은 train 마지막이 test 레이블에
+      포함될 수 있어 look-ahead bias 위험. gap=h 로 차단.
+    - [split_idx+gap, n): "test"
+
+    shuffle 절대 없음 — 시계열에서 shuffle 은 미래 누설.
+    """
+    out = df.copy()
+    n = len(out)
+    split_idx = max(1, int(n * (1.0 - test_ratio)))
+    gap_end = min(n, split_idx + gap)
+
+    out["_split"] = "train"
+    if gap > 0 and gap_end > split_idx:
+        out.iloc[split_idx:gap_end, out.columns.get_loc("_split")] = "gap"
+    out.iloc[gap_end:, out.columns.get_loc("_split")] = "test"
     return out
