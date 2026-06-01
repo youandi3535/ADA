@@ -7,11 +7,18 @@
     - ada_llm_tokens_total       (Counter,   by model + direction)
     - ada_kb_citations_total     (Counter,   by source)
 
+Day 11 — per-agent KB 인용 카운터 (KP9 정확도 위해):
+    - kb_citation_counter (ContextVar) — record_kb_citation 호출 시 증가
+    - reset_kb_citation_counter()      — agent 시작 시 0 으로 리셋
+    - get_kb_citation_count()          — agent 종료 시 누적값 조회
+    BaseAgent.log_agent_run 이 사용하여 AgentRun.payload['kb_citations'] 에 기록.
+
 prometheus_client 미설치 환경에서는 stub 객체로 silent no-op.
 """
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any
 
 try:
@@ -131,9 +138,31 @@ def record_llm_tokens(model: str, input_tokens: int, output_tokens: int) -> None
         pass
 
 
+# ----- Day 11 — per-agent KB 인용 카운터 (ContextVar 기반) -------------------
+# 비동기 태스크별 격리. BaseAgent.log_agent_run 가 진입 시 0 으로 리셋,
+# 종료 시 누적값을 AgentRun.payload['kb_citations'] 에 기록한다.
+_kb_citation_counter: ContextVar[int] = ContextVar("ada_kb_citation_count", default=0)
+
+
+def reset_kb_citation_counter() -> None:
+    """현재 contextvars 컨텍스트의 카운터를 0 으로 리셋. agent 시작 시 호출."""
+    _kb_citation_counter.set(0)
+
+
+def get_kb_citation_count() -> int:
+    """현재 컨텍스트의 누적 KB 인용 횟수. agent 종료 시 호출."""
+    return _kb_citation_counter.get()
+
+
 def record_kb_citation(source: str = "self_learning_kb") -> None:
+    """Prometheus 카운터 + per-agent ContextVar 카운터 동시 증가."""
     try:
         ada_kb_citations_total.labels(source=source).inc()
+    except Exception:
+        pass
+    # ContextVar 는 prometheus 미설치와 무관하게 항상 동작
+    try:
+        _kb_citation_counter.set(_kb_citation_counter.get() + 1)
     except Exception:
         pass
 

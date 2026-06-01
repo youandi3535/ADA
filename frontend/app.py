@@ -160,80 +160,198 @@ with tab4:
 
 
 # === 탭 5 — KPI 대시보드 (Day 10) =============================================
+# 임계치 색상 (Phase 11-3) — 초록/노랑/빨강 emoji
+_KPI_THRESHOLDS = {
+    "kp1": (0.80, 0.95),  # success rate: <80% 빨강, 80~95% 노랑, ≥95% 초록
+    "kp2": (10.0, 30.0),  # avg duration min: ≤10 초록, 10~30 노랑, >30 빨강 (역방향)
+    "kp5": (500.0, 2000.0),  # p95 ms: ≤500 초록, 500~2000 노랑, >2000 빨강 (역방향)
+    "kp9": (0.10, 0.30),  # KB rate: <10% 빨강, 10~30% 노랑, ≥30% 초록
+}
+
+
+def _kpi_status_emoji(metric: str, value: float | None) -> str:
+    """KPI 값을 임계치와 비교해 🟢🟡🔴 반환. None → ⚪."""
+    if value is None:
+        return "⚪"
+    lo, hi = _KPI_THRESHOLDS.get(metric, (0, 0))
+    # KP2, KP5 는 값이 작을수록 좋음 (역방향)
+    if metric in ("kp2", "kp5"):
+        if value <= lo:
+            return "🟢"
+        if value <= hi:
+            return "🟡"
+        return "🔴"
+    # KP1, KP9 는 값이 클수록 좋음
+    if value >= hi:
+        return "🟢"
+    if value >= lo:
+        return "🟡"
+    return "🔴"
+
+
+def _kpi_fetch(api_base: str, headers: dict, since_h: int, bypass_cache: bool) -> tuple[dict, dict]:
+    """KPI API 호출 → (data, meta). 실패 시 ({}, {"error": ...})."""
+    params = {"since_hours": since_h}
+    if bypass_cache:
+        params["cache"] = "bypass"
+    try:
+        r = requests.get(
+            f"{api_base}/admin/observability/kpi",
+            params=params,
+            headers=headers,
+            timeout=10,
+        )
+    except Exception as e:
+        return {}, {"error": f"네트워크 오류: {e}"}
+    if r.status_code == 401:
+        return {}, {"error": "401 — JWT 토큰을 사이드바에 입력하세요 (admin role)"}
+    if r.status_code == 403:
+        return {}, {"error": "403 — 관리자 권한 필요 (role=admin)"}
+    if not r.ok:
+        return {}, {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
+    return r.json(), {
+        "cache_status": r.headers.get("X-KPI-Cache-Status", "unknown"),
+        "cache_age": r.headers.get("X-KPI-Cache-Age", "0"),
+    }
+
+
 with tab5:
     st.header("5) KPI 대시보드")
-    st.caption("최근 N 시간의 운영 지표 — KP1 E2E 성공률 / KP2 평균 시간 / KP5 p95 / KP9 KB 적용률")
+    st.caption("최근 N 시간의 운영 지표 — KP1 E2E 성공률 / KP2 평균 종단 / KP5 p95 / KP9 KB 적용률")
 
-    col_c1, col_c2 = st.columns([1, 4])
+    col_c1, col_c2, col_c3 = st.columns([1, 1, 3])
     with col_c1:
-        since_h = st.number_input("최근 (시간)", min_value=1, max_value=720, value=24, step=1)
+        since_h = st.number_input("최근 (시간)", min_value=1, max_value=720, value=24, step=1, key="kpi_since_h")
     with col_c2:
         st.write("")
-        refresh = st.button("KPI 갱신", key="kpi_refresh")
+        st.write("")
+        refresh = st.button("🔄 KPI 갱신", key="kpi_refresh")
+    with col_c3:
+        st.write("")
+        st.write("")
+        force = st.checkbox("강제 갱신 (캐시 무시)", key="kpi_force")
 
+    # 최초 진입 시 자동 1회
     if refresh or "kpi_data" not in st.session_state:
-        try:
-            r = requests.get(
-                f"{API_BASE}/admin/observability/prometheus_check",
-                headers=_headers(),
-                timeout=5,
+        with st.spinner("KPI 측정 중..."):
+            data, meta = _kpi_fetch(API_BASE, _headers(), int(since_h), force)
+        st.session_state["kpi_data"] = data
+        st.session_state["kpi_meta"] = meta
+        # 트렌드 누적 (Phase 11-1, 세션 한정 최대 20건)
+        if data:
+            history = st.session_state.setdefault("kpi_history", [])
+            history.append(
+                {
+                    "measured_at": data.get("measured_at"),
+                    "kp1": data.get("kp1_e2e_success_rate"),
+                    "kp2": data.get("kp2_avg_duration_min"),
+                    "kp5": data.get("kp5_p95_api_ms"),
+                    "kp9": data.get("kp9_kb_citation_rate"),
+                    "n_jobs": data.get("n_jobs_total"),
+                }
             )
-            if r.ok:
-                st.session_state["kpi_prom"] = r.json()
-        except Exception:
-            pass
-
-        # API 가 없으면 로컬 스크립트 호출 (개발 환경)
-        try:
-            import json as _j
-            import subprocess
-
-            p = subprocess.run(
-                ["python", "scripts/kpi_measure.py", "--since", str(since_h), "--json"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if p.returncode == 0 and p.stdout.strip():
-                st.session_state["kpi_data"] = _j.loads(p.stdout.strip())
-        except Exception:
-            st.session_state["kpi_data"] = None
+            if len(history) > 20:
+                history.pop(0)
 
     data = st.session_state.get("kpi_data") or {}
+    meta = st.session_state.get("kpi_meta") or {}
+
+    # 에러 표시
+    if meta.get("error"):
+        st.error(meta["error"])
+
+    # 캐시 상태 배지
+    cache_status = meta.get("cache_status", "")
+    if cache_status == "cached":
+        st.caption(f"🔄 캐시 응답 (age {meta.get('cache_age', '0')}s)")
+    elif cache_status == "fresh":
+        st.caption("✨ 신규 측정")
+
+    # KP 5종 카드 + emoji 상태
+    kp1_v = data.get("kp1_e2e_success_rate")
+    kp2_v = data.get("kp2_avg_duration_min")
+    kp5_v = data.get("kp5_p95_api_ms")
+    kp9_v = data.get("kp9_kb_citation_rate")
+    n_total = data.get("n_jobs_total", 0)
+    n_terminal = data.get("n_jobs_terminal", 0)
+
     kpi_cols = st.columns(5)
     kpi_cols[0].metric(
-        "KP1 E2E 성공률",
-        f"{(data.get('KP1_e2e_success_rate') or 0) * 100:.1f}%"
-        if data.get("KP1_e2e_success_rate") is not None
-        else "—",
+        f"KP1 E2E 성공률 {_kpi_status_emoji('kp1', kp1_v)}",
+        f"{kp1_v * 100:.1f}%" if kp1_v is not None else "—",
     )
     kpi_cols[1].metric(
-        "KP2 평균 종단(분)",
-        f"{data.get('KP2_avg_duration_min', '—')}" if data.get("KP2_avg_duration_min") is not None else "—",
+        f"KP2 평균 종단(분) {_kpi_status_emoji('kp2', kp2_v)}",
+        f"{kp2_v:.2f}" if kp2_v is not None else "—",
     )
     kpi_cols[2].metric(
-        "KP5 p95 응답(ms)",
-        f"{data.get('KP5_p95_api_ms', '—')}" if data.get("KP5_p95_api_ms") is not None else "—",
+        f"KP5 p95 응답(ms) {_kpi_status_emoji('kp5', kp5_v)}",
+        f"{kp5_v:.1f}" if kp5_v is not None else "—",
     )
     kpi_cols[3].metric(
-        "KP9 KB 적용률",
-        f"{(data.get('KP9_kb_citation_rate') or 0) * 100:.1f}%"
-        if data.get("KP9_kb_citation_rate") is not None
-        else "—",
+        f"KP9 KB 적용률 {_kpi_status_emoji('kp9', kp9_v)}",
+        f"{kp9_v * 100:.1f}%" if kp9_v is not None else "—",
     )
-    kpi_cols[4].metric("최근 job 수", data.get("n_jobs", "—"))
+    kpi_cols[4].metric(
+        "측정 Job 수",
+        f"{n_total}",
+        delta=f"terminal {n_terminal}" if n_total else None,
+        delta_color="off",
+    )
 
+    # warnings 배너
+    warnings_list = data.get("warnings") or []
+    if warnings_list:
+        with st.expander(f"⚠️ 측정 신뢰도 안내 ({len(warnings_list)}건)"):
+            for w in warnings_list[:10]:
+                st.caption(f"• {w}")
+
+    # 트렌드 차트 (세션 한정)
+    history = st.session_state.get("kpi_history") or []
+    if len(history) >= 2:
+        with st.expander("📈 KPI 트렌드 (세션 한정, 최근 20회)"):
+            import pandas as _pd
+
+            df = _pd.DataFrame(history)
+            df["measured_at"] = _pd.to_datetime(df["measured_at"])
+            df = df.set_index("measured_at")
+            g1, g2 = st.columns(2)
+            g3, g4 = st.columns(2)
+            with g1:
+                st.caption("KP1 (성공률)")
+                if df["kp1"].notna().any():
+                    st.line_chart(df["kp1"])
+            with g2:
+                st.caption("KP9 (KB 적용률)")
+                if df["kp9"].notna().any():
+                    st.line_chart(df["kp9"])
+            with g3:
+                st.caption("KP2 (평균 종단 분)")
+                if df["kp2"].notna().any():
+                    st.line_chart(df["kp2"])
+            with g4:
+                st.caption("KP5 (p95 ms)")
+                if df["kp5"].notna().any():
+                    st.line_chart(df["kp5"])
+
+    # 데이터 소스
+    ds = data.get("data_source") or {}
+    if ds:
+        with st.expander("🔍 데이터 출처"):
+            for k, v in ds.items():
+                st.caption(f"**{k.upper()}** ← {v}")
+
+    # raw JSON
     with st.expander("raw KPI JSON"):
+        if data:
+            st.download_button(
+                "📥 JSON 다운로드",
+                data=json.dumps(data, ensure_ascii=False, indent=2),
+                file_name=f"kpi_{(data.get('measured_at') or '')[:19].replace(':', '')}.json",
+                mime="application/json",
+                key="kpi_download",
+            )
         st.json(data)
-
-    prom = st.session_state.get("kpi_prom")
-    if prom:
-        st.divider()
-        st.subheader("Prometheus exposition 샘플")
-        if prom.get("available"):
-            st.success(f"메트릭 노출 OK · size {prom.get('size_bytes', 0)} bytes")
-        else:
-            st.warning("ada_agent_duration_seconds 미노출 — /metrics 확인 필요")
 
 
 # === 탭 6 — 오류 자동처리 & KB 모니터링 대시보드 ================================

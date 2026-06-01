@@ -124,6 +124,11 @@ from api.routes import admin as admin_routes  # noqa: E402
 
 app.include_router(admin_routes.router, tags=["Admin"])
 
+# KPI 측정 — Day 10 (HJ)
+from api.routes import observability as observability_routes  # noqa: E402
+
+app.include_router(observability_routes.router)
+
 # 오류 자동처리 & KB 모니터링 대시보드
 from api.routes import error_dashboard as error_dashboard_routes  # noqa: E402
 

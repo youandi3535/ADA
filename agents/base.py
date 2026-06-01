@@ -47,9 +47,15 @@ class BaseAgent(abc.ABC):
     @asynccontextmanager
     async def log_agent_run(self, state: PipelineState) -> AsyncIterator[None]:
         from ada.db.models import AgentRun
+        from ada.observability.metrics import (
+            get_kb_citation_count,
+            reset_kb_citation_counter,
+        )
 
         bind_context(job_id=state.job_id, agent_name=self.__class__.__name__)
         self._current_job_id = state.job_id
+        # Day 11 — per-agent KB 인용 카운터 리셋 (KP9 측정용)
+        reset_kb_citation_counter()
         start = time.perf_counter()
         run_id = uuid.uuid4()
         if self.session is not None:
@@ -102,6 +108,8 @@ class BaseAgent(abc.ABC):
                 record_agent_run(self.__class__.__name__, duration_ms / 1000.0, err_type)
             except Exception:
                 pass
+            # Day 11 — per-agent KB 인용 횟수 (KP9 정확도)
+            kb_count = get_kb_citation_count()
             if self.session is not None:
                 row = await self.session.get(AgentRun, run_id)
                 if row is not None:
@@ -110,6 +118,10 @@ class BaseAgent(abc.ABC):
                     row.input_tokens = self._last_input_tokens
                     row.output_tokens = self._last_output_tokens
                     row.error = error
+                    if kb_count > 0:
+                        existing = row.payload if isinstance(row.payload, dict) else {}
+                        existing["kb_citations"] = kb_count
+                        row.payload = existing
                     await self.session.flush()
 
     async def _call_llm(
