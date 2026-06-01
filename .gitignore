@@ -67,3 +67,7 @@ mlruns/
 
 # CatBoost 학습 로그
 catboost_info/
+
+# Claude Code 내부 probe 파일
+_bashprobe_*.py
+_probe_*
