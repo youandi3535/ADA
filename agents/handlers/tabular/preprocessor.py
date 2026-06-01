@@ -1109,30 +1109,666 @@ register_transform(
     )
 )
 
-# 7 planned transforms (trigger-only, no plan_fn/apply_fn)
-for _name, _cat, _mutex in [
-    ("missing_indicator", "imputation", []),
-    ("hash_encoding", "encoding", ["target_encoding", "encode_categorical"]),
-    ("quantile_transform", "scaling", ["distribution_transform"]),
-    ("polynomial_features", "feature_gen", ["interaction_terms"]),
-    ("interaction_terms", "feature_gen", ["polynomial_features"]),
-    ("correlation_drop", "feature_select", ["vif_drop", "pca_preview"]),
-    ("pca_preview", "feature_select", ["vif_drop", "correlation_drop"]),
-]:
-    register_transform(
-        TransformSpec(
-            name=_name,
-            category=_cat,
-            trigger_fn=lambda *a, **kw: False,
-            score_fn=lambda p: 0.0,
-            plan_fn=None,
-            apply_fn=None,
-            prerequisite=[],
-            mutex=_mutex,
-            status="planned",
-            version="0.0",
+# ---------------------------------------------------------------------------
+# 9. Missing Indicator (any column ≥ 1% missing)
+# ---------------------------------------------------------------------------
+
+
+def _mi_trigger(profile, hints, category, task_type, target):
+    missing_by_col = profile.get("missing") or {}
+    return any(float(v) >= 0.01 for v in missing_by_col.values())
+
+
+def _mi_plan(state):
+    profile = _get_profile(state)
+    target = state.target_column
+    missing_by_col = profile.get("missing") or {}
+    mi_cols = [c for c, v in missing_by_col.items() if float(v) >= 0.01 and c != target]
+    return {
+        "name": "missing_indicator",
+        "columns": mi_cols,
+        "params": {},
+        "inputs": [],
+        "outputs": ["missing_indicators"],
+        "prerequisite_steps": [],
+        "mutex_steps": [],
+        "fit_scope": "train_only",
+        "idempotent": True,
+        "needs_review": False,
+        "severity_if_fail": "warn",
+        "score": 0.6,
+        "catalog_version": "1.0",
+    }
+
+
+def _mi_apply(df, step, state):
+    import numpy as np
+
+    target = state.target_column
+    cols = [c for c in step.get("columns", []) if c in df.columns and c != target]
+    if not cols:
+        # Auto-detect from df
+        missing_pct = df.isna().mean()
+        cols = [c for c in df.columns if c != target and missing_pct[c] >= 0.01]
+
+    if not cols:
+        return df, {}
+
+    out = df.copy()
+    added: list[str] = []
+    for col in cols:
+        if col not in out.columns:
+            continue
+        if out[col].isna().any():
+            ind_col = f"{col}__was_missing"
+            out[ind_col] = out[col].isna().astype(np.int8)
+            added.append(ind_col)
+
+    return out, {"missing_indicators": added}
+
+
+# ---------------------------------------------------------------------------
+# 10. Hash Encoding (very high cardinality, tabular_dl or hint)
+# ---------------------------------------------------------------------------
+
+
+def _he_trigger(profile, hints, category, task_type, target):
+    if not hints.get("use_hash_encoding", False) and category != "tabular_dl":
+        return False
+    card = profile.get("cardinality_levels", {})
+    return any(lvl == "high" for lvl in card.values())
+
+
+def _he_plan(state):
+    profile = _get_profile(state)
+    hints = _get_hints(state)
+    target = state.target_column
+    card = profile.get("cardinality_levels", {})
+    he_cols = [c for c, lvl in card.items() if lvl == "high" and c != target]
+    n_components = hints.get("hash_n_components", 16)
+    return {
+        "name": "hash_encoding",
+        "columns": he_cols,
+        "params": {"n_components": n_components},
+        "inputs": [],
+        "outputs": ["hash_encoder"],
+        "prerequisite_steps": [],
+        "mutex_steps": ["target_encoding", "encode_categorical"],
+        "fit_scope": "full",
+        "idempotent": True,
+        "needs_review": False,
+        "severity_if_fail": "warn",
+        "score": 0.55,
+        "catalog_version": "1.0",
+    }
+
+
+def _he_apply(df, step, state):
+    target = state.target_column
+    cols = [c for c in step.get("columns", []) if c in df.columns and c != target]
+    n_components = step.get("params", {}).get("n_components", 16)
+
+    if not cols:
+        return df, {}
+
+    try:
+        from sklearn.feature_extraction import FeatureHasher
+    except ImportError:
+        warnings.warn("hash_encoding: sklearn FeatureHasher not available, skipping")
+        return df, {}
+
+    out = df.copy()
+    encoded_info: dict = {}
+
+    for col in cols:
+        if col not in out.columns:
+            continue
+        str_vals = out[col].astype(str).values
+        hasher = FeatureHasher(n_features=n_components, input_type="string", alternate_sign=False)
+        hashed = hasher.transform([[v] for v in str_vals]).toarray()
+        new_cols = [f"{col}__hash_{i}" for i in range(n_components)]
+        for i, nc in enumerate(new_cols):
+            out[nc] = hashed[:, i]
+        out = out.drop(columns=[col])
+        encoded_info[col] = {"n_components": n_components, "new_cols": new_cols}
+
+    return out, {"hash_encoder": {"method": "feature_hashing", "columns": encoded_info}}
+
+
+# ---------------------------------------------------------------------------
+# 11. Quantile Transform (heavy tail or extreme skew, mutex: distribution_transform)
+# ---------------------------------------------------------------------------
+
+
+def _qt_trigger(profile, hints, category, task_type, target):
+    skew_by_col = profile.get("skew") or {}
+    # Trigger for very heavy skew (>3) — stronger than distribution_transform
+    extreme = any(abs(float(v)) > 3.0 for v in skew_by_col.values())
+    if extreme:
+        return True
+    # Also trigger if outlier ratio very high
+    outlier_by_col = profile.get("outlier_ratio") or {}
+    return any(float(v) > 0.10 for v in outlier_by_col.values())
+
+
+def _qt_plan(state):
+    profile = _get_profile(state)
+    hints = _get_hints(state)
+    target = state.target_column
+    skew_by_col = profile.get("skew") or {}
+    outlier_by_col = profile.get("outlier_ratio") or {}
+    qt_cols_skew = {c for c, v in skew_by_col.items() if abs(float(v)) > 3.0 and c != target}
+    qt_cols_out = {c for c, v in outlier_by_col.items() if float(v) > 0.10 and c != target}
+    qt_cols = list(qt_cols_skew | qt_cols_out)
+    n_quantiles = hints.get("quantile_n_quantiles", 1000)
+    output_distribution = hints.get("quantile_output_distribution", "normal")
+    return {
+        "name": "quantile_transform",
+        "columns": qt_cols,
+        "params": {"n_quantiles": n_quantiles, "output_distribution": output_distribution},
+        "inputs": [],
+        "outputs": ["quantile_transforms"],
+        "prerequisite_steps": [{"name": "impute_numeric", "strength": "hard"}],
+        "mutex_steps": ["distribution_transform"],
+        "fit_scope": "train_only",
+        "idempotent": True,
+        "needs_review": False,
+        "severity_if_fail": "warn",
+        "score": 0.72,
+        "catalog_version": "1.0",
+    }
+
+
+def _qt_apply(df, step, state):
+    import numpy as np
+    from sklearn.preprocessing import QuantileTransformer
+
+    target = state.target_column
+    cols = [c for c in step.get("columns", []) if c in df.columns and c != target]
+    if not cols:
+        # Auto-detect
+        cols = [
+            c
+            for c in df.select_dtypes(include=[np.number]).columns
+            if c != target
+            and (abs(float(df[c].dropna().skew())) > 3.0 or _outlier_ratio(df[c]) > 0.10)
+            and df[c].dropna().std() > 0
+        ]
+
+    if not cols:
+        return df, {}
+
+    n_quantiles = step.get("params", {}).get("n_quantiles", 1000)
+    output_dist = step.get("params", {}).get("output_distribution", "normal")
+    seed = getattr(state, "seed", 42) or 42
+
+    # Cap n_quantiles to available rows to avoid sklearn warnings
+    n_quantiles = min(n_quantiles, max(10, len(df) - 1))
+
+    out = df.copy()
+    qt_info: dict = {}
+
+    try:
+        qt = QuantileTransformer(
+            n_quantiles=n_quantiles,
+            output_distribution=output_dist,
+            random_state=seed,
+            subsample=min(100_000, len(df)),
         )
+        out[cols] = qt.fit_transform(out[cols])
+        qt_info = {
+            "columns": cols,
+            "n_quantiles": n_quantiles,
+            "output_distribution": output_dist,
+        }
+    except Exception as exc:
+        warnings.warn(f"quantile_transform failed: {exc}")
+        return df, {"quantile_transforms": {"columns": [], "error": str(exc)}}
+
+    return out, {"quantile_transforms": qt_info}
+
+
+# ---------------------------------------------------------------------------
+# 12. Polynomial Features (few numeric cols, regression, no DL)
+# ---------------------------------------------------------------------------
+
+
+def _pf_trigger(profile, hints, category, task_type, target):
+    if category == "tabular_dl":
+        return False
+    if not hints.get("allow_polynomial", False):
+        return False
+    numeric_count = profile.get("numeric_count", 0)
+    # Only for small feature sets (≤10 numeric) to avoid combinatorial explosion
+    return 2 <= numeric_count <= 10
+
+
+def _pf_plan(state):
+    hints = _get_hints(state)
+    degree = hints.get("polynomial_degree", 2)
+    interaction_only = hints.get("polynomial_interaction_only", False)
+    return {
+        "name": "polynomial_features",
+        "columns": [],
+        "params": {"degree": degree, "interaction_only": interaction_only},
+        "inputs": [],
+        "outputs": ["polynomial_features"],
+        "prerequisite_steps": [{"name": "scale_numeric", "strength": "soft"}],
+        "mutex_steps": ["interaction_terms"],
+        "fit_scope": "train_only",
+        "idempotent": True,
+        "needs_review": True,
+        "severity_if_fail": "warn",
+        "score": 0.5,
+        "catalog_version": "1.0",
+    }
+
+
+def _pf_apply(df, step, state):
+    import numpy as np
+    from sklearn.preprocessing import PolynomialFeatures
+
+    target = state.target_column
+    num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target]
+
+    if len(num_cols) < 2:
+        return df, {}
+
+    degree = step.get("params", {}).get("degree", 2)
+    interaction_only = step.get("params", {}).get("interaction_only", False)
+
+    # Guard: cap feature count to avoid explosion
+    if len(num_cols) > 10:
+        num_cols = num_cols[:10]
+
+    out = df.copy()
+    try:
+        pf = PolynomialFeatures(degree=degree, interaction_only=interaction_only, include_bias=False)
+        poly_arr = pf.fit_transform(out[num_cols])
+        poly_feature_names = pf.get_feature_names_out(num_cols)
+        # Only add the new cross-term columns (not the originals which are already in df)
+        original_set = set(num_cols)
+        for i, fname in enumerate(poly_feature_names):
+            if fname not in original_set:
+                out[fname] = poly_arr[:, i]
+        artifact = {
+            "degree": degree,
+            "interaction_only": interaction_only,
+            "n_output_features": len(poly_feature_names),
+            "input_cols": num_cols,
+        }
+    except Exception as exc:
+        warnings.warn(f"polynomial_features failed: {exc}")
+        return df, {"polynomial_features": {"error": str(exc)}}
+
+    return out, {"polynomial_features": artifact}
+
+
+# ---------------------------------------------------------------------------
+# 13. Interaction Terms (explicit pairwise products, no DL, opt-in)
+# ---------------------------------------------------------------------------
+
+
+def _it_trigger(profile, hints, category, task_type, target):
+    if category == "tabular_dl":
+        return False
+    if not hints.get("allow_interaction_terms", False):
+        return False
+    numeric_count = profile.get("numeric_count", 0)
+    return 2 <= numeric_count <= 15
+
+
+def _it_plan(state):
+    hints = _get_hints(state)
+    max_pairs = hints.get("interaction_max_pairs", 20)
+    return {
+        "name": "interaction_terms",
+        "columns": [],
+        "params": {"max_pairs": max_pairs},
+        "inputs": [],
+        "outputs": ["interaction_terms"],
+        "prerequisite_steps": [{"name": "scale_numeric", "strength": "soft"}],
+        "mutex_steps": ["polynomial_features"],
+        "fit_scope": "full",
+        "idempotent": True,
+        "needs_review": True,
+        "severity_if_fail": "warn",
+        "score": 0.45,
+        "catalog_version": "1.0",
+    }
+
+
+def _it_apply(df, step, state):
+    import numpy as np
+
+    target = state.target_column
+    num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target]
+
+    if len(num_cols) < 2:
+        return df, {}
+
+    max_pairs = step.get("params", {}).get("max_pairs", 20)
+    out = df.copy()
+    added: list[str] = []
+
+    pairs_done = 0
+    for i in range(len(num_cols)):
+        for j in range(i + 1, len(num_cols)):
+            if pairs_done >= max_pairs:
+                break
+            c1, c2 = num_cols[i], num_cols[j]
+            new_col = f"{c1}_x_{c2}"
+            if new_col not in out.columns:
+                out[new_col] = out[c1] * out[c2]
+                added.append(new_col)
+            pairs_done += 1
+        if pairs_done >= max_pairs:
+            break
+
+    artifact = {"added_cols": added, "n_pairs": len(added), "max_pairs": max_pairs}
+    return out, {"interaction_terms": artifact}
+
+
+# ---------------------------------------------------------------------------
+# 14. Correlation Drop (pairwise corr > threshold, greedy drop lower-variance)
+# ---------------------------------------------------------------------------
+
+
+def _cd_trigger(profile, hints, category, task_type, target):
+    if category == "tabular_dl":
+        return False
+    numeric_count = profile.get("numeric_count", 0)
+    if numeric_count < 4:
+        return False
+    # Only trigger if profiler flagged high correlations
+    corr_flag = profile.get("high_correlation_pairs")
+    if corr_flag:
+        return True
+    # Fallback: if many numeric features, enable eagerly with hint
+    return hints.get("allow_correlation_drop", False) and numeric_count >= 6
+
+
+def _cd_plan(state):
+    hints = _get_hints(state)
+    protect = hints.get("correlation_drop_protect_columns", [])
+    return {
+        "name": "correlation_drop",
+        "columns": [],
+        "params": {"protect": protect},
+        "inputs": [],
+        "outputs": ["correlation_dropped"],
+        "prerequisite_steps": [{"name": "scale_numeric", "strength": "soft"}],
+        "mutex_steps": ["vif_drop", "pca_preview"],
+        "fit_scope": "full",
+        "idempotent": True,
+        "needs_review": False,
+        "severity_if_fail": "warn",
+        "score": 0.65,
+        "catalog_version": "1.0",
+    }
+
+
+def _cd_apply(df, step, state):
+    import numpy as np
+
+    target = state.target_column
+    hints = _get_hints(state)
+    profile = _get_profile(state)
+    protect = set(step.get("params", {}).get("protect", []) or hints.get("correlation_drop_protect_columns", []))
+
+    num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target and c not in protect]
+    if len(num_cols) < 4:
+        return df, {"correlation_dropped": []}
+
+    threshold, _ = resolve_threshold("correlation_drop_threshold", hints, profile, 0.95)
+    max_drop_ratio, _ = resolve_threshold("correlation_drop_max_drop_ratio", hints, profile, 0.5)
+    max_drop = math.floor(len(num_cols) * max_drop_ratio)
+
+    corr = df[num_cols].corr().abs()
+    variances = {c: float(df[c].var()) for c in num_cols}
+
+    dropped: list[str] = []
+    active_cols = list(num_cols)
+
+    for _ in range(max_drop):
+        if len(active_cols) < 3:
+            break
+        sub_corr = corr.loc[active_cols, active_cols]
+        # Upper triangle
+        upper = sub_corr.where(np.triu(np.ones(sub_corr.shape), k=1).astype(bool))
+        max_corr = float(upper.max().max())
+        if max_corr < threshold:
+            break
+        # Find the pair with highest correlation, drop the one with lower variance
+        pair_idx = upper.stack().idxmax()
+        c1, c2 = pair_idx
+        drop_col = c1 if variances.get(c1, 0) <= variances.get(c2, 0) else c2
+        active_cols.remove(drop_col)
+        dropped.append(drop_col)
+
+    out = df.drop(columns=dropped)
+    artifact = {"correlation_dropped": dropped, "threshold": threshold}
+    return out, artifact
+
+
+# ---------------------------------------------------------------------------
+# 15. PCA Preview (many numeric features, dimensionality reduction signal)
+# ---------------------------------------------------------------------------
+
+
+def _pca_trigger(profile, hints, category, task_type, target):
+    numeric_count = profile.get("numeric_count", 0)
+    if numeric_count < 10:
+        return False
+    if category == "tabular_dl" and not hints.get("allow_pca_dl", False):
+        return False
+    # Only trigger if hints explicitly enable or many features
+    return hints.get("allow_pca_preview", False) or numeric_count >= 20
+
+
+def _pca_plan(state):
+    profile = _get_profile(state)
+    hints = _get_hints(state)
+    numeric_count = profile.get("numeric_count", 20)
+    # Variance threshold: keep components explaining 95% by default
+    variance_threshold = hints.get("pca_variance_threshold", 0.95)
+    n_components = hints.get("pca_n_components", min(numeric_count, 50))
+    return {
+        "name": "pca_preview",
+        "columns": [],
+        "params": {"n_components": n_components, "variance_threshold": variance_threshold},
+        "inputs": [],
+        "outputs": ["pca_info"],
+        "prerequisite_steps": [{"name": "scale_numeric", "strength": "hard"}],
+        "mutex_steps": ["vif_drop", "correlation_drop"],
+        "fit_scope": "train_only",
+        "idempotent": True,
+        "needs_review": True,
+        "severity_if_fail": "warn",
+        "score": 0.6,
+        "catalog_version": "1.0",
+    }
+
+
+def _pca_apply(df, step, state):
+    import numpy as np
+    from sklearn.decomposition import PCA
+
+    target = state.target_column
+    num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target]
+
+    if len(num_cols) < 3:
+        return df, {"pca_info": {"n_components_selected": 0, "variance_explained": 0.0}}
+
+    params = step.get("params", {})
+    variance_threshold = params.get("variance_threshold", 0.95)
+    n_components_max = params.get("n_components", min(len(num_cols), 50))
+    n_components_max = min(n_components_max, len(num_cols), len(df) - 1)
+
+    try:
+        # Fit full PCA first to determine components needed for variance threshold
+        pca_full = PCA(n_components=n_components_max, random_state=42)
+        pca_full.fit(df[num_cols].fillna(0))
+        cumvar = float(np.cumsum(pca_full.explained_variance_ratio_)[-1])
+
+        # Find minimum n_components to reach variance_threshold
+        cum = np.cumsum(pca_full.explained_variance_ratio_)
+        n_selected = int(np.searchsorted(cum, variance_threshold) + 1)
+        n_selected = max(1, min(n_selected, n_components_max))
+
+        pca = PCA(n_components=n_selected, random_state=42)
+        transformed = pca.fit_transform(df[num_cols].fillna(0))
+
+        out = df.copy()
+        # Drop original numeric cols and add PCA components
+        out = out.drop(columns=num_cols)
+        for i in range(n_selected):
+            out[f"pca_{i}"] = transformed[:, i]
+
+        artifact = {
+            "n_components_selected": n_selected,
+            "variance_threshold": variance_threshold,
+            "variance_explained_by_selection": float(cum[n_selected - 1]),
+            "total_variance_by_max": cumvar,
+            "input_cols": num_cols,
+            "loadings_top3": {
+                f"pca_{i}": [num_cols[j] for j in np.argsort(np.abs(pca.components_[i]))[::-1][:3]]
+                for i in range(min(3, n_selected))
+            },
+        }
+    except Exception as exc:
+        warnings.warn(f"pca_preview failed: {exc}")
+        return df, {"pca_info": {"n_components_selected": 0, "error": str(exc)}}
+
+    return out, {"pca_info": artifact}
+
+
+# Register 7 newly implemented transforms (replacing planned stubs)
+register_transform(
+    TransformSpec(
+        name="missing_indicator",
+        category="imputation",
+        trigger_fn=_mi_trigger,
+        score_fn=lambda p: 0.6,
+        plan_fn=_mi_plan,
+        apply_fn=_mi_apply,
+        prerequisite=[],
+        mutex=[],
+        fit_scope="train_only",
+        idempotent=True,
+        severity_if_fail="warn",
+        status="implemented",
+        version="1.0",
     )
+)
+
+register_transform(
+    TransformSpec(
+        name="hash_encoding",
+        category="encoding",
+        trigger_fn=_he_trigger,
+        score_fn=lambda p: 0.55,
+        plan_fn=_he_plan,
+        apply_fn=_he_apply,
+        prerequisite=[],
+        mutex=["target_encoding", "encode_categorical"],
+        fit_scope="full",
+        idempotent=True,
+        severity_if_fail="warn",
+        status="implemented",
+        version="1.0",
+    )
+)
+
+register_transform(
+    TransformSpec(
+        name="quantile_transform",
+        category="scaling",
+        trigger_fn=_qt_trigger,
+        score_fn=lambda p: 0.72,
+        plan_fn=_qt_plan,
+        apply_fn=_qt_apply,
+        prerequisite=[("impute_numeric", "hard")],
+        mutex=["distribution_transform"],
+        fit_scope="train_only",
+        idempotent=True,
+        severity_if_fail="warn",
+        status="implemented",
+        version="1.0",
+    )
+)
+
+register_transform(
+    TransformSpec(
+        name="polynomial_features",
+        category="feature_gen",
+        trigger_fn=_pf_trigger,
+        score_fn=lambda p: 0.5,
+        plan_fn=_pf_plan,
+        apply_fn=_pf_apply,
+        prerequisite=[("scale_numeric", "soft")],
+        mutex=["interaction_terms"],
+        fit_scope="train_only",
+        idempotent=True,
+        severity_if_fail="warn",
+        status="implemented",
+        version="1.0",
+    )
+)
+
+register_transform(
+    TransformSpec(
+        name="interaction_terms",
+        category="feature_gen",
+        trigger_fn=_it_trigger,
+        score_fn=lambda p: 0.45,
+        plan_fn=_it_plan,
+        apply_fn=_it_apply,
+        prerequisite=[("scale_numeric", "soft")],
+        mutex=["polynomial_features"],
+        fit_scope="full",
+        idempotent=True,
+        severity_if_fail="warn",
+        status="implemented",
+        version="1.0",
+    )
+)
+
+register_transform(
+    TransformSpec(
+        name="correlation_drop",
+        category="feature_select",
+        trigger_fn=_cd_trigger,
+        score_fn=lambda p: 0.65,
+        plan_fn=_cd_plan,
+        apply_fn=_cd_apply,
+        prerequisite=[("scale_numeric", "soft")],
+        mutex=["vif_drop", "pca_preview"],
+        fit_scope="full",
+        idempotent=True,
+        severity_if_fail="warn",
+        status="implemented",
+        version="1.0",
+    )
+)
+
+register_transform(
+    TransformSpec(
+        name="pca_preview",
+        category="feature_select",
+        trigger_fn=_pca_trigger,
+        score_fn=lambda p: 0.6,
+        plan_fn=_pca_plan,
+        apply_fn=_pca_apply,
+        prerequisite=[("scale_numeric", "hard")],
+        mutex=["vif_drop", "correlation_drop"],
+        fit_scope="train_only",
+        idempotent=True,
+        severity_if_fail="warn",
+        status="implemented",
+        version="1.0",
+    )
+)
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ BASE_SCORE: dict[str, float] = {
     "LOF": 0.70,
     "OneClassSVM": 0.75,
     "AutoEncoder": 0.65,
+    "COPOD": 0.60,  # ★ FIX-3: COPOD 추가 (INTERPRETABILITY_SCORE 와 정합)
     "TranAD": 0.55,
     "AnomalyTransformer": 0.50,
 }

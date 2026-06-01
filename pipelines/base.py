@@ -1,7 +1,9 @@
 """pipelines.base — BasePipeline 추상 클래스 (Day04 §3)."""
+
 from __future__ import annotations
 
 import abc
+from functools import cached_property
 from typing import Any, Optional
 
 try:
@@ -18,6 +20,17 @@ class BasePipeline(abc.ABC):
     #: MLflow 실험명 — 서브클래스에서 ada-{category}
     experiment_name: str = "ada-default"
 
+    @cached_property
+    def logger(self) -> Any:
+        """구조화 로거 (지연 생성).
+
+        BasePipeline 은 __init__ 이 없으므로, 모든 서브클래스가 별도 초기화 없이
+        self.logger 를 안전하게 사용할 수 있도록 cached_property 로 제공한다.
+        """
+        from ada.core.logger import get_logger
+
+        return get_logger(self.__class__.__name__)
+
     @abc.abstractmethod
     def train(
         self,
@@ -33,9 +46,7 @@ class BasePipeline(abc.ABC):
         """예측 결과 ndarray 반환."""
 
     @abc.abstractmethod
-    def evaluate(
-        self, model: Any, X_val: Any, y_val: Any, task: str
-    ) -> dict[str, float]:
+    def evaluate(self, model: Any, X_val: Any, y_val: Any, task: str) -> dict[str, float]:
         """평가 메트릭 dict 반환."""
 
     # --- MLflow 유틸 ---------------------------------------------------
@@ -46,10 +57,17 @@ class BasePipeline(abc.ABC):
         tags: Optional[dict[str, str]] = None,
     ) -> Any:
         if mlflow is None:
+
             class _Noop:
-                def __enter__(self): return self
-                def __exit__(self, *a): return False
-                def info(self) -> dict: return {}
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def info(self) -> dict:
+                    return {}
+
             return _Noop()
 
         mlflow.set_tracking_uri(settings.mlflow_tracking_uri)

@@ -97,11 +97,25 @@ def _g2_score_ocsvm(profile: dict, preproc: dict) -> float:
 def _g2_score_autoencoder(profile: dict, preproc: dict) -> float:
     base = 0.5
     n_rows = profile.get("n_rows", 0)
-    n_cols = preproc.get("n_cols_out", 0) or profile.get("n_features_numeric", 0)
+    n_cols = preproc.get("n_cols_out", 0) or profile.get("n_numeric_cols", 0)
     if n_rows >= MIN_ROWS_FOR_AE:
         base += 0.2
     if n_cols > HIGH_DIM_THRESHOLD:
         base += 0.2
+    return _clip(base)
+
+
+def _g2_score_copod(profile: dict, preproc: dict) -> float:
+    """★ FIX-3: COPOD — ECDF 기반, 고차원 친화적 (D6 추가).
+
+    COPOD는 copula 함수로 각 차원의 이상치 확률을 독립 추정 — 해석 가능 + 빠름.
+    """
+    base = 0.55
+    n_cols = preproc.get("n_cols_out", 0) or profile.get("n_numeric_cols", 0)
+    if n_cols > HIGH_DIM_THRESHOLD:
+        base += 0.1  # 고차원 우위 (copula independence assumption)
+    if profile.get("is_approximately_gaussian"):
+        base -= 0.1  # 가우시안이면 IForest/OCSVM 이 더 강함
     return _clip(base)
 
 
@@ -168,6 +182,8 @@ def g2(state: Any) -> list[dict[str, Any]]:
             "OneClassSVM", _g2_score_ocsvm(profile, preproc), "정상 경계 학습 — contamination 낮을 때 강함 (★ DoD)"
         ),
         _make_card("AutoEncoder", _g2_score_autoencoder(profile, preproc), "딥러닝 — 큰 데이터·고차원 우위"),
+        # ★ FIX-3: COPOD 추가 — g2 경로에서 항상 후보에 포함 (selector BASE_SCORE 정합)
+        _make_card("COPOD", _g2_score_copod(profile, preproc), "Copula 기반 — 해석 가능 ECDF 이상치 확률, 고차원 친화"),
     ]
 
     # D1: 시계열 데이터면 트랜스포머 2 종 추가

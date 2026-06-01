@@ -65,7 +65,7 @@ def test_hs256_roundtrip():
 
 # ----- 3) RS256 — 환경변수 키 사용 ---------------------------------------------
 def test_rs256_roundtrip_via_env(monkeypatch):
-    pytest.importorskip("Crypto")  # python-jose RS256 의존 cryptography
+    pytest.importorskip("cryptography")  # python-jose RS256 의존 cryptography
     # 키쌍 생성
     import subprocess as sp
     import tempfile
@@ -104,7 +104,7 @@ def test_rs256_roundtrip_via_env(monkeypatch):
 
 # ----- 4) decode_token 다중 알고리즘 — RS 토큰 있는데 HS 토큰도 들어와도 OK ---
 def test_decode_accepts_both_when_rs_available(monkeypatch):
-    pytest.importorskip("Crypto")
+    pytest.importorskip("cryptography")
     import subprocess as sp
     import tempfile
 

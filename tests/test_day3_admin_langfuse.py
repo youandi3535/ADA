@@ -329,6 +329,9 @@ def test_log_agent_run_sets_current_job_id():
 
 def test_api_main_lifespan_calls_langfuse_flush(monkeypatch):
     """L3.3 — api/main.py 의 lifespan shutdown 에 flush 호출 코드 존재."""
-    src = open("api/main.py", encoding="utf-8").read()
+    from pathlib import Path
+
+    _repo = Path(__file__).resolve().parent.parent
+    src = (_repo / "api" / "main.py").read_text(encoding="utf-8")
     assert "from ada.core.langfuse_client import flush" in src
     assert "flush(timeout_sec=" in src

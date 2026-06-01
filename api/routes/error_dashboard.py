@@ -19,11 +19,12 @@ from sqlalchemy import desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ada.db.session import get_db
+from ada.security.rbac import require_perm
 
 router = APIRouter(prefix="/errors/dashboard", tags=["ErrorDashboard"])
 
-# 개발 중 인증 없이 접근 가능 — 운영 배포 시 require_perm("admin.audit.read") 로 교체
-_no_auth: None = None
+# 관리자 전용 — admin/service 역할만 허용 (admin.py·observability.py 와 동일 패턴)
+_admin_only = require_perm("admin.audit.read")
 
 
 # =============================================================================
@@ -35,7 +36,7 @@ _no_auth: None = None
 async def get_error_summary(
     since_hours: int = Query(24, ge=1, le=24 * 30),
     db: AsyncSession = Depends(get_db),
-    # _user: dict = Depends(_admin_only),  # TODO: 운영 시 인증 복원
+    _user: dict = Depends(_admin_only),
 ) -> dict[str, Any]:
     """오류 대시보드 요약 통계.
 
@@ -138,7 +139,7 @@ async def get_recent_errors(
     limit: int = Query(20, ge=1, le=200),
     only_unhandled: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    # _user: dict = Depends(_admin_only),  # TODO: 운영 시 인증 복원
+    _user: dict = Depends(_admin_only),
 ) -> dict[str, Any]:
     """최근 오류 목록.
 
@@ -193,7 +194,7 @@ async def get_patches(
     status: Optional[str] = Query(None, description="pending | approved | rejected"),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    # _user: dict = Depends(_admin_only),  # TODO: 운영 시 인증 복원
+    _user: dict = Depends(_admin_only),
 ) -> dict[str, Any]:
     """패치 목록 (기본: 전체, status 필터 가능)."""
     from ada.db.models import PendingPatch
@@ -235,7 +236,7 @@ async def update_patch_status(
     patch_id: str,
     body: PatchAction,
     db: AsyncSession = Depends(get_db),
-    # _user: dict = Depends(_admin_only),  # TODO: 운영 시 인증 복원
+    _user: dict = Depends(_admin_only),
 ) -> dict[str, Any]:
     """패치 승인(approve) 또는 거부(reject)."""
     from ada.db.models import PendingPatch

@@ -82,10 +82,170 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
         return m
 
     if model_name in ("TranAD", "AnomalyTransformer"):
-        # 시계열 모델 - PyOD 가상, 미구현 시 ImportError
-        raise ImportError(f"{model_name} 미구현 (Day 7+ 본격화 예정)")
+        return _train_torch_ts_model(model_name, X_train, params)
 
     raise ValueError(f"Unknown anomaly model: {model_name}")
+
+
+# ── PyTorch 기반 간략화 시계열 이상탐지 (TranAD / AnomalyTransformer) ─────
+#
+# 설계 원칙 (간략화 사항 명시):
+#   1. 원논문의 복잡한 이중 분기(TranAD)/Association Discrepancy(AnomalyTransformer) 대신
+#      동일한 "Transformer Encoder → Linear 재구성" 구조를 공유.
+#      TranAD는 input/output 모두 window이지만 여기선 단일 타임스텝 재구성으로 단순화.
+#      AnomalyTransformer의 Association Discrepancy(Prior/Series) 손실은 미구현 — MSE 단독.
+#   2. 슬라이딩 윈도우 배치로 시계열 패턴 학습 (window_size=16, stride=1).
+#      데이터가 window_size 미만이면 전체를 하나의 윈도우로 처리.
+#   3. Deterministic (torch.manual_seed 고정, CPU 전용).
+#   4. 에폭 수·모델 크기는 CPU에서 수 초 이내 완료 수준으로 제한.
+#   5. 반환 객체: _TorchTSAnomalyModel (decision_function/fit 미포함) —
+#      _get_anomaly_scores 가 score_samples 없는 경우를 처리하므로
+#      custom predict(X) → anomaly score ndarray 를 노출.
+#
+# 인터페이스: model.anomaly_scores(X: ndarray) -> ndarray (높을수록 이상)
+#             _get_anomaly_scores 가 model_name 별 분기 없이 사용 가능하도록
+#             decision_function 을 구현.
+
+
+class _TorchTSAnomalyModel:
+    """경량 Transformer 재구성 이상탐지 모델 (TranAD/AnomalyTransformer 공용).
+
+    ★ 간략화 — 원 논문 대비 단순화 항목:
+      - TranAD: 이중-분기 역전파(phase1/phase2) 미구현, 단일 MSE 재구성으로 대체.
+      - AnomalyTransformer: Association Discrepancy(Prior/Series Association) 미구현.
+      - 두 모델 모두 동일한 TransformerEncoder + Linear 재구성 아키텍처 사용.
+      - 슬라이딩 윈도우 = 16 타임스텝, 배치 = 64, 에폭 = 10 (CPU 친화).
+    """
+
+    def __init__(self, model_name: str, n_features: int, window_size: int = 16) -> None:
+        self.model_name = model_name
+        self.n_features = n_features
+        self.window_size = window_size
+        self._net: Any = None
+        self._train_scores: Any = None  # 학습 데이터 재구성 오류 분포 (임계 결정용)
+
+    def fit(self, X: np.ndarray) -> "_TorchTSAnomalyModel":
+        """학습: X (n_samples, n_features) → 슬라이딩 윈도우 재구성 학습."""
+        try:
+            import torch
+            import torch.nn as nn
+        except ImportError as exc:
+            raise ImportError(
+                f"{self.model_name} 학습에는 PyTorch가 필요합니다. "
+                "requirements/handlers-anomaly.txt 에 torch>=2.0 추가 후 재설치하세요."
+            ) from exc
+
+        torch.manual_seed(42)
+        n_feat = self.n_features
+        ws = self.window_size
+
+        # ── 모델 정의 ──────────────────────────────────────────────
+        class _TSAnomalyNet(nn.Module):
+            def __init__(self, n_feat: int, ws: int) -> None:
+                super().__init__()
+                d_model = max(16, min(64, n_feat * 2))
+                self.input_proj = nn.Linear(n_feat, d_model)
+                encoder_layer = nn.TransformerEncoderLayer(
+                    d_model=d_model,
+                    nhead=max(1, d_model // 8),
+                    dim_feedforward=d_model * 2,
+                    batch_first=True,
+                    dropout=0.0,
+                )
+                self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=1)
+                self.output_proj = nn.Linear(d_model, n_feat)
+
+            def forward(self, x: Any) -> Any:
+                # x: (batch, window, n_feat)
+                z = self.input_proj(x)
+                z = self.encoder(z)
+                return self.output_proj(z)
+
+        net = _TSAnomalyNet(n_feat, ws)
+        optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+        criterion = nn.MSELoss()
+
+        # ── 슬라이딩 윈도우 배치 구성 ──────────────────────────────
+        X_t = torch.tensor(X, dtype=torch.float32)
+        n = len(X_t)
+        if n < ws:
+            windows = X_t.unsqueeze(0)  # (1, n, feat)
+        else:
+            windows = X_t.unfold(0, ws, 1).permute(0, 2, 1)  # (n-ws+1, ws, feat)
+
+        batch_size = 64
+        n_epochs = 10
+        net.train()
+        for _ in range(n_epochs):
+            perm = torch.randperm(len(windows))
+            for start in range(0, len(windows), batch_size):
+                batch = windows[perm[start : start + batch_size]]
+                pred = net(batch)
+                loss = criterion(pred, batch)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+        self._net = net
+
+        # ── 학습 데이터 점수 저장 (임계 결정용) ──────────────────
+        self._train_scores = self._compute_scores(X)
+        return self
+
+    def _compute_scores(self, X: np.ndarray) -> np.ndarray:
+        """MSE 재구성 오류 → per-sample anomaly score."""
+        try:
+            import torch
+        except ImportError as exc:
+            raise ImportError(
+                f"{self.model_name} 추론에는 PyTorch가 필요합니다. "
+                "requirements/handlers-anomaly.txt 에 torch>=2.0 추가 후 재설치하세요."
+            ) from exc
+
+        net = self._net
+        if net is None:
+            raise RuntimeError(f"{self.model_name}: fit() 을 먼저 호출하세요.")
+
+        ws = self.window_size
+        X_t = torch.tensor(X, dtype=torch.float32)
+        n = len(X_t)
+        net.eval()
+
+        sample_errors = np.zeros(n, dtype=float)
+        sample_counts = np.zeros(n, dtype=int)
+
+        with torch.no_grad():
+            if n < ws:
+                w = X_t.unsqueeze(0)  # (1, n, feat)
+                pred = net(w).squeeze(0)  # (n, feat)
+                err = float(((X_t - pred) ** 2).mean().item())
+                sample_errors[:] += err
+                sample_counts[:] += 1
+            else:
+                for i in range(n - ws + 1):
+                    w = X_t[i : i + ws].unsqueeze(0)  # (1, ws, feat)
+                    pred = net(w).squeeze(0)  # (ws, feat)
+                    errors = ((X_t[i : i + ws] - pred) ** 2).mean(dim=1).numpy()
+                    for j in range(ws):
+                        sample_errors[i + j] += errors[j]
+                        sample_counts[i + j] += 1
+
+        mask = sample_counts > 0
+        sample_errors[mask] /= sample_counts[mask]
+        return sample_errors
+
+    def decision_function(self, X: np.ndarray) -> np.ndarray:
+        """PyOD 규약: 높을수록 이상 (MSE 재구성 오류 직접 반환)."""
+        return self._compute_scores(X)
+
+
+def _train_torch_ts_model(model_name: str, X_train: np.ndarray, params: dict[str, Any]) -> "_TorchTSAnomalyModel":
+    """TranAD / AnomalyTransformer 학습 진입점."""
+    window_size = int(params.get("window_size", 16))
+    n_features = X_train.shape[1] if X_train.ndim == 2 else 1
+    m = _TorchTSAnomalyModel(model_name=model_name, n_features=n_features, window_size=window_size)
+    m.fit(X_train)
+    return m
 
 
 def _get_anomaly_scores(model: Any, X: np.ndarray, model_name: str) -> np.ndarray:

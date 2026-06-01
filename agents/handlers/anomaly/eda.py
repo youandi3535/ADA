@@ -185,7 +185,9 @@ def _chart_time_anomaly(df: Any, state: Any, job_id: str) -> str | None:
     profile = getattr(state, "data_profile", None) or {}
     if not profile.get("has_time_column"):
         return None
-    time_col = profile.get("time_column")
+    # profiler emits `time_column_candidates` (list), NOT `time_column` — use first element
+    _candidates = profile.get("time_column_candidates") or []
+    time_col = _candidates[0] if _candidates else None
     if time_col is None or time_col not in df.columns:
         return None
 

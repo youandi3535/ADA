@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ada.core.logger import get_logger
-from ada.db.models import Job, JobDistillationLog, SelfLearningKB
+from ada.db.models import AgentRun, Job, JobDistillationLog, Model, SelfLearningKB
 
 log = get_logger("harness")
 
@@ -30,6 +30,43 @@ DECAY_RATE = 0.9
 def _hash_payload(payload: dict[str, Any]) -> str:
     canon = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+_EDA_STEPS = {
+    "tabular_ml": ["결측·이상치 요약", "타깃 분포/불균형", "수치형 상관 히트맵", "범주형 카디널리티"],
+    "tabular_dl": ["결측·이상치 요약", "타깃 분포/불균형", "임베딩 대상 범주 분포", "수치형 스케일 점검"],
+    "timeseries": ["추세/계절성 분해", "정상성(ADF) 점검", "ACF/PACF", "결측 구간·리샘플링"],
+    "anomaly": ["분포·꼬리 두께", "시간성 여부", "라벨 유무/오염도", "수치형 차원 수"],
+}
+
+
+def _eda_steps_for(category: str) -> list[str]:
+    return _EDA_STEPS.get(category, ["결측·이상치 요약", "타깃 분포", "주요 변수 상관"])
+
+
+def _primary_metric(metrics: Any) -> dict[str, Any]:
+    """metrics dict 에서 대표 지표 1개를 {name, value} 로 추출."""
+    if not isinstance(metrics, dict) or not metrics:
+        return {}
+    for key in (
+        "roc_auc",
+        "val_roc_auc",
+        "f1",
+        "val_f1",
+        "accuracy",
+        "val_accuracy",
+        "rmse",
+        "val_rmse",
+        "mae",
+        "r2",
+        "val_r2",
+    ):
+        if isinstance(metrics.get(key), (int, float)):
+            return {"name": key, "value": float(metrics[key])}
+    for k, v in metrics.items():
+        if isinstance(v, (int, float)):
+            return {"name": k, "value": float(v)}
+    return {}
 
 
 class SelfLearningHarness:
@@ -79,6 +116,84 @@ class SelfLearningHarness:
                 summaries[str(kb_id)] = (
                     f"성공 패턴: {job.category} / {job.target_column or ''} / {job.user_intent or ''}"
                 )[:500]
+
+            # 1-2) recipe / hpo_warm_start / eda_template — 성공 job 의 재사용 레시피
+            best_model = await self.session.scalar(
+                select(Model)
+                .where(Model.job_id == job.id)
+                .order_by(Model.is_best.desc(), Model.created_at.desc())
+                .limit(1)
+            )
+            agent_payloads = await self._collect_agent_payloads(job.id)
+            metric_summary = _primary_metric(best_model.metrics if best_model else None)
+
+            # recipe — model_selection._fetch_recipes 가 인용
+            if best_model is not None:
+                recipe_payload = {
+                    "category": job.category,
+                    "target": job.target_column,
+                    "best_model": best_model.model_name,
+                    "framework": best_model.framework,
+                    "metric": metric_summary,
+                    "requested_outputs": job.requested_outputs or [],
+                }
+                kb_id, is_new = await self._upsert(
+                    kb_type="recipe",
+                    category=job.category,
+                    payload=recipe_payload,
+                    source_job_id=job.id,
+                    confidence_init=0.55,
+                )
+                if is_new and kb_id:
+                    inserted += 1
+                    created_kb_ids.append(str(kb_id))
+                    summaries[str(kb_id)] = (
+                        f"레시피: {job.category} → {best_model.model_name} "
+                        f"({metric_summary.get('name', '')} {metric_summary.get('value', '')})"
+                    )[:500]
+
+            # hpo_warm_start — 다음 튜닝의 warm-start 시드
+            best_params = agent_payloads.get("best_params")
+            if best_model is not None and best_params:
+                hpo_payload = {
+                    "category": job.category,
+                    "model": best_model.model_name,
+                    "best_params": best_params,
+                    "metric": metric_summary,
+                }
+                kb_id, is_new = await self._upsert(
+                    kb_type="hpo_warm_start",
+                    category=job.category,
+                    payload=hpo_payload,
+                    source_job_id=job.id,
+                    confidence_init=0.5,
+                )
+                if is_new and kb_id:
+                    inserted += 1
+                    created_kb_ids.append(str(kb_id))
+                    summaries[str(kb_id)] = (f"HPO warm-start: {best_model.model_name} {list(best_params)[:6]}")[:500]
+
+            # eda_template — 카테고리·데이터형태별 EDA 재사용
+            data_profile = agent_payloads.get("data_profile") or {}
+            eda_payload = {
+                "category": job.category,
+                "n_rows": data_profile.get("rows") or data_profile.get("n_rows"),
+                "n_cols": data_profile.get("cols") or data_profile.get("n_cols"),
+                "recommended_eda": _eda_steps_for(job.category),
+            }
+            kb_id, is_new = await self._upsert(
+                kb_type="eda_template",
+                category=job.category,
+                payload=eda_payload,
+                source_job_id=job.id,
+                confidence_init=0.5,
+            )
+            if is_new and kb_id:
+                inserted += 1
+                created_kb_ids.append(str(kb_id))
+                summaries[str(kb_id)] = (f"EDA 템플릿: {job.category} ({len(_eda_steps_for(job.category))} steps)")[
+                    :500
+                ]
 
         # 2) failure_lesson — 실패 job
         if job.status == "failed":
@@ -150,6 +265,24 @@ class SelfLearningHarness:
                 )
             )
             return new.id, True
+
+    # ------------------------------------------------------------------
+    async def _collect_agent_payloads(self, job_id: uuid.UUID) -> dict[str, Any]:
+        """job 의 AgentRun payload 들에서 best_params / data_profile 재사용 키를 추출."""
+        out: dict[str, Any] = {}
+        try:
+            rows = await self.session.scalars(select(AgentRun).where(AgentRun.job_id == job_id))
+            for run in rows:
+                p = run.payload if isinstance(run.payload, dict) else {}
+                if not p:
+                    continue
+                if "best_params" in p and "best_params" not in out:
+                    out["best_params"] = p["best_params"]
+                if "data_profile" in p and "data_profile" not in out:
+                    out["data_profile"] = p["data_profile"]
+        except Exception as e:  # noqa: BLE001
+            log.warning("collect_agent_payloads_failed", error=str(e))
+        return out
 
     # ------------------------------------------------------------------
     async def record_outcome(self, kb_id: uuid.UUID, success: bool) -> None:
