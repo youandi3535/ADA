@@ -58,7 +58,8 @@
       "PowerShell(.venv\\\\Scripts\\\\python scripts/demo/timeseries_demo.py --scenario anomaly --json 2>&1)",
       "PowerShell(.venv\\\\Scripts\\\\python scripts/demo/timeseries_demo.py --scenario anomaly 2>&1)",
       "PowerShell(.venv\\\\Scripts\\\\python scripts/demo/timeseries_demo.py --scenario 1d 2>&1)",
-      "Bash(rm -f .git/index.lock && echo \"lock 제거 완료\")"
+      "Bash(rm -f .git/index.lock && echo \"lock 제거 완료\")",
+      "PowerShell(.venv\\\\Scripts\\\\python -c \"import ast; ast.parse\\(open\\('scripts/query_kb_hook.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"
