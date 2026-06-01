@@ -105,33 +105,64 @@ def _strip_badge_lines(text: str) -> str:
     return "\n".join(cleaned).strip()
 
 
+# 비답변(사과·되묻기·모름류) 패턴 — 이런 응답으로는 Claude 를 차단하지 않는다
+_NON_ANSWER_PAT = re.compile(
+    r"죄송|이해하기\s*어렵|질문을\s*명확|잘\s*모르겠|모르겠습니다|답변(?:할|하기)\s*(?:수\s*없|어렵)|확실하지\s*않"
+)
+
+
+def _is_low_quality_answer(answer: str) -> bool:
+    """차단(block)해도 좋을 만큼 '진짜 답변'인지 판정.
+
+    너무 짧거나(<8자) 사과/되묻기/모름류 비답변이면 True.
+    → 이 경우 차단하지 않고 passthrough 하여 Claude 가 직접 답하게 한다
+      (화면 공백·무의미 답변으로 답이 사라지는 것을 원천 차단).
+    """
+    a = (answer or "").strip()
+    if len(a) < 8:
+        return True
+    return bool(_NON_ANSWER_PAT.search(a))
+
+
 # ---------------------------------------------------------------------------
 # UserPromptSubmit 응답 헬퍼
 # ---------------------------------------------------------------------------
 
 
 def _emit_block_with_answer(badge: str, answer: str, cwd: str = "") -> None:
-    """답변을 사용자에게 표시 + parent Claude 차단. exit 0.
+    """KB/Ollama 답변을 additionalContext 로 주입 → Claude 가 채팅에 표시. exit 0.
 
-    공식 사양 (UserPromptSubmit):
-        - exit 0 + JSON {"decision":"block","reason":"..."} 만 사용.
-        - reason 이 사용자 화면에 표시됨.
-        - hookSpecificOutput / suppressOriginalPrompt 는 비표준 필드 → 사용 금지.
-          (suppression 필드가 reason 표시까지 억제해 답변이 사라지는 버그 원인)
+    변경 이유
+    ---------
+    VS Code 익스텐션에서 {"decision":"block","reason":"..."} 방식은
+    reason 이 채팅 화면에 렌더링되지 않아 사용자에게 답변이 보이지 않는 버그.
+    → additionalContext 주입 방식으로 전환:
+      Claude 가 차단되지 않고 KB 답변을 컨텍스트로 받아 채팅에 직접 출력.
     """
-    body = f"{badge}\n{answer}"
+    ans = (answer or "").strip()
+    # 안전장치: 빈/저품질 답변으로는 컨텍스트 주입하지 않는다.
+    if _is_low_quality_answer(ans):
+        _debug(f"low_quality_answer → passthrough (len={len(ans)})", cwd)
+        _emit_passthrough(cwd, reason="low_quality_answer")
+        return
 
-    payload = {
-        "decision": "block",
-        "reason": body,
-    }
+    # Claude 에게 KB 답변을 컨텍스트로 전달 + 배지·출력 지시
+    context = (
+        f"[KB 답변 주입 — Claude 에 대한 지시]\n"
+        f"아래는 ADA 팀 KB에서 검색된 답변입니다. 이 내용을 그대로 출력하되:\n"
+        f"1) 반드시 첫 줄에 '{badge}' 배지를 그대로 출력하세요.\n"
+        f"2) 3순위 Claude 배지([3순위 ☁️ Claude | 💸 유료])는 붙이지 마세요.\n"
+        f"3) KB 답변 이외의 추가 설명은 최소화하세요.\n\n"
+        f"KB 답변 내용:\n{ans}"
+    )
+
+    payload = {"additionalContext": context}
     out = json.dumps(payload, ensure_ascii=False)
 
-    _debug(f"emit_block: badge={badge!r}, answer_len={len(answer)}", cwd)
-    _debug(f"emit_block: stdout_json={out[:300]}", cwd)
+    _debug(f"emit_context_inject: badge={badge!r}, answer_len={len(ans)}", cwd)
+    _debug(f"emit_context_inject: stdout_json={out[:300]}", cwd)
 
     try:
-        # buffer 레벨에서 UTF-8 직접 출력 — Windows 에서 sys.stdout 인코딩 오류 방지
         sys.stdout.buffer.write(out.encode("utf-8"))
         sys.stdout.buffer.flush()
     except Exception as e:  # noqa: BLE001
