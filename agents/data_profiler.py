@@ -1,13 +1,15 @@
-"""agents.data_profiler — DataProfilerAgent (Day 0 dispatcher 패턴).
+"""agents.data_profiler -- DataProfilerAgent (Day 0 dispatcher pattern).
 
-ADR-008 L3.3: 업로드 df 의 PII 컬럼 자동 마스킹 + state.category_extras['_pii']
-mapping merge. 핸들러는 마스킹된 df 받음.
+- File loading / statistics profile : library (pandas/numpy)
+- PII detection                      : LLM  / masking : library (PIIAnonymizer)
+- Category / target detection        : LLM
 
 수정 권한: HJ 단독 (dispatcher).
 """
 
 from __future__ import annotations
 
+import json as _json
 from typing import Any
 
 import agents.handlers.anomaly  # noqa: F401
@@ -21,53 +23,71 @@ from agents.handlers.common.shared import (
     load_dataframe_from_state,
 )
 
+_PII_SYSTEM_PROMPT = (
+    "You are a data privacy expert. "
+    "Identify which columns likely contain PII (names, emails, phone numbers, "
+    "addresses, ID numbers, SSNs, etc.). "
+    "Return ONLY a JSON array of column name strings. "
+    'Example: ["full_name", "email"] -- return [] if none.'
+)
+
+_CATEGORY_SYSTEM_PROMPT = (
+    "You are a data science expert. Classify this dataset into exactly one of:\n"
+    '- "tabular_ml"        : structured tabular data for ML classification or regression\n'
+    '- "tabular_dl"        : structured tabular data requiring deep learning\n'
+    '- "timeseries"        : data with a time/date dimension for forecasting\n'
+    '- "anomaly_detection" : data for detecting outliers or anomalies\n\n'
+    "Also identify the most likely target column to predict. "
+    "For anomaly_detection set target_column to null.\n\n"
+    "Return ONLY JSON (no markdown):\n"
+    '{"category": "tabular_ml", "target_column": "price", "reason": "brief"}'
+)
+
 
 class DataProfilerAgent(BaseAgent):
-    """4 카테고리 공통 dispatcher."""
+    """4-category common dispatcher."""
 
-    uses_llm = False
+    uses_llm = True
+    model_name = "claude-sonnet-4-6"
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
+            # ① File loading -- library
             try:
                 df = load_dataframe_from_state(state)
             except Exception as e:
                 return state.with_update(
-                    error=f"파일 로딩 실패: {e}",
+                    error=f"file load failed: {e}",
                     validation={"is_valid": False, "errors": [str(e)], "warnings": []},
                     next_agent="error_recovery",
                 )
 
-            # ADR-008 L3.3 — 업로드 df 의 PII 컬럼 자동 마스킹
-            df, pii_extras = _anonymize_uploaded_df(df, state)
+            # ② PII detection -- LLM  /  masking -- library
+            df, pii_extras = await self._llm_anonymize_df(df)
 
-            # ── 게이트 주도 설계: category 미지정 시 데이터 기반 자동 탐지 ──
-            #   사용자는 탭1에서 category/target 을 입력하지 않음 → 여기서 추정하고
-            #   G1 게이트에서 사용자가 확인/override 한다.
+            # ③ Category / target detection -- LLM (only when unspecified)
             category = state.category
             target_column = state.target_column
             detection: dict[str, Any] = {}
             if (not category) or category in ("pending", "auto") or category not in CATEGORIES:
                 try:
                     generic = basic_dataframe_profile(df, target_column=None)
-                    category, target_column, detection = _detect_category(
-                        generic, state.user_intent or state.user_question or ""
+                    category, target_column, detection = await self._llm_detect_category(
+                        generic, df, state.user_intent or state.user_question or ""
                     )
-                except Exception as e:  # noqa: BLE001
-                    self.logger.warning("category_detection_failed", error=str(e))
+                except Exception as e:
+                    self.logger.warning("llm_category_detection_failed", error=str(e))
                     category, target_column = "tabular_ml", None
-                # 최후 방어 — schema_validator 가 'pending'/무효 category 로 죽지 않도록 보장
                 if category not in CATEGORIES:
                     category = "tabular_ml"
                 await self._persist_detection(state, category, target_column)
 
-            # 감지된 target 반영해 프로파일 산출 (schema_validator 의 has_target 검증용)
+            # ④ Full statistics profile -- library
             profile = basic_dataframe_profile(df, target_column=target_column)
             if detection:
                 profile["category_detection"] = detection
-                if detection.get("date_col"):
-                    profile.setdefault("date_col", detection["date_col"])
 
+            # ⑤ Category-specific handler -- library (best-effort)
             handler = get_handler(category, "profile")
             if handler is not None:
                 try:
@@ -86,8 +106,88 @@ class DataProfilerAgent(BaseAgent):
                 next_agent="schema_validator",
             )
 
+    # ------------------------------------------------------------------
+    # LLM helpers
+    # ------------------------------------------------------------------
+
+    async def _llm_detect_pii(self, df: Any) -> list[str]:
+        """LLM-based PII column detection. Returns [] on failure."""
+        cols = list(map(str, df.columns))
+        try:
+            sample = df.head(3).fillna("").astype(str).to_dict(orient="records")
+        except Exception:
+            sample = []
+        user_prompt = (
+            f"Column names: {cols}\nSample data (first 3 rows): {_json.dumps(sample, ensure_ascii=False)[:2000]}"
+        )
+        raw = await self._call_llm(
+            system_prompt=_PII_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            max_tokens=300,
+            temperature=0.0,
+            json_mode=True,
+        )
+        result = self._parse_json(raw)
+        if isinstance(result, list):
+            pii_cols = result
+        elif isinstance(result, dict):
+            pii_cols = result.get("pii_columns", [])
+        else:
+            pii_cols = []
+        return [c for c in pii_cols if c in df.columns]
+
+    async def _llm_anonymize_df(self, df: Any) -> tuple[Any, dict[str, Any]]:
+        """PII detection via LLM, masking via library. Returns original df on failure."""
+        try:
+            pii_cols = await self._llm_detect_pii(df)
+            if not pii_cols:
+                return df, {}
+            from ada.security.guardrails import PIIAnonymizer
+
+            anon = PIIAnonymizer()
+            masked_df, mapping = anon.anonymize_df(df, pii_columns=pii_cols)
+            return masked_df, {"mapping": mapping, "columns": pii_cols}
+        except Exception as e:
+            self.logger.warning("llm_pii_anonymize_fallback", error=str(e))
+            return df, {}
+
+    async def _llm_detect_category(
+        self, profile: dict[str, Any], df: Any, intent: str
+    ) -> tuple[str, Any, dict[str, Any]]:
+        """LLM-based category / target detection."""
+        try:
+            sample = df.head(3).fillna("").astype(str).to_dict(orient="records")
+        except Exception:
+            sample = []
+        user_prompt = (
+            f"columns: {profile.get('columns', [])}\n"
+            f"dtypes: {_json.dumps(profile.get('dtypes', {}), ensure_ascii=False)}\n"
+            f"sample_rows: {_json.dumps(sample, ensure_ascii=False)[:2000]}\n"
+            f"user_intent: {intent or 'none'}"
+        )
+        raw = await self._call_llm(
+            system_prompt=_CATEGORY_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            max_tokens=300,
+            temperature=0.0,
+            json_mode=True,
+        )
+        parsed = self._parse_json(raw)
+        category = parsed.get("category", "tabular_ml")
+        target_column = parsed.get("target_column") or None
+        reason = parsed.get("reason", "")
+        detection = {
+            "detected_category": category,
+            "detected_target": target_column,
+            "reason": reason,
+            "signals": {"llm_inferred": True},
+        }
+        return category, target_column, detection
+
+    # ------------------------------------------------------------------
+
     async def _persist_detection(self, state: PipelineState, category: str, target_column: Any) -> None:
-        """감지된 category/target 을 Job 행에 반영 (distiller·상태조회 일관성). best-effort."""
+        """Persist detected category/target to Job row. best-effort."""
         if self.session is None:
             return
         try:
@@ -102,41 +202,17 @@ class DataProfilerAgent(BaseAgent):
                 if target_column:
                     job.target_column = target_column
                 await self.session.flush()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.logger.warning("persist_detection_failed", error=str(e))
 
 
 # ==============================================================
-# ADR-008 L3.3 — 헬퍼 (모듈 레벨, 테스트 용이)
+# Module-level helpers
 # ==============================================================
 
 
-def _anonymize_uploaded_df(df: Any, state: PipelineState) -> tuple[Any, dict[str, Any]]:
-    """업로드 df 의 PII 컬럼 자동 마스킹.
-
-    Returns:
-        (마스킹된 df, extras={"mapping": {...}, "columns": [...]})
-    """
-    try:
-        from ada.security.guardrails import PIIAnonymizer
-    except Exception:
-        return df, {}
-    try:
-        anon = PIIAnonymizer()
-        cols = anon.detect_pii_columns(df)
-        if not cols:
-            return df, {}
-        masked_df, mapping = anon.anonymize_df(df, pii_columns=cols)
-        return masked_df, {"mapping": mapping, "columns": cols}
-    except Exception:
-        return df, {}
-
-
 def _merge_pii_extras(current_extras: dict[str, Any] | None, new_pii: dict[str, Any]) -> dict[str, Any]:
-    """state.category_extras 에 새 PII mapping/columns 를 merge.
-
-    기존 _pii (텍스트 mapping) 보존 + df mapping 추가 + df_columns 노출.
-    """
+    """Merge new PII mapping/columns into state.category_extras."""
     extras = dict(current_extras or {})
     if not new_pii:
         return extras
@@ -149,82 +225,3 @@ def _merge_pii_extras(current_extras: dict[str, Any] | None, new_pii: dict[str, 
         "redaction": existing.get("redaction") or "***",
     }
     return extras
-
-
-# ==============================================================
-# 게이트 주도 — category/target 자동 탐지 (G1 제안용)
-# ==============================================================
-
-_TARGET_NAME_HINTS = (
-    "target",
-    "label",
-    "class",
-    "outcome",
-    "result",
-    "survived",
-    "churn",
-    "default",
-    "fraud",
-    "price",
-    "sales",
-    "정답",
-    "타깃",
-    "레이블",
-    "라벨",
-    "결과",
-    "종속",
-)
-_DATE_NAME_HINTS = ("date", "time", "timestamp", "datetime", "날짜", "일자", "시간", "period", "ds")
-_TS_INTENT = ("시계열", "예측", "forecast", "time series", "timeseries", "추세", "계절", "미래", "향후")
-_ANOM_INTENT = ("이상", "anomaly", "outlier", "비정상", "fraud", "사기", "결함", "불량")
-
-
-def _detect_category(profile: dict[str, Any], intent: str) -> tuple[str, Any, dict[str, Any]]:
-    """범용 프로파일 + 의도로 4 카테고리 중 하나와 target 후보를 추정.
-
-    완벽할 필요 없음 — G1 게이트에서 사용자가 확인/override 한다.
-    반환: (category, target_column|None, detection_info)
-    """
-    cols = [str(c) for c in (profile.get("columns") or [])]
-    dtypes = {str(k): str(v).lower() for k, v in (profile.get("dtypes") or {}).items()}
-    low = (intent or "").lower()
-
-    # 날짜 컬럼 (dtype → 이름)
-    date_col = next((c for c in cols if "datetime" in dtypes.get(c, "")), None)
-    if date_col is None:
-        date_col = next((c for c in cols if any(h in c.lower() for h in _DATE_NAME_HINTS)), None)
-
-    # 타깃 후보 (이름 힌트 → 마지막 컬럼 관례)
-    target = next((c for c in cols if any(h in c.lower() for h in _TARGET_NAME_HINTS)), None)
-    if target is None and cols and cols[-1] != date_col:
-        target = cols[-1]
-
-    numeric_cols = [c for c in cols if any(t in dtypes.get(c, "") for t in ("int", "float")) and c != date_col]
-    ts_kw = any(k in low for k in _TS_INTENT)
-    anom_kw = any(k in low for k in _ANOM_INTENT)
-
-    if anom_kw:
-        category, target = "anomaly_detection", None
-    elif date_col and (ts_kw or len(cols) <= 3):
-        category = "timeseries"
-        if not (target and target in numeric_cols and target != date_col):
-            target = numeric_cols[0] if numeric_cols else None
-    elif target is not None:
-        category = "tabular_ml"
-    elif date_col:
-        category = "timeseries"
-        target = numeric_cols[0] if numeric_cols else None
-    else:
-        category, target = "anomaly_detection", None
-
-    return (
-        category,
-        target,
-        {
-            "detected_category": category,
-            "detected_target": target,
-            "date_col": date_col,
-            "signals": {"has_date": bool(date_col), "ts_keyword": ts_kw, "anomaly_keyword": anom_kw},
-            "note": "G1 게이트에서 사용자 확인/override 가능",
-        },
-    )

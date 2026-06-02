@@ -25,7 +25,7 @@ class AnalysisProposerAgent(BaseGate):
     """G1 — 분석 방향 3안 (예: 예측 / 분류 / 군집)."""
 
     gate_code = "G1"
-    model_name = "claude-opus-4-7"
+    model_name = "claude-opus-4-6"
 
     async def _propose(self, state: PipelineState) -> list[dict[str, Any]]:
         payload = {

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ============================================================
 # Dockerfile.worker  -  Celery 워커 이미지 (ML / 오케스트레이션)
 # pipeline / training / output / harness 4종이 이 한 이미지 공용
@@ -30,7 +31,9 @@ COPY requirements/base.txt requirements/worker.txt \
      requirements/handlers-timeseries.txt \
      requirements/handlers-anomaly.txt \
      /app/requirements/
-RUN pip install --timeout=600 --retries=5 -r /app/requirements/worker.txt
+# pip 다운로드 캐시 재사용(BuildKit) — 재시도·재빌드 때 torch 등 재다운로드 방지
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_NO_CACHE_DIR=0 pip install --timeout=1200 --retries=10 -r /app/requirements/worker.txt
 
 COPY . /app
 

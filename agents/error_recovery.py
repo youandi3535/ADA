@@ -2,6 +2,7 @@
 
 6단계 폴백 + 사용자 친절 안내.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,18 +22,18 @@ JSON 으로 응답합니다.
 
 
 FALLBACKS = [
-    "retry_same",        # 1) 동일 설정 재시도
+    "retry_same",  # 1) 동일 설정 재시도
     "downgrade_models",  # 2) 트랜스포머 제외 후 재시도
-    "reduce_trials",     # 3) Optuna trial 축소
-    "skip_finetune",     # 4) FineTune 건너뜀
-    "smaller_sample",    # 5) 데이터 샘플링 축소
-    "user_handoff",      # 6) 사용자 개입 요청
+    "reduce_trials",  # 3) Optuna trial 축소
+    "skip_finetune",  # 4) FineTune 건너뜀
+    "smaller_sample",  # 5) 데이터 샘플링 축소
+    "user_handoff",  # 6) 사용자 개입 요청
 ]
 
 
 class ErrorRecoveryAgent(BaseAgent):
     uses_llm = True
-    model_name = "claude-opus-4-7"
+    model_name = "claude-opus-4-6"
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
@@ -47,12 +48,15 @@ class ErrorRecoveryAgent(BaseAgent):
             try:
                 raw = await self._call_llm(
                     system_prompt=SYSTEM_PROMPT,
-                    user_prompt=json.dumps({
-                        "error": state.error,
-                        "category": state.category,
-                        "retry_count": retry,
-                        "fallback": fallback,
-                    }, ensure_ascii=False),
+                    user_prompt=json.dumps(
+                        {
+                            "error": state.error,
+                            "category": state.category,
+                            "retry_count": retry,
+                            "fallback": fallback,
+                        },
+                        ensure_ascii=False,
+                    ),
                     max_tokens=300,
                     temperature=0.2,
                     json_mode=True,
@@ -72,16 +76,24 @@ class ErrorRecoveryAgent(BaseAgent):
 
             next_agent = "supervisor"
             # downgrade_models: 모델 후보에서 트랜스포머 계열 제외
-            updates: dict[str, Any] = {"retry_count": retry,
-                                        "insights": user_message,
-                                        "error": None,
-                                        "next_agent": next_agent}
+            updates: dict[str, Any] = {
+                "retry_count": retry,
+                "insights": user_message,
+                "error": None,
+                "next_agent": next_agent,
+            }
             if fallback == "downgrade_models" and state.model_candidates:
-                transformer = {"TabTransformer", "FTTransformer", "TabPFN",
-                               "Informer", "TFT", "PatchTST", "TranAD",
-                               "AnomalyTransformer"}
-                updates["model_candidates"] = [m for m in state.model_candidates
-                                                if m not in transformer]
+                transformer = {
+                    "TabTransformer",
+                    "FTTransformer",
+                    "TabPFN",
+                    "Informer",
+                    "TFT",
+                    "PatchTST",
+                    "TranAD",
+                    "AnomalyTransformer",
+                }
+                updates["model_candidates"] = [m for m in state.model_candidates if m not in transformer]
             elif fallback == "smaller_sample":
                 # supervisor 부터 다시 — 본문 sampling 은 training_executor 가 본다
                 updates["max_re_loop"] = 0

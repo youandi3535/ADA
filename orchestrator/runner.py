@@ -120,7 +120,13 @@ def publish_progress(job_id: str, current_agent: str, message: str = "") -> None
         "ts": time.time(),
         "message": message,
     }
-    r.publish(f"ada:pipeline:{job_id}", json.dumps(payload))
+    body = json.dumps(payload)
+    r.publish(f"ada:pipeline:{job_id}", body)
+    # 마지막 진행상황 영속화 — /pipeline/gate 가 실제 진행률/현재 에이전트를 읽어 표시
+    try:
+        r.set(f"ada:progress:{job_id}", body, ex=3600)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +189,15 @@ def ping() -> str:
 # ---------------------------------------------------------------------------
 # Internal async runners
 # ---------------------------------------------------------------------------
+def _final_to_dict(final) -> dict | None:
+    """LangGraph ainvoke 반환값(PipelineState 또는 AddableValuesDict) → dict 변환."""
+    if final is None:
+        return None
+    if hasattr(final, "to_dict"):
+        return final.to_dict()
+    return dict(final)
+
+
 async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
     from orchestrator.graph import get_pipeline_graph
 
@@ -192,7 +207,7 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
     try:
         final = await graph.ainvoke(state, config=config) if not resume else None
         publish_progress(job_id, "END", "complete")
-        return {"status": "completed", "final": final.to_dict() if final else None}
+        return {"status": "completed", "final": _final_to_dict(final)}
     except Exception as e:
         log.error("pipeline_error", error=str(e))
         publish_progress(job_id, "error_recovery", f"error: {e}")
@@ -214,4 +229,4 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
     new_responses[gate_code] = {**new_responses.get(gate_code, {}), "user_choice": gate_response.get("choice")}
     await graph.aupdate_state(config, {"gate_responses": new_responses, "current_gate": None})
     final = await graph.ainvoke(None, config=config)
-    return {"status": "completed", "final": final.to_dict() if final else None}
+    return {"status": "completed", "final": _final_to_dict(final)}

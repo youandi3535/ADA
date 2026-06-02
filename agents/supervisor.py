@@ -129,7 +129,8 @@ class SupervisorAgent(BaseAgent):
     @staticmethod
     def _validate_input(state: PipelineState) -> tuple[bool, list[str]]:
         errs: list[str] = []
-        if state.category not in VALID_CATEGORIES:
+        # pending/auto 는 data_profiler 가 자동 감지하는 플레이스홀더 → 여기서 거부 금지
+        if state.category not in VALID_CATEGORIES and state.category not in ("pending", "auto"):
             errs.append(f"유효하지 않은 카테고리: {state.category}")
         if state.category == "timeseries" and not state.target_column:
             errs.append("timeseries 카테고리는 target_column 필수")

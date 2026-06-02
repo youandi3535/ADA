@@ -178,4 +178,22 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     except Exception:  # noqa: BLE001
         pass
 
+    # 실시간 진행률/현재 에이전트 — runner.publish_progress 가 Redis 에 저장한 마지막 값
+    try:
+        import json as _json
+
+        import redis as _redis
+
+        from ada.core.config import settings as _settings
+
+        rc = _redis.Redis.from_url(_settings.redis_url)
+        raw = rc.get(f"ada:progress:{job_id}")
+        if raw:
+            pr = _json.loads(raw)
+            data["current_agent"] = pr.get("agent")
+            data["progress_pct"] = pr.get("progress")
+            data["progress_ts"] = pr.get("ts")
+    except Exception:  # noqa: BLE001
+        pass
+
     return data

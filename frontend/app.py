@@ -3,7 +3,8 @@
 1) 랜딩(스플래시) → Start
 2) 업로드 → 5게이트(HITL) → 산출물 : 확정 디자인(다크 히어로·진행도 스텝퍼·카드)을
    임베드(components.html)하고, 임베드 안에서 브라우저가 ADA API(localhost:8000)에 직접
-   fetch 로 연동. 게이트 추천(proposals)·분석 결과는 GET /pipeline/gate/{job} 에서 받아 표시.
+   fetch 로 연동. 게이트 추천(proposals)·분석 결과·현재 게이트는 GET /pipeline/gate/{job}
+   (LangGraph state) 에서 받아 표시. 분석 중에는 로딩바·진행률·경과/예상시간 표시.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ st.markdown(
 )
 
 # ===========================================================================
-# 업로드 + 진행 플로우 — 확정 디자인 + API 연동 (게이트 추천/결과는 백엔드에서)
+# 업로드 + 진행 플로우 — 확정 디자인 + API 연동 (게이트/추천/결과는 /gate=LangGraph state)
 # ===========================================================================
 _FLOW_HTML = """
 <!doctype html><html lang="ko"><head><meta charset="utf-8">
@@ -92,6 +93,21 @@ _FLOW_HTML = """
     border:1px solid #cfe9d8;border-radius:14px;padding:13px 20px;margin:14px 0 4px;font-size:18px;color:#2a5e44;}
   .databar .t{font-weight:700;color:#1f7a52;}
   .databar b{color:#176a45;}
+  .loadwrap{text-align:center;margin-top:24px;}
+  .loadtxt{font-size:22px;color:#52647d;}
+  .lbar{height:20px;border-radius:10px;background:#e6edf6;overflow:hidden;max-width:760px;margin:22px auto 0;position:relative;}
+  .lfill{height:100%;border-radius:10px;background:linear-gradient(90deg,#3f5d7e,#1f3e5c);transition:width .6s ease;}
+  .lmeta{font-size:20px;color:#7e98ba;margin-top:16px;}
+  .lmeta b{color:#3f5168;}
+  .lagent{font-size:19px;color:#1f7a52;margin-top:8px;}
+  @keyframes adapop{0%{transform:scale(.06);opacity:0;}60%{opacity:1;}100%{transform:scale(1);opacity:1;}}
+  .opts.popin{transform-origin:top center;animation:adapop .55s cubic-bezier(.2,.8,.25,1.25);}
+  .lbar.indet{position:relative;}
+  .lbar.indet .lfill{width:32% !important;position:absolute;top:0;left:-32%;animation:indet 1.3s ease-in-out infinite;}
+  @keyframes indet{0%{left:-32%;}100%{left:100%;}}
+  .diag{margin:18px auto 0;background:#fff7ec;border:1px solid #f0d9b5;color:#8a5a16;border-radius:14px;padding:16px 20px;font-size:17px;line-height:1.75;text-align:left;max-width:840px;}
+  .diag code{background:#f1e7d4;border-radius:6px;padding:2px 7px;font-size:15px;}
+  .diag b{color:#6a4310;}
   .dz{border:2px dashed var(--line2);background:#f7faff;border-radius:20px;padding:34px;display:flex;align-items:center;gap:26px;cursor:pointer;}
   .dz.has{border-color:#1f7a52;background:#eefbf4;}
   .dz .ic{width:56px;height:56px;color:#6f93c4;flex:none;}
@@ -153,32 +169,30 @@ _FLOW_HTML = """
 <script>
 const steps=[{label:'업로드',sub:'데이터'},{label:'분석 방향',sub:'G1'},{label:'방법론',sub:'G2'},{label:'모델 전략',sub:'G3'},{label:'모델 선택',sub:'G4'},{label:'산출물',sub:'G5'},{label:'완료',sub:'인사이트'}];
 const N=steps.length, LAST=N-1;
+const ANALYZE_EST=45;  // 분석 중 진행률 추정용(초)
 const GATE_TITLE={G1:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G2:['어떤 방법론으로 진행할까요?','Choose your methodology'],G3:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G4:['어떤 모델을 채택할까요?','Pick the best model'],G5:['어떤 산출물을 만들까요?','Choose your outputs']};
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
-let gateData={}, gateFetchedFor=null, selId=null, selGate=null, customText='';
+let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
+const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성'};
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function serverStep(){
-  if(!jobId) return 0;
-  const s=status.status;
-  if(['completed','succeeded','success'].includes(s)) return LAST;
-  const g=status.current_gate;
-  if(g && /^G[1-5]$/.test(g)) return +g[1];
-  return 1;
+function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
+function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[1-5]$/.test(g))?g:null; }
+function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
+function isCompleted(){ return ['completed','succeeded','success'].includes(status.status) || (jobId && !curGate() && hasResults()); }
+function analyzing(){ return !!(jobId && !curGate() && !isCompleted()); }
+function computeFrontier(){
+  if(isCompleted()){ frontier=LAST; return; }
+  const g=curGate();
+  frontier = g ? (+g[1]) : (jobId?1:0);
 }
 async function api(path, opts){
   const r=await fetch(API+path, opts||{});
   const txt=await r.text();
   if(!r.ok) throw new Error('HTTP '+r.status+' '+txt.slice(0,180));
   return txt ? JSON.parse(txt) : {};
-}
-async function fetchGate(tag){
-  try{ gateData=await api('/pipeline/gate/'+jobId,{}); }
-  catch(e){ gateData={proposals:[], _err:e.message}; }
-  gateFetchedFor=tag; selId=null;
-  render();
 }
 async function doUpload(){
   if(!selectedFile){ errMsg='먼저 파일을 선택하세요.'; render(); return; }
@@ -189,7 +203,8 @@ async function doUpload(){
     fileId=up.file_id;
     const stt=await api('/pipeline/start',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({file_id:fileId,user_intent:intentText||null,requested_outputs:[]})});
-    jobId=stt.job_id; follow=true; cur=1; frontier=1; maxReached=1; busy=false; gateFetchedFor=null;
+    jobId=stt.job_id; follow=true; cur=1; frontier=1; maxReached=1; busy=false;
+    gateData={}; analyzeStart=Date.now();
     startPolling();
   }catch(e){ errMsg='업로드/시작 실패 — '+e.message; busy=false; render(); }
 }
@@ -199,37 +214,63 @@ async function doResume(){
   if(selId==='custom'){
     if(!customText.trim()){ errMsg='옵션: 분석 방향을 입력해 주세요.'; render(); return; }
     choice={adopted_rank:0, custom_intent:customText};
-  } else if(selId!=null){
-    choice={adopted_rank:selId};
-  } else {
-    choice={adopted_rank: (props[0]&&props[0].id)||1};
-  }
-  const gate=gateData.gate || status.current_gate || ('G'+cur);
+  } else if(selId!=null){ choice={adopted_rank:selId}; }
+  else { choice={adopted_rank:(props[0]&&props[0].id)||1}; }
+  const gate=curGate() || ('G'+cur);
   errMsg=''; busy=true; render();
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
-    follow=true; busy=false; gateFetchedFor=null; gateData={}; selId=null;
+    follow=true; busy=false; gateData={}; selId=null; analyzeStart=Date.now();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
 }
 async function poll(){
   if(!jobId) return;
-  try{ status=await api('/pipeline/status/'+jobId,{}); }
-  catch(e){ errMsg='상태 조회 실패 — '+e.message; }
-  frontier=serverStep(); maxReached=Math.max(maxReached,frontier);
+  try{ status=await api('/pipeline/status/'+jobId,{}); }catch(e){ status={_err:e.message}; }
+  try{ gateData=await api('/pipeline/gate/'+jobId,{}); }catch(e){ gateData={proposals:[], _err:e.message}; }
+  computeFrontier(); maxReached=Math.max(maxReached,frontier);
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
+  if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
   render();
-  const done=['completed','succeeded','success'].includes(status.status);
-  if(status.current_gate && gateFetchedFor!==status.current_gate){ fetchGate(status.current_gate); }
-  else if(done && gateFetchedFor!=='_done'){ fetchGate('_done'); }
-  const running=['pending','running'].includes(status.status);
-  if(running && !paused && !status.current_gate){ pollTimer=setTimeout(poll, 2500); }
+  if(analyzing() && !paused){ pollTimer=setTimeout(poll, 2500); }
   else { polling=false; }
 }
 function startPolling(){ if(polling){ render(); return; } polling=true; clearTimeout(pollTimer); poll(); }
 
+// 1초 틱 — 분석 중 로딩바/경과시간 갱신
+setInterval(function(){ if(analyzing() && !paused) render(); }, 1000);
+
+function loadingBlock(){
+  const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
+  const realP=(gateData.progress_pct!=null)?gateData.progress_pct:null;
+  if(realP!=null){
+    const p=Math.max(2, Math.min(99, realP));
+    let etaStr='추정 중…';
+    if(realP>2 && el>1){ etaStr='약 '+fmtTime(Math.max(0, el*100/realP - el)); }
+    let agentLine='';
+    if(gateData.current_agent){ agentLine='<div class="lagent">현재 작업: <b>'+esc(AGENT_KO[gateData.current_agent]||gateData.current_agent)+'</b></div>'; }
+    let staleLine='';
+    if(gateData.progress_ts){ const since=Math.max(0, Date.now()/1000 - gateData.progress_ts); staleLine=' · 마지막 갱신 '+fmtTime(since)+' 전'+((since>120)?' ⚠ 지연/멈춤 의심':''); }
+    return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine
+      +'<div class="lbar"><div class="lfill" style="width:'+p+'%"></div></div>'
+      +'<div class="lmeta">진행 <b>'+p+'%</b> · 분석 시간 <b>'+fmtTime(el)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'+staleLine+'</div></div>';
+  }
+  // 백엔드가 진행률을 안 보냄 → 가짜 % 대신 미정(indeterminate) 바 + 진단
+  let diag='';
+  if(el>75){
+    diag='<div class="diag">⚠ 백엔드에서 진행 신호가 <b>'+fmtTime(el)+'</b> 동안 없습니다. 워커가 실제로 분석 중이 아닐 가능성이 큽니다.<br>'
+      +'① 워커 실행: <code>docker ps | grep worker</code> &nbsp; ② 로그: <code>docker logs --tail 120 ada-worker-pipeline</code><br>'
+      +'③ <code>ANTHROPIC_API_KEY</code> 설정 여부 &nbsp; ④ 백엔드(api·worker) 파일 복사 후 <b>재기동</b> 했는지'
+      +(gateData._err?('<br><b>/gate 오류:</b> '+esc(gateData._err)+' → api 미배포/미기동 의심'):'')
+      +(gateData._state_error?('<br><b>state 오류:</b> '+esc(gateData._state_error)):'')
+      +'</div>';
+  }
+  return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석하는 중입니다…</div>'
+    +'<div class="lbar indet"><div class="lfill"></div></div>'
+    +'<div class="lmeta">분석 시간 <b>'+fmtTime(el)+'</b> · 백엔드 진행 신호 <b>대기 중</b></div>'+diag+'</div>';
+}
 function gateHeader(g){
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
   const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
@@ -243,7 +284,7 @@ function propCard(p, idx, recId){
   const rec=(p.id===recId)?'<span class="rec">추천</span>':'';
   let extra='';
   if(p.models && p.models.length) extra='<div class="hint">🧩 모델: '+p.models.map(esc).join(', ')+'</div>';
-  else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(k=>esc(k)+' '+esc(p.metrics[k])).join(' · ')+'</div>'; }
+  else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(function(k){return esc(k)+' '+esc(p.metrics[k]);}).join(' · ')+'</div>'; }
   else if(p.outputs && p.outputs.length) extra='<div class="hint">📦 '+p.outputs.map(esc).join(', ')+'</div>';
   const score=(p.score!=null)?('<div class="time">⭐ 추천도 '+Math.round(p.score*100)+'%</div>'):'';
   return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><p>'+esc(p.rationale||'')+'</p>'+extra+score+'</div>';
@@ -254,14 +295,16 @@ function customCard(n){
     +'<textarea id="cust" placeholder="예) 1등석 여성 승객의 생존 요인을 집중 분석하고 싶어요"></textarea><div class="time">자유 입력</div></div>';
 }
 function contentGate(){
-  const g=gateData.gate || status.current_gate || ('G'+cur);
+  const g=curGate() || ('G'+cur);
   const props=(gateData.proposals)||[];
-  if(!props.length){ return gateHeader(g)+'<p class="desc" style="margin-top:26px;color:#7e98ba">🔄 데이터를 분석해 추천을 생성하는 중입니다…</p>'; }
+  if(!curGate() || !props.length){ return gateHeader(g)+loadingBlock(); }
   let recId=props.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, props[0]).id;
   if(selId===null || selGate!==g){ selId=recId; selGate=g; }
   let cards=props.map(function(p,i){ return propCard(p,i,recId); }).join('');
   if(g==='G1') cards+=customCard(props.length);
-  return gateHeader(g)+'<div class="opts">'+cards+'</div>';
+  let pop='';
+  if(animatedGate!==g){ pop=' popin'; animatedGate=g; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
+  return gateHeader(g)+'<div class="opts'+pop+'">'+cards+'</div>';
 }
 function rcard(title, inner){ return '<div class="rcard"><h4>'+title+'</h4>'+inner+'</div>'; }
 function contentResult(){
@@ -323,13 +366,12 @@ function render(){
 
   document.getElementById('content').innerHTML=(errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur);
   document.getElementById('curName').textContent=steps[cur].label;
-  const pct=(status.progress_pct!=null && status.progress_pct!==0)?status.progress_pct:Math.round(fillPct);
-  document.getElementById('curPct').textContent=pct+'%';
+  document.getElementById('curPct').textContent=((gateData.progress_pct!=null && !isCompleted())?gateData.progress_pct:Math.round(fillPct))+'%';
   document.getElementById('curIdx').textContent=cur+1;
   document.getElementById('curTot').textContent=N;
   const stt=document.getElementById('status');
   if(paused){ stt.textContent='⏸ 일시정지됨'; stt.className='status paused'; }
-  else if(frontier>=LAST && jobId){ stt.textContent='✓ 완료'; stt.className='status done'; }
+  else if(isCompleted()){ stt.textContent='✓ 완료'; stt.className='status done'; }
   else if(jobId){ stt.textContent='진행 중'; stt.className='status'; }
   else { stt.textContent='대기'; stt.className='status'; }
 
@@ -354,9 +396,8 @@ function render(){
         stop=document.getElementById('stopBtn'), prim=document.getElementById('primaryBtn');
   prev.disabled=(cur===0);
   next.disabled=(cur>=maxReached);
-  const running=jobId && ['pending','running'].includes(status.status);
-  stop.style.display=(!paused && running)?'inline-flex':'none';
-  const atGate=(cur===frontier) && !!status.current_gate;
+  stop.style.display=(!paused && analyzing())?'inline-flex':'none';
+  const atGate=(cur===frontier) && !!curGate() && ((gateData.proposals||[]).length>0);
   prim.innerHTML=primaryLabel();
   prim.classList.toggle('resume', paused);
   if(busy) prim.disabled=true;
@@ -370,7 +411,7 @@ document.getElementById('nextBtn').onclick=function(){ if(cur<maxReached){ cur++
 document.getElementById('stopBtn').onclick=function(){ paused=true; if(pollTimer) clearTimeout(pollTimer); polling=false; render(); };
 document.getElementById('primaryBtn').onclick=function(){
   if(busy) return;
-  if(paused){ paused=false; render(); if(jobId && ['pending','running'].includes(status.status) && !status.current_gate) startPolling(); return; }
+  if(paused){ paused=false; render(); if(analyzing()) startPolling(); return; }
   if(cur===0){ doUpload(); return; }
   if(cur>=1 && cur<=5){ doResume(); return; }
 };
