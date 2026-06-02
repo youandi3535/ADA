@@ -14,6 +14,7 @@ uvicorn[standard]==0.29.0
 scikit-learn==1.5.0
 xgboost==2.0.3
 lightgbm==4.3.0
-torch==2.3.0           # CPU 빌드 (서빙은 CPU)
+# torch(CPU) 는 requirements/torch-cpu-serving.txt 로 분리 → Dockerfile.serving 가 선설치.
+# (라벨 없는 torch==2.3.0 은 PyPI 기본=CUDA 빌드라 nvidia-* 수 GB 가 딸려와 이미지 비대)
 numpy==1.26.4
 pandas==2.2.2

@@ -65,7 +65,19 @@
       "Bash(claude --version)",
       "Bash(Remove-Item _bashprobe_sync.py, _probe_xyz -Force)",
       "Bash(docker cp *)",
-      "Bash(docker restart *)"
+      "Bash(docker restart *)",
+      "PowerShell(Get-Process -Id 4524 -ErrorAction SilentlyContinue)",
+      "PowerShell(cd C:\\\\IT\\\\workspace_python\\\\ADA; docker compose -f docker/docker-compose.yml --env-file .env up -d serving 2>&1 | Where-Object { $_ -notmatch \"^time=|level=warning\" })",
+      "PowerShell(cd C:\\\\IT\\\\workspace_python\\\\ADA\\\\docker; $env:POSTGRES_USER=\"autoai\"; docker compose up -d serving 2>&1 | Where-Object { $_ -notmatch \"^time=|level=warning\" })",
+      "PowerShell(cd C:\\\\IT\\\\workspace_python\\\\ADA\\\\docker; docker compose --profile ml up -d serving 2>&1 | Where-Object { $_ -notmatch \"^time=|level=warning\" })",
+      "PowerShell(cd C:\\\\IT\\\\workspace_python\\\\ADA\\\\docker; docker compose --profile core --profile ml up -d serving 2>&1 | Where-Object { $_ -notmatch \"^time=|level=warning\" })",
+      "PowerShell(docker exec ada-api pip install celery==5.4.0 --quiet 2>&1)",
+      "PowerShell(docker restart ada-api 2>&1)",
+      "PowerShell(Start-Sleep -Seconds 5; docker logs ada-api --tail 15 2>&1 | Where-Object { $_ -notmatch \"^time=|level=warning\" })",
+      "PowerShell(docker exec ada-api python -c \"from orchestrator.runner import run_pipeline_task; print\\('OK'\\)\" 2>&1)",
+      "PowerShell(docker logs ada-api --tail 30 2>&1 | Where-Object { $_ -notmatch \"GET /health|level=warning|^time=\" })",
+      "PowerShell(docker exec ada-api pip install redis==5.0.4 --quiet 2>&1)",
+      "PowerShell(docker restart ada-api 2>&1; Start-Sleep -Seconds 5; docker logs ada-api --tail 10 2>&1 | Where-Object { $_ -notmatch \"GET /health|level=warning|^time=\" })"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"

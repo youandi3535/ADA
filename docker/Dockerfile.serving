@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ============================================================
 # Dockerfile.serving  -  모델 서빙 (CPU 전용, 가벼움)
 # Python 3.10-slim 베이스 (작업지시서 §2.4)
@@ -16,8 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# 1) torch(CPU) 를 pytorch 인덱스에서 먼저 설치 — 느린 인덱스를 이 스텝에만 격리.
+#    (라벨 없는 torch 는 PyPI 기본=CUDA 라 이미지가 비대해짐 → +cpu 로 명시)
+COPY requirements/torch-cpu-serving.txt /app/requirements/
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_NO_CACHE_DIR=0 pip install --timeout=1200 --retries=10 -r /app/requirements/torch-cpu-serving.txt
+# 2) 나머지 의존성은 순수 PyPI 로 설치 → pytorch 인덱스 미조회.
 COPY requirements/base.txt requirements/serving.txt /app/requirements/
-RUN pip install -r /app/requirements/serving.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_NO_CACHE_DIR=0 pip install -r /app/requirements/serving.txt
 
 COPY . /app
 
