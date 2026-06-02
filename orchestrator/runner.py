@@ -240,6 +240,32 @@ def ping() -> str:
 # ---------------------------------------------------------------------------
 # Internal async runners
 # ---------------------------------------------------------------------------
+def _save_gate_data(job_id: str, final_dict: dict) -> None:
+    """게이트 인터럽트 시 proposals 등 핵심 데이터를 Redis 에 직접 저장.
+
+    API gate 엔드포인트가 matplotlib 등 워커 전용 패키지 없이도
+    graph.get_state() 없이 이 키에서 데이터를 읽을 수 있다.
+    """
+    gate = final_dict.get("current_gate")
+    if not gate:
+        return
+    gr = final_dict.get("gate_responses") or {}
+    gate_entry = gr.get(gate) or {}
+    try:
+        r = _get_redis()
+        payload = {
+            "gate": gate,
+            "proposals": gate_entry.get("proposals") or [],
+            "category": final_dict.get("category"),
+            "target_column": final_dict.get("target_column"),
+            "insights": final_dict.get("insights"),
+            "data_profile": final_dict.get("data_profile"),
+        }
+        r.set(f"ada:gate_data:{job_id}", json.dumps(payload, ensure_ascii=False, default=str), ex=86400)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _final_to_dict(final) -> dict | None:
     """LangGraph ainvoke 반환값(PipelineState 또는 AddableValuesDict) → dict 변환."""
     if final is None:
@@ -267,12 +293,9 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
             await _set_job_terminal(job_id, "completed")
         else:
-            publish_progress(
-                job_id,
-                final_dict.get("current_gate") or "gate_wait",
-                "awaiting user input",
-                pipeline_status="awaiting_user",
-            )
+            gate = final_dict.get("current_gate") or "gate_wait"
+            publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")
+            _save_gate_data(job_id, final_dict)
         return {"status": "completed", "final": final_dict}
     except Exception as e:
         tb = traceback.format_exc()
@@ -319,12 +342,9 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
             await _set_job_terminal(job_id, "completed")
         else:
-            publish_progress(
-                job_id,
-                final_dict.get("current_gate") or "gate_wait",
-                "awaiting user input",
-                pipeline_status="awaiting_user",
-            )
+            gate = final_dict.get("current_gate") or "gate_wait"
+            publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")
+            _save_gate_data(job_id, final_dict)
         return {"status": "completed", "final": final_dict}
     except Exception as e:
         tb = traceback.format_exc()

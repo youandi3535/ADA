@@ -8,7 +8,6 @@ GET  /pipeline/result/{job}  → 최종 결과
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime
 
@@ -143,33 +142,26 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
         "output_paths": {},
     }
 
-    def _read_state() -> dict | None:
-        from orchestrator.graph import get_pipeline_graph
-
-        graph = get_pipeline_graph()
-        snap = graph.get_state({"configurable": {"thread_id": job_id}})
-        vals = getattr(snap, "values", None)
-        if vals is None:
-            return None
-        return vals if isinstance(vals, dict) else vals.to_dict()
-
+    # runner._save_gate_data() 가 저장한 Redis 키에서 직접 읽기
     try:
-        cur = await asyncio.to_thread(_read_state)
-    except Exception as e:  # noqa: BLE001
-        cur = None
-        data["_state_error"] = str(e)
+        import json as _json2
 
-    if isinstance(cur, dict):
-        gr = cur.get("gate_responses") or {}
-        gate = cur.get("current_gate") or job.current_gate
-        data["gate"] = gate
-        if gate and isinstance(gr.get(gate), dict):
-            data["proposals"] = gr[gate].get("proposals") or []
-            data["user_choice"] = gr[gate].get("user_choice")
-        for k in ("insights", "eval_result", "best_model", "eda_summary", "output_paths", "category", "target_column"):
-            v = cur.get(k)
-            if v is not None:
-                data[k] = v
+        import redis as _redis2
+
+        from ada.core.config import settings as _s2
+
+        _rc2 = _redis2.Redis.from_url(_s2.redis_url)
+        _raw_gate = _rc2.get(f"ada:gate_data:{job_id}")
+        if _raw_gate:
+            _gd = _json2.loads(_raw_gate)
+            data["gate"] = _gd.get("gate") or job.current_gate
+            data["proposals"] = _gd.get("proposals") or []
+            for k in ("category", "target_column", "insights", "data_profile"):
+                v = _gd.get(k)
+                if v is not None:
+                    data[k] = v
+    except Exception:  # noqa: BLE001
+        pass
 
     try:
         rows = (await db.scalars(select(Output).where(Output.job_id == job.id))).all()
@@ -193,7 +185,18 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             data["current_agent"] = pr.get("agent")
             data["progress_pct"] = pr.get("progress")
             data["progress_ts"] = pr.get("ts")
+            # 워커가 종료 신호를 남겼으면 프론트가 폴링을 멈추도록 그대로 전달
+            if pr.get("status"):
+                data["pipeline_status"] = pr.get("status")
+            if pr.get("error"):
+                data["pipeline_error"] = pr.get("error")
     except Exception:  # noqa: BLE001
         pass
+
+    # DB job.status 가 'failed'/'completed' 면 Redis 가 비어 있어도 보고
+    if job.status in ("failed", "completed") and not data.get("pipeline_status"):
+        data["pipeline_status"] = job.status
+        if job.status == "failed" and job.error_message:
+            data["pipeline_error"] = job.error_message
 
     return data

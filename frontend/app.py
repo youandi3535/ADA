@@ -181,8 +181,9 @@ function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
 function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[1-5]$/.test(g))?g:null; }
 function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
-function isCompleted(){ return ['completed','succeeded','success'].includes(status.status) || (jobId && !curGate() && hasResults()); }
-function analyzing(){ return !!(jobId && !curGate() && !isCompleted()); }
+function isFailed(){ return (gateData.pipeline_status==='failed') || (status.status==='failed'); }
+function isCompleted(){ return ['completed','succeeded','success'].includes(status.status) || (gateData.pipeline_status==='completed') || (jobId && !curGate() && hasResults()); }
+function analyzing(){ return !!(jobId && !curGate() && !isCompleted() && !isFailed()); }
 function computeFrontier(){
   if(isCompleted()){ frontier=LAST; return; }
   const g=curGate();
@@ -242,17 +243,35 @@ function startPolling(){ if(polling){ render(); return; } polling=true; clearTim
 // 1초 틱 — 분석 중 로딩바/경과시간 갱신
 setInterval(function(){ if(analyzing() && !paused) render(); }, 1000);
 
+function failureBlock(){
+  const msg=gateData.pipeline_error||status.error||'알 수 없는 오류';
+  return '<div class="loadwrap"><div class="loadtxt">⛔ 분석이 실패했습니다.</div>'
+    +'<div class="diag"><b>오류:</b> '+esc(msg)+'<br>'
+    +'① 워커 로그 확인: <code>docker logs --tail 200 ada-worker-pipeline</code><br>'
+    +'② 워커 재기동 후 새 파일로 재시도하세요.'
+    +'</div></div>';
+}
 function loadingBlock(){
+  if(isFailed()) return failureBlock();
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
   const realP=(gateData.progress_pct!=null)?gateData.progress_pct:null;
+  // 지연/정체 판단 — 마지막 진행 갱신이 120초 이상 없으면 ETA 를 동결한다
+  let since=null;
+  if(gateData.progress_ts){ since=Math.max(0, Date.now()/1000 - gateData.progress_ts); }
+  const stale=(since!=null && since>120);
   if(realP!=null){
     const p=Math.max(2, Math.min(99, realP));
     let etaStr='추정 중…';
-    if(realP>2 && el>1){ etaStr='약 '+fmtTime(Math.max(0, el*100/realP - el)); }
+    if(stale){
+      etaStr='지연/멈춤 의심 — 추정 불가';
+    } else if(realP>5 && el>5){
+      // 진행률이 너무 낮으면 선형 외삽이 곧 elapsed 와 같아져 오해를 부른다 → 5% 미만은 표시 안 함
+      etaStr='약 '+fmtTime(Math.max(0, el*100/realP - el));
+    }
     let agentLine='';
     if(gateData.current_agent){ agentLine='<div class="lagent">현재 작업: <b>'+esc(AGENT_KO[gateData.current_agent]||gateData.current_agent)+'</b></div>'; }
     let staleLine='';
-    if(gateData.progress_ts){ const since=Math.max(0, Date.now()/1000 - gateData.progress_ts); staleLine=' · 마지막 갱신 '+fmtTime(since)+' 전'+((since>120)?' ⚠ 지연/멈춤 의심':''); }
+    if(since!=null){ staleLine=' · 마지막 갱신 '+fmtTime(since)+' 전'+(stale?' ⚠ 지연/멈춤 의심':''); }
     return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine
       +'<div class="lbar"><div class="lfill" style="width:'+p+'%"></div></div>'
       +'<div class="lmeta">진행 <b>'+p+'%</b> · 분석 시간 <b>'+fmtTime(el)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'+staleLine+'</div></div>';
@@ -371,6 +390,7 @@ function render(){
   document.getElementById('curTot').textContent=N;
   const stt=document.getElementById('status');
   if(paused){ stt.textContent='⏸ 일시정지됨'; stt.className='status paused'; }
+  else if(isFailed()){ stt.textContent='⛔ 실패'; stt.className='status failed'; }
   else if(isCompleted()){ stt.textContent='✓ 완료'; stt.className='status done'; }
   else if(jobId){ stt.textContent='진행 중'; stt.className='status'; }
   else { stt.textContent='대기'; stt.className='status'; }
