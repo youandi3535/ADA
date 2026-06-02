@@ -1,4 +1,5 @@
 """api.schemas.pipeline — 파이프라인 요청/응답 스키마."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -13,7 +14,8 @@ OutputCode = Literal["OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07"]
 
 class PipelineStartRequest(BaseModel):
     file_id: str
-    category: Category
+    # 게이트 주도: 미지정 시 데이터 프로파일 기반 자동 탐지 → G1 에서 사용자 확인/override
+    category: Optional[Category] = None
     target_column: Optional[str] = None
     user_question: Optional[str] = None
     user_intent: Optional[str] = None
@@ -41,6 +43,8 @@ class PipelineResumeRequest(BaseModel):
 class PipelineStatusResponse(BaseModel):
     job_id: str
     status: str
+    category: Optional[str] = None  # 게이트 주도: 자동탐지/확정된 카테고리
+    target_column: Optional[str] = None  # 자동탐지/확정된 타깃
     current_agent: Optional[str] = None
     current_gate: Optional[str] = None
     progress_pct: int = 0

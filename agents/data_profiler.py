@@ -13,7 +13,7 @@ from typing import Any
 import agents.handlers.anomaly  # noqa: F401
 import agents.handlers.tabular  # noqa: F401
 import agents.handlers.timeseries  # noqa: F401
-from ada.core.state import PipelineState
+from ada.core.state import CATEGORIES, PipelineState
 from agents.base import BaseAgent
 from agents.handlers import get_handler
 from agents.handlers.common.shared import (
@@ -41,23 +41,69 @@ class DataProfilerAgent(BaseAgent):
             # ADR-008 L3.3 — 업로드 df 의 PII 컬럼 자동 마스킹
             df, pii_extras = _anonymize_uploaded_df(df, state)
 
-            profile = basic_dataframe_profile(df, target_column=state.target_column)
+            # ── 게이트 주도 설계: category 미지정 시 데이터 기반 자동 탐지 ──
+            #   사용자는 탭1에서 category/target 을 입력하지 않음 → 여기서 추정하고
+            #   G1 게이트에서 사용자가 확인/override 한다.
+            category = state.category
+            target_column = state.target_column
+            detection: dict[str, Any] = {}
+            if (not category) or category in ("pending", "auto") or category not in CATEGORIES:
+                try:
+                    generic = basic_dataframe_profile(df, target_column=None)
+                    category, target_column, detection = _detect_category(
+                        generic, state.user_intent or state.user_question or ""
+                    )
+                except Exception as e:  # noqa: BLE001
+                    self.logger.warning("category_detection_failed", error=str(e))
+                    category, target_column = "tabular_ml", None
+                # 최후 방어 — schema_validator 가 'pending'/무효 category 로 죽지 않도록 보장
+                if category not in CATEGORIES:
+                    category = "tabular_ml"
+                await self._persist_detection(state, category, target_column)
 
-            handler = get_handler(state.category, "profile")
+            # 감지된 target 반영해 프로파일 산출 (schema_validator 의 has_target 검증용)
+            profile = basic_dataframe_profile(df, target_column=target_column)
+            if detection:
+                profile["category_detection"] = detection
+                if detection.get("date_col"):
+                    profile.setdefault("date_col", detection["date_col"])
+
+            handler = get_handler(category, "profile")
             if handler is not None:
                 try:
-                    extra = handler(df, state)
+                    extra = handler(df, state.with_update(category=category, target_column=target_column))
                     if isinstance(extra, dict):
                         profile.update(extra)
                 except Exception as e:
-                    self.logger.warning("profiler_handler_failed", category=state.category, error=str(e))
+                    self.logger.warning("profiler_handler_failed", category=category, error=str(e))
 
             merged_extras = _merge_pii_extras(state.category_extras, pii_extras)
             return state.with_update(
+                category=category,
+                target_column=target_column,
                 data_profile=profile,
                 category_extras=merged_extras,
                 next_agent="schema_validator",
             )
+
+    async def _persist_detection(self, state: PipelineState, category: str, target_column: Any) -> None:
+        """감지된 category/target 을 Job 행에 반영 (distiller·상태조회 일관성). best-effort."""
+        if self.session is None:
+            return
+        try:
+            import uuid as _uuid
+
+            from ada.db.models import Job
+
+            jid = _uuid.UUID(state.job_id) if isinstance(state.job_id, str) else state.job_id
+            job = await self.session.get(Job, jid)
+            if job is not None:
+                job.category = category
+                if target_column:
+                    job.target_column = target_column
+                await self.session.flush()
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("persist_detection_failed", error=str(e))
 
 
 # ==============================================================
@@ -103,3 +149,82 @@ def _merge_pii_extras(current_extras: dict[str, Any] | None, new_pii: dict[str, 
         "redaction": existing.get("redaction") or "***",
     }
     return extras
+
+
+# ==============================================================
+# 게이트 주도 — category/target 자동 탐지 (G1 제안용)
+# ==============================================================
+
+_TARGET_NAME_HINTS = (
+    "target",
+    "label",
+    "class",
+    "outcome",
+    "result",
+    "survived",
+    "churn",
+    "default",
+    "fraud",
+    "price",
+    "sales",
+    "정답",
+    "타깃",
+    "레이블",
+    "라벨",
+    "결과",
+    "종속",
+)
+_DATE_NAME_HINTS = ("date", "time", "timestamp", "datetime", "날짜", "일자", "시간", "period", "ds")
+_TS_INTENT = ("시계열", "예측", "forecast", "time series", "timeseries", "추세", "계절", "미래", "향후")
+_ANOM_INTENT = ("이상", "anomaly", "outlier", "비정상", "fraud", "사기", "결함", "불량")
+
+
+def _detect_category(profile: dict[str, Any], intent: str) -> tuple[str, Any, dict[str, Any]]:
+    """범용 프로파일 + 의도로 4 카테고리 중 하나와 target 후보를 추정.
+
+    완벽할 필요 없음 — G1 게이트에서 사용자가 확인/override 한다.
+    반환: (category, target_column|None, detection_info)
+    """
+    cols = [str(c) for c in (profile.get("columns") or [])]
+    dtypes = {str(k): str(v).lower() for k, v in (profile.get("dtypes") or {}).items()}
+    low = (intent or "").lower()
+
+    # 날짜 컬럼 (dtype → 이름)
+    date_col = next((c for c in cols if "datetime" in dtypes.get(c, "")), None)
+    if date_col is None:
+        date_col = next((c for c in cols if any(h in c.lower() for h in _DATE_NAME_HINTS)), None)
+
+    # 타깃 후보 (이름 힌트 → 마지막 컬럼 관례)
+    target = next((c for c in cols if any(h in c.lower() for h in _TARGET_NAME_HINTS)), None)
+    if target is None and cols and cols[-1] != date_col:
+        target = cols[-1]
+
+    numeric_cols = [c for c in cols if any(t in dtypes.get(c, "") for t in ("int", "float")) and c != date_col]
+    ts_kw = any(k in low for k in _TS_INTENT)
+    anom_kw = any(k in low for k in _ANOM_INTENT)
+
+    if anom_kw:
+        category, target = "anomaly_detection", None
+    elif date_col and (ts_kw or len(cols) <= 3):
+        category = "timeseries"
+        if not (target and target in numeric_cols and target != date_col):
+            target = numeric_cols[0] if numeric_cols else None
+    elif target is not None:
+        category = "tabular_ml"
+    elif date_col:
+        category = "timeseries"
+        target = numeric_cols[0] if numeric_cols else None
+    else:
+        category, target = "anomaly_detection", None
+
+    return (
+        category,
+        target,
+        {
+            "detected_category": category,
+            "detected_target": target,
+            "date_col": date_col,
+            "signals": {"has_date": bool(date_col), "ts_keyword": ts_kw, "anomaly_keyword": anom_kw},
+            "note": "G1 게이트에서 사용자 확인/override 가능",
+        },
+    )

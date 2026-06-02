@@ -28,12 +28,20 @@ class BaseGate(BaseAgent):
         """서브클래스 본문. ``[{id, title, rationale, score}, ...]`` 반환."""
         raise NotImplementedError
 
+    def _apply_choice(self, state: PipelineState, user_choice: Any, proposals: list[dict[str, Any]]) -> PipelineState:
+        """게이트 재진입 시 사용자 선택을 상태에 반영 (기본: 변화 없음).
+
+        서브클래스가 override 하여 category/target(G1)·outputs(G5) 등을 적용한다.
+        """
+        return state
+
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
-            # 이미 사용자 응답이 채워졌으면 통과 (재진입 보호)
+            # 이미 사용자 응답이 채워졌으면 — 선택을 상태에 반영하고 통과 (재진입 보호)
             existing = (state.gate_responses or {}).get(self.gate_code, {})
-            if existing.get("user_choice"):
-                return state.with_update(current_gate=None)
+            if existing.get("user_choice") is not None:
+                updated = self._apply_choice(state, existing.get("user_choice"), existing.get("proposals") or [])
+                return updated.with_update(current_gate=None)
 
             try:
                 proposals = await self._propose(state)

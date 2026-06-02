@@ -1,10 +1,11 @@
 """agents.gates.analysis_proposer — G1 분석 방향 3안 제시."""
+
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from ada.core.state import PipelineState
+from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
 
 SYSTEM_PROMPT = """당신은 분석 의도와 데이터 프로파일을 보고
@@ -69,5 +70,41 @@ class AnalysisProposerAgent(BaseGate):
                 {"id": 3, "title": "Top-N 알림", "rationale": "상위 N 이상치 리포트", "score": 0.6},
             ],
         }
-        return defaults.get(state.category, [{"id": 1, "title": "기본 분석",
-                                               "rationale": "fallback", "score": 0.5}])
+        return defaults.get(state.category, [{"id": 1, "title": "기본 분석", "rationale": "fallback", "score": 0.5}])
+
+    def _apply_choice(self, state: PipelineState, user_choice: Any, proposals: list[dict[str, Any]]) -> PipelineState:
+        """G1 — 사용자 선택을 상태에 반영.
+
+        - category/target override (기존)
+        - 옵션3 직접 입력(custom_intent) → user_intent 로 사용 (사용자 방향 우선)
+        - 추천 채택(adopted_rank) → 선택한 제안의 방향 제목을 user_intent 에 반영
+        """
+        uc = user_choice if isinstance(user_choice, dict) else {}
+        updates: dict[str, Any] = {}
+
+        cat = uc.get("category")
+        if isinstance(cat, str) and cat in CATEGORIES and cat != state.category:
+            updates["category"] = cat
+        tgt = uc.get("target_column") or uc.get("target")
+        if isinstance(tgt, str) and tgt:
+            updates["target_column"] = tgt
+
+        custom = uc.get("custom_intent")
+        if isinstance(custom, str) and custom.strip():
+            # 옵션3 — 사용자가 직접 입력한 분석 방향을 그대로 분석 의도로 채택
+            updates["user_intent"] = custom.strip()
+        else:
+            # 추천 채택 — adopted_rank 로 선택한 제안의 방향을 분석 의도에 반영
+            rank = uc.get("adopted_rank")
+            chosen = next(
+                (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
+                None,
+            )
+            if chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
+                direction = chosen["title"].strip()
+                base = (state.user_intent or "").strip()
+                updates["user_intent"] = (
+                    f"{base} (분석 방향: {direction})".strip() if base else f"분석 방향: {direction}"
+                )
+
+        return state.with_update(**updates) if updates else state

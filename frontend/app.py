@@ -1,749 +1,449 @@
-"""frontend/app.py — Streamlit 메인 대시보드 (Day18).
+"""frontend/app.py — ADA Studio (단일 플로우 UI).
 
-페이지 구조:
-  Sidebar — 환경/API URL/로그인 토큰
-  1. 업로드 & 시작
-  2. 에이전트 현황판 (실시간)
-  3. 5게이트 HITL UI
-  4. 산출물 다운로드
-  5. 자체학습 KB 모니터
+1) 랜딩(스플래시) → Start
+2) 업로드 → 5게이트(HITL) → 산출물 : 확정 디자인(다크 히어로·진행도 스텝퍼·카드)을
+   임베드(components.html)하고, 임베드 안에서 브라우저가 ADA API(localhost:8000)에 직접
+   fetch 로 연동. 게이트 추천(proposals)·분석 결과는 GET /pipeline/gate/{job} 에서 받아 표시.
 """
 
 from __future__ import annotations
 
-import json
 import os
-from datetime import datetime
 
-import requests
 import streamlit as st
-
-API_BASE = os.environ.get("API_BASE_URL", "http://api:8000")
+import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="ADA v2 — Adaptive AutoAI Studio",
-    page_icon="🤖",
+    page_title="ADA Studio — Adaptive AutoAI",
+    page_icon="🪄",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-# --- 사이드바 ----------------------------------------------------------------
-with st.sidebar:
-    st.title("ADA v2")
-    st.caption("정형 ML / 정형 DL / 시계열 / 이상탐지")
-    st.text(f"API: {API_BASE}")
-    token = st.text_input("JWT (옵션)", type="password", value=st.session_state.get("token", ""))
-    if token:
-        st.session_state["token"] = token
-    st.divider()
-    st.markdown("**5게이트 HITL**\nG1 분석 방향 · G2 방법론 · G3 모델 전략 · G4 모델 선택 · G5 산출물")
+_HERO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "ada_hero.png")
 
-
-def _headers() -> dict[str, str]:
-    h = {}
-    if st.session_state.get("token"):
-        h["Authorization"] = f"Bearer {st.session_state['token']}"
-    return h
-
-
-# --- 탭 ------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    [
-        "1) 업로드/시작",
-        "2) 에이전트 현황판",
-        "3) HITL 응답",
-        "4) 산출물/KB",
-        "5) KPI 대시보드",
-        "6) 🚨 오류 대시보드",
-    ]
-)
-
-# === 탭 1 — 업로드 ============================================================
-with tab1:
-    st.header("1) 데이터 업로드 & 파이프라인 시작")
-    upl = st.file_uploader(
-        "CSV / Parquet / XLSX / ZIP / JSON / PDF / TXT / HTML",
-        type=["csv", "parquet", "xlsx", "zip", "json", "pdf", "txt", "html"],
-    )
-    col1, col2 = st.columns(2)
-    with col1:
-        cat = st.selectbox("카테고리", ["tabular_ml", "tabular_dl", "timeseries", "anomaly_detection"])
-        target = st.text_input("Target 컬럼 (해당 시)")
-    with col2:
-        intent = st.text_area("분석 의도 (자유 서술 1~3 문장)")
-        outs = st.multiselect(
-            "원하는 산출물", ["OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07"], default=["OUT-04", "OUT-07"]
-        )
-
-    if st.button("업로드", type="primary", disabled=upl is None):
-        with st.spinner("업로드 중..."):
-            resp = requests.post(
-                f"{API_BASE}/upload",
-                files={"file": (upl.name, upl.getvalue())},
-                headers=_headers(),
-                timeout=60,
-            )
-        if resp.ok:
-            data = resp.json()
-            st.success(f"file_id = {data['file_id']}")
-            st.session_state["file_id"] = data["file_id"]
-        else:
-            st.error(resp.text)
-
-    if st.session_state.get("file_id"):
-        if st.button("파이프라인 시작"):
-            payload = {
-                "file_id": st.session_state["file_id"],
-                "category": cat,
-                "target_column": target or None,
-                "user_intent": intent or None,
-                "requested_outputs": outs,
-            }
-            r = requests.post(f"{API_BASE}/pipeline/start", json=payload, headers=_headers(), timeout=10)
-            if r.ok:
-                st.session_state["job_id"] = r.json()["job_id"]
-                st.success(f"job_id = {st.session_state['job_id']}")
-            else:
-                st.error(r.text)
-
-
-# === 탭 2 — 현황판 ===========================================================
-with tab2:
-    st.header("2) 에이전트 현황판")
-    job_id = st.text_input("Job ID", value=st.session_state.get("job_id", ""))
-    if job_id:
-        try:
-            s = requests.get(f"{API_BASE}/pipeline/status/{job_id}", headers=_headers(), timeout=5).json()
-            col = st.columns(4)
-            col[0].metric("status", s.get("status"))
-            col[1].metric("gate", s.get("current_gate") or "-")
-            col[2].metric("progress", f"{s.get('progress_pct', 0)}%")
-            col[3].metric("error", s.get("error") or "-")
-            st.json(s)
-        except Exception as e:
-            st.warning(f"status 조회 실패: {e}")
-        st.caption("실시간 SSE 진행률은 /stream/progress/{job_id} 로 구독")
-
-
-# === 탭 3 — HITL 응답 =========================================================
-with tab3:
-    st.header("3) HITL 게이트 응답")
-    job_id_h = st.text_input("Job ID ", value=st.session_state.get("job_id", ""), key="hitl_job")
-    gate = st.selectbox("게이트", ["G1", "G2", "G3", "G4", "G5"])
-    choice_text = st.text_area("선택 (JSON)", value='{"adopted_rank": 1}')
-    if st.button("응답 전송") and job_id_h:
-        try:
-            choice = json.loads(choice_text)
-            r = requests.post(
-                f"{API_BASE}/pipeline/resume/{job_id_h}",
-                json={"gate": gate, "choice": choice},
-                headers=_headers(),
-                timeout=10,
-            )
-            if r.ok:
-                st.success("재개 큐 적재 완료")
-            else:
-                st.error(r.text)
-        except Exception as e:
-            st.error(e)
-
-
-# === 탭 4 — 산출물/KB ========================================================
-with tab4:
-    st.header("4) 산출물 / 자체학습 KB")
-    job_id_o = st.text_input("Job ID  ", value=st.session_state.get("job_id", ""), key="out_job")
-    if job_id_o:
-        try:
-            r = requests.get(f"{API_BASE}/pipeline/result/{job_id_o}", headers=_headers(), timeout=5).json()
-            st.json(r)
-        except Exception as e:
-            st.warning(str(e))
-
-
-# === 탭 5 — KPI 대시보드 (Day 10) =============================================
-# 임계치 색상 (Phase 11-3) — 초록/노랑/빨강 emoji
-_KPI_THRESHOLDS = {
-    "kp1": (0.80, 0.95),  # success rate: <80% 빨강, 80~95% 노랑, ≥95% 초록
-    "kp2": (10.0, 30.0),  # avg duration min: ≤10 초록, 10~30 노랑, >30 빨강 (역방향)
-    "kp5": (500.0, 2000.0),  # p95 ms: ≤500 초록, 500~2000 노랑, >2000 빨강 (역방향)
-    "kp9": (0.10, 0.30),  # KB rate: <10% 빨강, 10~30% 노랑, ≥30% 초록
-}
-
-
-def _kpi_status_emoji(metric: str, value: float | None) -> str:
-    """KPI 값을 임계치와 비교해 🟢🟡🔴 반환. None → ⚪."""
-    if value is None:
-        return "⚪"
-    lo, hi = _KPI_THRESHOLDS.get(metric, (0, 0))
-    # KP2, KP5 는 값이 작을수록 좋음 (역방향)
-    if metric in ("kp2", "kp5"):
-        if value <= lo:
-            return "🟢"
-        if value <= hi:
-            return "🟡"
-        return "🔴"
-    # KP1, KP9 는 값이 클수록 좋음
-    if value >= hi:
-        return "🟢"
-    if value >= lo:
-        return "🟡"
-    return "🔴"
-
-
-def _kpi_fetch(api_base: str, headers: dict, since_h: int, bypass_cache: bool) -> tuple[dict, dict]:
-    """KPI API 호출 → (data, meta). 실패 시 ({}, {"error": ...})."""
-    params = {"since_hours": since_h}
-    if bypass_cache:
-        params["cache"] = "bypass"
-    try:
-        r = requests.get(
-            f"{api_base}/admin/observability/kpi",
-            params=params,
-            headers=headers,
-            timeout=10,
-        )
-    except Exception as e:
-        return {}, {"error": f"네트워크 오류: {e}"}
-    if r.status_code == 401:
-        return {}, {"error": "401 — JWT 토큰을 사이드바에 입력하세요 (admin role)"}
-    if r.status_code == 403:
-        return {}, {"error": "403 — 관리자 권한 필요 (role=admin)"}
-    if not r.ok:
-        return {}, {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
-    return r.json(), {
-        "cache_status": r.headers.get("X-KPI-Cache-Status", "unknown"),
-        "cache_age": r.headers.get("X-KPI-Cache-Age", "0"),
+st.markdown(
+    """
+    <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+    html, body, [data-testid="stAppViewContainer"] {
+        font-family: 'Pretendard', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
+    #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] { visibility: hidden; height: 0; }
+    [data-testid="stHeader"] { background: transparent; }
+    [data-testid="stAppViewContainer"] { background: #dbe7f6; }
+    [data-testid="stSidebar"],
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+    .block-container { padding-top: 3rem; padding-bottom: 3rem; max-width: 1100px; margin: 0 auto; }
+    .stButton > button[kind="primary"] {
+        background: #1f3e5c !important; border: none !important; color: #fff !important;
+        border-radius: 999px; padding: .6rem 2rem; box-shadow: 0 10px 24px rgba(31,62,92,.28);
+    }
+    .stButton > button[kind="primary"]:hover { background: #284e74 !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ===========================================================================
+# 업로드 + 진행 플로우 — 확정 디자인 + API 연동 (게이트 추천/결과는 백엔드에서)
+# ===========================================================================
+_FLOW_HTML = """
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<style>
+  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+  :root{ --ink:#19395a; --deep:#1f3e5c; --muted:#52647d; --line:#d8e3f2; --line2:#cdddf0; }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{min-height:100%;background:linear-gradient(160deg,#2b4a6b 0%,#243f5c 58%,#1c3450 100%);
+    font-family:'Pretendard','Inter',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--ink);}
+  .shell{width:100%;max-width:1440px;margin:0 auto;padding:34px 40px 48px;min-height:100%;
+    display:flex;flex-direction:column;justify-content:center;}
+  .brand{display:flex;align-items:center;gap:18px;color:#bcd2ec;margin-bottom:26px;}
+  .brand .globe{font-size:38px;}
+  .brand .nm{font-size:21px;letter-spacing:.26em;font-weight:700;}
+  .brand .status{margin-left:auto;font-size:21px;font-weight:600;border-radius:999px;padding:9px 24px;
+    background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);color:#dce7f5;}
+  .brand .status.paused{background:rgba(245,196,120,.16);border-color:rgba(245,196,120,.5);color:#f3cf8a;}
+  .brand .status.done{background:rgba(122,224,180,.16);border-color:rgba(122,224,180,.5);color:#9fe6c4;}
+  .steps{position:relative;display:flex;justify-content:space-between;margin:8px 10px 0;}
+  .steps .line{position:absolute;top:34px;left:34px;right:34px;height:4px;background:rgba(255,255,255,.16);}
+  .steps .fill{position:absolute;top:34px;left:34px;height:4px;background:#9fe6c4;transition:width .3s;}
+  .step{position:relative;z-index:2;flex:1;display:flex;flex-direction:column;align-items:center;gap:14px;}
+  .step .dot{width:68px;height:68px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:28px;}
+  .step .lab{text-align:center;line-height:1.2;}
+  .step .nm{font-size:21px;color:#9fb6d4;white-space:nowrap;}
+  .step .sub{font-size:16px;letter-spacing:.04em;color:#7e98ba;margin-top:5px;}
+  .step.pending .dot{background:rgba(255,255,255,.08);color:#88a0bf;border:1px solid rgba(255,255,255,.20);}
+  .step.done .dot{background:#9fe6c4;color:#0f4a36;}
+  .step.active .dot{background:#fff;color:var(--deep);box-shadow:0 0 0 9px rgba(255,255,255,.16);}
+  .step.active .nm{color:#fff;font-weight:700;}
+  .step.reachable{cursor:pointer;}
+  .prog-meta{display:flex;justify-content:flex-end;align-items:center;margin:20px 8px 0;color:#bcd2ec;font-size:22px;}
+  .prog-meta b{color:#fff;}
+  .card{background:#fff;border-radius:28px;margin:26px auto 0;width:1360px;max-width:100%;
+    box-shadow:0 0 0 1px rgba(255,255,255,.10),0 36px 84px rgba(0,0,0,.42);padding:44px 52px 32px;display:flex;flex-direction:column;}
+  .card h2{font-size:38px;font-weight:800;margin:0 0 6px;text-align:center;}
+  .card .desc{font-size:23px;color:var(--muted);text-align:center;margin:0 0 28px;}
+  .ahdr{text-align:center;}
+  .ahdr .en{font-size:20px;color:#8aa0bd;font-style:italic;margin:3px 0 0;}
+  .databar{display:flex;flex-wrap:wrap;gap:10px 22px;justify-content:center;align-items:center;background:#eef6ef;
+    border:1px solid #cfe9d8;border-radius:14px;padding:13px 20px;margin:14px 0 4px;font-size:18px;color:#2a5e44;}
+  .databar .t{font-weight:700;color:#1f7a52;}
+  .databar b{color:#176a45;}
+  .dz{border:2px dashed var(--line2);background:#f7faff;border-radius:20px;padding:34px;display:flex;align-items:center;gap:26px;cursor:pointer;}
+  .dz.has{border-color:#1f7a52;background:#eefbf4;}
+  .dz .ic{width:56px;height:56px;color:#6f93c4;flex:none;}
+  .dz .t{font-size:26px;font-weight:600;color:var(--ink);}
+  .dz .s{font-size:19px;color:var(--muted);margin-top:5px;}
+  .browse{border:1px solid var(--line2);background:#fff;color:var(--deep);border-radius:12px;padding:15px 28px;font-size:22px;font-weight:600;font-family:inherit;cursor:pointer;}
+  .intent{width:100%;margin-top:20px;border:1px solid var(--line);border-radius:14px;padding:20px 22px;font-size:24px;background:#fff;color:var(--ink);font-family:inherit;resize:vertical;min-height:90px;}
+  .intent::placeholder{color:#9aa9bd;}
+  .opts{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:16px;}
+  .opt{position:relative;border:2px solid #e3ecf7;border-radius:20px;background:#fff;padding:26px 26px;cursor:pointer;transition:.15s;display:flex;flex-direction:column;}
+  .opt:hover{border-color:#b9cbe4;}
+  .opt.sel{border-color:#1f3e5c;box-shadow:0 14px 34px rgba(31,62,92,.14);}
+  .opt .onum{font-size:15px;letter-spacing:.13em;color:#9aa9bd;font-weight:700;}
+  .opt .rec{display:inline-block;margin-left:9px;font-size:13px;font-weight:700;color:#1f7a52;background:#e6f7ef;border:1px solid #b7e6cf;border-radius:999px;padding:3px 11px;vertical-align:middle;}
+  .opt h3{font-size:25px;font-weight:800;color:var(--ink);margin:14px 0 8px;}
+  .opt p{font-size:18px;color:#52647d;line-height:1.5;margin:0 0 14px;}
+  .opt .hint{font-size:15px;color:#1f7a52;background:#f0faf4;border-radius:9px;padding:8px 12px;margin:0 0 12px;}
+  .opt .en2{font-size:17px;color:#8aa0bd;margin-bottom:14px;}
+  .opt .time{margin-top:auto;font-size:16px;color:#8aa0bd;}
+  .opt .ck{position:absolute;top:15px;right:15px;width:32px;height:32px;border-radius:50%;background:#1f3e5c;color:#fff;display:none;align-items:center;justify-content:center;font-size:17px;font-weight:800;}
+  .opt.sel .ck{display:flex;}
+  .opt textarea{width:100%;border:1px solid var(--line);border-radius:11px;padding:13px 15px;font-size:18px;font-family:inherit;color:var(--ink);min-height:130px;resize:vertical;}
+  .res .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+  .rcard{border:1px solid var(--line);border-radius:16px;background:#f7faff;padding:24px 28px;}
+  .rcard h4{margin:0 0 14px;font-size:21px;color:var(--ink);}
+  .rtext{font-size:18px;color:#3f5168;line-height:1.6;white-space:pre-wrap;margin:0;}
+  .kpi{display:flex;gap:26px;flex-wrap:wrap;}
+  .kpi .it{flex:1;min-width:120px;}
+  .kpi .v{font-size:30px;font-weight:800;color:var(--deep);word-break:break-all;}
+  .kpi .l{font-size:15px;color:var(--muted);margin-top:2px;}
+  .chip{display:inline-block;font-size:18px;font-weight:600;color:var(--deep);background:#e6f0fc;border:1px solid var(--line2);border-radius:999px;padding:7px 16px;margin:5px 8px 0 0;}
+  .chip.on{background:var(--deep);color:#fff;border-color:transparent;}
+  .err{background:#fbeaea;border:1px solid #e7b7b7;color:#a33;border-radius:14px;padding:15px 20px;font-size:19px;margin:0 0 20px;}
+  .footer{display:flex;align-items:center;gap:16px;margin-top:28px;padding-top:24px;border-top:1px solid #eef2f8;}
+  .spacer{flex:1;}
+  .btn{font-family:inherit;font-weight:600;border-radius:999px;cursor:pointer;font-size:24px;white-space:nowrap;display:inline-flex;align-items:center;gap:10px;}
+  .btn-ghost{background:#fff;color:var(--deep);border:1px solid var(--line2);padding:15px 30px;}
+  .btn-ghost:disabled{opacity:.4;cursor:default;color:#9aa9bd;}
+  .btn-stop{background:#fff;color:#b5481f;border:1px solid #e7c8ba;padding:15px 28px;}
+  .btn-primary{background:var(--deep);color:#fff;border:none;padding:18px 48px;box-shadow:0 13px 28px rgba(31,62,92,.26);}
+  .btn-primary.resume{background:#1f7a52;}
+  .btn-primary:disabled{opacity:.45;cursor:default;box-shadow:none;}
+  @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
+</style></head><body>
+  <div class="shell">
+    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span></div>
+    <div class="steps" id="steps"></div>
+    <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
+    <div class="card"><div class="content" id="content"></div>
+      <div class="footer">
+        <button class="btn btn-ghost" id="prevBtn">← 이전 단계</button>
+        <button class="btn btn-ghost" id="nextBtn">다음 단계 →</button>
+        <span class="spacer"></span>
+        <button class="btn btn-stop" id="stopBtn">⏸ 멈춤</button>
+        <button class="btn btn-primary" id="primaryBtn">⬆ 업로드</button>
+      </div>
+    </div>
+  </div>
+<script>
+const steps=[{label:'업로드',sub:'데이터'},{label:'분석 방향',sub:'G1'},{label:'방법론',sub:'G2'},{label:'모델 전략',sub:'G3'},{label:'모델 선택',sub:'G4'},{label:'산출물',sub:'G5'},{label:'완료',sub:'인사이트'}];
+const N=steps.length, LAST=N-1;
+const GATE_TITLE={G1:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G2:['어떤 방법론으로 진행할까요?','Choose your methodology'],G3:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G4:['어떤 모델을 채택할까요?','Pick the best model'],G5:['어떤 산출물을 만들까요?','Choose your outputs']};
+const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
+let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
+let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
+let gateData={}, gateFetchedFor=null, selId=null, selGate=null, customText='';
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function serverStep(){
+  if(!jobId) return 0;
+  const s=status.status;
+  if(['completed','succeeded','success'].includes(s)) return LAST;
+  const g=status.current_gate;
+  if(g && /^G[1-5]$/.test(g)) return +g[1];
+  return 1;
+}
+async function api(path, opts){
+  const r=await fetch(API+path, opts||{});
+  const txt=await r.text();
+  if(!r.ok) throw new Error('HTTP '+r.status+' '+txt.slice(0,180));
+  return txt ? JSON.parse(txt) : {};
+}
+async function fetchGate(tag){
+  try{ gateData=await api('/pipeline/gate/'+jobId,{}); }
+  catch(e){ gateData={proposals:[], _err:e.message}; }
+  gateFetchedFor=tag; selId=null;
+  render();
+}
+async function doUpload(){
+  if(!selectedFile){ errMsg='먼저 파일을 선택하세요.'; render(); return; }
+  errMsg=''; busy=true; render();
+  try{
+    const fd=new FormData(); fd.append('file', selectedFile);
+    const up=await api('/upload',{method:'POST',body:fd});
+    fileId=up.file_id;
+    const stt=await api('/pipeline/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({file_id:fileId,user_intent:intentText||null,requested_outputs:[]})});
+    jobId=stt.job_id; follow=true; cur=1; frontier=1; maxReached=1; busy=false; gateFetchedFor=null;
+    startPolling();
+  }catch(e){ errMsg='업로드/시작 실패 — '+e.message; busy=false; render(); }
+}
+async function doResume(){
+  const props=(gateData.proposals)||[];
+  let choice;
+  if(selId==='custom'){
+    if(!customText.trim()){ errMsg='옵션: 분석 방향을 입력해 주세요.'; render(); return; }
+    choice={adopted_rank:0, custom_intent:customText};
+  } else if(selId!=null){
+    choice={adopted_rank:selId};
+  } else {
+    choice={adopted_rank: (props[0]&&props[0].id)||1};
+  }
+  const gate=gateData.gate || status.current_gate || ('G'+cur);
+  errMsg=''; busy=true; render();
+  try{
+    await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({gate:gate,choice:choice})});
+    follow=true; busy=false; gateFetchedFor=null; gateData={}; selId=null;
+    startPolling();
+  }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
+}
+async function poll(){
+  if(!jobId) return;
+  try{ status=await api('/pipeline/status/'+jobId,{}); }
+  catch(e){ errMsg='상태 조회 실패 — '+e.message; }
+  frontier=serverStep(); maxReached=Math.max(maxReached,frontier);
+  if(follow) cur=frontier;
+  cur=Math.max(0,Math.min(cur,frontier));
+  render();
+  const done=['completed','succeeded','success'].includes(status.status);
+  if(status.current_gate && gateFetchedFor!==status.current_gate){ fetchGate(status.current_gate); }
+  else if(done && gateFetchedFor!=='_done'){ fetchGate('_done'); }
+  const running=['pending','running'].includes(status.status);
+  if(running && !paused && !status.current_gate){ pollTimer=setTimeout(poll, 2500); }
+  else { polling=false; }
+}
+function startPolling(){ if(polling){ render(); return; } polling=true; clearTimeout(pollTimer); poll(); }
+
+function gateHeader(g){
+  const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
+  const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
+  const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
+  return '<div class="ahdr"><h2>'+tt[0]+'</h2><div class="en">'+tt[1]+'</div></div>'
+    +'<p class="desc">업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.</p>'
+    +((cat||tgt)?('<div class="databar"><span class="t">✓ 데이터 분석 완료</span>'+cat+tgt+'</div>'):'');
+}
+function propCard(p, idx, recId){
+  const sel=(selId===p.id)?' sel':'';
+  const rec=(p.id===recId)?'<span class="rec">추천</span>':'';
+  let extra='';
+  if(p.models && p.models.length) extra='<div class="hint">🧩 모델: '+p.models.map(esc).join(', ')+'</div>';
+  else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(k=>esc(k)+' '+esc(p.metrics[k])).join(' · ')+'</div>'; }
+  else if(p.outputs && p.outputs.length) extra='<div class="hint">📦 '+p.outputs.map(esc).join(', ')+'</div>';
+  const score=(p.score!=null)?('<div class="time">⭐ 추천도 '+Math.round(p.score*100)+'%</div>'):'';
+  return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><p>'+esc(p.rationale||'')+'</p>'+extra+score+'</div>';
+}
+function customCard(n){
+  const sel=(selId==='custom')?' sel':'';
+  return '<div class="opt'+sel+'" data-pid="custom"><div class="ck">✓</div><div class="onum">OPTION 0'+(n+1)+'</div><h3>직접 입력</h3><div class="en2">Custom Direction</div>'
+    +'<textarea id="cust" placeholder="예) 1등석 여성 승객의 생존 요인을 집중 분석하고 싶어요"></textarea><div class="time">자유 입력</div></div>';
+}
+function contentGate(){
+  const g=gateData.gate || status.current_gate || ('G'+cur);
+  const props=(gateData.proposals)||[];
+  if(!props.length){ return gateHeader(g)+'<p class="desc" style="margin-top:26px;color:#7e98ba">🔄 데이터를 분석해 추천을 생성하는 중입니다…</p>'; }
+  let recId=props.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, props[0]).id;
+  if(selId===null || selGate!==g){ selId=recId; selGate=g; }
+  let cards=props.map(function(p,i){ return propCard(p,i,recId); }).join('');
+  if(g==='G1') cards+=customCard(props.length);
+  return gateHeader(g)+'<div class="opts">'+cards+'</div>';
+}
+function rcard(title, inner){ return '<div class="rcard"><h4>'+title+'</h4>'+inner+'</div>'; }
+function contentResult(){
+  const g=gateData; let panels='';
+  if(g.eda_summary) panels+=rcard('데이터 요약 (EDA)','<p class="rtext">'+esc(g.eda_summary)+'</p>');
+  if(g.best_model && typeof g.best_model==='object'){
+    const m=g.best_model; let h='<div class="kpi">';
+    if(m.model_name) h+='<div class="it"><div class="v">'+esc(m.model_name)+'</div><div class="l">최적 모델</div></div>';
+    if(m.metrics && typeof m.metrics==='object'){ const mk=Object.keys(m.metrics)[0]; if(mk) h+='<div class="it"><div class="v">'+esc(m.metrics[mk])+'</div><div class="l">'+esc(mk)+'</div></div>'; }
+    h+='</div>'; panels+=rcard('최적 모델', h);
+  }
+  if(g.eval_result && typeof g.eval_result==='object'){
+    const ev=g.eval_result; let h='';
+    if(ev.rationale) h+='<p class="rtext">'+esc(ev.rationale)+'</p>';
+    if(ev.metrics && typeof ev.metrics==='object'){ const ks=Object.keys(ev.metrics).slice(0,3); h+='<div class="kpi" style="margin-top:10px">'+ks.map(function(k){return '<div class="it"><div class="v">'+esc(ev.metrics[k])+'</div><div class="l">'+esc(k)+'</div></div>';}).join('')+'</div>'; }
+    if(h) panels+=rcard('평가 결과', h);
+  }
+  if(g.insights) panels+=rcard('인사이트','<p class="rtext">'+esc(g.insights)+'</p>');
+  const outs=Object.keys(g.output_paths||{});
+  if(outs.length) panels+=rcard('산출물', outs.map(function(o){return '<span class="chip on">'+esc(o)+'</span>';}).join(''));
+  if(!panels) panels='<div class="rcard"><p class="rtext">결과를 불러오는 중…</p></div>';
+  return '<div class="res"><div class="ahdr"><h2>분석 완료 🎉</h2></div><p class="desc">데이터를 분석한 결과입니다.</p><div class="grid2">'+panels+'</div></div>';
+}
+function content(i){
+  if(i===0){
+    const has=!!selectedFile;
+    const t=has?('선택됨: '+esc(selectedFile.name)):'파일을 끌어다 놓거나 선택';
+    return '<div class="ahdr"><h2>데이터 업로드</h2></div><p class="desc">파일을 올리면 ADA가 데이터를 분석해 방향을 제안합니다.</p>'
+      +'<div class="dz'+(has?' has':'')+'" id="dz"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 8.5a3.5 3.5 0 0 1 .5 6.96"/><path d="M12 19v-7"/><path d="m9 14 3-3 3 3"/></svg>'
+      +'<div style="flex:1"><div class="t" id="dzt">'+t+'</div><div class="s">CSV · XLSX · PARQUET · JSON · PDF · ZIP · TXT (최대 100MB)</div></div>'
+      +'<button class="browse" id="browseBtn">찾아보기</button></div>'
+      +'<input type="file" id="fileInput" style="display:none" accept=".csv,.parquet,.xlsx,.zip,.json,.pdf,.txt,.html">'
+      +'<textarea class="intent" id="intentInput" placeholder="💬 분석 의도 — 예) 타이타닉 승객의 생존 여부를 예측하고 싶어요"></textarea>';
+  }
+  if(i>=1 && i<=5) return contentGate();
+  return contentResult();
+}
+function primaryLabel(){
+  if(busy) return '… 처리 중';
+  if(paused) return '▶ 계속';
+  if(cur===0) return '⬆ 업로드';
+  if(cur===LAST) return '📥 완료';
+  return '진행 ▸';
+}
+function render(){
+  const sc=document.getElementById('steps');
+  const fillPct=(frontier/(N-1))*100;
+  let html='<div class="line"></div><div class="fill" style="width:calc((100% - 68px) * '+(fillPct/100)+')"></div>';
+  steps.forEach(function(s,i){
+    let cls, inner;
+    if(i===cur){ cls='active'; inner=(i<frontier?'✓':(i+1)); }
+    else if(i<=frontier){ cls='done'; inner='✓'; }
+    else { cls='pending'; inner=(i+1); }
+    if(i<=maxReached && i!==cur) cls+=' reachable';
+    html+='<div class="step '+cls+'" data-i="'+i+'"><div class="dot">'+inner+'</div><div class="lab"><div class="nm">'+s.label+'</div><div class="sub">'+s.sub+'</div></div></div>';
+  });
+  sc.innerHTML=html;
+  sc.querySelectorAll('.step.reachable').forEach(function(el){ el.onclick=function(){ cur=+el.dataset.i; if(cur<frontier) follow=false; paused=false; render(); }; });
+
+  document.getElementById('content').innerHTML=(errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur);
+  document.getElementById('curName').textContent=steps[cur].label;
+  const pct=(status.progress_pct!=null && status.progress_pct!==0)?status.progress_pct:Math.round(fillPct);
+  document.getElementById('curPct').textContent=pct+'%';
+  document.getElementById('curIdx').textContent=cur+1;
+  document.getElementById('curTot').textContent=N;
+  const stt=document.getElementById('status');
+  if(paused){ stt.textContent='⏸ 일시정지됨'; stt.className='status paused'; }
+  else if(frontier>=LAST && jobId){ stt.textContent='✓ 완료'; stt.className='status done'; }
+  else if(jobId){ stt.textContent='진행 중'; stt.className='status'; }
+  else { stt.textContent='대기'; stt.className='status'; }
+
+  if(cur===0){
+    const fi=document.getElementById('fileInput'), dz=document.getElementById('dz'),
+          br=document.getElementById('browseBtn'), it=document.getElementById('intentInput');
+    if(br&&fi) br.onclick=function(e){ e.stopPropagation(); fi.click(); };
+    if(dz&&fi) dz.onclick=function(){ fi.click(); };
+    if(fi) fi.onchange=function(){ if(fi.files[0]){ selectedFile=fi.files[0]; render(); } };
+    if(dz){ dz.ondragover=function(e){ e.preventDefault(); }; dz.ondrop=function(e){ e.preventDefault(); if(e.dataTransfer.files[0]){ selectedFile=e.dataTransfer.files[0]; render(); } }; }
+    if(it){ it.value=intentText; it.oninput=function(){ intentText=it.value; }; }
+  }
+  if(cur>=1 && cur<=5){
+    document.querySelectorAll('.opt').forEach(function(el){ el.onclick=function(){ const pid=el.dataset.pid; selId=(pid==='custom')?'custom':(+pid); render(); }; });
+    const tc=document.getElementById('cust');
+    if(tc){ tc.value=customText; tc.onclick=function(e){ e.stopPropagation(); };
+      tc.onfocus=function(){ selId='custom'; document.querySelectorAll('.opt').forEach(function(el){ el.classList.toggle('sel', el.dataset.pid==='custom'); }); };
+      tc.oninput=function(){ customText=tc.value; }; }
+  }
+
+  const prev=document.getElementById('prevBtn'), next=document.getElementById('nextBtn'),
+        stop=document.getElementById('stopBtn'), prim=document.getElementById('primaryBtn');
+  prev.disabled=(cur===0);
+  next.disabled=(cur>=maxReached);
+  const running=jobId && ['pending','running'].includes(status.status);
+  stop.style.display=(!paused && running)?'inline-flex':'none';
+  const atGate=(cur===frontier) && !!status.current_gate;
+  prim.innerHTML=primaryLabel();
+  prim.classList.toggle('resume', paused);
+  if(busy) prim.disabled=true;
+  else if(paused) prim.disabled=false;
+  else if(cur===0) prim.disabled=(!selectedFile || !!jobId);
+  else if(cur===LAST) prim.disabled=true;
+  else prim.disabled=!atGate;
+}
+document.getElementById('prevBtn').onclick=function(){ if(cur>0){ cur--; follow=false; render(); } };
+document.getElementById('nextBtn').onclick=function(){ if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
+document.getElementById('stopBtn').onclick=function(){ paused=true; if(pollTimer) clearTimeout(pollTimer); polling=false; render(); };
+document.getElementById('primaryBtn').onclick=function(){
+  if(busy) return;
+  if(paused){ paused=false; render(); if(jobId && ['pending','running'].includes(status.status) && !status.current_gate) startPolling(); return; }
+  if(cur===0){ doUpload(); return; }
+  if(cur>=1 && cur<=5){ doResume(); return; }
+};
+render();
+</script></body></html>
+"""
 
 
-with tab5:
-    st.header("5) KPI 대시보드")
-    st.caption("최근 N 시간의 운영 지표 — KP1 E2E 성공률 / KP2 평균 종단 / KP5 p95 / KP9 KB 적용률")
-
-    col_c1, col_c2, col_c3 = st.columns([1, 1, 3])
-    with col_c1:
-        since_h = st.number_input("최근 (시간)", min_value=1, max_value=720, value=24, step=1, key="kpi_since_h")
-    with col_c2:
-        st.write("")
-        st.write("")
-        refresh = st.button("🔄 KPI 갱신", key="kpi_refresh")
-    with col_c3:
-        st.write("")
-        st.write("")
-        force = st.checkbox("강제 갱신 (캐시 무시)", key="kpi_force")
-
-    # 최초 진입 시 자동 1회
-    if refresh or "kpi_data" not in st.session_state:
-        with st.spinner("KPI 측정 중..."):
-            data, meta = _kpi_fetch(API_BASE, _headers(), int(since_h), force)
-        st.session_state["kpi_data"] = data
-        st.session_state["kpi_meta"] = meta
-        # 트렌드 누적 (Phase 11-1, 세션 한정 최대 20건)
-        if data:
-            history = st.session_state.setdefault("kpi_history", [])
-            history.append(
-                {
-                    "measured_at": data.get("measured_at"),
-                    "kp1": data.get("kp1_e2e_success_rate"),
-                    "kp2": data.get("kp2_avg_duration_min"),
-                    "kp5": data.get("kp5_p95_api_ms"),
-                    "kp9": data.get("kp9_kb_citation_rate"),
-                    "n_jobs": data.get("n_jobs_total"),
-                }
-            )
-            if len(history) > 20:
-                history.pop(0)
-
-    data = st.session_state.get("kpi_data") or {}
-    meta = st.session_state.get("kpi_meta") or {}
-
-    # 에러 표시
-    if meta.get("error"):
-        st.error(meta["error"])
-
-    # 캐시 상태 배지
-    cache_status = meta.get("cache_status", "")
-    if cache_status == "cached":
-        st.caption(f"🔄 캐시 응답 (age {meta.get('cache_age', '0')}s)")
-    elif cache_status == "fresh":
-        st.caption("✨ 신규 측정")
-
-    # KP 5종 카드 + emoji 상태
-    kp1_v = data.get("kp1_e2e_success_rate")
-    kp2_v = data.get("kp2_avg_duration_min")
-    kp5_v = data.get("kp5_p95_api_ms")
-    kp9_v = data.get("kp9_kb_citation_rate")
-    n_total = data.get("n_jobs_total", 0)
-    n_terminal = data.get("n_jobs_terminal", 0)
-
-    kpi_cols = st.columns(5)
-    kpi_cols[0].metric(
-        f"KP1 E2E 성공률 {_kpi_status_emoji('kp1', kp1_v)}",
-        f"{kp1_v * 100:.1f}%" if kp1_v is not None else "—",
-    )
-    kpi_cols[1].metric(
-        f"KP2 평균 종단(분) {_kpi_status_emoji('kp2', kp2_v)}",
-        f"{kp2_v:.2f}" if kp2_v is not None else "—",
-    )
-    kpi_cols[2].metric(
-        f"KP5 p95 응답(ms) {_kpi_status_emoji('kp5', kp5_v)}",
-        f"{kp5_v:.1f}" if kp5_v is not None else "—",
-    )
-    kpi_cols[3].metric(
-        f"KP9 KB 적용률 {_kpi_status_emoji('kp9', kp9_v)}",
-        f"{kp9_v * 100:.1f}%" if kp9_v is not None else "—",
-    )
-    kpi_cols[4].metric(
-        "측정 Job 수",
-        f"{n_total}",
-        delta=f"terminal {n_terminal}" if n_total else None,
-        delta_color="off",
-    )
-
-    # warnings 배너
-    warnings_list = data.get("warnings") or []
-    if warnings_list:
-        with st.expander(f"⚠️ 측정 신뢰도 안내 ({len(warnings_list)}건)"):
-            for w in warnings_list[:10]:
-                st.caption(f"• {w}")
-
-    # 트렌드 차트 (세션 한정)
-    history = st.session_state.get("kpi_history") or []
-    if len(history) >= 2:
-        with st.expander("📈 KPI 트렌드 (세션 한정, 최근 20회)"):
-            import pandas as _pd
-
-            df = _pd.DataFrame(history)
-            df["measured_at"] = _pd.to_datetime(df["measured_at"])
-            df = df.set_index("measured_at")
-            g1, g2 = st.columns(2)
-            g3, g4 = st.columns(2)
-            with g1:
-                st.caption("KP1 (성공률)")
-                if df["kp1"].notna().any():
-                    st.line_chart(df["kp1"])
-            with g2:
-                st.caption("KP9 (KB 적용률)")
-                if df["kp9"].notna().any():
-                    st.line_chart(df["kp9"])
-            with g3:
-                st.caption("KP2 (평균 종단 분)")
-                if df["kp2"].notna().any():
-                    st.line_chart(df["kp2"])
-            with g4:
-                st.caption("KP5 (p95 ms)")
-                if df["kp5"].notna().any():
-                    st.line_chart(df["kp5"])
-
-    # 데이터 소스
-    ds = data.get("data_source") or {}
-    if ds:
-        with st.expander("🔍 데이터 출처"):
-            for k, v in ds.items():
-                st.caption(f"**{k.upper()}** ← {v}")
-
-    # raw JSON
-    with st.expander("raw KPI JSON"):
-        if data:
-            st.download_button(
-                "📥 JSON 다운로드",
-                data=json.dumps(data, ensure_ascii=False, indent=2),
-                file_name=f"kpi_{(data.get('measured_at') or '')[:19].replace(':', '')}.json",
-                mime="application/json",
-                key="kpi_download",
-            )
-        st.json(data)
-
-
-# === 탭 6 — 오류 자동처리 & KB 모니터링 대시보드 ================================
-with tab6:
-    # ── 헤더 ──────────────────────────────────────────────────────────────────
+def _flow_screen() -> None:
+    """확정 디자인 임베드(가운데 정렬 + 스크롤) + API 직접 연동."""
     st.markdown(
         """
-        <div style="
-            background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
-            border-radius: 10px;
-            padding: 16px 24px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            border-left: 4px solid #e94560;
-        ">
-            <span style="font-size:24px; margin-right:12px;">🚨</span>
-            <div>
-                <span style="color:#fff; font-size:18px; font-weight:700;">
-                    오류 자동처리 & 자체학습 모니터링 대시보드
-                </span><br>
-                <span style="color:#aaa; font-size:12px;">
-                    AutoErrorHandlerAgent · SelfLearningAgent · ErrorKB · PendingPatch
-                </span>
+        <style>
+        [data-testid="stAppViewContainer"] { background: #1c3450; }
+        [data-testid="stHeader"] { display: none; }
+        .block-container { max-width: 100% !important; padding: 0 !important; }
+        [data-testid="stMain"] .block-container { padding: 0 !important; }
+        [data-testid="stIFrame"] iframe, .block-container iframe {
+            width: 100% !important; height: 97vh !important; border: 0; display: block;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    components.html(_FLOW_HTML, height=900, scrolling=True)
+
+
+# ===========================================================================
+# 라우팅 — 랜딩 → 플로우
+# ===========================================================================
+if not st.session_state.get("studio_started"):
+    # ── 스플래시(랜딩) ── (화면 세로 중앙 정렬, 히어로 이미지·폴백 공통)
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            min-height: calc(100vh - 4rem);
+            display: flex; flex-direction: column; justify-content: center;
+            padding-top: 1.5rem; padding-bottom: 1.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    if os.path.exists(_HERO):
+        st.image(_HERO, use_column_width=True)
+    else:
+        st.markdown(
+            """
+            <div style="max-width:960px;margin:0 auto;border-radius:34px;padding:104px 64px;
+                        background:linear-gradient(160deg,#2b4a6b 0%,#3f5d7e 100%);color:#e6eef8;text-align:center;
+                        box-shadow:0 32px 80px rgba(31,62,92,.34)">
+              <div style="font-size:20px;letter-spacing:.30em;opacity:.85;font-weight:600">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</div>
+              <div style="font-size:200px;line-height:1.0;margin:28px 0 6px">🌐</div>
             </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+        """
+        <div style="text-align:center;margin-top:44px">
+          <div style="font-size:76px;font-weight:800;color:#19395a">ADA Studio</div>
+          <div style="font-size:26px;color:#52647d;margin-top:18px">
+            다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로!</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    # ── 조회 범위 & 새로고침 ───────────────────────────────────────────────────
-    ctrl_c1, ctrl_c2, ctrl_c3 = st.columns([1, 1, 2])
-    with ctrl_c1:
-        err_since_h = st.number_input(
-            "조회 범위 (시간)", min_value=1, max_value=720, value=24, step=1, key="err_since_h"
-        )
-    with ctrl_c2:
-        st.write("")
-        st.write("")
-        err_refresh = st.button("🔄 새로고침", key="err_refresh")
-    with ctrl_c3:
-        only_unhandled = st.checkbox("미처리 오류만 표시", key="err_unhandled")
-
-    # ── 데이터 로드 ────────────────────────────────────────────────────────────
-    if err_refresh or "err_summary" not in st.session_state:
-        try:
-            r = requests.get(
-                f"{API_BASE}/errors/dashboard/summary",
-                params={"since_hours": err_since_h},
-                headers=_headers(),
-                timeout=8,
-            )
-            if r.ok:
-                st.session_state["err_summary"] = r.json()
-            else:
-                st.session_state["err_summary"] = None
-                st.warning(f"요약 조회 실패: {r.status_code} — JWT 토큰(admin)이 필요합니다.")
-        except Exception as e:
-            st.session_state["err_summary"] = None
-            st.warning(f"API 연결 실패: {e}")
-
-        try:
-            r2 = requests.get(
-                f"{API_BASE}/errors/dashboard/recent",
-                params={"limit": 50, "only_unhandled": only_unhandled},
-                headers=_headers(),
-                timeout=8,
-            )
-            st.session_state["err_recent"] = r2.json() if r2.ok else None
-        except Exception:
-            st.session_state["err_recent"] = None
-
-        try:
-            r3 = requests.get(
-                f"{API_BASE}/errors/dashboard/patches",
-                headers=_headers(),
-                timeout=8,
-            )
-            st.session_state["err_patches"] = r3.json() if r3.ok else None
-        except Exception:
-            st.session_state["err_patches"] = None
-
-    summary_data = st.session_state.get("err_summary") or {}
-    sm = summary_data.get("summary", {})
-    recent_data = st.session_state.get("err_recent") or {}
-    patch_data = st.session_state.get("err_patches") or {}
-
-    # ── 요약 카드 4개 ──────────────────────────────────────────────────────────
-    CARD_CSS = """
-    <div style="
-        background:{bg};
-        border-radius:10px;
-        padding:16px 20px;
-        text-align:center;
-        border-top: 4px solid {accent};
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    ">
-        <div style="font-size:32px; font-weight:800; color:{accent};">{value}</div>
-        <div style="font-size:13px; color:#555; margin-top:4px;">{label}</div>
-        <div style="font-size:11px; color:#999; margin-top:2px;">{sub}</div>
-    </div>
-    """
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(
-            CARD_CSS.format(
-                bg="#fff8f8",
-                accent="#e94560",
-                value=sm.get("total_errors", "—"),
-                label="총 오류 발생",
-                sub="전체 누적",
-            ),
-            unsafe_allow_html=True,
-        )
-    with c2:
-        rate = sm.get("auto_resolve_rate", 0)
-        st.markdown(
-            CARD_CSS.format(
-                bg="#f0fff4",
-                accent="#38a169",
-                value=sm.get("auto_resolved", "—"),
-                label="자동 해결",
-                sub=f"해결률 {rate * 100:.1f}%",
-            ),
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            CARD_CSS.format(
-                bg="#fffaf0",
-                accent="#dd6b20",
-                value=sm.get("pending_patches", "—"),
-                label="패치 검토 대기",
-                sub="review_status=pending",
-            ),
-            unsafe_allow_html=True,
-        )
-    with c4:
-        st.markdown(
-            CARD_CSS.format(
-                bg="#ebf8ff",
-                accent="#3182ce",
-                value=sm.get("kb_patterns", "—"),
-                label="KB 등록 오류 패턴",
-                sub="ErrorKB 총계",
-            ),
-            unsafe_allow_html=True,
-        )
-
-    st.write("")  # 간격
-
-    # ── 차트 2개 (시간별 오류 + 카테고리별 비율) ──────────────────────────────
-    chart_l, chart_r = st.columns([3, 2])
-
-    with chart_l:
-        st.markdown("#### 📈 시간별 오류 발생 현황")
-        hourly = summary_data.get("hourly_errors", [])
-        if hourly:
-            import pandas as pd
-
-            df_h = pd.DataFrame(hourly).rename(columns={"hour": "시간", "count": "오류 건수"})
-            df_h["시간"] = pd.to_datetime(df_h["시간"])
-            df_h = df_h.set_index("시간")
-            st.line_chart(df_h["오류 건수"], use_container_width=True)
-        else:
-            st.info("최근 오류 데이터가 없습니다.")
-
-    with chart_r:
-        st.markdown("#### 🥧 오류 유형별 비율")
-        by_cat = summary_data.get("by_category", [])
-        if by_cat:
-            import pandas as pd
-
-            df_c = pd.DataFrame(by_cat).rename(columns={"category": "카테고리", "count": "건수"}).set_index("카테고리")
-            st.bar_chart(df_c["건수"], use_container_width=True)
-        else:
-            st.info("카테고리 데이터가 없습니다.")
-
-    st.divider()
-
-    # ── 최근 경보 목록 ─────────────────────────────────────────────────────────
-    st.markdown("#### 🔔 최근 오류 경보 목록")
-
-    _SEV_ICON = {"CRITICAL": "🔴", "MEDIUM": "🟡", "INFO": "🟢"}
-    _SEV_COLOR = {"CRITICAL": "#e94560", "MEDIUM": "#dd6b20", "INFO": "#38a169"}
-
-    recent_items = (recent_data.get("items") or [])[:10]
-    if recent_items:
-        import pandas as pd
-
-        df_r = pd.DataFrame(recent_items)
-        df_r["등급"] = df_r["severity"].map(lambda s: _SEV_ICON.get(s, "⚪") + " " + s)
-        df_r["자동처리"] = df_r["auto_handled"].map(lambda x: "✅ 완료" if x else "❌ 미처리")
-        df_r["KB매칭"] = df_r["has_kb_match"].map(lambda x: "✅" if x else "—")
-        display_cols = ["created_at", "등급", "error_category", "error_message", "자동처리", "KB매칭"]
-        display_cols = [c for c in display_cols if c in df_r.columns]
-        st.dataframe(
-            df_r[display_cols].rename(
-                columns={
-                    "created_at": "발생시각",
-                    "error_category": "오류 유형",
-                    "error_message": "메시지 (200자)",
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.success("✅ 최근 오류 없음")
-
-    st.divider()
-
-    # ── 상세 로그 테이블 + CSV 다운로드 ────────────────────────────────────────
-    with st.expander("📋 상세 오류 로그 (전체)", expanded=False):
-        all_items = recent_data.get("items") or []
-        if all_items:
-            import pandas as pd
-
-            df_all = pd.DataFrame(all_items)
-            # CSV 다운로드
-            csv_bytes = df_all.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                label="📥 CSV 다운로드",
-                data=csv_bytes,
-                file_name=f"error_log_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv",
-            )
-            st.dataframe(df_all, use_container_width=True, hide_index=True)
-        else:
-            st.info("데이터 없음")
-
-    st.divider()
-
-    # ── 패치 관리 테이블 ───────────────────────────────────────────────────────
-    st.markdown("#### 🔧 패치 대기 목록 (승인 / 거부)")
-
-    patch_items = patch_data.get("items") or []
-    pending_only = [p for p in patch_items if p.get("review_status") == "pending"]
-
-    if pending_only:
-        for patch in pending_only:
-            with st.container(border=True):
-                p1, p2, p3 = st.columns([3, 1, 1])
-                with p1:
-                    conf = patch.get("confidence", 0)
-                    conf_color = "#38a169" if conf >= 0.7 else "#dd6b20" if conf >= 0.4 else "#e94560"
-                    st.markdown(
-                        f"**ID**: `{patch['id'][:16]}…` &nbsp;|&nbsp; "
-                        f"신뢰도: <span style='color:{conf_color};font-weight:700'>{conf:.0%}</span> &nbsp;|&nbsp; "
-                        f"생성: {(patch.get('created_at') or '')[:16]}",
-                        unsafe_allow_html=True,
-                    )
-                    if patch.get("patch_preview"):
-                        st.code(patch["patch_preview"], language="diff")
-                with p2:
-                    if st.button("✅ 승인", key=f"approve_{patch['id']}"):
-                        try:
-                            rv = requests.patch(
-                                f"{API_BASE}/errors/dashboard/patches/{patch['id']}",
-                                json={"action": "approve", "reviewer": "dashboard"},
-                                headers=_headers(),
-                                timeout=5,
-                            )
-                            if rv.ok:
-                                st.success("승인 완료")
-                                st.session_state.pop("err_patches", None)
-                                st.rerun()
-                            else:
-                                st.error(rv.text)
-                        except Exception as e:
-                            st.error(str(e))
-                with p3:
-                    if st.button("❌ 거부", key=f"reject_{patch['id']}"):
-                        try:
-                            rv = requests.patch(
-                                f"{API_BASE}/errors/dashboard/patches/{patch['id']}",
-                                json={"action": "reject", "reviewer": "dashboard"},
-                                headers=_headers(),
-                                timeout=5,
-                            )
-                            if rv.ok:
-                                st.warning("거부 처리됨")
-                                st.session_state.pop("err_patches", None)
-                                st.rerun()
-                            else:
-                                st.error(rv.text)
-                        except Exception as e:
-                            st.error(str(e))
-    else:
-        st.success("✅ 대기 중인 패치 없음")
-
-    # 처리 완료된 패치 이력
-    done_patches = [p for p in patch_items if p.get("review_status") != "pending"]
-    if done_patches:
-        with st.expander(f"처리 완료 패치 이력 ({len(done_patches)}건)", expanded=False):
-            import pandas as pd
-
-            df_done = pd.DataFrame(done_patches)[
-                ["id", "review_status", "reviewer", "confidence", "created_at"]
-            ].rename(
-                columns={
-                    "id": "패치 ID",
-                    "review_status": "처리 결과",
-                    "reviewer": "검토자",
-                    "confidence": "신뢰도",
-                    "created_at": "생성일시",
-                }
-            )
-            st.dataframe(df_done, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # ── KB 학습 현황 ───────────────────────────────────────────────────────────
-    st.markdown("#### 🧠 자체학습 KB 현황")
-    kb_type_data = summary_data.get("kb_by_type", [])
-    top_kb_data = summary_data.get("top_kb", [])
-
-    kb_l, kb_r = st.columns([1, 2])
-    with kb_l:
-        if kb_type_data:
-            import pandas as pd
-
-            df_kb = pd.DataFrame(kb_type_data).rename(columns={"kb_type": "KB 유형", "count": "건수"})
-            st.dataframe(df_kb, use_container_width=True, hide_index=True)
-        else:
-            st.info("KB 데이터 없음")
-
-    with kb_r:
-        st.caption("ErrorKB 상위 패턴 (성공 횟수 기준)")
-        if top_kb_data:
-            import pandas as pd
-
-            df_top = pd.DataFrame(top_kb_data).rename(
-                columns={
-                    "signature": "오류 시그니처",
-                    "success_count": "자동처리 성공",
-                    "fail_count": "실패",
-                    "confidence": "신뢰도",
-                }
-            )
-            st.dataframe(df_top, use_container_width=True, hide_index=True)
-        else:
-            st.info("ErrorKB 패턴 없음")
-
-
-# =============================================================================
-# ADR-008 L4 — PII 마스킹 통계 위젯
-# =============================================================================
-try:
-    import requests
-    import streamlit as st
-
-    with st.expander("🛡️ 오늘의 PII 마스킹 (ADR-008 L4)", expanded=False):
-        admin_jwt = st.text_input(
-            "Admin JWT (PII 통계 조회용)",
-            type="password",
-            key="pii_admin_jwt",
-        )
-        if admin_jwt:
-            try:
-                r = requests.get(
-                    f"{API_BASE}/admin/security/pii?since_hours=24",
-                    headers={"Authorization": f"Bearer {admin_jwt}"},
-                    timeout=5,
-                )
-                if r.status_code == 200:
-                    data = r.json()
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("마스킹된 토큰 (24h)", data.get("total_tokens_masked", 0))
-                    c2.metric("처리 요청 수", data.get("total_events", 0))
-                    avg = (data["total_tokens_masked"] / data["total_events"]) if data["total_events"] else 0
-                    c3.metric("요청당 평균 토큰", f"{avg:.2f}")
-
-                    if data.get("by_hour"):
-                        import pandas as pd
-
-                        df_h = pd.DataFrame(data["by_hour"])
-                        if not df_h.empty:
-                            df_h = df_h.set_index("hour")
-                            st.line_chart(df_h[["events", "tokens"]])
-
-                    if data.get("top_actors"):
-                        st.caption("상위 PII 처리 actor")
-                        st.dataframe(data["top_actors"][:5], use_container_width=True, hide_index=True)
-                elif r.status_code == 403:
-                    st.error("403 — admin role JWT 필요")
-                else:
-                    st.warning(f"조회 실패: HTTP {r.status_code}")
-            except Exception as e:
-                st.error(f"네트워크 오류: {e}")
-        else:
-            st.info("Admin JWT 입력 시 PII 마스킹 통계 표시")
-except Exception:
-    pass
+    st.write("")
+    _bc = st.columns([2, 1, 2])
+    with _bc[1]:
+        if st.button("✦  시작", type="primary", use_container_width=True):
+            st.session_state["studio_started"] = True
+            st.rerun()
+else:
+    _flow_screen()
