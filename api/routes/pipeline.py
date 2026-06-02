@@ -9,20 +9,41 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ada.core.config import settings
+from ada.core.logger import get_logger
 from ada.core.state import PipelineState
-from ada.db.models import Job, Upload
+from ada.db.models import Job, Output, Upload
 from ada.db.session import get_db
 from api.schemas.pipeline import (
+    OutputItem,
+    PipelineResultResponse,
     PipelineResumeRequest,
     PipelineStartRequest,
     PipelineStartResponse,
     PipelineStatusResponse,
 )
+
+log = get_logger("api.pipeline")
+
+
+# ----- 헬퍼: s3:// URI → MinIO Key 파싱 -----
+def _key_from_minio_path(minio_path: str, bucket: str) -> str:
+    """``s3://{bucket}/{key}`` → ``{key}``  (그 외 형식은 그대로 통과)."""
+    if minio_path.startswith("s3://"):
+        # s3://bucket/outputs/OUT-04/{job_id}/file.html
+        rest = minio_path[len("s3://"):]
+        # bucket/ 접두 제거
+        if rest.startswith(f"{bucket}/"):
+            return rest[len(bucket) + 1:]
+        # 다른 버킷이면 첫 / 이후를 키로
+        return rest.split("/", 1)[1] if "/" in rest else rest
+    return minio_path
 
 router = APIRouter()
 
@@ -111,13 +132,87 @@ async def resume(job_id: str, req: PipelineResumeRequest,
     return {"job_id": job_id, "gate": req.gate, "queued": True}
 
 
-@router.get("/result/{job_id}")
-async def result(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+@router.get("/result/{job_id}", response_model=PipelineResultResponse)
+async def result(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    expiry: int = 3600,
+) -> PipelineResultResponse:
+    """파이프라인 결과 — Output 테이블 + presigned URL.
+
+    동작 원리
+    ---------
+    1) Job 조회 (없으면 404)
+    2) Output 테이블에서 job_id 의 모든 산출물 행 SELECT
+       (output_code, minio_path, file_size_bytes, generation_ms, status)
+    3) 각 행의 minio_path 에서 Key 를 파싱해 ``get_presigned_url(key, expiry)`` 발급
+       — MinIO 가 일시적인 공개 URL 을 만들어주므로 브라우저가 직접 받아갈 수 있음
+       — 발급 자체는 서명 연산만이라 빠르고 부담 없음
+    4) 응답 스키마 ``PipelineResultResponse`` 로 직렬화
+
+    Notes
+    -----
+    - ``expiry`` 쿼리 파라미터로 만료시간 조절 가능 (기본 1h).
+    - presigned URL 호스트는 ``settings.minio_endpoint`` 기준. 브라우저가 닿을 수
+      있는 호스트여야 하므로 운영에서는 ``.env`` 의 ``MINIO_ENDPOINT`` 를
+      외부 도메인(또는 nginx 경유 경로)으로 두는 것이 정석. 도커 내부망 이름
+      (``minio:9000``) 그대로면 사용자 브라우저에서는 못 받음.
+    """
+
     job = await db.scalar(select(Job).where(Job.id == uuid.UUID(job_id)))
     if job is None:
         raise HTTPException(404, detail="job not found")
-    return {
-        "job_id": str(job.id),
-        "status": job.status,
-        "outputs": job.requested_outputs or [],
-    }
+
+    rows = (
+        await db.scalars(
+            select(Output).where(Output.job_id == uuid.UUID(job_id)).order_by(Output.created_at.asc())
+        )
+    ).all()
+
+    items: list[OutputItem] = []
+
+    # MinIO 클라이언트는 lazy import (테스트 환경에서 boto3 의존 회피)
+    mc = None
+    if rows:
+        try:
+            from tools.minio_tool import get_minio_client
+
+            mc = get_minio_client()
+        except Exception as e:
+            log.warning("minio_client_unavailable", error=str(e))
+            mc = None
+
+    for row in rows:
+        key = _key_from_minio_path(row.minio_path, settings.minio_bucket)
+        filename = Path(key).name or "(unnamed)"
+        url: str | None = None
+        if mc is not None:
+            try:
+                url = mc.get_presigned_url(key, expiry=expiry)
+            except Exception as e:
+                log.warning(
+                    "presigned_url_failed",
+                    output_code=row.output_code,
+                    minio_path=row.minio_path,
+                    error=str(e),
+                )
+
+        items.append(
+            OutputItem(
+                code=row.output_code,
+                filename=filename,
+                minio_path=row.minio_path,
+                size_bytes=row.file_size_bytes,
+                generation_ms=row.generation_ms,
+                status=row.status or "completed",
+                url=url,
+                url_expires_in=expiry,
+            )
+        )
+
+    return PipelineResultResponse(
+        job_id=str(job.id),
+        status=job.status,
+        outputs=items,
+        requested_outputs=list(job.requested_outputs or []),
+    )
