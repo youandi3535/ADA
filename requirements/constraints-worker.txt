@@ -89,9 +89,9 @@ langchain-anthropic==0.1.13
 langchain-core==0.2.43
 langchain-text-splitters==0.2.4
 langcodes==3.5.1
-langgraph==0.1.5
-langgraph-checkpoint==1.0.12
-langgraph-checkpoint-postgres==1.0.9
+langgraph==0.3.34
+langgraph-checkpoint==2.1.2
+langgraph-checkpoint-postgres==2.0.21
 langsmith==0.1.147
 lazy-loader==0.5
 librosa==0.10.2

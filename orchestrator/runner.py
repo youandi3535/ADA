@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import traceback
 from typing import Any
 
 from celery import Celery
@@ -111,15 +112,38 @@ def _get_redis() -> Any:
     return redis.Redis.from_url(settings.redis_url)
 
 
-def publish_progress(job_id: str, current_agent: str, message: str = "") -> None:
-    """대시보드 SSE / WebSocket 채널."""
+def publish_progress(
+    job_id: str,
+    current_agent: str,
+    message: str = "",
+    *,
+    pipeline_status: str | None = None,
+    error: str | None = None,
+) -> None:
+    """대시보드 SSE / WebSocket 채널.
+
+    pipeline_status: ``running``/``completed``/``failed`` — 워커 종료 신호.
+        프론트는 이 값을 보고 폴링을 종료한다 (`error_recovery`가 보이는데도
+        진행률이 멈춰 있는 좀비 상태 방지).
+    error: 실패 시 사용자 안내용 메시지 (PII 마스킹 후 저장).
+    """
     r = _get_redis()
-    payload = {
+    payload: dict[str, Any] = {
         "agent": current_agent,
         "progress": AGENT_PROGRESS_MAP.get(current_agent, 0),
         "ts": time.time(),
         "message": message,
     }
+    if pipeline_status:
+        payload["status"] = pipeline_status
+    if error:
+        # R-103 — PII 마스킹 후 영속화
+        try:
+            from ada.core.logger import _pii_mask  # noqa: WPS433
+
+            payload["error"] = _pii_mask(str(error))[:1000]
+        except Exception:  # noqa: BLE001
+            payload["error"] = str(error)[:1000]
     body = json.dumps(payload)
     r.publish(f"ada:pipeline:{job_id}", body)
     # 마지막 진행상황 영속화 — /pipeline/gate 가 실제 진행률/현재 에이전트를 읽어 표시
@@ -127,6 +151,33 @@ def publish_progress(job_id: str, current_agent: str, message: str = "") -> None
         r.set(f"ada:progress:{job_id}", body, ex=3600)
     except Exception:  # noqa: BLE001
         pass
+
+
+async def _set_job_terminal(job_id: str, status: str, error: str | None = None) -> None:
+    """워커 종료 시 DB Job.status 갱신 (running/completed/failed).
+
+    이 함수가 없으면 `_invoke` 가 예외로 종료해도 DB 의 status 가 그대로
+    'pending' 으로 남아 프론트가 끝없이 폴링한다.
+    """
+    try:
+        import uuid as _uuid
+
+        from sqlalchemy import select  # noqa: WPS433
+
+        from ada.core.logger import _pii_mask  # noqa: WPS433
+        from ada.db.models import Job  # noqa: WPS433
+        from ada.db.session import AsyncSessionLocal  # noqa: WPS433
+
+        async with AsyncSessionLocal() as session:
+            job = await session.scalar(select(Job).where(Job.id == _uuid.UUID(job_id)))
+            if job is None:
+                return
+            job.status = status
+            if error is not None:
+                job.error_message = _pii_mask(str(error))[:2000]
+            await session.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning("set_job_terminal_failed", job_id=job_id, error=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -199,34 +250,94 @@ def _final_to_dict(final) -> dict | None:
 
 
 async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
-    from orchestrator.graph import get_pipeline_graph
+    from orchestrator.checkpoint import CompatMemorySaver, load_checkpoint, save_checkpoint
+    from orchestrator.graph import build_graph
 
-    graph = get_pipeline_graph()
+    checkpointer = CompatMemorySaver()
+    load_checkpoint(checkpointer, job_id)
+    graph = build_graph(checkpointer=checkpointer)
     config = {"configurable": {"thread_id": job_id}, "callbacks": _get_callbacks()}
 
+    await _set_job_terminal(job_id, "running")
     try:
         final = await graph.ainvoke(state, config=config) if not resume else None
-        publish_progress(job_id, "END", "complete")
-        return {"status": "completed", "final": _final_to_dict(final)}
+        final_dict = _final_to_dict(final)
+        is_terminal = bool(final_dict) and not (final_dict.get("current_gate"))
+        if is_terminal:
+            publish_progress(job_id, "END", "complete", pipeline_status="completed")
+            await _set_job_terminal(job_id, "completed")
+        else:
+            publish_progress(
+                job_id,
+                final_dict.get("current_gate") or "gate_wait",
+                "awaiting user input",
+                pipeline_status="awaiting_user",
+            )
+        return {"status": "completed", "final": final_dict}
     except Exception as e:
-        log.error("pipeline_error", error=str(e))
-        publish_progress(job_id, "error_recovery", f"error: {e}")
-        return {"status": "failed", "error": str(e)}
+        tb = traceback.format_exc()
+        err_msg = repr(e) if not str(e) else str(e)
+        log.error("pipeline_error", error=err_msg, traceback=tb)
+        publish_progress(
+            job_id,
+            "error_recovery",
+            f"error: {err_msg}",
+            pipeline_status="failed",
+            error=err_msg,
+        )
+        await _set_job_terminal(job_id, "failed", error=err_msg)
+        return {"status": "failed", "error": err_msg}
+    finally:
+        save_checkpoint(checkpointer, job_id)
 
 
 async def _resume(*, job_id: str, gate_response: dict) -> dict:
-    from orchestrator.graph import get_pipeline_graph
+    from orchestrator.checkpoint import CompatMemorySaver, load_checkpoint, save_checkpoint
+    from orchestrator.graph import build_graph
 
-    graph = get_pipeline_graph()
+    checkpointer = CompatMemorySaver()
+    load_checkpoint(checkpointer, job_id)
+    graph = build_graph(checkpointer=checkpointer)
     config = {"configurable": {"thread_id": job_id}}
 
-    # 사용자 응답을 state 의 gate_responses 에 머지
-    snap = await graph.aget_state(config)
-    cur = snap.values  # LangGraph returns dict for Pydantic state
-    gate_code = gate_response.get("gate", "G?")
-    existing = cur["gate_responses"] if isinstance(cur, dict) else cur.gate_responses
-    new_responses = dict(existing)
-    new_responses[gate_code] = {**new_responses.get(gate_code, {}), "user_choice": gate_response.get("choice")}
-    await graph.aupdate_state(config, {"gate_responses": new_responses, "current_gate": None})
-    final = await graph.ainvoke(None, config=config)
-    return {"status": "completed", "final": _final_to_dict(final)}
+    await _set_job_terminal(job_id, "running")
+    try:
+        snap = await graph.aget_state(config)
+        cur = snap.values
+        gate_code = gate_response.get("gate", "G?")
+        existing = cur["gate_responses"] if isinstance(cur, dict) else cur.gate_responses
+        new_responses = dict(existing)
+        new_responses[gate_code] = {
+            **new_responses.get(gate_code, {}),
+            "user_choice": gate_response.get("choice"),
+        }
+        await graph.aupdate_state(config, {"gate_responses": new_responses, "current_gate": None})
+        final = await graph.ainvoke(None, config=config)
+        final_dict = _final_to_dict(final)
+        is_terminal = bool(final_dict) and not (final_dict.get("current_gate"))
+        if is_terminal:
+            publish_progress(job_id, "END", "complete", pipeline_status="completed")
+            await _set_job_terminal(job_id, "completed")
+        else:
+            publish_progress(
+                job_id,
+                final_dict.get("current_gate") or "gate_wait",
+                "awaiting user input",
+                pipeline_status="awaiting_user",
+            )
+        return {"status": "completed", "final": final_dict}
+    except Exception as e:
+        tb = traceback.format_exc()
+        err_msg = repr(e) if not str(e) else str(e)
+        log.error("pipeline_resume_error", error=err_msg, traceback=tb)
+        publish_progress(
+            job_id,
+            "error_recovery",
+            f"error: {err_msg}",
+            pipeline_status="failed",
+            error=err_msg,
+        )
+        await _set_job_terminal(job_id, "failed", error=err_msg)
+        return {"status": "failed", "error": err_msg}
+    finally:
+        save_checkpoint(checkpointer, job_id)

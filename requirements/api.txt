@@ -29,8 +29,8 @@ sentence-transformers==2.7.0  # paraphrase-multilingual-mpnet-base-v2 (768dim) �
 
 # LLM
 anthropic==0.28.0        # Claude API
-langgraph==0.1.5         # 그래프 resume (Day04)
-langgraph-checkpoint-postgres>=1.0,<2   # HITL 게이트 interrupt 용 PostgresSaver (langgraph 0.1.5 호환)
+langgraph==0.3.34        # 그래프 resume (Day04) — CompatMemorySaver 브릿지 사용
+langgraph-checkpoint-postgres==2.0.21   # HITL 체크포인터 (CompatMemorySaver 로 우회)
 psycopg[binary]>=3.1                     # PostgresSaver(psycopg3) 드라이버
 langchain==0.2.3
 langchain-anthropic==0.1.13
