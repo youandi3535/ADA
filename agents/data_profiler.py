@@ -211,6 +211,30 @@ class DataProfilerAgent(BaseAgent):
 # ==============================================================
 
 
+def _anonymize_uploaded_df(df: Any, state: Any) -> tuple[Any, dict[str, Any]]:
+    """동기 PII 익명화 래퍼 — 테스트 및 레거시 호출용.
+
+    컬럼명 휴리스틱으로 PII 컬럼을 탐지(LLM 없음)하여 동기 환경에서도 동작한다.
+    """
+    import re
+
+    _PII_PAT = re.compile(
+        r"(email|phone|tel|mobile|ssn|name|주민|이메일|전화|핸드폰|이름)",
+        re.IGNORECASE,
+    )
+    pii_cols = [c for c in df.columns if _PII_PAT.search(str(c))]
+    if not pii_cols:
+        return df, {}
+    try:
+        from ada.security.guardrails import PIIAnonymizer  # noqa: WPS433
+
+        anon = PIIAnonymizer()
+        masked_df, mapping = anon.anonymize_df(df, pii_columns=pii_cols)
+        return masked_df, {"mapping": mapping, "columns": pii_cols}
+    except Exception:  # noqa: BLE001
+        return df, {}
+
+
 def _merge_pii_extras(current_extras: dict[str, Any] | None, new_pii: dict[str, Any]) -> dict[str, Any]:
     """Merge new PII mapping/columns into state.category_extras."""
     extras = dict(current_extras or {})
