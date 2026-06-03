@@ -4,30 +4,54 @@ POST /pipeline/start         → 새 job 시작
 GET  /pipeline/status/{job}  → 진행 상황
 POST /pipeline/resume/{job}  → 5게이트 응답 후 재개
 GET  /pipeline/result/{job}  → 최종 결과
+GET  /pipeline/gate/{job}    → 현재 게이트 proposals + 실시간 진행률
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ada.core.config import settings
+from ada.core.logger import get_logger
 from ada.core.state import PipelineState
 from ada.db.models import Job, Output, Upload
 from ada.db.session import get_db
 from api.schemas.pipeline import (
+    OutputItem,
+    PipelineResultResponse,
     PipelineResumeRequest,
     PipelineStartRequest,
     PipelineStartResponse,
     PipelineStatusResponse,
 )
 
+log = get_logger("api.pipeline")
+
 router = APIRouter()
 
 
+# ---------------------------------------------------------------------------
+# 헬퍼
+# ---------------------------------------------------------------------------
+def _key_from_minio_path(minio_path: str, bucket: str) -> str:
+    """``s3://{bucket}/{key}`` → ``{key}``  (그 외 형식은 그대로 통과)."""
+    if minio_path.startswith("s3://"):
+        rest = minio_path[len("s3://") :]
+        if rest.startswith(f"{bucket}/"):
+            return rest[len(bucket) + 1 :]
+        return rest.split("/", 1)[1] if "/" in rest else rest
+    return minio_path
+
+
+# ---------------------------------------------------------------------------
+# 엔드포인트
+# ---------------------------------------------------------------------------
 @router.post("/start", response_model=PipelineStartResponse)
 async def start_pipeline(req: PipelineStartRequest, db: AsyncSession = Depends(get_db)) -> PipelineStartResponse:
     upload = await db.scalar(select(Upload).where(Upload.file_id == req.file_id))
@@ -48,7 +72,6 @@ async def start_pipeline(req: PipelineStartRequest, db: AsyncSession = Depends(g
     db.add(job)
     await db.flush()
 
-    # Celery enqueue
     from orchestrator.runner import run_pipeline_task
 
     state = PipelineState(
@@ -77,8 +100,6 @@ async def status(job_id: str, db: AsyncSession = Depends(get_db)) -> PipelineSta
     if job is None:
         raise HTTPException(404, detail="job not found")
 
-    # progress_pct 는 Redis 의 마지막 publish 메시지에서 읽어오는게 정확하지만,
-    # 여기선 잡 상태 기반 단순 매핑.
     prog = 100 if job.status == "completed" else (50 if job.status == "running" else 0)
     return PipelineStatusResponse(
         job_id=str(job.id),
@@ -109,22 +130,75 @@ async def resume(job_id: str, req: PipelineResumeRequest, db: AsyncSession = Dep
     return {"job_id": job_id, "gate": req.gate, "queued": True}
 
 
-@router.get("/result/{job_id}")
-async def result(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+@router.get("/result/{job_id}", response_model=PipelineResultResponse)
+async def result(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    expiry: int = 3600,
+) -> PipelineResultResponse:
+    """파이프라인 결과 — Output 테이블 + MinIO presigned URL."""
     job = await db.scalar(select(Job).where(Job.id == uuid.UUID(job_id)))
     if job is None:
         raise HTTPException(404, detail="job not found")
-    return {
-        "job_id": str(job.id),
-        "status": job.status,
-        "outputs": job.requested_outputs or [],
-    }
+
+    rows = (
+        await db.scalars(select(Output).where(Output.job_id == uuid.UUID(job_id)).order_by(Output.created_at.asc()))
+    ).all()
+
+    items: list[OutputItem] = []
+
+    mc = None
+    if rows:
+        try:
+            from tools.minio_tool import get_minio_client
+
+            mc = get_minio_client()
+        except Exception as e:
+            log.warning("minio_client_unavailable", error=str(e))
+
+    for row in rows:
+        key = _key_from_minio_path(row.minio_path, settings.minio_bucket)
+        filename = Path(key).name or "(unnamed)"
+        url: str | None = None
+        if mc is not None:
+            try:
+                url = mc.get_presigned_url(key, expiry=expiry)
+            except Exception as e:
+                log.warning(
+                    "presigned_url_failed",
+                    output_code=row.output_code,
+                    minio_path=row.minio_path,
+                    error=str(e),
+                )
+
+        items.append(
+            OutputItem(
+                code=row.output_code,
+                filename=filename,
+                minio_path=row.minio_path,
+                size_bytes=row.file_size_bytes,
+                generation_ms=row.generation_ms,
+                status=row.status or "completed",
+                url=url,
+                url_expires_in=expiry,
+            )
+        )
+
+    return PipelineResultResponse(
+        job_id=str(job.id),
+        status=job.status,
+        outputs=items,
+        requested_outputs=list(job.requested_outputs or []),
+    )
 
 
 @router.get("/gate/{job_id}")
 async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    """현재 게이트의 추천(proposals) + 분석 결과(insights·eval·best_model·eda·산출물)를
-    LangGraph 체크포인트 state 에서 읽어 노출 (read-only). state 미가용 시 빈 값으로 degrade."""
+    """현재 게이트 proposals + 실시간 진행률/에이전트.
+
+    runner._save_gate_data() 가 Redis 에 저장한 ada:gate_data:{job_id} 를 직접 읽어
+    graph.get_state() 와 워커 전용 패키지(matplotlib 등) 없이 동작한다.
+    """
     job = await db.scalar(select(Job).where(Job.id == uuid.UUID(job_id)))
     if job is None:
         raise HTTPException(404, detail="job not found")
@@ -142,7 +216,6 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
         "output_paths": {},
     }
 
-    # runner._save_gate_data() 가 저장한 Redis 키에서 직접 읽기
     try:
         import json as _json2
 
@@ -170,7 +243,6 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     except Exception:  # noqa: BLE001
         pass
 
-    # 실시간 진행률/현재 에이전트 — runner.publish_progress 가 Redis 에 저장한 마지막 값
     try:
         import json as _json
 
@@ -185,7 +257,6 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             data["current_agent"] = pr.get("agent")
             data["progress_pct"] = pr.get("progress")
             data["progress_ts"] = pr.get("ts")
-            # 워커가 종료 신호를 남겼으면 프론트가 폴링을 멈추도록 그대로 전달
             if pr.get("status"):
                 data["pipeline_status"] = pr.get("status")
             if pr.get("error"):
@@ -193,7 +264,6 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     except Exception:  # noqa: BLE001
         pass
 
-    # DB job.status 가 'failed'/'completed' 면 Redis 가 비어 있어도 보고
     if job.status in ("failed", "completed") and not data.get("pipeline_status"):
         data["pipeline_status"] = job.status
         if job.status == "failed" and job.error_message:
