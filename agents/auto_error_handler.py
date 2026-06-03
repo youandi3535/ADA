@@ -37,7 +37,10 @@ from agents.base import BaseAgent
 RESOLVED_ACTIONS = frozenset(
     {
         # ── 자동 적용 완료 (코드 수정까지 완료) ──────────────────────────────
-        "auto_kb_applied",  # Tier 1  SelfLearningKB diff 자동 적용
+        "auto_kb_applied",  # Tier 0/legacy  static fixer diff 자동 적용
+        "auto_kb_match",  # 레거시 호환 alias
+        "auto_self_learning_match",  # Tier 1  SelfLearningKB 시맨틱 매칭 + 패치 큐
+        "patch_reused_approved",  # 재사용 패치 승인 (apply-worker)
         "auto_ollama_applied",  # Tier 2  Ollama diff 자동 적용
         "auto_claude_applied",  # Tier 3  Claude diff 자동 적용
     }

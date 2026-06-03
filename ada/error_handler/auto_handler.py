@@ -42,7 +42,8 @@ log = get_logger("auto_handler")
 RESOLVED_ACTIONS: frozenset[str] = frozenset(
     {
         # ── 자동 적용 완료 (코드 수정까지 완료) ──────────────────────────────
-        "auto_kb_applied",  # Tier 1  SelfLearningKB diff 자동 적용
+        "auto_kb_applied",  # Tier 0/legacy  static fixer diff 자동 적용
+        "auto_self_learning_match",  # Tier 1  SelfLearningKB 시맨틱 매칭 + 패치 큐
         "auto_ollama_applied",  # Tier 2  Ollama diff 자동 적용
         "auto_claude_applied",  # Tier 3  Claude diff 자동 적용
     }
@@ -386,11 +387,15 @@ class AutoErrorHandler:
         except Exception as e:  # noqa: BLE001
             log.warning("static_fixer_failed", error=str(e))
 
-        # ── Tier 1: SelfLearningKB 시맨틱 검색 + 자동 적용 ────────────────────
+        # ── Tier 1: SelfLearningKB 시맨틱 검색 + 패치 큐 ────────────────────
         # 팀원·Ollama·Claude 가 누적한 수정 사례를 pgvector 코사인 유사도로 검색.
         # similarity ≥ 0.85 + confidence ≥ 0.7 + 저장된 diff 존재 시:
-        #   sandbox 빠른 검증(worktree + ruff, pytest 제외) → 통과하면 즉시 적용.
-        # LLM 호출 없음, 비용 0.
+        #   static_check(scope·format 검증) → 통과하면 PendingPatch 큐 적재.
+        # apply_patch 는 백그라운드 apply-worker 가 처리. LLM 호출 없음, 비용 0.
+        # source 신뢰도에 따라 review_status 결정:
+        #   ollama/claude/auto → "approved" (신뢰 소스, 바로 적용 가능)
+        #   team_manual 등    → "pending"  (사람 검토 후 적용)
+        _TRUSTED_SOURCES = frozenset({"ollama", "claude", "claude_code", "auto"})
         try:
             from ada.harness.rag import KBRAG
 
@@ -406,7 +411,7 @@ class AutoErrorHandler:
                         payload = json.loads(payload)
                     except Exception as _parse_e:  # noqa: BLE001
                         log.warning(
-                            "tier1_payload_parse_failed",
+                            "tier_1_5_payload_parse_failed",
                             kb_id=str(top.get("kb_id")),
                             error=str(_parse_e),
                             payload_preview=str(top.get("payload"))[:200],
@@ -416,57 +421,43 @@ class AutoErrorHandler:
                 src = payload.get("source") if isinstance(payload, dict) else None
 
                 if similarity >= 0.85 and kb_confidence >= 0.7 and stored_diff:
-                    from ada.error_handler.patcher import apply_patch
                     from ada.error_handler.sandbox import PatchValidator
 
                     _validator = PatchValidator(skip_tests=True)
-                    val_result = await _validator.validate(stored_diff)
+                    val_result = _validator.static_check(stored_diff)
                     if val_result.passed:
-                        apply_result = await apply_patch(
-                            stored_diff,
-                            commit_msg=(
-                                f"auto-fix/tier-1(kb): kb={top.get('kb_id')} "
-                                f"sim={similarity:.3f} src={src or 'unknown'}"
-                            ),
-                        )
+                        is_trusted = src in _TRUSTED_SOURCES
+                        review_status = "approved" if is_trusted else "pending"
                         self.session.add(
                             PendingPatch(
                                 error_kb_id=None,
                                 patch_diff=stored_diff,
                                 test_plan=(
                                     f"[tier-1/self_learning_kb:{src or 'unknown'}] "
-                                    f"kb_id={top.get('kb_id')} sim={similarity:.3f} "
-                                    f"applied={apply_result['applied']}"
+                                    f"kb_id={top.get('kb_id')} sim={similarity:.3f}"
                                 ),
                                 confidence=min(0.95, kb_confidence),
-                                review_status="auto_applied" if apply_result["applied"] else "apply_failed",
+                                review_status=review_status,
                             )
                         )
                         await self.session.flush()
 
-                        if apply_result["applied"]:
-                            log.info(
-                                "auto_kb_applied",
-                                kb_id=str(top.get("kb_id")),
-                                similarity=similarity,
-                                source=src,
-                                git_commit=apply_result.get("git_commit"),
-                                modules_reloaded=apply_result.get("modules_reloaded"),
-                            )
-                            return {
-                                "action": "auto_kb_applied",
-                                "kb_id": str(top.get("kb_id")),
-                                "similarity": similarity,
-                                "patch_chars": len(stored_diff),
-                                "git_commit": apply_result.get("git_commit"),
-                                "modules_reloaded": apply_result.get("modules_reloaded"),
-                            }
-                        # 적용 실패 → Tier 2 로 계속
-                        log.warning(
-                            "tier1_apply_failed",
+                        log.info(
+                            "auto_self_learning_match",
                             kb_id=str(top.get("kb_id")),
-                            reason=apply_result.get("reason"),
+                            similarity=similarity,
+                            source=src,
+                            trusted=is_trusted,
+                            review_status=review_status,
                         )
+                        return {
+                            "action": "auto_self_learning_match",
+                            "kb_id": str(top.get("kb_id")),
+                            "similarity": similarity,
+                            "patch_chars": len(stored_diff),
+                            "trusted_source": is_trusted,
+                            "review_status": review_status,
+                        }
                     else:
                         log.info(
                             "tier1_rejected_scope",
