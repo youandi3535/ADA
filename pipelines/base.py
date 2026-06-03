@@ -72,6 +72,7 @@ class BasePipeline(abc.ABC):
 
         mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
         mlflow.set_experiment(experiment_name or self.experiment_name)
-        run = mlflow.start_run(tags=tags or {})
+        nested = mlflow.active_run() is not None
+        run = mlflow.start_run(tags=tags or {}, nested=nested)
         self.mlflow_run_id = run.info.run_id
         return run
