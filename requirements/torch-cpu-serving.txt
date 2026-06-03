@@ -1,0 +1,14 @@
+# Python: 3.10  (Dockerfile FROM python:3.10-slim 과 동일)
+# =============================================================
+# torch-cpu-serving.txt  -  CPU 전용 torch (serving 이미지용)
+# =============================================================
+# serving 은 예측(추론)만 하므로 CPU 빌드면 충분.
+# 버전은 학습/worker(torch 2.3.0+cu121)과 "동일 2.3.0" 으로 맞춰 추론 호환성을 보장한다.
+# (api 의 torch-cpu.txt 는 임베딩용이라 2.3.1 — 용도가 달라 별도 유지)
+#
+# pytorch 인덱스(download.pytorch.org, 느림)를 "이 파일에만" 격리 →
+# serving.txt 본체는 순수 PyPI 로 설치되어 빌드가 빨라진다.
+# Dockerfile.serving 가 본 파일을 먼저 별도 스텝으로 설치한다.
+# =============================================================
+--index-url https://download.pytorch.org/whl/cpu
+torch==2.3.0+cpu

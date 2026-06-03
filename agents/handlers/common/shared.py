@@ -12,11 +12,26 @@ from typing import Any, Optional
 
 
 def load_dataframe_from_state(state: Any) -> Any:
-    """state.file_id 의 확장자 기반 자동 포맷 감지 + MinIO 로딩."""
+    """state.file_id → MinIO 로딩.
+
+    파일은 uploads/{file_id}/{original_name} 경로에 저장된다.
+    file_id 자체가 확장자를 포함할 경우(레거시)에도 동작한다.
+    """
     from tools.minio_tool import get_minio_client
 
-    fmt = state.file_id.rsplit(".", 1)[-1].lower() if "." in state.file_id else "csv"
-    return get_minio_client().load_dataframe(state.file_id, fmt=fmt)
+    client = get_minio_client()
+    file_id = state.file_id
+
+    # uploads/{file_id}/ 아래 첫 번째 파일 사용
+    keys = client.list_objects(prefix=f"uploads/{file_id}/")
+    if keys:
+        object_name = keys[0]
+        fmt = object_name.rsplit(".", 1)[-1].lower() if "." in object_name else "csv"
+        return client.load_dataframe(object_name, fmt=fmt)
+
+    # 레거시: file_id 자체가 경로인 경우
+    fmt = file_id.rsplit(".", 1)[-1].lower() if "." in file_id else "csv"
+    return client.load_dataframe(file_id, fmt=fmt)
 
 
 def save_chart_to_minio(fig: Any, *, kind: str, job_id: str) -> str:

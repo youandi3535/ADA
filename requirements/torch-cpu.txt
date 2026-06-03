@@ -1,0 +1,13 @@
+# Python: 3.10  (Dockerfile FROM python:3.10-slim 과 동일)
+# =============================================================
+# torch-cpu.txt  -  CPU 전용 torch (api 이미지용)
+# =============================================================
+# pytorch 인덱스(download.pytorch.org, 느림)를 "이 파일에만" 격리한다.
+# api.txt 본체는 순수 PyPI 로 설치되므로, 수백 개 패키지가 매번
+# pytorch 인덱스를 조회하던 낭비가 사라진다 (빌드 시간 대폭 단축).
+#
+# Dockerfile.api 가 본 파일을 먼저 별도 스텝으로 설치한다.
+# --index-url 는 pytorch 공식 설치 커맨드와 동일한 방식 (deps 도 동일 인덱스에서 해결).
+# =============================================================
+--index-url https://download.pytorch.org/whl/cpu
+torch==2.3.1+cpu

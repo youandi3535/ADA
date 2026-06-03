@@ -1,4 +1,5 @@
 """agents.gates.model_strategy_proposer — G3 최종 모델 전략."""
+
 from __future__ import annotations
 
 import json
@@ -16,7 +17,7 @@ class ModelStrategyProposerAgent(BaseGate):
     """G3 — 모델 전략 (예: '경량 ML 3종 비교' vs '트랜스포머 1종 강화')."""
 
     gate_code = "G3"
-    model_name = "claude-opus-4-7"
+    model_name = "claude-opus-4-6"
 
     async def _propose(self, state: PipelineState) -> list[dict[str, Any]]:
         payload = {
@@ -42,35 +43,64 @@ class ModelStrategyProposerAgent(BaseGate):
 
         defaults = {
             "tabular_ml": [
-                {"id": 1, "title": "Gradient Boosting 3종",
-                 "models": ["XGBoost", "LightGBM", "CatBoost"],
-                 "rationale": "Tabular 표준 baseline", "score": 0.85},
-                {"id": 2, "title": "Tree 다양화",
-                 "models": ["RandomForest", "XGBoost", "LightGBM"],
-                 "rationale": "안정성 + 빠른 학습", "score": 0.75},
+                {
+                    "id": 1,
+                    "title": "Gradient Boosting 3종",
+                    "models": ["XGBoost", "LightGBM", "CatBoost"],
+                    "rationale": "Tabular 표준 baseline",
+                    "score": 0.85,
+                },
+                {
+                    "id": 2,
+                    "title": "Tree 다양화",
+                    "models": ["RandomForest", "XGBoost", "LightGBM"],
+                    "rationale": "안정성 + 빠른 학습",
+                    "score": 0.75,
+                },
             ],
             "tabular_dl": [
-                {"id": 1, "title": "트랜스포머 3종",
-                 "models": ["FTTransformer", "TabTransformer", "TabPFN"],
-                 "rationale": "DL 표현력 비교", "score": 0.8},
+                {
+                    "id": 1,
+                    "title": "트랜스포머 3종",
+                    "models": ["FTTransformer", "TabTransformer", "TabPFN"],
+                    "rationale": "DL 표현력 비교",
+                    "score": 0.8,
+                },
             ],
             "timeseries": [
-                {"id": 1, "title": "통계 + DL 혼합",
-                 "models": ["SARIMA", "Prophet", "TFT"],
-                 "rationale": "단기/장기 균형", "score": 0.85},
-                {"id": 2, "title": "DL 중심",
-                 "models": ["TFT", "PatchTST", "Informer"],
-                 "rationale": "복잡 패턴 학습", "score": 0.7},
+                {
+                    "id": 1,
+                    "title": "통계 + DL 혼합",
+                    "models": ["SARIMA", "Prophet", "TFT"],
+                    "rationale": "단기/장기 균형",
+                    "score": 0.85,
+                },
+                {
+                    "id": 2,
+                    "title": "DL 중심",
+                    "models": ["TFT", "PatchTST", "Informer"],
+                    "rationale": "복잡 패턴 학습",
+                    "score": 0.7,
+                },
             ],
             "anomaly_detection": [
-                {"id": 1, "title": "거리 기반 3종",
-                 "models": ["IsolationForest", "LOF", "OneClassSVM"],
-                 "rationale": "고전 이상탐지 강건성", "score": 0.85},
-                {"id": 2, "title": "DL 강화",
-                 "models": ["AutoEncoder", "TranAD", "AnomalyTransformer"],
-                 "rationale": "복잡 시계열 이상", "score": 0.7},
+                {
+                    "id": 1,
+                    "title": "거리 기반 3종",
+                    "models": ["IsolationForest", "LOF", "OneClassSVM"],
+                    "rationale": "고전 이상탐지 강건성",
+                    "score": 0.85,
+                },
+                {
+                    "id": 2,
+                    "title": "DL 강화",
+                    "models": ["AutoEncoder", "TranAD", "AnomalyTransformer"],
+                    "rationale": "복잡 시계열 이상",
+                    "score": 0.7,
+                },
             ],
         }
-        return defaults.get(state.category, [{"id": 1, "title": "fallback",
-                                                "models": ["XGBoost"],
-                                                "rationale": "default", "score": 0.5}])
+        return defaults.get(
+            state.category,
+            [{"id": 1, "title": "fallback", "models": ["XGBoost"], "rationale": "default", "score": 0.5}],
+        )

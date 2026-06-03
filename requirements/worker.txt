@@ -3,7 +3,7 @@
 
 # =============================================================
 # worker.txt  -  Celery 워커용 (가장 무거움, 4 카테고리 공통)
-# torch는 cu121 빌드 (Pascal GTX 1060 호환 / CPU-only 환경도 동작)
+# torch(cu121, Pascal GTX 1060 호환)는 requirements/torch-cu121.txt 로 분리 → Dockerfile.worker 가 선설치
 #
 # 카테고리별 의존성은 handlers-{cat}.txt 로 분리됨:
 #   - handlers-timeseries.txt  (CS 단독)
@@ -30,10 +30,12 @@ pgvector==0.2.5
 
 # LLM
 anthropic==0.28.0
-langgraph==0.1.5
+langgraph==0.3.34
+langgraph-checkpoint-postgres==2.0.21   # HITL 체크포인터 (CompatMemorySaver 로 우회)
+psycopg[binary]>=3.1                     # PostgresSaver(psycopg3) 드라이버
 langchain==0.2.3
 langchain-anthropic==0.1.13
-langsmith==0.1.65
+langsmith==0.1.147
 
 # 정형 ML 공통 (4 카테고리 모두 사용)
 scikit-learn==1.5.0          # RandomForest / LogReg / IsolationForest / OneClassSVM / LOF / etc.
@@ -41,10 +43,9 @@ optuna==3.6.1                # HPO 공통 백엔드
 shap==0.45.1                 # 설명가능성 — 모든 카테고리 공통
 
 # 딥러닝 / 트랜스포머 (timeseries DL + tabular DL 공통)
---extra-index-url https://download.pytorch.org/whl/cu121
-torch==2.3.0+cu121
-torchvision==0.18.0+cu121
-torchaudio==2.3.0+cu121
+# torch/torchvision/torchaudio(cu121) 는 requirements/torch-cu121.txt 로 분리하여
+# Dockerfile.worker 가 먼저 설치한다. 여기에는 순수 PyPI 패키지만 남긴다.
+# (--extra-index-url 를 전역에 두면 모든 패키지가 느린 pytorch 인덱스를 조회 → 빌드 지연)
 transformers==4.41.0
 accelerate==0.30.1
 peft==0.11.0                 # LoRA (Day12)
@@ -79,14 +80,4 @@ spacy==3.7.4
 # 한국어 NER 모델은 시작 시 별도 다운로드:
 #   python -m spacy download ko_core_news_sm
 
-# 차트/EDA (Day10) — 모든 카테고리 공통
-matplotlib==3.9.0
-seaborn==0.13.2
-plotly==5.22.0
-
-# 산출물 생성 (Day12/Day15) — 5종 carrier
-python-pptx==0.6.23          # PPT
-reportlab==4.2.2             # PDF (outputs/pdf.py)
-
-# 시스템 모니터링
-psutil==5.9.8                # TrainingMonitorAgent 메모리/CPU 감시
+# 차트/EDA (Day10) — �

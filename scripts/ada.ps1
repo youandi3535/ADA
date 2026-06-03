@@ -4,13 +4,13 @@
 $ADA_ROOT = "C:\IT\workspace_python\ADA"
 
 function ada-up {
-    Write-Host "[ADA] 컨테이너 시작..." -ForegroundColor Cyan
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core up -d --pull never
+    Write-Host "[ADA] 컨테이너 시작 (core + ml)..." -ForegroundColor Cyan
+    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml up -d --pull never
 }
 
 function ada-down {
-    Write-Host "[ADA] 컨테이너 종료..." -ForegroundColor Yellow
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core down
+    Write-Host "[ADA] 컨테이너 종료 (core + ml)..." -ForegroundColor Yellow
+    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml down
 }
 
 function ada-ps {
@@ -29,8 +29,8 @@ function ada-logs {
 }
 
 function ada-build {
-    Write-Host "[ADA] 이미지 빌드 중..." -ForegroundColor Cyan
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core build
+    Write-Host "[ADA] 이미지 빌드 중 (core + ml)..." -ForegroundColor Cyan
+    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml build
 }
 
 function ada-mlflow-init {
@@ -56,8 +56,8 @@ function ada-migrate-status {
 
 function ada-help {
     Write-Host ""
-    Write-Host "  ada-up             컨테이너 시작 (core)" -ForegroundColor Green
-    Write-Host "  ada-down           컨테이너 종료" -ForegroundColor Green
+    Write-Host "  ada-up             컨테이너 시작 (core + ml: serving/training/output 포함)" -ForegroundColor Green
+    Write-Host "  ada-down           컨테이너 종료 (core + ml 전부)" -ForegroundColor Green
     Write-Host "  ada-ps             상태 확인" -ForegroundColor Green
     Write-Host "  ada-logs           전체 로그" -ForegroundColor Green
     Write-Host "  ada-logs api       api 로그만" -ForegroundColor Green

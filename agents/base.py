@@ -170,7 +170,8 @@ class BaseAgent(abc.ABC):
         from ada.core.langfuse_client import track_llm
 
         if self._anthropic is None:
-            self._anthropic = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            # 요청 타임아웃 필수 — 없으면 SDK 기본(~10분)으로 호출이 멈춰 파이프라인 전체가 hang.
+            self._anthropic = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=30.0, max_retries=1)
 
         breaker = get_breaker("anthropic", fail_max=3, reset_timeout=30)
         actual_model = model_name or self.model_name
@@ -257,7 +258,7 @@ class BaseAgent(abc.ABC):
                 ["claude", "-p", prompt, "--output-format", "json", "--max-turns", "1"],
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=45,
             )
             return proc.stdout
 

@@ -22,29 +22,25 @@ psycopg2-binary==2.9.9   # alembic 동기 드라이버 (engine_from_config 필�
 alembic==1.13.1
 pgvector==0.2.5          # pgvector Python 클라이언트 (Day19 RAG)
 
-# KB 벡터 검색 — CPU 전용 torch 를 먼저 지정해 CUDA 패키지(~2GB) 방지
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.3.1+cpu
-sentence-transformers==2.7.0  # paraphrase-multilingual-mpnet-base-v2 (768dim)
+# KB 벡터 검색 — torch(CPU) 는 requirements/torch-cpu.txt 로 분리하여
+# Dockerfile.api 가 먼저 설치한다. 여기에는 순수 PyPI 패키지만 남긴다.
+# (--extra-index-url 를 전역에 두면 모든 패키지가 느린 pytorch 인덱스를 조회 → 빌드 지연)
+sentence-transformers==2.7.0  # paraphrase-multilingual-mpnet-base-v2 (768dim) — torch 의존(선설치됨)
 
 # LLM
 anthropic==0.28.0        # Claude API
-langgraph==0.1.5         # 그래프 resume (Day04)
+langgraph==0.3.34        # 그래프 resume (Day04) — CompatMemorySaver 브릿지 사용
+langgraph-checkpoint-postgres==2.0.21   # HITL 체크포인터 (CompatMemorySaver 로 우회)
+psycopg[binary]>=3.1                     # PostgresSaver(psycopg3) 드라이버
 langchain==0.2.3
 langchain-anthropic==0.1.13
-langsmith==0.1.65        # 트레이싱
+langsmith==0.1.147        # 트레이싱
 
 # 보안 (Day17)
 python-jose[cryptography]==3.3.0   # JWT
 passlib[bcrypt]==1.7.4              # 패스워드 해시
 itsdangerous==2.2.0                 # 서명된 쿠키
 hvac==2.3.0                         # Vault 클라이언트
-slowapi==0.1.9                      # rate limit
-
-# 관측 (Day01 Prometheus + Langfuse)
-prometheus-client==0.20.0   # /metrics 엔드포인트 + ada_* 지표
-langfuse==2.36.0             # LLM 호출 추적 (ada/core/langfuse_client.py, 미설치 시 no-op)
-
-# 보조
-celery==5.4.0           # Celery 태스크 enqueue 용도
-redis==5.0.4
+slowapi==0.1.9                      # rate-limit
+celery==5.4.0                       # Celery 태스크 디스패치 (runner import)
+redis==5.0.4                        # Celery Redis 브로커 드라이버 + publish_progress

@@ -162,6 +162,7 @@ services:
       - "127.0.0.1:8000:8000"
     env_file: ../.env
     environment:
+      PYTHONPATH: /app
       CUDA_VISIBLE_DEVICES: ""
       # Ollama: 호스트 머신에서 실행 중인 Ollama 서버를 가리킴
       # Windows/Mac Docker Desktop → host.docker.internal 자동 해석
@@ -237,6 +238,7 @@ services:
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
+      PYTHONPATH: /app
     depends_on:
       postgres:
         condition: service_healthy
@@ -264,6 +266,7 @@ services:
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
+      PYTHONPATH: /app
     depends_on:
       postgres:
         condition: service_healthy
@@ -306,6 +309,8 @@ services:
     restart: unless-stopped
     command: celery -A orchestrator.runner worker -Q training -c 1 -n training@%h --loglevel=info
     env_file: ../.env
+    environment:
+      PYTHONPATH: /app
     depends_on:
       postgres:
         condition: service_healthy
@@ -335,6 +340,7 @@ services:
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
+      PYTHONPATH: /app
     depends_on:
       postgres:
         condition: service_healthy
@@ -356,7 +362,7 @@ services:
     container_name: ada-serving
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8080"
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""

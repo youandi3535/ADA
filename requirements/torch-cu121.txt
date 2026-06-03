@@ -1,0 +1,15 @@
+# Python: 3.10  (Dockerfile FROM python:3.10-slim 과 동일)
+# =============================================================
+# torch-cu121.txt  -  CUDA 12.1 torch 패밀리 (worker 이미지용)
+# =============================================================
+# Pascal GTX 1060 호환 cu121 빌드. nvidia-* 런타임(수 GB)도 여기서 함께 설치된다.
+# pytorch 인덱스(download.pytorch.org, 느림)를 "이 파일에만" 격리 →
+# worker.txt 본체(수백 패키지)는 순수 PyPI 로 설치되어 빌드가 빨라진다.
+#
+# Dockerfile.worker 가 본 파일을 먼저 별도 스텝으로 설치한다.
+# --index-url 는 pytorch 공식 설치 커맨드와 동일한 방식 (deps 도 동일 인덱스에서 해결).
+# =============================================================
+--index-url https://download.pytorch.org/whl/cu121
+torch==2.3.0+cu121
+torchvision==0.18.0+cu121
+torchaudio==2.3.0+cu121
