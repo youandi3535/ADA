@@ -338,7 +338,7 @@ function contentGate(){
   let recId=llmProps.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, llmProps[0]).id;
   if(selId===null || selGate!==g){ selId=recId; selGate=g; }
   let cards=llmProps.map(function(p,i){ return propCard(p,i,recId); }).join('');
-  if(g==='G1') cards+=customCard(llmProps.length);
+  if(g==='G1'||g==='G2') cards+=customCard(llmProps.length);
   let pop='';
   if(animatedGate!==g){ pop=' popin'; animatedGate=g; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
   return gateHeader(g)+'<div class="opts'+pop+'">'+cards+'</div>';
