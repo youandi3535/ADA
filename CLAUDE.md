@@ -32,7 +32,7 @@
 - `agents/{hyperparameter_tuner,training_executor,training_monitor,metrics_aggregator,fine_tune_executor,intent_elicitor,schema_validator,explainability}.py`
 - `agents/handlers/__init__.py`, `agents/handlers/_base.py`, `agents/handlers/common/`
 - `pipelines/{base,factory,__init__}.py`
-- `scripts/`, `docker/`, `.github/`, `requirements/`, `migrations/`, `alembic.ini`, `Makefile`, `pyproject.toml`, `.pre-commit-config.yaml`
+- `scripts/`, `docker/`, `.github/`, `requirements/`, `migrations/`, `alembic.ini`, `pyproject.toml`, `.pre-commit-config.yaml`
 - `tests/conftest.py`, `tests/integration/`, `tests/test_{state,personas,graph_build,agents_count}.py`
 - `tools/`, `docs/`, `AGENTS.md`, `CLAUDE.md`
 
