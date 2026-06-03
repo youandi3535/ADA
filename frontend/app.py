@@ -176,7 +176,7 @@ _FLOW_HTML = """
     </div>
   </div>
 <script>
-const steps=[{label:'업로드',sub:'데이터'},{label:'분석 방향',sub:'G1'},{label:'방법론',sub:'G2'},{label:'모델 전략',sub:'G3'},{label:'모델 선택',sub:'G4'},{label:'산출물',sub:'G5'},{label:'완료',sub:'인사이트'}];
+const steps=[{label:'업로드',sub:'데이터 파악'},{label:'분석 방향',sub:'G1 · EDA'},{label:'방법론',sub:'G2 · 전처리'},{label:'모델 전략',sub:'G3 · 피처링'},{label:'모델 선택',sub:'G4 · 학습·평가'},{label:'산출물',sub:'G5 · 리포트'},{label:'완료',sub:'인사이트'}];
 const N=steps.length, LAST=N-1;
 const ANALYZE_EST=45;  // 분석 중 진행률 추정용(초)
 const GATE_TITLE={G1:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G2:['어떤 방법론으로 진행할까요?','Choose your methodology'],G3:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G4:['어떤 모델을 채택할까요?','Pick the best model'],G5:['어떤 산출물을 만들까요?','Choose your outputs']};
@@ -184,6 +184,7 @@ const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.locatio
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
 let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
+let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성'};
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -231,6 +232,7 @@ async function doResume(){
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
+    lastSubmittedGate=gate;  // Celery가 task 집어가기 전에 Redis에 게이트 잔존 → 이 값이 바뀔 때까지 계속 폴링
     follow=true; busy=false; gateData={}; selId=null; analyzeStart=Date.now();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
@@ -244,7 +246,11 @@ async function poll(){
   cur=Math.max(0,Math.min(cur,frontier));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
   render();
-  if(analyzing() && !paused){ pollTimer=setTimeout(poll, 2500); }
+  // resume 직후 Celery가 아직 task를 못 받아 Redis에 이전 게이트가 남아있을 수 있음 →
+  // lastSubmittedGate 와 현재 게이트가 같으면 계속 폴링, 달라지면(새 게이트 or null) 클리어
+  if(lastSubmittedGate && curGate()!==lastSubmittedGate) lastSubmittedGate=null;
+  const keepPolling=(analyzing() || !!lastSubmittedGate) && !paused;
+  if(keepPolling){ pollTimer=setTimeout(poll, 2500); }
   else { polling=false; }
 }
 function startPolling(){ if(polling){ render(); return; } polling=true; clearTimeout(pollTimer); poll(); }

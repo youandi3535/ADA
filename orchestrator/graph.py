@@ -62,6 +62,21 @@ INTERRUPT_AFTER = list(GATE_NODES.keys())
 # ---------------------------------------------------------------------------
 # ADR-006 Phase 1 — safe_node 어댑터
 # ---------------------------------------------------------------------------
+def _coerce_to_pipeline_state(state) -> PipelineState:
+    """LangGraph resume 시 dict/AddableValuesDict 로 복원된 state 를 PipelineState 로 변환.
+
+    aupdate_state 후 ainvoke(None) 을 호출하면 LangGraph 가 체크포인트 값을
+    그대로 dict 로 넘길 수 있다. Pydantic 속성 접근(.job_id 등)이 깨지는 문제를 방지.
+    """
+    if isinstance(state, PipelineState):
+        return state
+    try:
+        raw = dict(state) if hasattr(state, "items") else vars(state)
+        return PipelineState.model_validate(raw)
+    except Exception:
+        return state  # type: ignore[return-value]
+
+
 def safe_node(agent_callable: Callable) -> Callable:
     """모든 일반 노드를 감싸는 어댑터.
 
@@ -74,6 +89,8 @@ def safe_node(agent_callable: Callable) -> Callable:
 
     @wraps(agent_callable)
     async def wrapped(state):
+        # resume 시 dict 로 복원된 state → PipelineState 로 보장
+        state = _coerce_to_pipeline_state(state)
         # 입력 state 에 이미 error 가 있으면 스킵 (cascade 방지)
         # → 그래프가 다음 conditional_edges 에서 auto_error_handler 로 라우팅
         if getattr(state, "error", None):
@@ -105,6 +122,7 @@ def _is_attempt_exhausted(state: PipelineState) -> bool:
 
 
 def route_after_supervisor(state: PipelineState) -> str:
+    state = _coerce_to_pipeline_state(state)
     if state.error:
         # ADR-006: 자동 수정 시도 한도 내면 auto_error_handler, 초과면 error_recovery
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
@@ -126,6 +144,7 @@ def route_after_auto_handler(state: PipelineState) -> str:
 
 
 def route_after_validation(state: PipelineState) -> str:
+    state = _coerce_to_pipeline_state(state)
     if state.error:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
@@ -137,6 +156,7 @@ def route_after_validation(state: PipelineState) -> str:
 
 def route_after_feature_engineer(state: PipelineState) -> str:
     """전처리 결정 신뢰도 낮으면 미니 게이트(PreprocessingChoice), 아니면 G3로."""
+    state = _coerce_to_pipeline_state(state)
     if state.preprocessing_plan and any(s.get("needs_review") for s in state.preprocessing_plan):
         return "preprocessing_choice"
     return "gate_model_strategy"  # G3 게이트 — 모델 전략 선택
@@ -149,6 +169,7 @@ def route_after_metrics(state: PipelineState) -> str:
 
 def route_after_g4(state: PipelineState) -> str:
     """G4 응답에 따라 finetune 갈지 평가로 갈지."""
+    state = _coerce_to_pipeline_state(state)
     g4 = state.gate_responses.get("G4", {})
     if g4.get("user_choice", {}).get("requires_finetune"):
         return "fine_tune_executor"
@@ -156,6 +177,7 @@ def route_after_g4(state: PipelineState) -> str:
 
 
 def route_after_eval(state: PipelineState) -> str:
+    state = _coerce_to_pipeline_state(state)
     if state.error:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
@@ -168,6 +190,7 @@ def route_after_eval(state: PipelineState) -> str:
 
 
 def route_after_g5(state: PipelineState) -> str:
+    state = _coerce_to_pipeline_state(state)
     # ADR-006: 마지막 게이트도 에러 체크 (insight 노드까지의 cascade 잡기)
     if state.error:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
@@ -177,6 +200,7 @@ def route_after_g5(state: PipelineState) -> str:
 
 
 def route_after_error_recovery(state: PipelineState) -> str:
+    state = _coerce_to_pipeline_state(state)
     """ADR-006 — 회복 후 라우팅.
 
     회복 노드의 조건부 엣지에는 'supervisor' / 'END' 두 키만 매핑돼 있다.
