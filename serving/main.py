@@ -325,6 +325,36 @@ async def _validation_exc(_req: Any, exc: RequestValidationError) -> JSONRespons
     return JSONResponse(status_code=422, content={"error": "validation_error", "details": exc.errors()})
 
 
+@app.exception_handler(Exception)
+async def _generic_exc(_req: Any, exc: Exception) -> JSONResponse:
+    import asyncio
+    import traceback as _tb
+    import uuid as _uuid
+
+    err_id = str(_uuid.uuid4())
+    try:
+        from ada.core.logger import get_logger as _get_log
+
+        _get_log("serving").error("unhandled_exception", err_id=err_id, error=str(exc))
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        from ada.error_handler.auto_handler import capture_and_handle
+
+        asyncio.create_task(
+            capture_and_handle(
+                error_message=str(exc),
+                stack_trace=_tb.format_exc(),
+                source="serving",
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return JSONResponse(status_code=500, content={"error": "internal_error", "error_id": err_id})
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------

@@ -199,6 +199,24 @@ def route_after_g5(state: PipelineState) -> str:
     return "report_composer"
 
 
+def route_after_report_composer(state: PipelineState) -> str:
+    state = _coerce_to_pipeline_state(state)
+    if state.error:
+        if state.auto_fix_attempts >= state.max_auto_fix_attempts:
+            return "error_recovery"
+        return "auto_error_handler"
+    return "self_learning_dispatch"
+
+
+def route_after_self_learning(state: PipelineState) -> str:
+    state = _coerce_to_pipeline_state(state)
+    if state.error:
+        if state.auto_fix_attempts >= state.max_auto_fix_attempts:
+            return "error_recovery"
+        return "auto_error_handler"
+    return "END"
+
+
 def route_after_error_recovery(state: PipelineState) -> str:
     state = _coerce_to_pipeline_state(state)
     """ADR-006 — 회복 후 라우팅.
@@ -273,8 +291,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_edge("fine_tune_executor", "eval_agent")
     g.add_edge("explainability", "insight")
     g.add_edge("insight", "gate_outputs")
-    g.add_edge("report_composer", "self_learning_dispatch")
-    g.add_edge("self_learning_dispatch", END)
+    # report_composer / self_learning_dispatch 도 에러 체크 (마지막 구간 구멍 차단)
 
     # ---- 조건부 엣지 ---------------------------------------------------
     # ADR-006 Phase 1: 모든 error-aware 라우팅에 auto_error_handler 목적지 추가.
@@ -342,6 +359,24 @@ def build_graph(checkpointer: Any | None = None) -> Any:
             # supervisor 가 보낼 수 있는 다른 노드들도 가능 (state.next_agent)
             "intent_elicitor": "intent_elicitor",
             "data_profiler": "data_profiler",
+        },
+    )
+    g.add_conditional_edges(
+        "report_composer",
+        route_after_report_composer,
+        {
+            "self_learning_dispatch": "self_learning_dispatch",
+            "auto_error_handler": "auto_error_handler",
+            "error_recovery": "error_recovery",
+        },
+    )
+    g.add_conditional_edges(
+        "self_learning_dispatch",
+        route_after_self_learning,
+        {
+            "END": END,
+            "auto_error_handler": "auto_error_handler",
+            "error_recovery": "error_recovery",
         },
     )
     g.add_conditional_edges(

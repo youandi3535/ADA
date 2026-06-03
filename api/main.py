@@ -84,8 +84,28 @@ async def validation_exc(request: Request, exc: RequestValidationError) -> JSONR
 
 @app.exception_handler(Exception)
 async def generic_exc(request: Request, exc: Exception) -> JSONResponse:
+    import asyncio
+    import traceback as _tb
+
     err_id = str(uuid.uuid4())
     log.error("unhandled_exception", err_id=err_id, error=str(exc))
+
+    # FastAPI 미처리 예외 → AutoErrorHandler fire-and-forget
+    # job_id 는 알 수 없으므로 None. source="api" 로 FailureLog 적재.
+    try:
+        from ada.error_handler.auto_handler import capture_and_handle
+
+        asyncio.create_task(
+            capture_and_handle(
+                error_message=str(exc),
+                stack_trace=_tb.format_exc(),
+                job_id=None,
+                source="api",
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
     return JSONResponse(
         status_code=500,
         content={

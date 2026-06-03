@@ -29,14 +29,25 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ada.core.config import settings
 from ada.core.logger import get_logger
-from ada.db.models import ErrorKB, FailureLog, PendingPatch
+from ada.db.models import FailureLog, PendingPatch
 
 log = get_logger("auto_handler")
+
+# AutoErrorHandler 가 반환하는 "완전 해결" action 집합.
+# agents/auto_error_handler.py 의 RESOLVED_ACTIONS 와 동기화 유지.
+RESOLVED_ACTIONS: frozenset[str] = frozenset(
+    {
+        # ── 자동 적용 완료 (코드 수정까지 완료) ──────────────────────────────
+        "auto_kb_applied",  # Tier 0/legacy  static fixer diff 자동 적용
+        "auto_self_learning_match",  # Tier 1  SelfLearningKB 시맨틱 매칭 + 패치 큐
+        "auto_ollama_applied",  # Tier 2  Ollama diff 자동 적용
+        "auto_claude_applied",  # Tier 3  Claude diff 자동 적용
+    }
+)
 
 
 def fingerprint(error_message: str, stack: str = "") -> dict[str, str]:
@@ -342,52 +353,49 @@ class AutoErrorHandler:
                 log_row.stack_trace or "",
             )
             if static and static.get("diff"):
-                self.session.add(
-                    PendingPatch(
-                        error_kb_id=None,
-                        patch_diff=static["diff"],
-                        test_plan=f"[static:{static['fixer']}] {static['test_plan']}",
-                        confidence=static["confidence"],
-                        review_status="pending",
+                from ada.error_handler.patcher import apply_patch
+                from ada.error_handler.sandbox import PatchValidator
+
+                _sv = PatchValidator(skip_tests=True)
+                _sr = await _sv.validate(static["diff"])
+                if _sr.passed:
+                    _ar = await apply_patch(
+                        static["diff"],
+                        commit_msg=f"auto-fix/tier-0(static/{static['fixer']})",
                     )
-                )
-                await self.session.flush()
-                log.info(
-                    "static_patch_queued",
-                    fixer=static["fixer"],
-                    confidence=static["confidence"],
-                    chars=len(static["diff"]),
-                )
-                return {
-                    "action": "patch_queued_static",
-                    "fixer": static["fixer"],
-                    "patch_chars": len(static["diff"]),
-                }
+                    self.session.add(
+                        PendingPatch(
+                            error_kb_id=None,
+                            patch_diff=static["diff"],
+                            test_plan=f"[static:{static['fixer']}] {static['test_plan']} applied={_ar['applied']}",
+                            confidence=static["confidence"],
+                            review_status="auto_applied" if _ar["applied"] else "apply_failed",
+                        )
+                    )
+                    await self.session.flush()
+                    if _ar["applied"]:
+                        log.info("auto_static_applied", fixer=static["fixer"], git_commit=_ar.get("git_commit"))
+                        return {
+                            "action": "auto_kb_applied",
+                            "fixer": static["fixer"],
+                            "patch_chars": len(static["diff"]),
+                            "git_commit": _ar.get("git_commit"),
+                            "source": "static",
+                        }
+                # 검증 실패 또는 적용 실패 → Tier 1 으로 계속
+                log.info("static_fixer_fallthrough", fixer=static["fixer"])
         except Exception as e:  # noqa: BLE001
             log.warning("static_fixer_failed", error=str(e))
 
-        # ── Tier 1: ErrorKB 자동 매칭 ──────────────────────────────────────
-        kb = await self.session.scalar(select(ErrorKB).where(ErrorKB.error_hash == fp["hash"]))
-        if kb and (kb.confidence or 0.0) >= 0.7:
-            log_row.auto_handled_by_kb = True
-            log_row.error_kb_id = kb.id
-            kb.success_count = (kb.success_count or 0) + 1
-            await self.session.flush()
-            log.info("auto_kb_match", kb_id=str(kb.id), confidence=kb.confidence)
-            return {"action": "auto_kb_match", "kb_id": str(kb.id)}
-
-        # ── Tier 1.5: SelfLearningKB.failure_lesson 시맨틱 폴백 (Day24) ─────
-        # ErrorKB 해시 미스해도, 팀원이 누적한 비슷한 에러 수정 사례를
-        # pgvector 시맨틱 검색으로 찾는다. similarity ≥ 0.85 + confidence ≥ 0.7
-        # 이면 저장된 fix_diff 를 그대로 재사용 → LLM 비용 0.
-        #
-        # 보안 정책 (BLOCKER-1 수정):
-        #   - source ∈ {ollama, claude_cli, static, approved_patch}
-        #       → 과거 sandbox 검증 통과한 사례. review_status="approved" 자동승인
-        #   - source = team_manual (또는 unknown)
-        #       → sandbox 검증 미통과. review_status="pending" 으로 사람 확인 필수
-        #     (poisoned-fix 주입 방지)
-        _SANDBOX_TRUSTED_SOURCES = frozenset({"ollama", "claude_cli", "static", "approved_patch"})
+        # ── Tier 1: SelfLearningKB 시맨틱 검색 + 패치 큐 ────────────────────
+        # 팀원·Ollama·Claude 가 누적한 수정 사례를 pgvector 코사인 유사도로 검색.
+        # similarity ≥ 0.85 + confidence ≥ 0.7 + 저장된 diff 존재 시:
+        #   static_check(scope·format 검증) → 통과하면 PendingPatch 큐 적재.
+        # apply_patch 는 백그라운드 apply-worker 가 처리. LLM 호출 없음, 비용 0.
+        # source 신뢰도에 따라 review_status 결정:
+        #   ollama/claude/auto → "approved" (신뢰 소스, 바로 적용 가능)
+        #   team_manual 등    → "pending"  (사람 검토 후 적용)
+        _TRUSTED_SOURCES = frozenset({"ollama", "claude", "claude_code", "auto"})
         try:
             from ada.harness.rag import KBRAG
 
@@ -399,11 +407,9 @@ class AutoErrorHandler:
                 kb_confidence = float(top.get("confidence") or 0.0)
                 payload = top.get("payload") or {}
                 if isinstance(payload, str):
-                    # JSONB 가 문자열로 올 수 있어 안전 파싱
                     try:
                         payload = json.loads(payload)
                     except Exception as _parse_e:  # noqa: BLE001
-                        # IMPORTANT-1 수정: 파싱 실패 시 명시적 경고 (조용한 폐기 금지)
                         log.warning(
                             "tier_1_5_payload_parse_failed",
                             kb_id=str(top.get("kb_id")),
@@ -415,35 +421,33 @@ class AutoErrorHandler:
                 src = payload.get("source") if isinstance(payload, dict) else None
 
                 if similarity >= 0.85 and kb_confidence >= 0.7 and stored_diff:
-                    # 영역 검증 — 누적 KB 라도 한 번 더 확인 (R-403)
                     from ada.error_handler.sandbox import PatchValidator
 
-                    _validator = PatchValidator()
-                    static_result = _validator.static_check(stored_diff)
-                    if static_result.passed:
-                        # 자동승인 정책 — source 신뢰도 기반
-                        trusted = src in _SANDBOX_TRUSTED_SOURCES
-                        review_status = "approved" if trusted else "pending"
+                    _validator = PatchValidator(skip_tests=True)
+                    val_result = _validator.static_check(stored_diff)
+                    if val_result.passed:
+                        is_trusted = src in _TRUSTED_SOURCES
+                        review_status = "approved" if is_trusted else "pending"
                         self.session.add(
                             PendingPatch(
-                                error_kb_id=(kb.id if kb else None),
+                                error_kb_id=None,
                                 patch_diff=stored_diff,
                                 test_plan=(
-                                    f"[self_learning_kb:{src or 'unknown'}] "
-                                    f"reused kb_id={top.get('kb_id')} sim={similarity:.3f} "
-                                    f"trusted={trusted}"
+                                    f"[tier-1/self_learning_kb:{src or 'unknown'}] "
+                                    f"kb_id={top.get('kb_id')} sim={similarity:.3f}"
                                 ),
                                 confidence=min(0.95, kb_confidence),
                                 review_status=review_status,
                             )
                         )
                         await self.session.flush()
+
                         log.info(
                             "auto_self_learning_match",
                             kb_id=str(top.get("kb_id")),
                             similarity=similarity,
-                            confidence=kb_confidence,
                             source=src,
+                            trusted=is_trusted,
                             review_status=review_status,
                         )
                         return {
@@ -451,44 +455,17 @@ class AutoErrorHandler:
                             "kb_id": str(top.get("kb_id")),
                             "similarity": similarity,
                             "patch_chars": len(stored_diff),
-                            "source": "self_learning_kb",
+                            "trusted_source": is_trusted,
                             "review_status": review_status,
-                            "trusted_source": trusted,
                         }
                     else:
                         log.info(
-                            "self_learning_match_rejected_scope",
+                            "tier1_rejected_scope",
                             kb_id=str(top.get("kb_id")),
-                            reason=static_result.reason,
+                            reason=val_result.reason,
                         )
         except Exception as e:  # noqa: BLE001
-            log.warning("self_learning_kb_lookup_failed", error=str(e))
-
-        # ── Tier 1.6: 승인된 패치 재사용 (LLM 비용 0) ─────────────────────
-        if kb:
-            try:
-                approved = await self.session.scalar(
-                    select(PendingPatch)
-                    .where(PendingPatch.error_kb_id == kb.id)
-                    .where(PendingPatch.review_status == "approved")
-                    .order_by(PendingPatch.created_at.desc())
-                )
-                if approved and (approved.confidence or 0.0) >= 0.65:
-                    kb.success_count = (kb.success_count or 0) + 1
-                    await self.session.flush()
-                    log.info(
-                        "approved_patch_reused",
-                        kb_id=str(kb.id),
-                        patch_id=str(approved.id),
-                        confidence=approved.confidence,
-                    )
-                    return {
-                        "action": "patch_reused_approved",
-                        "patch_id": str(approved.id),
-                        "patch_chars": len(approved.patch_diff or ""),
-                    }
-            except Exception as e:  # noqa: BLE001
-                log.warning("approved_patch_lookup_failed", error=str(e))
+            log.warning("tier1_lookup_failed", error=str(e))
 
         # ── Tier 2: Ollama qwen2.5-coder ───────────────────────────────────
         # ADR-006 Phase 2-A: fp["signature"] 와 clean_stack 은 이미 redacted.
@@ -505,46 +482,65 @@ class AutoErrorHandler:
             confidence = float(patch.get("confidence", 0.0))
 
             if diff and confidence >= 0.4:
-                # ADR-006 Phase 2-E: 영역 검증 (R-403) — HJ 영역 외 / 금지 파일 즉시 reject
+                # sandbox 전체 검증 (worktree + ruff, skip_tests=True で fast path)
                 from ada.error_handler.sandbox import PatchValidator
 
-                _validator = PatchValidator()
-                static_result = _validator.static_check(diff)
-                if not static_result.passed:
+                _validator = PatchValidator(skip_tests=True)
+                val_result = await _validator.validate(diff)
+                if not val_result.passed:
                     log.warning(
-                        "ollama_patch_rejected_static",
-                        reason=static_result.reason,
-                        scope_violations=static_result.scope_violations,
-                        forbidden=static_result.forbidden_violations,
+                        "ollama_patch_rejected",
+                        reason=val_result.reason,
+                        scope_violations=val_result.scope_violations,
+                        forbidden=val_result.forbidden_violations,
                     )
-                    # 큐에 적재하지 않고 다음 폴백 (Claude) 으로 진행
+                    # 검증 실패 → Claude 폴백
                 else:
-                    # test_plan 앞에 출처 표시
-                    test_plan = f"[ollama:{getattr(settings, 'ollama_coder_model', 'qwen2.5-coder:7b')}] " + (
-                        patch.get("test_plan") or ""
+                    # ── 자동 적용 ──────────────────────────────────────────
+                    from ada.error_handler.patcher import apply_patch
+
+                    model_name = getattr(settings, "ollama_coder_model", "qwen2.5-coder:7b")
+                    apply_result = await apply_patch(
+                        diff,
+                        commit_msg=f"auto-fix/tier-2(ollama/{model_name}): confidence={confidence:.2f}",
                     )
                     self.session.add(
                         PendingPatch(
-                            error_kb_id=(kb.id if kb else None),
+                            error_kb_id=None,
                             patch_diff=diff,
-                            test_plan=test_plan,
+                            test_plan=f"[ollama:{model_name}] {patch.get('test_plan') or ''} "
+                            f"applied={apply_result['applied']}",
                             confidence=confidence,
-                            review_status="pending",
+                            review_status="auto_applied" if apply_result["applied"] else "apply_failed",
                         )
                     )
                     await self.session.flush()
-                    log.info("ollama_patch_queued", chars=len(diff), confidence=confidence)
 
-                    # Day24: fire-and-forget sandbox 검증 → green 이면 KB 적재
-                    _schedule_validate_and_record(
-                        error_hash=fp["hash"],
-                        error_signature=fp["signature"],
-                        fix_diff=diff,
-                        source="ollama",
-                        confidence=confidence,
-                        explanation=patch.get("test_plan") or "",
-                    )
-                    return {"action": "patch_queued_ollama", "patch_chars": len(diff)}
+                    if apply_result["applied"]:
+                        log.info(
+                            "auto_ollama_applied",
+                            chars=len(diff),
+                            confidence=confidence,
+                            git_commit=apply_result.get("git_commit"),
+                            modules_reloaded=apply_result.get("modules_reloaded"),
+                        )
+                        # KB 누적 학습 (fire-and-forget)
+                        _schedule_validate_and_record(
+                            error_hash=fp["hash"],
+                            error_signature=fp["signature"],
+                            fix_diff=diff,
+                            source="ollama",
+                            confidence=confidence,
+                            explanation=patch.get("test_plan") or "",
+                        )
+                        return {
+                            "action": "auto_ollama_applied",
+                            "patch_chars": len(diff),
+                            "git_commit": apply_result.get("git_commit"),
+                            "modules_reloaded": apply_result.get("modules_reloaded"),
+                        }
+                    # 적용 실패 → Claude 폴백
+                    log.warning("ollama_apply_failed", reason=apply_result.get("reason"))
 
             # diff 없거나 신뢰도 낮음 → Claude CLI 로 계속
             log.warning("ollama_low_confidence", confidence=confidence, has_diff=bool(diff))
@@ -572,19 +568,34 @@ class AutoErrorHandler:
                 "remaining_usd": round(await budget.remaining_budget(), 4),
             }
 
-        # ADR-006 Phase 2-C: Claude CLI 도 circuit breaker 보호.
+        # ── Tier 3: Claude CLI ───────────────────────────────────────────────
+        # Full-Access 모드 우선 (worktree 격리 + 전체 도구 + 20턴)
+        # 실패 시 기존 제한 모드(Read/Grep/Glob 3턴) 로 폴백
         _claude_cb = get_breaker("claude_cli", failure_threshold=3, recovery_timeout=180)
         try:
             from ada.error_handler.claude_cli_bridge import ClaudeCLIBridge
 
             bridge = ClaudeCLIBridge()
-            # ADR-006 Phase 2-A: redacted text 만 외부 API 로 전송.
+
+            # ── 3-A: Claude Code 전체 도구 모드 (우선 시도) ─────────────────
+            # worktree 격리 환경에서 Read/Write/Edit/Bash/Grep/Glob 전부 허용.
+            # Claude 가 직접 파일을 탐색·수정·검증 (최대 20턴).
             patch = await _claude_cb.call(
-                bridge.request_patch,
+                bridge.request_fix_direct,
                 error_signature=fp["signature"],
                 stack=clean_stack,
             )
-            # ADR-006 Phase 2-D: Claude 응답에 토큰 정보 있으면 비용 누적
+
+            # full-access 가 diff 를 못 만들었으면 제한 모드로 폴백
+            if not (patch.get("diff") or "").strip():
+                log.info("claude_full_no_diff_fallback_restricted")
+                patch = await _claude_cb.call(
+                    bridge.request_patch,
+                    error_signature=fp["signature"],
+                    stack=clean_stack,
+                )
+
+            # 토큰 비용 누적 (full-access 는 토큰 정보 없음 — 제한 모드만)
             input_tokens = int(patch.get("input_tokens", 0) or 0)
             output_tokens = int(patch.get("output_tokens", 0) or 0)
             if input_tokens or output_tokens:
@@ -594,50 +605,147 @@ class AutoErrorHandler:
                     output_tokens=output_tokens,
                 )
 
-            # ADR-006 Phase 2-E: 영역 검증
+            # sandbox 전체 검증 (worktree + ruff, skip_tests=True で fast path)
             from ada.error_handler.sandbox import PatchValidator
 
             diff_str = patch.get("diff") or ""
-            _validator = PatchValidator()
-            static_result = _validator.static_check(diff_str)
-            if not static_result.passed:
+            _validator = PatchValidator(skip_tests=True)
+            val_result = await _validator.validate(diff_str)
+            if not val_result.passed:
                 log.warning(
-                    "claude_patch_rejected_static",
-                    reason=static_result.reason,
-                    scope_violations=static_result.scope_violations,
-                    forbidden=static_result.forbidden_violations,
+                    "claude_patch_rejected",
+                    reason=val_result.reason,
+                    scope_violations=val_result.scope_violations,
+                    forbidden=val_result.forbidden_violations,
                 )
                 return {
                     "action": "patch_rejected_scope",
-                    "reason": static_result.reason,
-                    "violations": static_result.scope_violations + static_result.forbidden_violations,
+                    "reason": val_result.reason,
+                    "violations": val_result.scope_violations + val_result.forbidden_violations,
                 }
 
+            # ── 자동 적용 ──────────────────────────────────────────────────
+            from ada.error_handler.patcher import apply_patch
+
+            claude_confidence = float(patch.get("confidence", 0.4) or 0.4)
+            apply_result = await apply_patch(
+                diff_str,
+                commit_msg=f"auto-fix/tier-3(claude): confidence={claude_confidence:.2f}",
+            )
             self.session.add(
                 PendingPatch(
-                    error_kb_id=(kb.id if kb else None),
+                    error_kb_id=None,
                     patch_diff=diff_str,
-                    test_plan="[claude_cli] " + (patch.get("test_plan") or ""),
-                    confidence=patch.get("confidence", 0.4),
-                    review_status="pending",
+                    test_plan=f"[claude_cli] {patch.get('test_plan') or ''} applied={apply_result['applied']}",
+                    confidence=claude_confidence,
+                    review_status="auto_applied" if apply_result["applied"] else "apply_failed",
                 )
             )
             await self.session.flush()
-            log.info("claude_patch_queued", chars=len(diff_str))
 
-            # Day24: fire-and-forget sandbox 검증 → green 이면 KB 적재
-            _schedule_validate_and_record(
-                error_hash=fp["hash"],
-                error_signature=fp["signature"],
-                fix_diff=diff_str,
-                source="claude_cli",
-                confidence=float(patch.get("confidence", 0.4) or 0.4),
-                explanation=patch.get("test_plan") or "",
-            )
-            return {"action": "patch_queued", "patch_chars": len(diff_str)}
+            if apply_result["applied"]:
+                log.info(
+                    "auto_claude_applied",
+                    chars=len(diff_str),
+                    git_commit=apply_result.get("git_commit"),
+                    modules_reloaded=apply_result.get("modules_reloaded"),
+                )
+                # KB 누적 학습 (fire-and-forget)
+                _schedule_validate_and_record(
+                    error_hash=fp["hash"],
+                    error_signature=fp["signature"],
+                    fix_diff=diff_str,
+                    source="claude_cli",
+                    confidence=claude_confidence,
+                    explanation=patch.get("test_plan") or "",
+                )
+                return {
+                    "action": "auto_claude_applied",
+                    "patch_chars": len(diff_str),
+                    "git_commit": apply_result.get("git_commit"),
+                    "modules_reloaded": apply_result.get("modules_reloaded"),
+                }
+
+            log.warning("claude_apply_failed", reason=apply_result.get("reason"))
+            return {"action": "noop", "error": f"apply_failed: {apply_result.get('reason')}"}
         except CircuitBreakerOpenError as e:
             log.warning("claude_circuit_open", retry_after_sec=e.retry_after_sec)
             return {"action": "circuit_open", "breaker": "claude_cli", "retry_after_sec": e.retry_after_sec}
         except Exception as e:
             log.warning("auto_handler_failed", error=str(e))
             return {"action": "noop", "error": str(e)}
+
+
+# =============================================================================
+# 그래프 외부 컨텍스트용 독립 진입점
+# =============================================================================
+
+
+async def capture_and_handle(
+    error_message: str,
+    stack_trace: str = "",
+    job_id: str | None = None,
+    source: str = "runner",
+) -> dict[str, Any]:
+    """LangGraph 그래프 밖(runner, API 미들웨어, 업로드 레이어)에서 발생한
+    예외를 잡아 AutoErrorHandler Tier 0~3 폴백으로 처리한다.
+
+    - 자체 AsyncSession 을 생성하므로 호출자 트랜잭션과 완전히 독립.
+    - 내부 오류는 절대 호출자에 누설하지 않는다 (항상 dict 반환).
+    - source 는 FailureLog.error_category 에 기록된다:
+        "runner"  — Celery 워커 레벨 크래시
+        "resume"  — 게이트 재개 레벨 크래시
+        "api"     — FastAPI 미처리 예외
+    """
+    import uuid as _uuid
+
+    from ada.db.models import FailureLog
+    from ada.db.session import AsyncSessionLocal
+
+    try:
+        async with AsyncSessionLocal() as session:
+            from ada.error_handler.redactor import redact
+
+            clean_msg, msg_pii = redact(error_message)
+            clean_stack, stack_pii = redact(stack_trace)
+            if msg_pii or stack_pii:
+                log.info(
+                    "pii_redacted_capture",
+                    msg_types=msg_pii,
+                    stack_types=stack_pii,
+                    source=source,
+                )
+
+            fp = fingerprint(clean_msg, clean_stack)
+
+            job_id_val: _uuid.UUID | None = None
+            if job_id:
+                try:
+                    job_id_val = _uuid.UUID(job_id)
+                except (ValueError, TypeError):
+                    pass
+
+            fl = FailureLog(
+                job_id=job_id_val,
+                error_hash=fp["hash"],
+                error_message=clean_msg[:2000],
+                stack_trace=clean_stack[:5000],
+                error_category=source,
+            )
+            session.add(fl)
+            await session.flush()
+
+            outcome = await AutoErrorHandler(session).handle(fl)
+            await session.commit()
+
+            log.info(
+                "capture_and_handle_outcome",
+                action=outcome.get("action"),
+                source=source,
+                fingerprint=fp["hash"][:16],
+            )
+            return outcome
+
+    except Exception as e:  # noqa: BLE001
+        log.error("capture_and_handle_failed", error=str(e), source=source)
+        return {"action": "noop", "error": str(e)}

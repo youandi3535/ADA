@@ -43,12 +43,17 @@ def rate_limit_dep(request: Request) -> None:
 
 # --- SSE 진행률 스트림 -------------------------------------------------------
 async def progress_sse(job_id: str) -> AsyncIterator[bytes]:
+    import traceback as _tb
+
     import redis.asyncio as redis_async  # type: ignore
 
+    from ada.core.logger import get_logger as _get_log
+
+    _log = _get_log("sse")
     r = redis_async.Redis.from_url(settings.redis_url)
     pubsub = r.pubsub()
-    await pubsub.subscribe(f"ada:pipeline:{job_id}")
     try:
+        await pubsub.subscribe(f"ada:pipeline:{job_id}")
         async for msg in pubsub.listen():
             if msg["type"] != "message":
                 continue
@@ -56,9 +61,15 @@ async def progress_sse(job_id: str) -> AsyncIterator[bytes]:
             if isinstance(data, bytes):
                 data = data.decode("utf-8")
             yield f"data: {data}\n\n".encode("utf-8")
+    except Exception as _e:  # noqa: BLE001
+        # Starlette 이 streaming 예외를 조용히 삼키므로 직접 기록
+        _log.error("sse_stream_error", job_id=job_id, error=str(_e), traceback=_tb.format_exc())
     finally:
-        await pubsub.unsubscribe(f"ada:pipeline:{job_id}")
-        await pubsub.close()
+        try:
+            await pubsub.unsubscribe(f"ada:pipeline:{job_id}")
+            await pubsub.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def make_sse_response(job_id: str) -> StreamingResponse:

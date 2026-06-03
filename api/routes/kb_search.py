@@ -202,6 +202,9 @@ async def _vector_search(
 
 async def _increment_success_count(db: AsyncSession, kb_id: str) -> None:
     """KB 히트 시 success_count 증가 (학습 누적)."""
+    from ada.core.logger import get_logger as _gl
+
+    _log = _gl("kb_search")
     try:
         await db.execute(
             text(
@@ -212,8 +215,8 @@ async def _increment_success_count(db: AsyncSession, kb_id: str) -> None:
             ).bindparams(kb_id=kb_id)
         )
         await db.commit()
-    except Exception:  # noqa: BLE001
-        pass  # 카운트 실패는 조용히 무시
+    except Exception as e:  # noqa: BLE001
+        _log.warning("kb_success_count_update_failed", kb_id=kb_id, error=str(e))
 
 
 # =============================================================================
@@ -421,19 +424,38 @@ async def _run_fallbacks(
     use_claude: bool,
 ) -> tuple[str, str | None, str]:
     """(answer, model_used, answered_by) 반환."""
+    from ada.core.logger import get_logger as _gl
+
+    _log = _gl("kb_search")
+
     # 2순위: Ollama 로컬
     if use_ollama:
         try:
             answer, model = await _ollama_fallback(question)
             return answer, model, "ollama_local"
-        except (urllib.error.URLError, RuntimeError):
-            pass  # Ollama 불가 → Claude Opus 로 계속
+        except (urllib.error.URLError, RuntimeError) as e:
+            _log.warning("ollama_fallback_failed", error=str(e))
 
     # 3순위: Claude Opus
     if use_claude:
         answer = await _claude_opus_fallback(question)
         return answer, "claude-opus-4-7", "claude_opus"
 
+    # 모든 폴백 비활성화 → FailureLog 에 기록
+    err_msg = "kb_search_all_fallbacks_disabled"
+    _log.error(err_msg, question_len=len(question))
+    try:
+        import traceback as _tb
+
+        from ada.error_handler.auto_handler import capture_and_handle
+
+        await capture_and_handle(
+            error_message=err_msg,
+            stack_trace=_tb.format_stack()[-1],
+            source="api_kb_search",
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return "(모든 폴백 비활성화됨)", None, "error"
 
 
