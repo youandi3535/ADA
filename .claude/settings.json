@@ -101,7 +101,25 @@
       "PowerShell(docker cp C:\\\\IT\\\\workspace_python\\\\ADA\\\\api\\\\routes\\\\pipeline.py ada-api:/app/api/routes/pipeline.py)",
       "Bash(git fetch *)",
       "Bash(git push *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(git merge *)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(git pull *)",
+      "Bash(git reset *)",
+      "Bash(.venv\\\\Scripts\\\\python.exe scripts/demo/timeseries_demo.py --scenario S3 --quiet)",
+      "Bash(python scripts/demo/timeseries_demo.py --scenario S3 --quiet)",
+      "Bash(.venv/Scripts/pytest tests/handlers/timeseries/test_e2e.py::test_model_beats_naive tests/handlers/timeseries/test_e2e.py::test_forecast_chart_has_prediction -x -q)",
+      "Bash(.venv/Scripts/pytest tests/handlers/timeseries/test_e2e.py::test_model_beats_naive tests/handlers/timeseries/test_e2e.py::test_forecast_chart_has_prediction -v --no-header)",
+      "Bash(.venv/Scripts/pytest tests/handlers/timeseries/test_e2e.py::test_model_beats_naive -k S3 -s)",
+      "Bash(.venv/Scripts/pytest tests/handlers/timeseries/test_e2e.py --no-header -q)",
+      "Bash(ruff check *)",
+      "Bash(python -m ruff check tests/test_day24_kb_errorkb_bridge.py)",
+      "Bash(where ruff *)",
+      "Bash(py -m ruff check tests/test_day24_kb_errorkb_bridge.py)",
+      "PowerShell(Get-Command ruff -ErrorAction SilentlyContinue)",
+      "PowerShell(& \"C:\\\\Users\\\\user\\\\.local\\\\bin\\\\ruff\" check tests/test_day24_kb_errorkb_bridge.py 2>&1)",
+      "Bash(python3 -m pre_commit run ruff --files tests/test_day24_kb_errorkb_bridge.py)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"
@@ -126,6 +144,10 @@
           {
             "type": "command",
             "command": "python -X utf8 scripts/run_hook.py collect_qa.py"
+          },
+          {
+            "type": "command",
+            "command": "python -X utf8 scripts/run_hook.py collect_error_fix.py"
           }
         ]
       }

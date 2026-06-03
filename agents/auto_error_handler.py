@@ -23,7 +23,14 @@ from ada.db.models import FailureLog
 from agents.base import BaseAgent
 
 # action 분류 (auto_handler.py 의 반환값 기준)
-RESOLVED_ACTIONS = frozenset({"auto_kb_match", "patch_reused_approved"})
+# Day24: auto_self_learning_match 추가 — SelfLearningKB 시맨틱 매칭도 RESOLVED.
+RESOLVED_ACTIONS = frozenset(
+    {
+        "auto_kb_match",  # Tier 1 ErrorKB 해시 매칭
+        "auto_self_learning_match",  # Tier 1.5 SelfLearningKB 시맨틱 매칭
+        "patch_reused_approved",  # Tier 1.6 승인된 패치 재사용
+    }
+)
 PATCH_QUEUED_ACTIONS = frozenset({"patch_queued_static", "patch_queued_ollama", "patch_queued"})
 # ADR-006 Phase 2-C/D/E: budget_exceeded / patch_rejected_scope 도 graceful degradation
 FAILED_ACTIONS = frozenset(

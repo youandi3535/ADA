@@ -168,6 +168,35 @@ class ProcessedIn(BaseModel):
     kb_id: Optional[str] = None
 
 
+# Day24 — 팀원 자동수정 사례 누적용 스키마
+class ErrorFixIn(BaseModel):
+    """팀원이 Claude Code / Cowork 에서 해결한 에러 사례 1건.
+
+    Stop 훅 / VS Code extension 이 에러 + 수정 diff 를 추출해 전송한다.
+    수신되면 즉시 SelfLearningKB.failure_lesson 으로 적재 + 임베딩 색인 →
+    이후 동일 / 유사 에러는 ada-serving 의 Tier 1.5 에서 자동 재사용.
+    """
+
+    error_signature: str = Field(min_length=4, max_length=2_000)
+    # 호출자가 fingerprint hash 를 모르면 stack_top 만 보내고 서버가 계산
+    error_hash: Optional[str] = Field(default=None, max_length=64)
+    stack_top: Optional[str] = Field(default=None, max_length=4_000)
+    fix_diff: str = Field(min_length=10, max_length=20_000)
+    explanation: Optional[str] = Field(default=None, max_length=1_000)
+    confidence: float = Field(default=0.75, ge=0.0, le=1.0)
+    team_member: Optional[str] = Field(default=None, max_length=128)
+    session_id: Optional[str] = Field(default=None, max_length=64)
+    project: Optional[str] = Field(default=None, max_length=255)
+    source: str = Field(default="team_manual", max_length=32)
+
+
+class ErrorFixOut(BaseModel):
+    kb_id: Optional[str]
+    error_hash: str
+    status: str  # "recorded" | "duplicate_updated" | "rejected"
+    reason: Optional[str] = None
+
+
 # =============================================================================
 # 자동 학습 백그라운드 태스크
 # =============================================================================
@@ -471,3 +500,136 @@ async def get_stats(
         "recent_collected": recent,
         "by_member": by_member,
     }
+
+
+# =============================================================================
+# POST /kb/conversation/error_fix  — Day24 팀원 자동수정 사례 수집
+# =============================================================================
+
+
+@router.post("/error_fix", status_code=201, response_model=ErrorFixOut)
+async def submit_error_fix(
+    body: ErrorFixIn,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_secret),
+) -> dict[str, Any]:
+    """팀원이 Claude Code / Cowork 에서 해결한 에러 + 수정 diff 누적 학습 진입점.
+
+    동작:
+        1) error_hash 가 없으면 (signature + stack_top) 기반 SHA256 계산
+        2) SelfLearningKB.failure_lesson 으로 적재 (ON CONFLICT(hash) DO UPDATE)
+        3) 임베딩 자동 색인 (lesson_embeddings) — 이후 Tier 1.5 시맨틱 매칭에서 즉시 활용
+        4) 결과 반환
+
+    이 엔드포인트로 들어온 사례는 ada-serving 의 auto_handler.Tier 1.5 에서
+    추후 동일/유사 에러 발생 시 자동 재사용된다 (LLM 비용 0).
+    """
+    from agents.self_learning import record_error_fix, stable_hash_for_signature
+
+    # hash 계산 (호출자가 안 보낸 경우)
+    error_hash = (body.error_hash or "").strip()
+    if not error_hash:
+        error_hash = stable_hash_for_signature(body.error_signature, body.stack_top or "")
+
+    # 품질 게이트 — diff 가 단순 공백 / 미니 패치가 아닌지 검사
+    diff_lines = [ln for ln in body.fix_diff.splitlines() if ln.strip()]
+    has_hunk = any(ln.startswith(("--- ", "+++ ", "@@")) for ln in diff_lines)
+    if not has_hunk:
+        log.info(
+            "error_fix_rejected_no_hunk",
+            team_member=body.team_member,
+            error_hash=error_hash[:16],
+        )
+        return {
+            "kb_id": None,
+            "error_hash": error_hash,
+            "status": "rejected",
+            "reason": "diff_missing_hunk_headers",
+        }
+
+    # 적재
+    kb_id = await record_error_fix(
+        db,
+        error_hash=error_hash,
+        error_signature=body.error_signature,
+        fix_diff=body.fix_diff,
+        source=body.source or "team_manual",
+        confidence=body.confidence,
+        explanation=body.explanation or "",
+        team_member=body.team_member,
+        project=body.project,
+        extra={"session_id": body.session_id} if body.session_id else None,
+    )
+
+    await db.commit()
+
+    if kb_id is None:
+        return {
+            "kb_id": None,
+            "error_hash": error_hash,
+            "status": "rejected",
+            "reason": "record_failed",
+        }
+
+    log.info(
+        "error_fix_team_recorded",
+        kb_id=kb_id,
+        team_member=body.team_member,
+        project=body.project,
+        source=body.source,
+    )
+    return {
+        "kb_id": kb_id,
+        "error_hash": error_hash,
+        "status": "recorded",
+        "reason": None,
+    }
+
+
+# =============================================================================
+# GET /kb/conversation/failure_lessons  — Day24 크로스팀 동기화용 dump
+# =============================================================================
+
+
+@router.get("/failure_lessons")
+async def list_failure_lessons(
+    since: Optional[str] = Query(default=None, description="ISO timestamp (updated_at >= since)"),
+    limit: int = Query(default=200, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_secret),
+) -> dict[str, Any]:
+    """SelfLearningKB.failure_lesson dump endpoint for cross-team sync.
+
+    팀원의 linux_kb_sync.py (--pull-failure-lessons) 가 주기적으로 호출.
+    Returns: {"items": [{kb_id, error_hash, payload, confidence, success_count,
+              created_at, updated_at}, ...], "total": N}
+    """
+    sql = (
+        "SELECT id::text AS kb_id, hash AS error_hash, payload, "
+        "       confidence, success_count, "
+        "       created_at, updated_at "
+        "FROM self_learning_kb "
+        "WHERE kb_type = 'failure_lesson' "
+    )
+    params: dict[str, Any] = {"limit": limit}
+    if since:
+        sql += " AND updated_at >= CAST(:since AS timestamptz) "
+        params["since"] = since
+    sql += " ORDER BY updated_at DESC LIMIT :limit"
+
+    rows = (await db.execute(text(sql).bindparams(**params))).mappings().all()
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "kb_id": r["kb_id"],
+                "error_hash": r["error_hash"],
+                "payload": r["payload"],
+                "confidence": float(r["confidence"]) if r["confidence"] is not None else 0.0,
+                "success_count": int(r["success_count"] or 0),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            }
+        )
+
+    return {"items": items, "total": len(items), "since": since}

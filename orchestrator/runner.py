@@ -296,6 +296,15 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
             gate = final_dict.get("current_gate") or "gate_wait"
             publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")
             _save_gate_data(job_id, final_dict)
+            # resume 시 full state 복원을 위해 별도 저장 (aupdate_state partial 누락 방지)
+            try:
+                _get_redis().set(
+                    f"ada:full_state:{job_id}",
+                    json.dumps(final_dict, ensure_ascii=False, default=str),
+                    ex=86400,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         return {"status": "completed", "final": final_dict}
     except Exception as e:
         tb = traceback.format_exc()
@@ -325,16 +334,32 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
 
     await _set_job_terminal(job_id, "running")
     try:
+        gate_code = gate_response.get("gate", "G?")
+
+        # full_state 를 Redis 에서 먼저 로드 (aupdate_state partial 누락 방지)
+        full_state_dict: dict = {}
+        try:
+            _raw_fs = _get_redis().get(f"ada:full_state:{job_id}")
+            if _raw_fs:
+                full_state_dict = json.loads(_raw_fs)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # gate_responses 는 snap.values 에서 읽는 것이 최신 (full_state 보다 우선)
         snap = await graph.aget_state(config)
         cur = snap.values
-        gate_code = gate_response.get("gate", "G?")
-        existing = cur["gate_responses"] if isinstance(cur, dict) else cur.gate_responses
+        existing = cur.get("gate_responses", {}) if isinstance(cur, dict) else getattr(cur, "gate_responses", {})
+        if not existing and full_state_dict:
+            existing = full_state_dict.get("gate_responses", {})
         new_responses = dict(existing)
         new_responses[gate_code] = {
             **new_responses.get(gate_code, {}),
             "user_choice": gate_response.get("choice"),
         }
-        await graph.aupdate_state(config, {"gate_responses": new_responses, "current_gate": None})
+
+        # aupdate_state 에 full state 를 넘겨 job_id 등 필수 필드 누락 방지
+        update_payload = {**full_state_dict, "gate_responses": new_responses, "current_gate": None}
+        await graph.aupdate_state(config, update_payload)
         final = await graph.ainvoke(None, config=config)
         final_dict = _final_to_dict(final)
         is_terminal = bool(final_dict) and not (final_dict.get("current_gate"))
