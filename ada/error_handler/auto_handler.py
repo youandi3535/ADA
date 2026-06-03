@@ -577,19 +577,34 @@ class AutoErrorHandler:
                 "remaining_usd": round(await budget.remaining_budget(), 4),
             }
 
-        # ADR-006 Phase 2-C: Claude CLI 도 circuit breaker 보호.
+        # ── Tier 3: Claude CLI ───────────────────────────────────────────────
+        # Full-Access 모드 우선 (worktree 격리 + 전체 도구 + 20턴)
+        # 실패 시 기존 제한 모드(Read/Grep/Glob 3턴) 로 폴백
         _claude_cb = get_breaker("claude_cli", failure_threshold=3, recovery_timeout=180)
         try:
             from ada.error_handler.claude_cli_bridge import ClaudeCLIBridge
 
             bridge = ClaudeCLIBridge()
-            # ADR-006 Phase 2-A: redacted text 만 외부 API 로 전송.
+
+            # ── 3-A: Claude Code 전체 도구 모드 (우선 시도) ─────────────────
+            # worktree 격리 환경에서 Read/Write/Edit/Bash/Grep/Glob 전부 허용.
+            # Claude 가 직접 파일을 탐색·수정·검증 (최대 20턴).
             patch = await _claude_cb.call(
-                bridge.request_patch,
+                bridge.request_fix_direct,
                 error_signature=fp["signature"],
                 stack=clean_stack,
             )
-            # ADR-006 Phase 2-D: Claude 응답에 토큰 정보 있으면 비용 누적
+
+            # full-access 가 diff 를 못 만들었으면 제한 모드로 폴백
+            if not (patch.get("diff") or "").strip():
+                log.info("claude_full_no_diff_fallback_restricted")
+                patch = await _claude_cb.call(
+                    bridge.request_patch,
+                    error_signature=fp["signature"],
+                    stack=clean_stack,
+                )
+
+            # 토큰 비용 누적 (full-access 는 토큰 정보 없음 — 제한 모드만)
             input_tokens = int(patch.get("input_tokens", 0) or 0)
             output_tokens = int(patch.get("output_tokens", 0) or 0)
             if input_tokens or output_tokens:
