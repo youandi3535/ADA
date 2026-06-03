@@ -98,7 +98,9 @@
       "PowerShell(docker cp C:\\\\IT\\\\workspace_python\\\\ADA\\\\agents\\\\handlers\\\\common\\\\shared.py ada-worker-pipeline:/app/agents/handlers/common/shared.py)",
       "PowerShell(docker restart ada-worker-pipeline 2>&1)",
       "PowerShell(docker logs --tail 50 ada-worker-pipeline 2>&1 | Where-Object { $_ -notmatch \"UserWarning|warnings.warn|protected namespace|CPendingDeprecation|broker_connection_retry\" })",
-      "PowerShell(docker cp C:\\\\IT\\\\workspace_python\\\\ADA\\\\api\\\\routes\\\\pipeline.py ada-api:/app/api/routes/pipeline.py)"
+      "PowerShell(docker cp C:\\\\IT\\\\workspace_python\\\\ADA\\\\api\\\\routes\\\\pipeline.py ada-api:/app/api/routes/pipeline.py)",
+      "Bash(git fetch *)",
+      "Bash(git push *)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"
