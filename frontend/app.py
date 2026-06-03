@@ -326,10 +326,13 @@ function contentGate(){
   const g=curGate() || ('G'+cur);
   const props=(gateData.proposals)||[];
   if(!curGate() || !props.length){ return gateHeader(g)+loadingBlock(); }
-  let recId=props.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, props[0]).id;
+  // filter out backend-injected custom placeholder — customCard is added separately below
+  const llmProps=props.filter(function(p){ return !p.is_custom; });
+  if(!llmProps.length){ return gateHeader(g)+loadingBlock(); }
+  let recId=llmProps.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, llmProps[0]).id;
   if(selId===null || selGate!==g){ selId=recId; selGate=g; }
-  let cards=props.map(function(p,i){ return propCard(p,i,recId); }).join('');
-  if(g==='G1') cards+=customCard(props.length);
+  let cards=llmProps.map(function(p,i){ return propCard(p,i,recId); }).join('');
+  if(g==='G1') cards+=customCard(llmProps.length);
   let pop='';
   if(animatedGate!==g){ pop=' popin'; animatedGate=g; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
   return gateHeader(g)+'<div class="opts'+pop+'">'+cards+'</div>';

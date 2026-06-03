@@ -19,11 +19,19 @@ from agents.gates._base_gate import BaseGate
 
 SYSTEM_PROMPT = (
     "You are a data strategy consultant. "
-    "Given the user intent and data profile, propose exactly TWO distinct analysis directions. "
-    "(Option 3 is reserved for the user's own custom input -- do NOT generate it.) "
-    "Reply with a JSON array of 2 objects only:\n"
-    '[{"id": 1, "title": "...", "rationale": "1-2 sentences in Korean", "score": 0.0-1.0}, '
-    ' {"id": 2, "title": "...", "rationale": "1-2 sentences in Korean", "score": 0.0-1.0}]'
+    "Given the user intent and data profile, propose exactly TWO distinct analysis DIRECTIONS. "
+    "Each direction must be a concrete ML/DL analysis approach — for example: "
+    "binary classification, multi-class classification, regression, time-series forecasting, "
+    "anomaly detection, clustering, ranking, survival analysis, etc. "
+    "The two options must be genuinely different in their analytical goal or methodology. "
+    "Do NOT propose EDA, data exploration, or visualization as a direction — "
+    "those are steps within an analysis, not a direction itself. "
+    "For Option 1 pick the highest-confidence direction; "
+    "for Option 2 pick the second-best direction that offers a meaningfully different angle. "
+    "Both titles and rationales must be in Korean (1-2 sentences). "
+    "Reply with a JSON array of exactly 2 objects, no markdown:\n"
+    '[{"id": 1, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0}, '
+    ' {"id": 2, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0}]'
 )
 
 _CUSTOM_OPTION: dict[str, Any] = {
