@@ -69,6 +69,11 @@ celery_app.conf.update(
             "schedule": 30.0,  # 30초
             "options": {"queue": "harness"},
         },
+        "ada-fixer-promote-daily": {
+            "task": "ada.error_handler.promote_fixers",
+            "schedule": 86400.0,  # 24시간
+            "options": {"queue": "harness"},
+        },
     },
 )
 
@@ -221,7 +226,26 @@ def run_pipeline_task(self: Any, job_id: str, initial_state: dict) -> dict:
     log.info("pipeline_start", job_id=job_id)
     publish_progress(job_id, "supervisor", "파이프라인 시작")
 
-    state = PipelineState(**initial_state)
+    # Pydantic 검증 실패 시 Job 이 "pending" 으로 영원히 남지 않도록 보호
+    try:
+        state = PipelineState(**initial_state)
+    except Exception as e:
+        import traceback as _tb
+
+        err_msg = f"state_init: {e}"
+        tb = _tb.format_exc()
+        log.error("pipeline_state_init_failed", job_id=job_id, error=err_msg)
+
+        async def _handle_state_init_failure() -> None:
+            from ada.error_handler.auto_handler import capture_and_handle
+
+            await capture_and_handle(error_message=err_msg, stack_trace=tb, job_id=job_id, source="runner")
+            await _set_job_terminal(job_id, "failed", error=err_msg)
+
+        asyncio.run(_handle_state_init_failure())
+        publish_progress(job_id, "error_recovery", err_msg, pipeline_status="failed", error=err_msg)
+        return {"status": "failed", "error": err_msg}
+
     return asyncio.run(_invoke(job_id=job_id, state=state, resume=False))
 
 
@@ -279,15 +303,41 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
     from orchestrator.checkpoint import CompatMemorySaver, load_checkpoint, save_checkpoint
     from orchestrator.graph import build_graph
 
-    checkpointer = CompatMemorySaver()
-    load_checkpoint(checkpointer, job_id)
-    graph = build_graph(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": job_id}, "callbacks": _get_callbacks()}
-
-    await _set_job_terminal(job_id, "running")
+    # checkpointer 를 None 으로 초기화 → finally 에서 안전하게 조건 분기
+    checkpointer: Any = None
     try:
+        # ── 셋업 코드도 try 안에 ── build_graph()/DB 실패 시 except 로 흘러야 함
+        checkpointer = CompatMemorySaver()
+        load_checkpoint(checkpointer, job_id)
+        graph = build_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": job_id}, "callbacks": _get_callbacks()}
+        await _set_job_terminal(job_id, "running")
+
         final = await graph.ainvoke(state, config=config) if not resume else None
         final_dict = _final_to_dict(final)
+
+        # 그래프가 완료됐지만 state.error 가 잔존하는 경우 감지 (마지막 안전망)
+        # report_composer/self_learning_dispatch 조건부 엣지로 대부분 잡히지만
+        # 예상치 못한 경로로 END 에 도달했을 때를 대비
+        if final_dict and final_dict.get("error"):
+            _leftover_err = str(final_dict.get("error", ""))
+            _leftover_tb = str(final_dict.get("error_traceback", ""))
+            log.warning("pipeline_ended_with_error", error=_leftover_err[:200])
+            try:
+                from ada.error_handler.auto_handler import capture_and_handle
+
+                await capture_and_handle(
+                    error_message=_leftover_err,
+                    stack_trace=_leftover_tb,
+                    job_id=job_id,
+                    source="runner_end_state",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            publish_progress(job_id, "error_recovery", _leftover_err, pipeline_status="failed", error=_leftover_err)
+            await _set_job_terminal(job_id, "failed", error=_leftover_err)
+            return {"status": "failed", "error": _leftover_err}
+
         is_terminal = bool(final_dict) and not (final_dict.get("current_gate"))
         if is_terminal:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
@@ -310,6 +360,21 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
         tb = traceback.format_exc()
         err_msg = repr(e) if not str(e) else str(e)
         log.error("pipeline_error", error=err_msg, traceback=tb)
+
+        # safe_node 가 못 잡은 그래프 크래시 → AutoErrorHandler Tier 0~3
+        # (RESOLVED_ACTIONS = "KB 기록 존재" 이지 "코드 수정됨" 이 아니므로 재시도 없음)
+        try:
+            from ada.error_handler.auto_handler import capture_and_handle
+
+            await capture_and_handle(
+                error_message=err_msg,
+                stack_trace=tb,
+                job_id=job_id,
+                source="runner",
+            )
+        except Exception as _inner:  # noqa: BLE001
+            log.warning("runner_capture_failed", error=str(_inner))
+
         publish_progress(
             job_id,
             "error_recovery",
@@ -320,20 +385,23 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
         await _set_job_terminal(job_id, "failed", error=err_msg)
         return {"status": "failed", "error": err_msg}
     finally:
-        save_checkpoint(checkpointer, job_id)
+        if checkpointer is not None:
+            save_checkpoint(checkpointer, job_id)
 
 
 async def _resume(*, job_id: str, gate_response: dict) -> dict:
     from orchestrator.checkpoint import CompatMemorySaver, load_checkpoint, save_checkpoint
     from orchestrator.graph import build_graph
 
-    checkpointer = CompatMemorySaver()
-    load_checkpoint(checkpointer, job_id)
-    graph = build_graph(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": job_id}}
-
-    await _set_job_terminal(job_id, "running")
+    checkpointer: Any = None
     try:
+        # ── 셋업 코드도 try 안에 ── build_graph()/DB 실패 시 except 로 흘러야 함
+        checkpointer = CompatMemorySaver()
+        load_checkpoint(checkpointer, job_id)
+        graph = build_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": job_id}}
+        await _set_job_terminal(job_id, "running")
+
         gate_code = gate_response.get("gate", "G?")
 
         # full_state 를 Redis 에서 먼저 로드 (aupdate_state partial 누락 방지)
@@ -375,6 +443,20 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         tb = traceback.format_exc()
         err_msg = repr(e) if not str(e) else str(e)
         log.error("pipeline_resume_error", error=err_msg, traceback=tb)
+
+        # 게이트 재개 레벨 크래시 → AutoErrorHandler Tier 0~3
+        try:
+            from ada.error_handler.auto_handler import capture_and_handle
+
+            await capture_and_handle(
+                error_message=err_msg,
+                stack_trace=tb,
+                job_id=job_id,
+                source="resume",
+            )
+        except Exception as _inner:  # noqa: BLE001
+            log.warning("resume_capture_failed", error=str(_inner))
+
         publish_progress(
             job_id,
             "error_recovery",
@@ -385,4 +467,5 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         await _set_job_terminal(job_id, "failed", error=err_msg)
         return {"status": "failed", "error": err_msg}
     finally:
-        save_checkpoint(checkpointer, job_id)
+        if checkpointer is not None:
+            save_checkpoint(checkpointer, job_id)

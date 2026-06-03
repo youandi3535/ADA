@@ -509,23 +509,38 @@ _FIXERS = [
 ]
 
 
+def _load_generated_fixers() -> list:
+    """generated_fixers.py 의 자동 생성 fixer 목록 로드 (import 실패 시 빈 리스트)."""
+    try:
+        from ada.error_handler.generated_fixers import get_generated_fixers
+
+        return get_generated_fixers()
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def try_static_fix(error_message: str, stack_trace: str) -> dict[str, Any] | None:
-    """6종 정적 Fixer 순서대로 시도. 첫 번째 성공 결과 반환. 없으면 None.
+    """정적 Fixer + 자동 생성 Fixer 순서대로 시도. 첫 번째 성공 결과 반환.
+
+    순서:
+        1. 수동 작성 6종 (_FIXERS) — 신뢰도 높은 결정론적 패턴
+        2. 자동 생성 fixer (generated_fixers.py) — 반복 관찰된 패턴
 
     반환 형식:
         {
-            "diff":       str,   # unified diff
-            "test_plan":  str,   # 검증 방법
-            "confidence": float, # 0.0~1.0
-            "fixer":      str,   # fixer 이름
+            "diff":       str,
+            "test_plan":  str,
+            "confidence": float,
+            "fixer":      str,
             "tier":       str,   # "static" 고정
         }
     """
-    for fixer_fn in _FIXERS:
+    all_fixers = _FIXERS + _load_generated_fixers()
+    for fixer_fn in all_fixers:
         try:
             result = fixer_fn(error_message, stack_trace)
             if result:
                 return result
         except Exception:  # noqa: BLE001
-            continue  # 개별 fixer 실패는 조용히 건너뜀
+            continue
     return None

@@ -12,6 +12,16 @@ from typing import Any
 from orchestrator.runner import celery_app
 
 
+async def _capture(error_message: str, stack_trace: str, source: str) -> None:
+    """harness 태스크 예외를 AutoErrorHandler 로 위임하는 내부 헬퍼."""
+    try:
+        from ada.error_handler.auto_handler import capture_and_handle
+
+        await capture_and_handle(error_message=error_message, stack_trace=stack_trace, source=source)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @celery_app.task(name="ada.harness.distill", queue="harness")
 def distill_job(job_id: str) -> dict[str, Any]:
     async def _do() -> dict[str, Any]:
@@ -21,7 +31,16 @@ def distill_job(job_id: str) -> dict[str, Any]:
         async with AsyncSessionLocal() as s:
             return await SelfLearningHarness(s).distill_from_job(job_id)
 
-    return asyncio.run(_do())
+    try:
+        return asyncio.run(_do())
+    except Exception as e:
+        import traceback as _tb
+
+        from ada.core.logger import get_logger as _log
+
+        _log("harness_tasks").error("distill_job_failed", job_id=job_id, error=str(e))
+        asyncio.run(_capture("distill_job_failed: " + str(e), _tb.format_exc(), source="harness"))
+        return {"error": str(e)}
 
 
 @celery_app.task(name="ada.harness.decay", queue="harness")
@@ -34,7 +53,16 @@ def decay_kb() -> dict[str, int]:
             n = await SelfLearningHarness(s).decay_unused()
             return {"decayed": n}
 
-    return asyncio.run(_do())
+    try:
+        return asyncio.run(_do())
+    except Exception as e:
+        import traceback as _tb
+
+        from ada.core.logger import get_logger as _log
+
+        _log("harness_tasks").error("decay_kb_failed", error=str(e))
+        asyncio.run(_capture("decay_kb_failed: " + str(e), _tb.format_exc(), source="harness"))
+        return {"decayed": 0, "error": str(e)}
 
 
 @celery_app.task(name="ada.harness.retract", queue="harness")
@@ -47,7 +75,16 @@ def retract_kb() -> dict[str, int]:
             n = await SelfLearningHarness(s).retract_low_confidence()
             return {"retracted": n}
 
-    return asyncio.run(_do())
+    try:
+        return asyncio.run(_do())
+    except Exception as e:
+        import traceback as _tb
+
+        from ada.core.logger import get_logger as _log
+
+        _log("harness_tasks").error("retract_kb_failed", error=str(e))
+        asyncio.run(_capture("retract_kb_failed: " + str(e), _tb.format_exc(), source="harness"))
+        return {"retracted": 0, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +98,14 @@ def scan_failures() -> dict[str, Any]:
     from ada.error_handler.daemon import scan_new_failures
 
     return scan_new_failures()
+
+
+@celery_app.task(name="ada.error_handler.promote_fixers", queue="harness")
+def promote_fixers() -> dict[str, Any]:
+    """반복 오류 패턴을 감지해 Tier 0 fixer 로 자동 승격 (1일 1회)."""
+    from ada.error_handler.fixer_promoter import run_sync
+
+    return run_sync()
 
 
 def register_error_handler_beat(beat_schedule: dict[str, Any] | None = None) -> dict[str, Any]:

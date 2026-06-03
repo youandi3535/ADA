@@ -326,7 +326,19 @@ async def _embed_and_index_conv(
             await session.commit()
 
     except Exception as e:  # noqa: BLE001
+        import traceback as _tb
+
         log.warning("embed_and_index_failed", conv_id=conv_id, error=str(e))
+        try:
+            from ada.error_handler.auto_handler import capture_and_handle
+
+            await capture_and_handle(
+                error_message=f"embed_and_index_conv: {e}",
+                stack_trace=_tb.format_exc(),
+                source="api_background",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # =============================================================================
