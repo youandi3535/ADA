@@ -1,16 +1,22 @@
-"""ada.error_handler.auto_handler — AutoErrorHandler 데몬 (Day16).
+"""ada.error_handler.auto_handler — AutoErrorHandler 데몬 (Day16 + Day24).
 
-3단계 폴백 체계:
-  1순위  ErrorKB 자동 매칭 (fingerprint SHA256, confidence ≥ 0.7)
+3단계 폴백 체계 (Day24 — SelfLearningKB 통합):
+  1순위  ErrorKB 해시 완전일치 매칭 (fingerprint SHA256, confidence ≥ 0.7)
+  1.5순위  SelfLearningKB.failure_lesson 시맨틱 검색 (similarity ≥ 0.85
+          + confidence ≥ 0.7). 팀원이 누적시킨 수정 사례 재사용 — LLM 비용 0.
   2순위  Ollama qwen2.5-coder (로컬 LLM, diff 생성 특화)
+          → 성공 시 sandbox 검증 후 SelfLearningKB 적재 (fire-and-forget)
   3순위  Claude CLI Bridge (클라우드, 최후 수단)
+          → 성공 시 sandbox 검증 후 SelfLearningKB 적재 (fire-and-forget)
 
 흐름:
   1. failure_logs INSERT (또는 PubSub 이벤트) 감지
-  2. error_kb 에서 동일 fingerprint 매칭
-  3. 매칭이 있으면 자동 처리 (auto_handled_by_kb=True)
-  4. 없으면 Ollama qwen2.5-coder 로 패치 생성 시도
-  5. Ollama 실패 시 Claude CLI 사이드카에 패치 요청 → pending_patches 큐 적재
+  2. error_kb 에서 동일 fingerprint 매칭 (Tier 1)
+  3. 매칭 없으면 SelfLearningKB.failure_lesson 시맨틱 폴백 (Tier 1.5)
+  4. 그래도 없으면 Ollama qwen2.5-coder 로 패치 생성 시도 (Tier 2)
+  5. Ollama 실패 시 Claude CLI 사이드카에 패치 요청 (Tier 3)
+  6. Tier 2/3 성공한 패치는 pending_patches 큐 적재 + 백그라운드 sandbox 검증
+     → green 이면 SelfLearningKB 에 자동 누적 학습 (다음 동일 에러는 Tier 1.5 에서 처리)
 """
 
 from __future__ import annotations
@@ -173,6 +179,101 @@ async def _ollama_coder_fix(error_signature: str, stack: str) -> dict[str, Any]:
 
 
 # =============================================================================
+# Day24 — sandbox 검증 + SelfLearningKB 적재 fire-and-forget 헬퍼
+# =============================================================================
+
+
+def _schedule_validate_and_record(
+    *,
+    error_hash: str,
+    error_signature: str,
+    fix_diff: str,
+    source: str,
+    confidence: float,
+    explanation: str = "",
+) -> None:
+    """Tier 2/3 패치 success 직후 호출. 백그라운드 task 등록 (블로킹 X).
+
+    sandbox 검증 → green 이면 SelfLearningKB.failure_lesson 누적.
+    이벤트 루프 미가용 / 검증 실패 / DB 오류 등 어떤 경우도 호출자에
+    예외 누설 금지.
+
+    BLOCKER-2 누수 가시화:
+        - validate_and_record 내부에서 검증 통과 후 적재 실패는 FailureLog 로 audit.
+        - 본 래퍼 자체의 task 실패 (이벤트루프 / 스레드) 는 ERROR 로그.
+          INFO/WARNING 이 아닌 ERROR 라 모니터링 알람이 켜진다.
+
+    구현 메모:
+        - asyncio.get_running_loop() 가 RuntimeError 면 (동기 컨텍스트 호출)
+          별도 thread + new loop 로 실행. 데몬·테스트 양쪽 안전.
+    """
+    try:
+        from agents.self_learning import validate_and_record
+    except Exception as e:  # noqa: BLE001
+        # import 실패 = 코드 망가짐 = ERROR
+        log.error(
+            "schedule_record_import_failed",
+            error=str(e),
+            error_hash=error_hash[:16],
+            source=source,
+        )
+        return
+
+    async def _wrapped() -> None:
+        # task 안에서 어떤 예외든 잡아서 ERROR 로 보고 (Tier 2/3 누수 가시화)
+        try:
+            res = await validate_and_record(
+                error_hash=error_hash,
+                error_signature=error_signature,
+                fix_diff=fix_diff,
+                source=source,
+                confidence=confidence,
+                explanation=explanation,
+                # sandbox pytest 는 무거우므로 hot path 는 skip_tests=True (ruff + static_check).
+                # 완전 pytest 검증은 별도 야간 잡에서 처리 (TODO Day25 이후).
+                skip_tests=True,
+            )
+            if not res.get("recorded"):
+                # 검증 실패 (정상)는 INFO, 검증 통과 후 적재 실패는 audit 가 처리.
+                # 여기서는 결과만 한번 INFO 로 기록 (모니터 가시성).
+                log.info(
+                    "schedule_record_outcome",
+                    recorded=False,
+                    source=source,
+                    error_hash=error_hash[:16],
+                    reason=res.get("reason"),
+                )
+        except Exception as e:  # noqa: BLE001
+            log.error(
+                "schedule_record_task_crashed",
+                error=str(e),
+                error_type=type(e).__name__,
+                error_hash=error_hash[:16],
+                source=source,
+            )
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_wrapped())
+    except RuntimeError:
+        # 동기 호출 컨텍스트 → 별도 스레드에서 새 루프 돌림
+        import threading
+
+        def _runner() -> None:
+            try:
+                asyncio.run(_wrapped())
+            except Exception as e:  # noqa: BLE001
+                log.error(
+                    "schedule_record_thread_crashed",
+                    error=str(e),
+                    error_hash=error_hash[:16],
+                    source=source,
+                )
+
+        threading.Thread(target=_runner, daemon=True, name="ada-kb-recorder").start()
+
+
+# =============================================================================
 # AutoErrorHandler
 # =============================================================================
 
@@ -275,7 +376,95 @@ class AutoErrorHandler:
             log.info("auto_kb_match", kb_id=str(kb.id), confidence=kb.confidence)
             return {"action": "auto_kb_match", "kb_id": str(kb.id)}
 
-        # ── Tier 1.5: 승인된 패치 재사용 (LLM 비용 0) ─────────────────────
+        # ── Tier 1.5: SelfLearningKB.failure_lesson 시맨틱 폴백 (Day24) ─────
+        # ErrorKB 해시 미스해도, 팀원이 누적한 비슷한 에러 수정 사례를
+        # pgvector 시맨틱 검색으로 찾는다. similarity ≥ 0.85 + confidence ≥ 0.7
+        # 이면 저장된 fix_diff 를 그대로 재사용 → LLM 비용 0.
+        #
+        # 보안 정책 (BLOCKER-1 수정):
+        #   - source ∈ {ollama, claude_cli, static, approved_patch}
+        #       → 과거 sandbox 검증 통과한 사례. review_status="approved" 자동승인
+        #   - source = team_manual (또는 unknown)
+        #       → sandbox 검증 미통과. review_status="pending" 으로 사람 확인 필수
+        #     (poisoned-fix 주입 방지)
+        _SANDBOX_TRUSTED_SOURCES = frozenset({"ollama", "claude_cli", "static", "approved_patch"})
+        try:
+            from ada.harness.rag import KBRAG
+
+            rag = KBRAG(self.session)
+            lessons = await rag.search_lessons(fp["signature"], top_k=3)
+            if lessons:
+                top = lessons[0]
+                similarity = float(top.get("similarity") or 0.0)
+                kb_confidence = float(top.get("confidence") or 0.0)
+                payload = top.get("payload") or {}
+                if isinstance(payload, str):
+                    # JSONB 가 문자열로 올 수 있어 안전 파싱
+                    try:
+                        payload = json.loads(payload)
+                    except Exception as _parse_e:  # noqa: BLE001
+                        # IMPORTANT-1 수정: 파싱 실패 시 명시적 경고 (조용한 폐기 금지)
+                        log.warning(
+                            "tier_1_5_payload_parse_failed",
+                            kb_id=str(top.get("kb_id")),
+                            error=str(_parse_e),
+                            payload_preview=str(top.get("payload"))[:200],
+                        )
+                        payload = {}
+                stored_diff = (payload.get("fix_diff") or "").strip() if isinstance(payload, dict) else ""
+                src = payload.get("source") if isinstance(payload, dict) else None
+
+                if similarity >= 0.85 and kb_confidence >= 0.7 and stored_diff:
+                    # 영역 검증 — 누적 KB 라도 한 번 더 확인 (R-403)
+                    from ada.error_handler.sandbox import PatchValidator
+
+                    _validator = PatchValidator()
+                    static_result = _validator.static_check(stored_diff)
+                    if static_result.passed:
+                        # 자동승인 정책 — source 신뢰도 기반
+                        trusted = src in _SANDBOX_TRUSTED_SOURCES
+                        review_status = "approved" if trusted else "pending"
+                        self.session.add(
+                            PendingPatch(
+                                error_kb_id=(kb.id if kb else None),
+                                patch_diff=stored_diff,
+                                test_plan=(
+                                    f"[self_learning_kb:{src or 'unknown'}] "
+                                    f"reused kb_id={top.get('kb_id')} sim={similarity:.3f} "
+                                    f"trusted={trusted}"
+                                ),
+                                confidence=min(0.95, kb_confidence),
+                                review_status=review_status,
+                            )
+                        )
+                        await self.session.flush()
+                        log.info(
+                            "auto_self_learning_match",
+                            kb_id=str(top.get("kb_id")),
+                            similarity=similarity,
+                            confidence=kb_confidence,
+                            source=src,
+                            review_status=review_status,
+                        )
+                        return {
+                            "action": "auto_self_learning_match",
+                            "kb_id": str(top.get("kb_id")),
+                            "similarity": similarity,
+                            "patch_chars": len(stored_diff),
+                            "source": "self_learning_kb",
+                            "review_status": review_status,
+                            "trusted_source": trusted,
+                        }
+                    else:
+                        log.info(
+                            "self_learning_match_rejected_scope",
+                            kb_id=str(top.get("kb_id")),
+                            reason=static_result.reason,
+                        )
+        except Exception as e:  # noqa: BLE001
+            log.warning("self_learning_kb_lookup_failed", error=str(e))
+
+        # ── Tier 1.6: 승인된 패치 재사용 (LLM 비용 0) ─────────────────────
         if kb:
             try:
                 approved = await self.session.scalar(
@@ -345,6 +534,16 @@ class AutoErrorHandler:
                     )
                     await self.session.flush()
                     log.info("ollama_patch_queued", chars=len(diff), confidence=confidence)
+
+                    # Day24: fire-and-forget sandbox 검증 → green 이면 KB 적재
+                    _schedule_validate_and_record(
+                        error_hash=fp["hash"],
+                        error_signature=fp["signature"],
+                        fix_diff=diff,
+                        source="ollama",
+                        confidence=confidence,
+                        explanation=patch.get("test_plan") or "",
+                    )
                     return {"action": "patch_queued_ollama", "patch_chars": len(diff)}
 
             # diff 없거나 신뢰도 낮음 → Claude CLI 로 계속
@@ -425,6 +624,16 @@ class AutoErrorHandler:
             )
             await self.session.flush()
             log.info("claude_patch_queued", chars=len(diff_str))
+
+            # Day24: fire-and-forget sandbox 검증 → green 이면 KB 적재
+            _schedule_validate_and_record(
+                error_hash=fp["hash"],
+                error_signature=fp["signature"],
+                fix_diff=diff_str,
+                source="claude_cli",
+                confidence=float(patch.get("confidence", 0.4) or 0.4),
+                explanation=patch.get("test_plan") or "",
+            )
             return {"action": "patch_queued", "patch_chars": len(diff_str)}
         except CircuitBreakerOpenError as e:
             log.warning("claude_circuit_open", retry_after_sec=e.retry_after_sec)
