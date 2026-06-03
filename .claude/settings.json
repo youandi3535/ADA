@@ -138,7 +138,8 @@
       "PowerShell(Optimize-VHD -Path \"$env:LOCALAPPDATA\\\\Docker\\\\wsl\\\\disk\\\\docker_data.vhdx\" -Mode Full)",
       "PowerShell(Get-Item \"$env:LOCALAPPDATA\\\\Docker\\\\wsl\\\\disk\\\\docker_data.vhdx\" | Select-Object FullName, @{n='SizeGB';e={[math]::Round\\($_.Length/1GB,2\\)}})",
       "PowerShell(Start-Process \"C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe\")",
-      "PowerShell(docker start fcfbbbf009eb 40197f55765f 2564c4643c88 b02d74bb85d1 2c09c79b2186 08d3a7fbb441 abd77826d0ff 5c089ab7be39 b85980484ae3 957af747497e 2cd2ccb31dd8 1b7bf87b00d4)"
+      "PowerShell(docker start fcfbbbf009eb 40197f55765f 2564c4643c88 b02d74bb85d1 2c09c79b2186 08d3a7fbb441 abd77826d0ff 5c089ab7be39 b85980484ae3 957af747497e 2cd2ccb31dd8 1b7bf87b00d4)",
+      "Bash(gh pr create --title 'jh: Claude Code 허용 명령어 추가 + KB 동기화 스크립트 수정' --body ' *)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"
