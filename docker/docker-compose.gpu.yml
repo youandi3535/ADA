@@ -1,24 +1,44 @@
 # ============================================================
-# docker-compose.gpu.yml  -  GPU 노출 override
-# 사용:
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
-#     --profile core --profile ml up -d worker-training
+# docker-compose.gpu.yml — GPU override + 학원 서버 셋업
+# (토폴로지 B 기준 — ADR-009 참고)
 #
-# 전제:
-#   - 호스트에 NVIDIA 드라이버 + nvidia-container-toolkit 설치
-#   - daemon.json 에 nvidia runtime 등록 완료
-#   - GTX 1060 3GB 기준 동시성 1 (worker-training 만)
+# 두 가지 사용 시나리오:
 #
-# GPU 없는 팀원/VPS 는 이 파일 무시. 기본 compose 단독으로만 띄움.
+#  ┌─ VPS (모든 서비스 통합) ─────────────────────────────────
+#  │ docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#  │   --profile core --profile ml up -d worker-training
+#  │ -> postgres/redis/minio 등 core 서비스 같이 띄움
+#  └─────────────────────────────────────────────────────────
+#
+#  ┌─ 학원 (worker-training 단독, VPS 가리킴) ─────────────────
+#  │ docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#  │   --profile ml up -d --no-deps worker-training
+#  │ -> --no-deps 핵심. .env 가 VPS IP 로 가리키므로
+#  │   학원에는 postgres/redis/minio 미설치 가능.
+#  │   .env 는 .env.gpu.example 기반.
+#  └─────────────────────────────────────────────────────────
+#
+# 전제 (학원):
+#   - 호스트에 NVIDIA 드라이버 (550.163.01 확인) + nvidia-container-toolkit
+#   - daemon.json 에 nvidia runtime 등록
+#   - 호스트에 native Ollama 가동중 (qwen2.5:7b)
+#   - VPS 115.68.216.191 도달 가능 (6379/5432/9000/5000)
+#
+# GTX 1060 3GB 기준 동시성 1 (worker-training 만).
 # ============================================================
-
-version: "3.9"
 
 services:
   worker-training:
+    # 학원 native Ollama (host:11434) 컨테이너에서 접근용.
+    # OLLAMA_BASE_URL=http://host.docker.internal:11434 와 짝.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     environment:
       NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
+      # GTX 1060 3GB 메모리 단편화 완화 — partial offload 환경에서 권장
       PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:128"
+
     deploy:
       resources:
         reservations:
@@ -26,3 +46,6 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+        # 학원 RAM 15Gi 중 워커 4GB 한정 (학습 + Ollama 공존 고려)
+        limits:
+          memory: 4000M
