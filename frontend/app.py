@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import os
 
-# Day10 KPI 메트릭 레이블 — 성능 모니터링 대시보드용
+# Day10 KPI 메트릭 레이블 — tab5: KPI 대시보드
 _KPI_LABELS: dict[str, str] = {
     "KP1 E2E 성공률": "파이프라인 완주율 (%)",
     "KP2 평균 종단": "평균 종단 간 지연 (ms)",
     "KP5 p95": "p95 레이턴시 (ms)",
     "KP9 KB 적용률": "KB 활용 응답 비율 (%)",
 }
+# tab5: KPI 대시보드 탭 (5번째 탭)
 
 import streamlit as st
 import streamlit.components.v1 as components

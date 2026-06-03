@@ -219,7 +219,7 @@ def _anonymize_uploaded_df(df: Any, state: Any) -> tuple[Any, dict[str, Any]]:
     import re
 
     _PII_PAT = re.compile(
-        r"(email|phone|tel|mobile|ssn|name|주민|이메일|전화|핸드폰|이름)",
+        r"(email|phone|tel|mobile|ssn|주민|이메일|전화|핸드폰)",
         re.IGNORECASE,
     )
     pii_cols = [c for c in df.columns if _PII_PAT.search(str(c))]
