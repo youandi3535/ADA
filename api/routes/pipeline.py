@@ -33,8 +33,6 @@ from api.schemas.pipeline import (
 
 log = get_logger("api.pipeline")
 
-router = APIRouter()
-
 
 # ---------------------------------------------------------------------------
 # 헬퍼
@@ -47,6 +45,9 @@ def _key_from_minio_path(minio_path: str, bucket: str) -> str:
             return rest[len(bucket) + 1 :]
         return rest.split("/", 1)[1] if "/" in rest else rest
     return minio_path
+
+
+router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
