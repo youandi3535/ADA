@@ -584,3 +584,52 @@ async def submit_error_fix(
         "status": "recorded",
         "reason": None,
     }
+
+
+# =============================================================================
+# GET /kb/conversation/failure_lessons  — Day24 크로스팀 동기화용 dump
+# =============================================================================
+
+
+@router.get("/failure_lessons")
+async def list_failure_lessons(
+    since: Optional[str] = Query(default=None, description="ISO timestamp (updated_at >= since)"),
+    limit: int = Query(default=200, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_secret),
+) -> dict[str, Any]:
+    """SelfLearningKB.failure_lesson dump endpoint for cross-team sync.
+
+    팀원의 linux_kb_sync.py (--pull-failure-lessons) 가 주기적으로 호출.
+    Returns: {"items": [{kb_id, error_hash, payload, confidence, success_count,
+              created_at, updated_at}, ...], "total": N}
+    """
+    sql = (
+        "SELECT id::text AS kb_id, hash AS error_hash, payload, "
+        "       confidence, success_count, "
+        "       created_at, updated_at "
+        "FROM self_learning_kb "
+        "WHERE kb_type = 'failure_lesson' "
+    )
+    params: dict[str, Any] = {"limit": limit}
+    if since:
+        sql += " AND updated_at >= CAST(:since AS timestamptz) "
+        params["since"] = since
+    sql += " ORDER BY updated_at DESC LIMIT :limit"
+
+    rows = (await db.execute(text(sql).bindparams(**params))).mappings().all()
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "kb_id": r["kb_id"],
+                "error_hash": r["error_hash"],
+                "payload": r["payload"],
+                "confidence": float(r["confidence"]) if r["confidence"] is not None else 0.0,
+                "success_count": int(r["success_count"] or 0),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            }
+        )
+
+    return {"items": items, "total": len(items), "since": since}
