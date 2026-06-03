@@ -71,7 +71,11 @@ class TimeSeriesPipeline(BasePipeline):
         if model_name == "ARIMA":
             from statsmodels.tsa.arima.model import ARIMA
 
-            return ARIMA(y_train, order=params.get("order", (1, 1, 1))).fit()
+            return ARIMA(
+                y_train,
+                order=params.get("order", (1, 1, 1)),
+                trend=params.get("trend", "n"),
+            ).fit()
         if model_name == "SARIMA":
             from statsmodels.tsa.statespace.sarimax import SARIMAX
 

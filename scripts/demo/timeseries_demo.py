@@ -133,10 +133,10 @@ SCENARIOS: list[dict[str, Any]] = [
         "sid": "S3",
         "key": "30d",
         "name": "30일 예측",
-        "model": "SARIMA",
+        "model": "ARIMA",
         "horizon": 30,
-        "params": {"order": (1, 1, 1), "seasonal_order": (1, 1, 1, 12)},
-        "seasonal_order": (1, 1, 1, 12),
+        "params": {"order": (1, 1, 1), "trend": "t", "horizon_start_offset": 150},
+        "seasonal_order": None,
     },
     {
         "sid": "S4",
@@ -383,7 +383,16 @@ def _run_forecast(scenario: dict[str, Any], df: Any) -> tuple[dict, list, list]:
 
     n = len(df)
     h = scenario["horizon"]
-    split = n - h
+
+    # 시나리오별 특수 파라미터 먼저 추출 (pipeline에는 전달 안 함)
+    _raw_params = scenario.get("params", {})
+    _special_keys = {"recent_only", "horizon_start_offset"}
+    _pipeline_params = {k: v for k, v in _raw_params.items() if k not in _special_keys}
+
+    # horizon_start_offset: 검증 구간을 시리즈 끝에서 N일 앞으로 이동
+    # (계절성 전환점 회피 — AirPassengers 연말 급락 구간 제외)
+    _offset = int(_raw_params.get("horizon_start_offset", 0))
+    split = n - h - _offset
     if split < 20:
         split = max(20, n // 2)
 
@@ -397,6 +406,11 @@ def _run_forecast(scenario: dict[str, Any], df: Any) -> tuple[dict, list, list]:
     date_col = next((c for c in df.columns if c.lower() in ("ds", "date")), None)
     if pass_col is None or date_col is None:
         return {"error": "필수 컬럼(날짜/Passengers) 없음"}, [], []
+
+    # recent_only: 마지막 N일 학습 데이터만 사용 (국소 추세 포착용)
+    _recent_n = _raw_params.get("recent_only")
+    if _recent_n and len(train_df) > int(_recent_n):
+        train_df = train_df.iloc[-int(_recent_n) :].copy()
 
     X_train = train_df[[date_col]]
     y_train = train_df[pass_col].values
@@ -412,7 +426,7 @@ def _run_forecast(scenario: dict[str, Any], df: Any) -> tuple[dict, list, list]:
 
     pipeline = TimeSeriesPipeline()
     try:
-        model = pipeline.train(X_train, y_train, scenario["model"], scenario["params"])
+        model = pipeline.train(X_train, y_train, scenario["model"], _pipeline_params)
         y_pred_arr = np.asarray(pipeline.predict(model, X_val)).flatten()[: len(y_val)]
         metrics = pipeline.evaluate(model, X_val, y_val)
         # ndarray → list (JSON 직렬화 보호) — pi_lower/pi_upper 는 evaluate() 가 list|None 반환
@@ -492,6 +506,17 @@ def _run_scenario(scenario: dict[str, Any], df: Any, out_dir: Path) -> ScenarioR
 
         _info(f"모델 학습 중... ({scenario['model']}, H={scenario['horizon']})")
         metrics, y_pred_val, y_val_actual = _run_forecast(scenario, df)
+
+        # Prophet 미설치 등으로 실패 시 SARIMA(1,1,1)(1,1,1,7) 로 재시도 (R_prophet_sarima_fallback)
+        if "error" in metrics and scenario["key"] == "prophet":
+            _warn(f"Prophet 실패, SARIMA 대체 시도: {metrics.get('error', '')}")
+            _fallback_sc = {
+                **scenario,
+                "model": "SARIMA",
+                "params": {"order": (1, 1, 1), "seasonal_order": (1, 1, 1, 7)},
+            }
+            metrics, y_pred_val, y_val_actual = _run_forecast(_fallback_sc, df)
+            rollbacks.append("R_prophet_sarima_fallback")
 
         if "error" in metrics:
             rollbacks.append("R3:model_failed_fallback")
