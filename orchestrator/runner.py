@@ -425,19 +425,43 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             "user_choice": gate_response.get("choice"),
         }
 
-        # aupdate_state 에 full state 를 넘겨 job_id 등 필수 필드 누락 방지
-        update_payload = {**full_state_dict, "gate_responses": new_responses, "current_gate": None}
+        # snap.values 를 base 로 사용해 EDA 등 계산된 필드를 보존
+        # full_state_dict 는 job_id 등 누락 필드 보완용으로만 사용
+        snap_dict: dict = {}
+        if isinstance(cur, dict):
+            snap_dict = dict(cur)
+        elif hasattr(cur, "model_dump"):
+            snap_dict = cur.model_dump()
+        elif hasattr(cur, "__dict__"):
+            snap_dict = dict(vars(cur))
+        base_state = {**full_state_dict, **snap_dict}  # snap 이 stale full_state 를 덮어씀
+        update_payload = {**base_state, "gate_responses": new_responses, "current_gate": None}
         await graph.aupdate_state(config, update_payload)
         final = await graph.ainvoke(None, config=config)
         final_dict = _final_to_dict(final)
-        is_terminal = bool(final_dict) and not (final_dict.get("current_gate"))
-        if is_terminal:
+        has_error = bool(final_dict.get("error"))
+        is_terminal = bool(final_dict) and not final_dict.get("current_gate")
+        if is_terminal and has_error:
+            # 에러로 인해 게이트가 스킵된 경우 — completed 가 아닌 failed 로 처리
+            _err = final_dict.get("error", "unknown error")
+            publish_progress(job_id, "error_recovery", _err, pipeline_status="failed", error=_err)
+            await _set_job_terminal(job_id, "failed", error=_err)
+        elif is_terminal:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
             await _set_job_terminal(job_id, "completed")
         else:
             gate = final_dict.get("current_gate") or "gate_wait"
             publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")
             _save_gate_data(job_id, final_dict)
+            # 다음 resume 를 위해 최신 full_state 저장 (stale 상태 덮어쓰기 방지)
+            try:
+                _get_redis().set(
+                    f"ada:full_state:{job_id}",
+                    json.dumps(final_dict, ensure_ascii=False, default=str),
+                    ex=86400,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         return {"status": "completed", "final": final_dict}
     except Exception as e:
         tb = traceback.format_exc()
