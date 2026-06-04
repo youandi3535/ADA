@@ -459,11 +459,35 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
 
         base_state = {**full_state_dict, **snap_dict}  # snap 이 stale full_state 를 덮어씀
         update_payload = {**base_state, "gate_responses": new_responses, "current_gate": None}
+
+        # G5: as_node 방식에서는 gate_outputs 노드가 재실행되지 않아 _apply_choice 가
+        # 호출되지 않음 → requested_outputs 가 state 에 반영 안 되는 버그.
+        # 사용자 선택을 여기서 직접 update_payload 에 주입해 report_composer 에 전달.
+        if gate_code == "G5":
+            _g5_choice = gate_response.get("choice") or {}
+            _g5_outs = _g5_choice.get("outputs")
+            _ALL_OUTS = {"OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07"}
+            if isinstance(_g5_outs, list):
+                _filtered = [o for o in _g5_outs if o in _ALL_OUTS]
+                if _filtered:
+                    update_payload["requested_outputs"] = _filtered
+                    log.info("g5_requested_outputs_injected", job_id=job_id, outputs=_filtered)
+
         # as_node 로 체크포인트 위치를 게이트 노드 실행 완료 시점으로 명시 →
         # ainvoke(None) 이 게이트 다음 노드(model_selection 등)부터 재개
         await graph.aupdate_state(config, update_payload, as_node=gate_node_name)
         final = await graph.ainvoke(None, config=config)
         final_dict = _final_to_dict(final)
+
+        # G4 eval 재루프 시 gate_best_model(interrupt_after)에서 조기 종료 방어:
+        # current_gate=None 인데 G5 proposals 가 없으면 ainvoke 한 번 더 실행.
+        if gate_code == "G4" and not final_dict.get("current_gate"):
+            _g5 = (final_dict.get("gate_responses") or {}).get("G5", {})
+            if not _g5.get("proposals") and not final_dict.get("error"):
+                log.info("g4_reloop_resume_extra", job_id=job_id)
+                final = await graph.ainvoke(None, config=config)
+                final_dict = _final_to_dict(final)
+
         has_error = bool(final_dict.get("error"))
         is_terminal = bool(final_dict) and not final_dict.get("current_gate")
         if is_terminal and has_error:
@@ -474,6 +498,22 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         elif is_terminal:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
             await _set_job_terminal(job_id, "completed")
+            # 완료 시 gate_data 갱신: gate 제거 + requested_outputs / best_model 보존
+            try:
+                _r = _get_redis()
+                _gd_raw = _r.get(f"ada:gate_data:{job_id}")
+                _gd: dict = json.loads(_gd_raw) if _gd_raw else {}
+                _gd.pop("gate", None)
+                _gd["pipeline_status"] = "completed"
+                _gd["requested_outputs"] = final_dict.get("requested_outputs") or []
+                _gd["output_paths"] = final_dict.get("output_paths") or {}
+                if final_dict.get("best_model"):
+                    _gd["best_model"] = final_dict["best_model"]
+                if final_dict.get("insights"):
+                    _gd["insights"] = final_dict["insights"]
+                _r.set(f"ada:gate_data:{job_id}", json.dumps(_gd, ensure_ascii=False, default=str), ex=86400)
+            except Exception:  # noqa: BLE001
+                pass
         else:
             gate = final_dict.get("current_gate") or "gate_wait"
             publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")

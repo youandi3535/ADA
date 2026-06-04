@@ -113,6 +113,35 @@ def safe_node(agent_callable: Callable) -> Callable:
     return wrapped
 
 
+def safe_gate_node(agent_callable: Callable) -> Callable:
+    """gate_outputs 전용 래퍼 — 상위 노드 에러가 있어도 반드시 실행.
+
+    insight/explainability 실패로 state.error 가 세팅된 상태에서도
+    G5 proposals 를 생성해 사용자에게 선택지를 제공한다.
+    에러는 클리어 후 실행 (gate 자체 실패 시에는 다시 state.error 세팅).
+    """
+
+    @wraps(agent_callable)
+    async def wrapped(state):
+        state = _coerce_to_pipeline_state(state)
+        if getattr(state, "error", None):
+            state = state.with_update(error=None)
+        try:
+            return await agent_callable(state)
+        except Exception as e:
+            attached = getattr(e, "_ada_state", None)
+            if attached is not None:
+                return attached
+            return state.with_update(
+                error=f"{type(e).__name__}: {e}"[:2000],
+                error_traceback=traceback.format_exc()[:8000],
+                auto_fix_attempts=state.auto_fix_attempts + 1,
+                next_agent="auto_error_handler",
+            )
+
+    return wrapped
+
+
 # ---------------------------------------------------------------------------
 # 라우팅 함수
 # ---------------------------------------------------------------------------
@@ -187,10 +216,8 @@ def route_after_eval(state: PipelineState) -> str:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
-    if state.eval_result and state.eval_result.get("passed"):
-        return "explainability"
-    if state.re_loop_count < state.max_re_loop:
-        return "training_executor"
+    # 재루프(re_loop) 제거 — LLM 평가 실패 시 재훈련보다 G5 진행을 우선
+    return "explainability"
     return "error_recovery"
 
 
@@ -271,7 +298,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_node("eval_agent", safe_node(EvalAgent()))
     g.add_node("explainability", safe_node(ExplainabilityAgent()))
     g.add_node("insight", safe_node(InsightAgent()))
-    g.add_node("gate_outputs", safe_node(GATE_NODES["gate_outputs"]()))
+    g.add_node("gate_outputs", safe_gate_node(GATE_NODES["gate_outputs"]()))
     g.add_node("report_composer", safe_node(ReportComposerAgent()))
     g.add_node("self_learning_dispatch", safe_node(SelfLearningAgent()))
     g.add_node("error_recovery", ErrorRecoveryAgent())  # 마지막 안전망 — 감싸지 않음
@@ -343,7 +370,6 @@ def build_graph(checkpointer: Any | None = None) -> Any:
         route_after_eval,
         {
             "explainability": "explainability",
-            "training_executor": "training_executor",
             "auto_error_handler": "auto_error_handler",
             "error_recovery": "error_recovery",
         },

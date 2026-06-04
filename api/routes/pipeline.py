@@ -97,18 +97,40 @@ async def start_pipeline(req: PipelineStartRequest, db: AsyncSession = Depends(g
 
 @router.get("/status/{job_id}", response_model=PipelineStatusResponse)
 async def status(job_id: str, db: AsyncSession = Depends(get_db)) -> PipelineStatusResponse:
+    import json as _json
+
     job = await db.scalar(select(Job).where(Job.id == uuid.UUID(job_id)))
     if job is None:
         raise HTTPException(404, detail="job not found")
 
-    prog = 100 if job.status == "completed" else (50 if job.status == "running" else 0)
+    effective_status = job.status
+    effective_current_gate = job.current_gate
+
+    # Redis gate_data 로 보정: 활성 게이트가 있으면 DB "completed" 를 "running" 으로 재정의.
+    # 에러 복구 후 재시작 시 gate 재통과 과정에서 current_gate=None 이 되어 DB 가 completed 로
+    # 잘못 표기되는 경우를 방어한다.
+    try:
+        import redis as _redis
+        _r = _redis.from_url(settings.redis_url, decode_responses=True)
+        _raw = _r.get(f"ada:gate_data:{job_id}")
+        if _raw:
+            _gd = _json.loads(_raw)
+            _active_gate = _gd.get("gate")
+            if _active_gate and _gd.get("proposals"):
+                effective_current_gate = _active_gate
+                if effective_status in ("completed", "pending"):
+                    effective_status = "running"
+    except Exception:
+        pass
+
+    prog = 100 if effective_status == "completed" else (50 if effective_status == "running" else 0)
     return PipelineStatusResponse(
         job_id=str(job.id),
-        status=job.status,
+        status=effective_status,
         category=job.category,
         target_column=job.target_column,
         current_agent=None,
-        current_gate=job.current_gate,
+        current_gate=effective_current_gate,
         progress_pct=prog,
         error=job.error_message,
         created_at=job.created_at,
@@ -215,6 +237,7 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
         "best_model": None,
         "eda_summary": None,
         "output_paths": {},
+        "requested_outputs": [],
     }
 
     try:
@@ -230,10 +253,14 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             _gd = _json2.loads(_raw_gate)
             data["gate"] = _gd.get("gate") or job.current_gate
             data["proposals"] = _gd.get("proposals") or []
-            for k in ("category", "target_column", "insights", "data_profile"):
+            for k in ("category", "target_column", "insights", "data_profile",
+                      "requested_outputs", "best_model", "pipeline_status"):
                 v = _gd.get(k)
                 if v is not None:
                     data[k] = v
+            # output_paths: gate_data 값이 있으면 DB 값을 덮어씀 (완료 후 저장된 게 정확)
+            if _gd.get("output_paths"):
+                data["output_paths"] = {**(data.get("output_paths") or {}), **_gd["output_paths"]}
     except Exception:  # noqa: BLE001
         pass
 
@@ -271,3 +298,59 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             data["pipeline_error"] = job.error_message
 
     return data
+
+
+# ---------------------------------------------------------------------------
+# 산출물 다운로드 프록시 — MinIO 내부 주소를 API 가 중계
+# ---------------------------------------------------------------------------
+_DL_META: dict[str, tuple[str, str]] = {
+    "OUT-01": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "presentation.pptx"),
+    "OUT-02": ("application/pdf", "report.pdf"),
+    "OUT-03": ("text/plain; charset=utf-8", "script.txt"),
+    "OUT-04": ("text/html; charset=utf-8", "dashboard.html"),
+    "OUT-07": ("text/markdown; charset=utf-8", "insight.md"),
+}
+
+
+@router.get("/download/{job_id}/{output_code}")
+async def download_output(job_id: str, output_code: str) -> None:
+    """MinIO 에 저장된 산출물을 스트리밍 다운로드 (브라우저 직접 요청용)."""
+    import io as _io
+    import json as _json
+
+    import redis as _redis
+    from fastapi.responses import StreamingResponse
+
+    from ada.core.config import settings as _s
+    from tools.minio_tool import get_minio_client
+
+    # Redis gate_data 에서 output_paths 읽기
+    try:
+        _r = _redis.from_url(_s.redis_url, decode_responses=True)
+        _raw = _r.get(f"ada:gate_data:{job_id}")
+        if not _raw:
+            raise HTTPException(404, "결과를 찾을 수 없습니다.")
+        _gd = _json.loads(_raw)
+        _output_paths: dict = _gd.get("output_paths") or {}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(500, "Redis 조회 실패")
+
+    minio_path = _output_paths.get(output_code)
+    if not minio_path:
+        raise HTTPException(404, f"{output_code} 파일이 생성되지 않았습니다.")
+
+    try:
+        mc = get_minio_client()
+        key = minio_path.replace(f"s3://{mc.bucket}/", "") if minio_path.startswith("s3://") else minio_path
+        body = mc.download_bytes(key)
+    except Exception as e:
+        raise HTTPException(500, f"파일 다운로드 실패: {e}")
+
+    ct, fname = _DL_META.get(output_code, ("application/octet-stream", "output.bin"))
+    return StreamingResponse(
+        _io.BytesIO(body),
+        media_type=ct,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
