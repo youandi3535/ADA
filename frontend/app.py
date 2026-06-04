@@ -193,6 +193,7 @@ let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg
 let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G5 멀티선택 상태 {proposal_id: bool}
+let gateCache={};  // {G1: gateData, G2: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
 
 // ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
 // 1순위: URL 해시(#ada=…) — window.parent.history.replaceState 로 기록.
@@ -275,7 +276,11 @@ async function doUpload(){
   }catch(e){ errMsg='업로드/시작 실패 — '+e.message; busy=false; render(); }
 }
 async function doResume(){
-  const props=(gateData.proposals)||[];
+  const tg='G'+cur;
+  const ag=curGate();
+  // cur 기준으로 올바른 proposals 선택 (이전 단계 재진행 시 캐시 사용)
+  const d=(ag===tg)?gateData:(gateCache[tg]||{});
+  const props=(d.proposals)||[];
   let choice;
   if(curGate()==='G5'){
     const outs=[];
@@ -287,13 +292,21 @@ async function doResume(){
     choice={adopted_rank:0, custom_intent:customText};
   } else if(selId!=null){ choice={adopted_rank:selId}; }
   else { choice={adopted_rank:(props[0]&&props[0].id)||1}; }
-  const gate=curGate() || ('G'+cur);
+  const gate=tg;  // curGate() 대신 cur 기준 게이트 코드 사용
   errMsg=''; busy=true; render();
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
-    lastSubmittedGate=gate;  // Celery가 task 집어가기 전에 Redis에 게이트 잔존 → 이 값이 바뀔 때까지 계속 폴링
-    follow=true; busy=false; gateData={}; selId=null; analyzeStart=Date.now();
+    lastSubmittedGate=gate;
+    // 이전 단계 재진행: 이후 게이트 캐시와 frontier 초기화
+    if(cur < maxReached){
+      Object.keys(gateCache).forEach(function(k){
+        if(parseInt(k.slice(1),10)>cur) delete gateCache[k];
+      });
+      frontier=cur; maxReached=cur;
+    }
+    // selId 를 초기화하지 않음 — 제출 직후 poll 이 돌아와도 선택이 옵션1로 리셋되지 않도록
+    follow=true; busy=false; gateData={}; analyzeStart=Date.now();
     saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
@@ -302,6 +315,10 @@ async function poll(){
   if(!jobId) return;
   try{ status=await api('/pipeline/status/'+jobId,{}); }catch(e){ status={_err:e.message}; }
   try{ gateData=await api('/pipeline/gate/'+jobId,{}); }catch(e){ gateData={proposals:[], _err:e.message}; }
+  // proposals 가 있는 게이트 응답은 캐시 — 이전 단계 뒤로가기 시 재사용
+  if(gateData.gate && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length){
+    gateCache[gateData.gate]=gateData;
+  }
   // HTTP 4xx → 세션 만료(서버 재시작·DB 초기화): localStorage 정리 후 업로드 화면으로
   if(status._err && /HTTP 4[0-9][0-9]/.test(status._err)){
     clearState();
@@ -328,9 +345,9 @@ function startPolling(){ if(polling){ render(); return; } polling=true; clearTim
 setInterval(function(){ if(analyzing() && !paused) render(); }, 1000);
 
 function failureBlock(){
-  const msg=gateData.pipeline_error||status.error||'알 수 없는 오류';
+  const msg=gateData.insights||gateData.pipeline_error||status.error||'알 수 없는 오류';
   return '<div class="loadwrap"><div class="loadtxt">⛔ 분석이 실패했습니다.</div>'
-    +'<div class="diag"><b>오류:</b> '+esc(msg)+'<br>'
+    +'<div class="diag">'+esc(msg)+'<br><br>'
     +'① 워커 로그 확인: <code>docker logs --tail 200 ada-worker-pipeline</code><br>'
     +'② 워커 재기동 후 새 파일로 재시도하세요.'
     +'</div></div>';
@@ -404,9 +421,13 @@ function customCard(n){
     +'<textarea id="cust" placeholder="'+ph+'"></textarea><div class="time">자유 입력</div></div>';
 }
 function contentGate(){
-  const g=curGate() || ('G'+cur);
-  const props=(gateData.proposals)||[];
-  if(!curGate() || !props.length){ return gateHeader(g)+loadingBlock(); }
+  const tg='G'+cur;               // 사용자가 보고 싶은 게이트 (cur 기준)
+  const ag=curGate();             // 백엔드 현재 게이트
+  // 사용자 위치와 백엔드 위치가 같으면 실시간 gateData, 다르면 캐시 사용
+  const d=(ag===tg)?gateData:(gateCache[tg]||{});
+  const g=tg;
+  const props=(d.proposals)||[];
+  if(!props.length){ return gateHeader(g)+loadingBlock(); }
   // filter out backend-injected custom placeholder — customCard is added separately below
   const llmProps=props.filter(function(p){ return !p.is_custom; });
   if(!llmProps.length){ return gateHeader(g)+loadingBlock(); }
@@ -474,6 +495,7 @@ function primaryLabel(){
   if(paused) return '▶ 계속';
   if(cur===0) return '⬆ 업로드';
   if(cur===LAST) return '📥 완료';
+  if(cur>=1 && cur<=5 && cur<frontier) return '🔄 재진행 ▸';
   return '진행 ▸';
 }
 function render(){
@@ -531,7 +553,12 @@ function render(){
   prev.disabled=(cur===0);
   next.disabled=(cur>=maxReached);
   stop.style.display=(!paused && analyzing())?'inline-flex':'none';
-  const atGate=(cur===frontier) && !!curGate() && ((gateData.proposals||[]).length>0);
+  const _tg='G'+cur;
+  const _cd=gateCache[_tg]||{};
+  const _llmCount=function(d){ return (d.proposals||[]).filter(function(p){return !p.is_custom;}).length; };
+  const atCurrentGate=(cur===frontier)&&!!curGate()&&_llmCount(gateData)>0;
+  const atPastGate=(cur<frontier)&&cur>=1&&cur<=5&&_llmCount(_cd)>0;
+  const atGate=atCurrentGate||atPastGate;
   const g5ok=curGate()!=='G5'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
   prim.innerHTML=primaryLabel();
   prim.classList.toggle('resume', paused);

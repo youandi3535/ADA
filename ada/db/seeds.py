@@ -156,6 +156,12 @@ RULE_SEED: list[dict[str, Any]] = [
 ]
 
 
+# R-007: SYSTEM_PROMPT 변경 시 이 dict 에 버전을 bump. seeds 재실행 시 DB 에 반영됨.
+_PERSONA_VERSION_BUMPS: dict[str, str] = {
+    "AnalysisProposerAgent": "v2.1",  # G1: proposal 에 category/approach/target_column 필드 추가
+}
+
+
 async def seed_agent_registry(session: AsyncSession) -> int:
     """agent_registry 27 행 upsert. 이미 있으면 persona 업데이트만."""
     inserted = 0
@@ -171,6 +177,8 @@ async def seed_agent_registry(session: AsyncSession) -> int:
             existing.inputs = io_spec["inputs"]
             existing.outputs = io_spec["outputs"]
             existing.capabilities = caps
+            if name in _PERSONA_VERSION_BUMPS:
+                existing.persona_version = _PERSONA_VERSION_BUMPS[name]
             continue
         session.add(
             AgentRegistry(

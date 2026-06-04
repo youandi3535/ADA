@@ -441,61 +441,134 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             "user_choice": gate_response.get("choice"),  # 사용자 선택 항상 최우선
         }
 
-        # snap.values 를 base 로 사용해 EDA 등 계산된 필드를 보존
-        # full_state_dict 는 job_id 등 누락 필드 보완용으로만 사용
-        snap_dict: dict = {}
-        if isinstance(cur, dict):
-            snap_dict = dict(cur)
-        elif hasattr(cur, "model_dump"):
-            snap_dict = cur.model_dump()
-        elif hasattr(cur, "__dict__"):
-            snap_dict = dict(vars(cur))
-        # gate_code → LangGraph 노드명 매핑
-        _GATE_NODE = {
-            "G1": "gate_direction", "G2": "gate_methodology",
-            "G3": "gate_model_strategy", "G4": "gate_best_model", "G5": "gate_outputs",
-        }
-        gate_node_name = _GATE_NODE.get(gate_code)
+        from orchestrator.graph import GATE_NODES as _GN  # noqa: WPS433
 
-        base_state = {**full_state_dict, **snap_dict}  # snap 이 stale full_state 를 덮어씀
-        update_payload = {**base_state, "gate_responses": new_responses, "current_gate": None}
+        _gate_cls = next((cls for cls in _GN.values() if getattr(cls, "gate_code", None) == gate_code), None)
 
-        # G5: as_node 방식에서는 gate_outputs 노드가 재실행되지 않아 _apply_choice 가
-        # 호출되지 않음 → requested_outputs 가 state 에 반영 안 되는 버그.
-        # 사용자 선택을 여기서 직접 update_payload 에 주입해 report_composer 에 전달.
-        if gate_code == "G5":
-            _g5_choice = gate_response.get("choice") or {}
-            _g5_outs = _g5_choice.get("outputs")
-            _ALL_OUTS = {"OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07"}
-            if isinstance(_g5_outs, list):
-                _filtered = [o for o in _g5_outs if o in _ALL_OUTS]
-                if _filtered:
-                    update_payload["requested_outputs"] = _filtered
-                    log.info("g5_requested_outputs_injected", job_id=job_id, outputs=_filtered)
+        # 제출된 게이트보다 뒤에 있는 gate_responses 제거 + 다운스트림 상태 초기화
+        _gnum = int(gate_code[1]) if len(gate_code) == 2 and gate_code[0] == "G" and gate_code[1].isdigit() else 0
+        if _gnum > 0:
+            for _k in [
+                k for k in list(new_responses) if len(k) == 2 and k[0] == "G" and k[1:].isdigit() and int(k[1]) > _gnum
+            ]:
+                del new_responses[_k]
+            full_state_dict = {
+                **full_state_dict,
+                "preprocessing_plan": None,
+                "preprocessed_data_id": None,
+                "eda_charts": [],
+                "eda_summary": None,
+                "model_candidates": [],
+                "best_params": {},
+                "trained_models": [],
+                "training_warnings": [],
+                "best_model": None,
+                "eval_result": None,
+                "explanations": None,
+                "insights": None,
+                "output_paths": {},
+                "retry_count": 0,
+                "re_loop_count": 0,
+                "error": None,
+                "error_traceback": None,
+                "error_fingerprint": None,
+                "error_classified_as": None,
+                "next_agent": None,
+            }
+            try:
+                _get_redis().delete(f"ada:gate_data:{job_id}")
+            except Exception:  # noqa: BLE001
+                pass
 
-        # as_node 로 체크포인트 위치를 게이트 노드 실행 완료 시점으로 명시 →
-        # ainvoke(None) 이 게이트 다음 노드(model_selection 등)부터 재개
-        await graph.aupdate_state(config, update_payload, as_node=gate_node_name)
-        final = await graph.ainvoke(None, config=config)
+        # full_state_dict 가 비어 있으면 snap.values 로 보완 (jh 방식의 견고한 추출 적용)
+        if not full_state_dict.get("job_id"):
+            snap_dict: dict = {}
+            if isinstance(cur, dict):
+                snap_dict = dict(cur)
+            elif hasattr(cur, "model_dump"):
+                snap_dict = cur.model_dump()
+            elif hasattr(cur, "__dict__"):
+                snap_dict = dict(vars(cur))
+            full_state_dict = {**snap_dict, **full_state_dict}
+
+        # _apply_choice 를 미리 적용 (fresh invocation 의 게이트 통과 시 중복 적용되지만 멱등)
+        if _gate_cls:
+            try:
+                from ada.core.state import PipelineState as _PS  # noqa: WPS433
+
+                _base = {**full_state_dict, "gate_responses": new_responses}
+                _ps_fields = getattr(_PS, "model_fields", None) or _PS.__fields__
+                _temp = _PS(**{k: _base[k] for k in _ps_fields if k in _base})
+                _applied = _gate_cls()._apply_choice(
+                    _temp,
+                    gate_response.get("choice", {}),
+                    new_responses.get(gate_code, {}).get("proposals") or [],
+                )
+                for _f in _ps_fields:
+                    _orig, _new = getattr(_temp, _f, None), getattr(_applied, _f, None)
+                    if _new != _orig:
+                        full_state_dict = {**full_state_dict, _f: _new}
+            except Exception as _e:  # noqa: BLE001
+                log.warning("resume_apply_choice_failed", gate=gate_code, error=str(_e))
+
+        update_payload = {**full_state_dict, "gate_responses": new_responses, "current_gate": None}
+
+        # 항상 fresh invocation — 체크포인트 실행 위치에 의존하지 않음
+        fresh_cp = CompatMemorySaver()
+        fresh_graph = build_graph(checkpointer=fresh_cp)
+        from ada.core.state import PipelineState as _PS_r  # noqa: WPS433
+
+        _ps_r_fields = getattr(_PS_r, "model_fields", None) or _PS_r.__fields__
+        _fresh = _PS_r(**{k: update_payload[k] for k in _ps_r_fields if k in update_payload})
+        final = await fresh_graph.ainvoke(_fresh, config=config)
         final_dict = _final_to_dict(final)
 
-        # G4 eval 재루프 시 gate_best_model(interrupt_after)에서 조기 종료 방어:
-        # current_gate=None 인데 G5 proposals 가 없으면 ainvoke 한 번 더 실행.
-        if gate_code == "G4" and not final_dict.get("current_gate"):
-            _g5 = (final_dict.get("gate_responses") or {}).get("G5", {})
-            if not _g5.get("proposals") and not final_dict.get("error"):
-                log.info("g4_reloop_resume_extra", job_id=job_id)
-                final = await graph.ainvoke(None, config=config)
-                final_dict = _final_to_dict(final)
+        # interrupt_after 는 pass-through 게이트에도 발화 → current_gate=None 이고
+        # 실제 완료 신호가 없으면 다음 게이트까지 ainvoke 반복
+        _passes = len(_GN) + 2
+        while (
+            _passes > 0
+            and final_dict is not None
+            and not final_dict.get("current_gate")
+            and not final_dict.get("error")
+            and not final_dict.get("output_paths")
+            and not final_dict.get("best_model")
+        ):
+            final = await fresh_graph.ainvoke(None, config=config)
+            final_dict = _final_to_dict(final)
+            _passes -= 1
 
-        has_error = bool(final_dict.get("error"))
+        checkpointer = fresh_cp
+        log.info(
+            "resume_fresh_invocation",
+            gate=gate_code,
+            current_gate=final_dict.get("current_gate") if final_dict else None,
+        )
+
+        # 에러 잔존 시 failed 처리
+        if final_dict and final_dict.get("error"):
+            _leftover_err = str(final_dict.get("error", ""))
+            _leftover_tb = str(final_dict.get("error_traceback", ""))
+            log.warning("resume_ended_with_error", error=_leftover_err[:200])
+            try:
+                from ada.error_handler.auto_handler import capture_and_handle
+
+                await capture_and_handle(
+                    error_message=_leftover_err,
+                    stack_trace=_leftover_tb,
+                    job_id=job_id,
+                    source="runner_resume_end_state",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            _save_gate_data(job_id, final_dict)
+            publish_progress(job_id, "error_recovery", _leftover_err, pipeline_status="failed", error=_leftover_err)
+            await _set_job_terminal(job_id, "failed", error=_leftover_err)
+            return {"status": "failed", "error": _leftover_err}
+
+
         is_terminal = bool(final_dict) and not final_dict.get("current_gate")
-        if is_terminal and has_error:
-            # 에러로 인해 게이트가 스킵된 경우 — completed 가 아닌 failed 로 처리
-            _err = final_dict.get("error", "unknown error")
-            publish_progress(job_id, "error_recovery", _err, pipeline_status="failed", error=_err)
-            await _set_job_terminal(job_id, "failed", error=_err)
-        elif is_terminal:
+        if is_terminal:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
             await _set_job_terminal(job_id, "completed")
             # 완료 시 gate_data 갱신: gate 제거 + requested_outputs / best_model 보존
