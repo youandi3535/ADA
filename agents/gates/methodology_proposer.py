@@ -1,4 +1,4 @@
-"""agents.gates.methodology_proposer — G2 방법론 제안 (정형ML/정형DL/시계열/이상탐지)."""
+"""agents.gates.methodology_proposer — G3 방법론 제안 (정형ML/정형DL/시계열/이상탐지)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from agents.gates._base_gate import BaseGate
 
 SYSTEM_PROMPT = (
     "You are an AutoML strategy consultant. "
-    "Given the data profile and the G1 analysis direction chosen by the user, "
+    "Given the data profile and the G2 analysis direction chosen by the user, "
     "propose exactly TWO distinct methodology options from: tabular_ml, tabular_dl, timeseries, anomaly_detection. "
     "Option 1 should be the best fit; Option 2 should offer a meaningfully different angle. "
     "For each option, write a detailed Korean rationale of 2-3 sentences that explains: "
@@ -124,15 +124,15 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
 
 
 class MethodologyProposerAgent(BaseGate):
-    """G2 — 방법론(카테고리) 권장. 본 게이트가 카테고리 변경을 제안할 수 있다."""
+    """G3 — 방법론(카테고리) 권장. 본 게이트가 카테고리 변경을 제안할 수 있다."""
 
-    gate_code = "G2"
+    gate_code = "G3"
     model_name = "claude-sonnet-4-6"
     n_proposals = 2  # LLM generates 2; option 3 is always _CUSTOM_OPTION
 
     async def _propose(self, state: PipelineState) -> list[dict[str, Any]]:
-        # G1 선택 제목을 추출 — adopted_rank 숫자 대신 실제 방향 텍스트를 LLM 에 전달
-        g1_resp = (state.gate_responses or {}).get("G1", {})
+        # G2 선택 제목을 추출 — adopted_rank 숫자 대신 실제 방향 텍스트를 LLM 에 전달
+        g1_resp = (state.gate_responses or {}).get("G2", {})
         g1_uc = g1_resp.get("user_choice") or {}
         g1_rank = g1_uc.get("adopted_rank") if isinstance(g1_uc, dict) else None
         g1_props = g1_resp.get("proposals") or []

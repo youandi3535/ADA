@@ -16,7 +16,7 @@ from agents.base import BaseAgent
 class BaseGate(BaseAgent):
     """게이트 노드 공통 — interrupt-by-name 직전 상태 마킹."""
 
-    #: 'G1' ~ 'G5' — 서브클래스 필수 오버라이드
+    #: 'G2' ~ 'G6' — 서브클래스 필수 오버라이드
     gate_code: str = "G?"
 
     #: 게이트당 제안 개수 (마스터 §3 — 보통 3)
@@ -31,7 +31,7 @@ class BaseGate(BaseAgent):
     def _apply_choice(self, state: PipelineState, user_choice: Any, proposals: list[dict[str, Any]]) -> PipelineState:
         """게이트 재진입 시 사용자 선택을 상태에 반영 (기본: 변화 없음).
 
-        서브클래스가 override 하여 category/target(G1)·outputs(G5) 등을 적용한다.
+        서브클래스가 override 하여 category/target(G2)·outputs(G6) 등을 적용한다.
         """
         return state
 

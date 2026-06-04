@@ -1,4 +1,4 @@
-"""agents.gates.output_type_selector — G5 5종 산출물 전체 제시 (멀티선택)."""
+"""agents.gates.output_type_selector — G6 5종 산출물 전체 제시 (멀티선택)."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ _FIXED_PROPOSALS: list[dict[str, Any]] = [
 
 
 class OutputTypeSelectorAgent(BaseGate):
-    gate_code = "G5"
+    gate_code = "G6"
     uses_llm = False
     n_proposals = 5
 

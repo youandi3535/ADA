@@ -18,15 +18,15 @@ AGENT_META: list[tuple[str, str, str, str]] = [
     # I 슈퍼바이저 (1)
     ("SupervisorAgent", "supervisor", "입력 검증 및 task 분류", "claude-sonnet-4-6"),
     # A 입력·검증 (3)
-    ("IntentElicitorAgent", "gate", "G0 — 자유 의도 텍스트를 구조화", "claude-sonnet-4-6"),
+    ("IntentElicitorAgent", "gate", "G1 — 자유 의도 텍스트를 구조화", "claude-sonnet-4-6"),
     ("DataProfilerAgent", "data", "데이터 프로파일링 (이미지/오디오 제거 v2)", "none"),
     ("SchemaValidatorAgent", "data", "스키마/카테고리 적합성 검증", "none"),
     # B 의사결정 5게이트
-    ("AnalysisProposerAgent", "gate", "G1 — 분석 방향 3안 제시", "claude-opus-4-7"),
-    ("MethodologyProposerAgent", "gate", "G2 — 정형ML/정형DL/시계열/이상탐지 방법론 제안", "claude-sonnet-4-6"),
-    ("ModelStrategyProposerAgent", "gate", "G3 — 모델 전략 제안 (트랜스포머 우선)", "claude-opus-4-7"),
-    ("ModelComparisonReporterAgent", "gate", "G4 — Top-3 모델 비교표", "none"),
-    ("OutputTypeSelectorAgent", "gate", "G5 — 5종 산출물 추천 (OUT-01~04,07)", "claude-sonnet-4-6"),
+    ("AnalysisProposerAgent", "gate", "G2 — 분석 방향 3안 제시", "claude-opus-4-7"),
+    ("MethodologyProposerAgent", "gate", "G3 — 정형ML/정형DL/시계열/이상탐지 방법론 제안", "claude-sonnet-4-6"),
+    ("ModelStrategyProposerAgent", "gate", "G4 — 모델 전략 제안 (트랜스포머 우선)", "claude-opus-4-7"),
+    ("ModelComparisonReporterAgent", "gate", "G5 — Top-3 모델 비교표", "none"),
+    ("OutputTypeSelectorAgent", "gate", "G6 — 5종 산출물 추천 (OUT-01~04,07)", "claude-sonnet-4-6"),
     # C 전처리·EDA (3) + 미니게이트
     ("PreprocessingStrategistAgent", "data", "전처리 계획 (이미지/NLP 제거 v2)", "claude-sonnet-4-6"),
     ("FeatureEngineerAgent", "data", "피처 엔지니어링 실행", "none"),
@@ -158,7 +158,7 @@ RULE_SEED: list[dict[str, Any]] = [
 
 # R-007: SYSTEM_PROMPT 변경 시 이 dict 에 버전을 bump. seeds 재실행 시 DB 에 반영됨.
 _PERSONA_VERSION_BUMPS: dict[str, str] = {
-    "AnalysisProposerAgent": "v2.1",  # G1: proposal 에 category/approach/target_column 필드 추가
+    "AnalysisProposerAgent": "v2.1",  # G2: proposal 에 category/approach/target_column 필드 추가
 }
 
 

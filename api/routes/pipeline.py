@@ -111,6 +111,7 @@ async def status(job_id: str, db: AsyncSession = Depends(get_db)) -> PipelineSta
     # 잘못 표기되는 경우를 방어한다.
     try:
         import redis as _redis
+
         _r = _redis.from_url(settings.redis_url, decode_responses=True)
         _raw = _r.get(f"ada:gate_data:{job_id}")
         if _raw:
@@ -253,8 +254,18 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             _gd = _json2.loads(_raw_gate)
             data["gate"] = _gd.get("gate") or job.current_gate
             data["proposals"] = _gd.get("proposals") or []
-            for k in ("category", "target_column", "insights", "data_profile",
-                      "requested_outputs", "best_model", "pipeline_status"):
+            # 직전 단계 결과 필드 전부를 게이트 화면에 노출 (eda_summary/eval_result 추가)
+            for k in (
+                "category",
+                "target_column",
+                "insights",
+                "data_profile",
+                "requested_outputs",
+                "best_model",
+                "pipeline_status",
+                "eda_summary",
+                "eval_result",
+            ):
                 v = _gd.get(k)
                 if v is not None:
                     data[k] = v

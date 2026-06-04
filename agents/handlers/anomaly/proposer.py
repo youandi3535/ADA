@@ -2,8 +2,8 @@
 
 LLM 호출 X (D2). 규칙 기반 score 산출.
 
-- g1(state) -> list[dict]   G1 3 안 (점수화·정상학습·Top-N)
-- g2(state) -> list[dict]   G2 모델 카드 4~6 종 (D1: has_time_column 분기)
+- g1(state) -> list[dict]   G2 3 안 (점수화·정상학습·Top-N)
+- g2(state) -> list[dict]   G3 모델 카드 4~6 종 (D1: has_time_column 분기)
 
 DoD: contamination < 0.05 시 OCSVM 1 위 (D3·DoD).
 의심 결정 8 (셜록홈즈 §Day 4).
@@ -51,7 +51,7 @@ def _make_card(title: str, score: float, rationale: str) -> dict:
     }
 
 
-# ── G1 score 헬퍼 (D4 데이터 기반) ────────────────────────────────
+# ── G2 score 헬퍼 (D4 데이터 기반) ────────────────────────────────
 def _g1_score_scoring(profile: dict, preproc: dict) -> float:
     base = 0.85
     if profile.get("n_rows", 0) < 100:
@@ -75,7 +75,7 @@ def _g1_score_top_n(profile: dict, preproc: dict) -> float:
     return _clip(base)
 
 
-# ── G2 모델 score 헬퍼 (D1·D3·D8) ─────────────────────────────────
+# ── G3 모델 score 헬퍼 (D1·D3·D8) ─────────────────────────────────
 def _g2_score_iforest(profile: dict, preproc: dict) -> float:
     return 0.7
 
@@ -139,9 +139,9 @@ def _g2_score_anomaly_transformer(profile: dict, preproc: dict) -> float:
     return 0.3 + TIME_BONUS
 
 
-# ── 공개 진입점 1: G1 ────────────────────────────────────────────
+# ── 공개 진입점 1: G2 ────────────────────────────────────────────
 def g1(state: Any) -> list[dict[str, Any]]:
-    """G1 3 안 fallback (점수화·정상학습·Top-N)."""
+    """G2 3 안 fallback (점수화·정상학습·Top-N)."""
     profile = _get_profile(state)
     preproc = _get_preprocessing(state)
 
@@ -170,9 +170,9 @@ def g1(state: Any) -> list[dict[str, Any]]:
     ]
 
 
-# ── 공개 진입점 2: G2 ────────────────────────────────────────────
+# ── 공개 진입점 2: G3 ────────────────────────────────────────────
 def g2(state: Any) -> list[dict[str, Any]]:
-    """G2 모델 카드 fallback (D1: 4~6 종 동적)."""
+    """G3 모델 카드 fallback (D1: 4~6 종 동적)."""
     profile = _get_profile(state)
     preproc = _get_preprocessing(state)
 

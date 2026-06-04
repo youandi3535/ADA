@@ -75,7 +75,7 @@ def state_empty(anomaly_state):
 
 
 def test_g1_returns_three_options(state_no_time):
-    """#1 — G1 = 3 안 list, 각 5 키."""
+    """#1 — G2 = 3 안 list, 각 5 키."""
     from agents.handlers.anomaly.proposer import g1
 
     result = g1(state_no_time)
@@ -86,7 +86,7 @@ def test_g1_returns_three_options(state_no_time):
 
 
 def test_g2_returns_at_least_four_cards(state_no_time):
-    """#2 — D1: G2 ≥ 4 종."""
+    """#2 — D1: G3 ≥ 4 종."""
     from agents.handlers.anomaly.proposer import g2
 
     result = g2(state_no_time)

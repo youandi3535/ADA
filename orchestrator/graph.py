@@ -117,7 +117,7 @@ def safe_gate_node(agent_callable: Callable) -> Callable:
     """gate_outputs 전용 래퍼 — 상위 노드 에러가 있어도 반드시 실행.
 
     insight/explainability 실패로 state.error 가 세팅된 상태에서도
-    G5 proposals 를 생성해 사용자에게 선택지를 제공한다.
+    G6 proposals 를 생성해 사용자에게 선택지를 제공한다.
     에러는 클리어 후 실행 (gate 자체 실패 시에는 다시 state.error 세팅).
     """
 
@@ -179,16 +179,25 @@ def route_after_validation(state: PipelineState) -> str:
             return "error_recovery"
         return "auto_error_handler"
     if state.validation and state.validation.get("is_valid"):
-        return "gate_direction"  # G1 게이트 — 분석 방향 선택
+        return "gate_direction"  # G2 게이트 — 분석 방향 선택
     return "error_recovery"
 
 
 def route_after_feature_engineer(state: PipelineState) -> str:
-    """전처리 결정 신뢰도 낮으면 미니 게이트(PreprocessingChoice), 아니면 G3로."""
+    """전처리 결정 신뢰도 낮으면 미니 게이트(PreprocessingChoice), 아니면 G4로.
+
+    feature_engineer 가 실패해도 safe_node 가 state.error 만 세팅하고 흘려보내므로,
+    여기서 error 를 잡지 않으면 G4 게이트로 빈 proposals 가 흘러가며 사용자 입장에서
+    무한 로딩으로 보인다.
+    """
     state = _coerce_to_pipeline_state(state)
+    if state.error:
+        if state.auto_fix_attempts >= state.max_auto_fix_attempts:
+            return "error_recovery"
+        return "auto_error_handler"
     if state.preprocessing_plan and any(s.get("needs_review") for s in state.preprocessing_plan):
         return "preprocessing_choice"
-    return "gate_model_strategy"  # G3 게이트 — 모델 전략 선택
+    return "gate_model_strategy"  # G4 게이트 — 모델 전략 선택
 
 
 def route_after_metrics(state: PipelineState) -> str:
@@ -202,9 +211,17 @@ def route_after_metrics(state: PipelineState) -> str:
 
 
 def route_after_g4(state: PipelineState) -> str:
-    """G4 응답에 따라 finetune 갈지 평가로 갈지."""
+    """G5 응답에 따라 finetune 갈지 평가로 갈지.
+
+    이전엔 state.error 를 보지 않아, 학습/메트릭 단계가 한도 내에서 실패해도
+    eval_agent 로 넘어가 cascade 가 길어졌다. error 라우팅 추가.
+    """
     state = _coerce_to_pipeline_state(state)
-    g4 = state.gate_responses.get("G4", {})
+    if state.error:
+        if state.auto_fix_attempts >= state.max_auto_fix_attempts:
+            return "error_recovery"
+        return "auto_error_handler"
+    g4 = state.gate_responses.get("G5", {})
     if g4.get("user_choice", {}).get("requires_finetune"):
         return "fine_tune_executor"
     return "eval_agent"
@@ -216,7 +233,7 @@ def route_after_eval(state: PipelineState) -> str:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
-    # 재루프(re_loop) 제거 — LLM 평가 실패 시 재훈련보다 G5 진행을 우선
+    # 재루프(re_loop) 제거 — LLM 평가 실패 시 재훈련보다 G6 진행을 우선
     return "explainability"
     return "error_recovery"
 
@@ -349,7 +366,12 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_conditional_edges(
         "feature_engineer",
         route_after_feature_engineer,
-        {"preprocessing_choice": "preprocessing_choice", "gate_model_strategy": "gate_model_strategy"},
+        {
+            "preprocessing_choice": "preprocessing_choice",
+            "gate_model_strategy": "gate_model_strategy",
+            "auto_error_handler": "auto_error_handler",
+            "error_recovery": "error_recovery",
+        },
     )
     g.add_conditional_edges(
         "metrics_aggregator",
@@ -363,7 +385,12 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_conditional_edges(
         "gate_best_model",
         route_after_g4,
-        {"fine_tune_executor": "fine_tune_executor", "eval_agent": "eval_agent"},
+        {
+            "fine_tune_executor": "fine_tune_executor",
+            "eval_agent": "eval_agent",
+            "auto_error_handler": "auto_error_handler",
+            "error_recovery": "error_recovery",
+        },
     )
     g.add_conditional_edges(
         "eval_agent",

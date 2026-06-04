@@ -1,10 +1,10 @@
-"""agents.handlers.timeseries.proposer — 시계열 G1/G2 fallback 제안 (CS 담당, cs-day4 v2).
+"""agents.handlers.timeseries.proposer — 시계열 G2/G3 fallback 제안 (CS 담당, cs-day4 v2).
 
 LLM 실패 시 dispatcher (gates/) 가 본 함수를 호출하여 fallback.
 
 진입함수 (dispatcher 자동 등록):
-  - g1(state) -> list[dict]   G1 3 안 (단기 예측 / 이상 시점 / 계절 분해) — eda 기반 점수 조정
-  - g2(state) -> list[dict]   G2 카테고리 (timeseries 유지)
+  - g1(state) -> list[dict]   G2 3 안 (단기 예측 / 이상 시점 / 계절 분해) — eda 기반 점수 조정
+  - g2(state) -> list[dict]   G3 카테고리 (timeseries 유지)
 
 DoD: g1 list 길이 ≥ 3 + g2 list 길이 ≥ 1 + 모든 score ∈ [0.0, 1.0].
 
@@ -69,7 +69,7 @@ def _build_rationale(title: str, eda: dict, n: int) -> str:
 # §A~§E. g1 — 3 recipe 점수 조정
 # ════════════════════════════════════════════════════════════════
 def g1(state: Any) -> list[dict[str, Any]]:
-    """G1 3 안 fallback — eda 기반 점수 조정 (단기/이상/계절)."""
+    """G2 3 안 fallback — eda 기반 점수 조정 (단기/이상/계절)."""
     # ── A-1 : eda_summary 존재 가드 ──
     eda = _eda_dict(state)
     if not eda:
@@ -142,7 +142,7 @@ def g1(state: Any) -> list[dict[str, Any]]:
 # §E-2. g2 — 카테고리 유지
 # ════════════════════════════════════════════════════════════════
 def g2(state: Any) -> list[dict[str, Any]]:
-    """G2 방법론 — 시계열 카테고리 유지 우선."""
+    """G3 방법론 — 시계열 카테고리 유지 우선."""
     return [
         {
             "id": 1,

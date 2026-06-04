@@ -182,6 +182,6 @@ async def root() -> dict[str, Any]:
         "name": "ADA v2",
         "categories": ["tabular_ml", "tabular_dl", "timeseries", "anomaly_detection"],
         "outputs": ["OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07"],
-        "gates": ["G0", "G1", "G2", "G3", "G4", "G5"],
+        "gates": ["G1", "G2", "G3", "G4", "G5", "G6"],
         "agents": 27,
     }

@@ -1,4 +1,4 @@
-"""agents.gates.model_strategy_proposer — G3 최종 모델 전략."""
+"""agents.gates.model_strategy_proposer — G4 최종 모델 전략."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from agents.gates._base_gate import BaseGate
 
 SYSTEM_PROMPT = (
     "You are a modeling architect. "
-    "Given the data profile, EDA summary, and the G2 methodology chosen by the user, "
+    "Given the data profile, EDA summary, and the G3 methodology chosen by the user, "
     "propose exactly TWO distinct model strategy options. "
     "For each option write a concise Korean rationale of 1-2 sentences: "
     "why this strategy fits the data, and what result the user can expect. Keep it short and clear. "
@@ -100,9 +100,9 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
 
 
 class ModelStrategyProposerAgent(BaseGate):
-    """G3 — 모델 전략 (예: '경량 ML 3종 비교' vs '트랜스포머 1종 강화')."""
+    """G4 — 모델 전략 (예: '경량 ML 3종 비교' vs '트랜스포머 1종 강화')."""
 
-    gate_code = "G3"
+    gate_code = "G4"
     model_name = "claude-opus-4-6"
     n_proposals = 2
 
@@ -111,7 +111,7 @@ class ModelStrategyProposerAgent(BaseGate):
             "category": state.category,
             "data_profile_rows": (state.data_profile or {}).get("rows"),
             "data_profile_cols": (state.data_profile or {}).get("cols"),
-            "g2_choice": (state.gate_responses or {}).get("G2", {}).get("user_choice"),
+            "g2_choice": (state.gate_responses or {}).get("G3", {}).get("user_choice"),
             "eda_summary": state.eda_summary,
         }
         try:

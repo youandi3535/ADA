@@ -1,6 +1,6 @@
 """agents.fine_tune_executor — FineTuneExecutorAgent (Day08).
 
-G4 응답이 ``requires_finetune=True`` 일 때만 활성. 트랜스포머 계열 best_model 을
+G5 응답이 ``requires_finetune=True`` 일 때만 활성. 트랜스포머 계열 best_model 을
 한 번 더 미세조정한다. 비-트랜스포머 모델은 그대로 통과.
 """
 

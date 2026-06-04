@@ -187,14 +187,14 @@ _FLOW_HTML = """
 const steps=[{label:'업로드',sub:'G1 · 데이터 파악'},{label:'분석 방향',sub:'G2 · EDA'},{label:'방법론',sub:'G3 · 전처리'},{label:'모델 전략',sub:'G4 · 피처링'},{label:'모델 선택',sub:'G5 · 학습·평가'},{label:'산출물',sub:'G6 · 리포트'},{label:'완료',sub:'G7 · 인사이트'}];
 const N=steps.length, LAST=N-1;
 const ANALYZE_EST=45;  // 분석 중 진행률 추정용(초)
-const GATE_TITLE={G1:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G2:['어떤 방법론으로 진행할까요?','Choose your methodology'],G3:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G4:['어떤 모델을 채택할까요?','Pick the best model'],G5:['어떤 산출물을 만들까요?','Choose your outputs']};
+const GATE_TITLE={G2:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G3:['어떤 방법론으로 진행할까요?','Choose your methodology'],G4:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G5:['어떤 모델을 채택할까요?','Pick the best model'],G6:['어떤 산출물을 만들까요?','Choose your outputs']};
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
 let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
-let g5Checked={};  // G5 멀티선택 상태 {proposal_id: bool}
-let gateCache={};  // {G1: gateData, G2: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
+let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
+let gateCache={};  // {G2: gateData, G3: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
 
 // ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
 // 1순위: URL 해시(#ada=…) — window.parent.history.replaceState 로 기록.
@@ -238,11 +238,11 @@ const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
-function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[1-5]$/.test(g))?g:null; }
+function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[2-6]$/.test(g))?g:null; }
 function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
 function isFailed(){ return (gateData.pipeline_status==='failed') || (status.status==='failed'); }
 function isCompleted(){
-  // 백엔드 status 를 우선 — 세 번째 fallback 조건은 G5 이후 최종 결과가 모두 갖춰진 경우만 허용.
+  // 백엔드 status 를 우선 — 세 번째 fallback 조건은 G6 이후 최종 결과가 모두 갖춰진 경우만 허용.
   // (jobId && !curGate() && hasResults()) 만으로는 분석 중간에도 true 가 되어
   // clearState() 가 호출되므로, 반드시 pipeline_status 확인을 추가한다.
   if(['completed','succeeded','success'].includes(status.status)) return true;
@@ -250,10 +250,19 @@ function isCompleted(){
   return false;
 }
 function analyzing(){ return !!(jobId && !curGate() && !isCompleted() && !isFailed()); }
+// 시프트 후 (2026-06-04) 매핑:
+//   백엔드 gate_code 'G2' (분석 방향) → 화면 cur=1  ←→  화면 G2 라벨
+//   백엔드 gate_code 'G3' (방법론)    → 화면 cur=2  ←→  화면 G3 라벨
+//   ...
+//   백엔드 gate_code 'G6' (산출물)    → 화면 cur=5  ←→  화면 G6 라벨
+// 즉 frontier = parseInt(gate_code[1]) - 1.
 function computeFrontier(){
   if(isCompleted()){ frontier=LAST; return; }
   const g=curGate();
-  frontier = g ? (+g[1]) : (jobId?1:0);
+  // 게이트 없음(분석 중): frontier=0 으로 리셋하면 follow=true 상태에서 cur 도 0 으로
+  // snap-back 되어 업로드 화면이 잠깐 보이다 다음 게이트로 점프하는 현상 발생.
+  // maxReached 를 사용해 이전 최고 단계를 유지.
+  frontier = g ? (+g[1] - 1) : (jobId ? maxReached : 0);
 }
 async function api(path, opts){
   const r=await fetch(API+path, opts||{});
@@ -270,8 +279,8 @@ async function doUpload(){
     fileId=up.file_id;
     const stt=await api('/pipeline/start',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({file_id:fileId,user_intent:intentText||null,requested_outputs:[]})});
-    // Phase 1 — G0 데이터 파악 단계 유지. cur=0 으로 두고 follow=false 로 자동 전환 방지.
-    // G1 proposals 도착 시점에 poll() 안에서 명시적으로 cur=1 전환 + follow=true 부여.
+    // Phase 1 — G1 데이터 파악 단계 유지. cur=0 으로 두고 follow=false 로 자동 전환 방지.
+    // G2 proposals 도착 시점에 poll() 안에서 명시적으로 cur=1 전환 + follow=true 부여.
     jobId=stt.job_id; follow=false; cur=0; frontier=0; maxReached=0; busy=false;
     gateData={}; analyzeStart=Date.now();
     saveState();
@@ -279,13 +288,13 @@ async function doUpload(){
   }catch(e){ errMsg='업로드/시작 실패 — '+e.message; busy=false; render(); }
 }
 async function doResume(){
-  const tg='G'+cur;
+  const tg='G'+(cur+1);  // cur(화면 인덱스) → 백엔드 게이트 코드. cur=1(분석방향)=G2 ... cur=5(산출물)=G6
   const ag=curGate();
   // cur 기준으로 올바른 proposals 선택 (이전 단계 재진행 시 캐시 사용)
   const d=(ag===tg)?gateData:(gateCache[tg]||{});
   const props=(d.proposals)||[];
   let choice;
-  if(curGate()==='G5'){
+  if(tg==='G6'){
     const outs=[];
     props.forEach(function(p){ if(g5Checked[p.id]&&p.outputs){ p.outputs.forEach(function(o){outs.push(o);}); } });
     if(!outs.length){ errMsg='최소 1개 이상 산출물을 선택하세요.'; render(); return; }
@@ -304,7 +313,7 @@ async function doResume(){
     // 이전 단계 재진행: 이후 게이트 캐시와 frontier 초기화
     if(cur < maxReached){
       Object.keys(gateCache).forEach(function(k){
-        if(parseInt(k.slice(1),10)>cur) delete gateCache[k];
+        if(parseInt(k.slice(1),10)>cur+1) delete gateCache[k];  // 새 컨벤션: 캐시 키 G2~G6, cur=1→G2 가 현재이므로 G3+ 삭제
       });
       frontier=cur; maxReached=cur;
     }
@@ -329,15 +338,17 @@ async function poll(){
     errMsg='이전 분석 세션이 만료됐습니다. 새 파일을 업로드해 주세요.';
     render(); return;
   }
-  computeFrontier(); maxReached=Math.max(maxReached,frontier);
-  // Phase 1 — G0 데이터 파악 완료(=백엔드가 G1 게이트 도달 + proposals 보유) + 클라이언트
-  // 표시 진행률이 99% 이상 도달한 시점에 cur=0 → cur=1 자동 전환.
-  // _shownPct 가 99 미만이면 _stageProgress 의 보간이 끝날 때까지 cur=0 화면을 유지하여,
-  // 사용자가 "G0 100% 표시 → G1 전환" 시퀀스를 시각적으로 끝까지 본다.
-  if(cur===0 && jobId && curGate()==='G1'
-      && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length
-      && _shownPct >= 99){
-    cur=1; follow=true;
+  computeFrontier();
+  // 백엔드 frontier 가 maxReached 보다 낮으면 이전 세션 stale 가능성 → 클램프.
+  // (정상 뒤로가기: frontier=현재게이트 ≥ maxReached 이므로 클램프 안 됨)
+  if(maxReached > frontier) maxReached=frontier;
+  maxReached=Math.max(maxReached,frontier);
+  // Phase 1 (2026-06-04 수정) — G1 데이터 파악 완료 신호만으로 cur 전환.
+  // 백엔드가 G2 게이트 도달했는데 proposals 가 비어 있는 경우(LLM 응답 직전·직렬화 실패 등)에도
+  // 클라이언트가 stuck 되지 않도록 proposals 조건 제거. G2 화면에서 contentGate 가 자체적으로
+  // loading→옵션 전환을 처리한다. _shownPct 는 100 으로 보존하여 시각 단절 방지.
+  if(cur===0 && jobId && curGate()==='G2' && _shownPct >= 99){
+    cur=1; follow=true; _progressKey='G2'; _shownPct=100;
   }
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
@@ -345,18 +356,29 @@ async function poll(){
   saveState();
   render();
   // resume 직후 Celery가 아직 task를 못 받아 Redis에 이전 게이트가 남아있을 수 있음 →
-  // lastSubmittedGate 와 현재 게이트가 같으면 계속 폴링, 달라지면(새 게이트 or null) 클리어
-  if(lastSubmittedGate && curGate()!==lastSubmittedGate) lastSubmittedGate=null;
-  const keepPolling=(analyzing() || !!lastSubmittedGate) && !paused;
+  // lastSubmittedGate 와 현재 게이트가 같으면 계속 폴링.
+  // 분석 중(curGate=null)에는 유지 — 새 게이트 등장 시에만 클리어.
+  if(lastSubmittedGate && curGate() && curGate()!==lastSubmittedGate) lastSubmittedGate=null;
+  // G1→G2 자동 전환 대기 중에는 polling 을 유지해야 한다.
+  // 백엔드가 G2 게이트 도달 시점에 analyzing()=false 가 되어 기존 조건만으론 폴링이 멈추고,
+  // 그 결과 _shownPct 가 99 에 도달해도 cur 전환을 못 한 채 화면이 stuck 된다(2026-06-04 발견).
+  const g0Pending = (cur===0 && jobId && _shownPct < 100);
+  const keepPolling=(analyzing() || !!lastSubmittedGate || g0Pending) && !paused;
   if(keepPolling){ pollTimer=setTimeout(poll, 2500); }
   else { polling=false; }
 }
 function startPolling(){ if(polling){ render(); return; } polling=true; clearTimeout(pollTimer); poll(); }
 
-// 0.5초 틱 — 진행률 보간을 더 부드럽게. 분석 종료 후에도 _shownPct 가 100% 에 도달할 때까지 계속 그린다.
+// 0.5초 틱 — 진행률 보간 + G1→G2 자동 전환 안전망(polling 멈춤 후에도 보간 완료 시 cur 전환).
 setInterval(function(){
   if(paused) return;
-  if(analyzing() || _shownPct < 100) render();
+  // G1→G2 자동 전환: polling 이 멈춘 케이스에 대비해 매 500ms 도 조건 재확인.
+  // proposals 조건 제거(2026-06-04) — G2 게이트 도달 신호만으로 전환.
+  if(cur===0 && jobId && curGate()==='G2' && _shownPct >= 99){
+    cur=1; follow=true; _progressKey='G2'; _shownPct=100;
+    saveState();
+  }
+  if(analyzing() || _shownPct < 100 || (cur===0 && jobId)) render();
 }, 500);
 
 // A 트랙(2026-06-04): 백엔드 BaseAgent 가 매초 phase 단위 진행률을 publish 하므로
@@ -371,7 +393,7 @@ setInterval(function(){
 let _shownPct=0;
 let _progressKey=null;
 function _stageProgress(){
-  const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+cur);
+  const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+(cur+1));  // 백엔드 게이트 코드: cur=0→G1 ... cur=5→G6
   if(_progressKey!==key){ _progressKey=key; _shownPct=0; }
   if(isFailed()) return 0;
   if(isCompleted()||cur===LAST){ _shownPct=100; return 100; }
@@ -379,19 +401,19 @@ function _stageProgress(){
   // 목표 진행률 계산
   let target;
   if(cur===0){
-    // Phase 1 — G0 데이터 파악 단계는 백엔드 진행률 0~18% 를 0~95% 로 정규화.
-    // G1 게이트(proposals 도착) 진입 = G0 완전 종료 → 100% 로 점프(잠시 후 cur=1 전환).
-    const g1Reached = curGate()==='G1' && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+    // Phase 1 — G1 데이터 파악 단계는 백엔드 진행률 0~18% 를 0~95% 로 정규화.
+    // G2 게이트(proposals 도착) 진입 = G1 완전 종료 → 100% 로 점프(잠시 후 cur=1 전환).
+    const g1Reached = curGate()==='G2' && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
     if(g1Reached){
       target=100;
     } else {
       const raw=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
-      // G0 의 백엔드 진행률 천장 = 18 (AGENT_PHASE_MAP 의 gate_direction 시작). 정규화.
+      // G1 의 백엔드 진행률 천장 = 18 (AGENT_PHASE_MAP 의 gate_direction 시작). 정규화.
       target=Math.min(95, Math.round((raw/18)*95));
     }
   } else {
-    // 게이트 단계(G1~G5): proposals 도착=100%, 아니면 백엔드 progress_pct 그대로.
-    const tg='G'+cur;
+    // 게이트 단계(G2~G6): proposals 도착=100%, 아니면 백엔드 progress_pct 그대로.
+    const tg='G'+(cur+1);  // cur 1~5 → 백엔드 G2~G6
     const ag=curGate();
     const d=(ag===tg)?gateData:(gateCache[tg]||{});
     const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
@@ -473,7 +495,7 @@ function gateHeader(g){
     +((cat||tgt)?('<div class="databar"><span class="t">✓ 데이터 분석 완료</span>'+cat+tgt+'</div>'):'');
 }
 function propCard(p, idx, recId){
-  const g5=curGate()==='G5';
+  const g5=curGate()==='G6';
   const sel=g5?(g5Checked[p.id]?' sel':''):((selId===p.id)?' sel':'');
   const rec=(!g5&&p.id===recId)?'<span class="rec">추천</span>':'';
   let extra='';
@@ -485,15 +507,47 @@ function propCard(p, idx, recId){
 }
 function customCard(n){
   const sel=(selId==='custom')?' sel':'';
-  const g=curGate()||('G'+(cur));
-  const ph=g==='G5'?'예) PPT, 대시보드, 인사이트 요약 (선택: PPT · PDF 보고서 · 발표 대본 · 대시보드 · 인사이트)':'예) 1등석 여성 승객의 생존 요인을 집중 분석하고 싶어요';
-  const title=g==='G5'?'직접 선택':'직접 입력';
+  const g=curGate()||('G'+(cur+1));  // 새 컨벤션: cur=1(분석방향)→G2 ... cur=5(산출물)→G6
+  const ph=g==='G6'?'예) PPT, 대시보드, 인사이트 요약 (선택: PPT · PDF 보고서 · 발표 대본 · 대시보드 · 인사이트)':'예) 1등석 여성 승객의 생존 요인을 집중 분석하고 싶어요';
+  const title=g==='G6'?'직접 선택':'직접 입력';
   return '<div class="opt'+sel+'" data-pid="custom"><div class="ck">✓</div><div class="onum">OPTION 0'+(n+1)+'</div><h3>'+title+'</h3><div class="en2">Custom Direction</div>'
     +'<textarea id="cust" placeholder="'+ph+'"></textarea><div class="time">자유 입력</div></div>';
 }
+// G6 화면 상단에 표시할 학습·평가 리포트 카드 — best_model + eval_result 요약.
+// 사용자가 산출물을 선택하기 전에 "무엇이 학습됐는지" 확인할 수 있도록 한다.
+function g6ReportBlock(d){
+  const bm=d.best_model;
+  const ev=d.eval_result;
+  let parts='';
+  if(bm && typeof bm==='object'){
+    const nm=bm.model_name||bm.title||'?';
+    let metricLine='';
+    if(bm.metrics && typeof bm.metrics==='object'){
+      const ks=Object.keys(bm.metrics).slice(0,3);
+      metricLine=ks.map(function(k){return '<span class="chip">'+esc(k)+' <b>'+esc(bm.metrics[k])+'</b></span>';}).join('');
+    }
+    parts+='<div class="rcard" style="grid-column:1/-1;margin-bottom:14px">'
+      +'<h4>🏆 최적 모델 · '+esc(nm)+'</h4>'
+      +(metricLine?('<div style="margin-top:6px">'+metricLine+'</div>'):'')
+      +'</div>';
+  }
+  if(ev && typeof ev==='object'){
+    let inner='';
+    if(ev.rationale) inner+='<p class="rtext">'+esc(ev.rationale)+'</p>';
+    if(ev.metrics && typeof ev.metrics==='object'){
+      const ks=Object.keys(ev.metrics).slice(0,4);
+      inner+='<div style="margin-top:8px">'+ks.map(function(k){return '<span class="chip">'+esc(k)+' <b>'+esc(ev.metrics[k])+'</b></span>';}).join('')+'</div>';
+    }
+    if(inner) parts+='<div class="rcard" style="grid-column:1/-1;margin-bottom:14px"><h4>📊 평가 결과</h4>'+inner+'</div>';
+  }
+  return parts;
+}
+
 function contentGate(){
-  const tg='G'+cur;               // 사용자가 보고 싶은 게이트 (cur 기준)
+  const tg='G'+(cur+1);           // 사용자가 보고 싶은 게이트 (cur 기준). cur=1→G2 ... cur=5→G6
   const ag=curGate();             // 백엔드 현재 게이트
+  // 방금 제출한 게이트이고 다음 게이트 미도착(분석 중) → 캐시 proposals 재표시 방지
+  if(lastSubmittedGate===tg && !ag){ return gateHeader(tg)+loadingBlock(); }
   // 사용자 위치와 백엔드 위치가 같으면 실시간 gateData, 다르면 캐시 사용
   const d=(ag===tg)?gateData:(gateCache[tg]||{});
   const g=tg;
@@ -505,10 +559,12 @@ function contentGate(){
   let recId=llmProps.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, llmProps[0]).id;
   if(selId===null || selGate!==g){ selId=recId; selGate=g; }
   let cards=llmProps.map(function(p,i){ return propCard(p,i,recId); }).join('');
-  if(g==='G1'||g==='G2'||g==='G3'||g==='G4') cards+=customCard(llmProps.length);
+  if(g==='G2'||g==='G3'||g==='G4'||g==='G5') cards+=customCard(llmProps.length);
   let pop='';
-  if(animatedGate!==g){ pop=' popin'; animatedGate=g; if(g==='G5') g5Checked={}; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
-  return gateHeader(g)+'<div class="opts'+pop+'">'+cards+'</div>';
+  if(animatedGate!==g){ pop=' popin'; animatedGate=g; if(g==='G6') g5Checked={}; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
+  // G6 (산출물 선택) 상단에 학습·평가 리포트 표시
+  const reportTop=(g==='G6')?g6ReportBlock(d):'';
+  return gateHeader(g)+reportTop+'<div class="opts'+pop+'">'+cards+'</div>';
 }
 function rcard(title, inner){ return '<div class="rcard"><h4>'+title+'</h4>'+inner+'</div>'; }
 function contentResult(){
@@ -549,13 +605,13 @@ function contentResult(){
 }
 function content(i){
   if(i===0){
-    // Phase 1 — G0 단계가 두 가지 상태를 가진다.
+    // Phase 1 — G1 단계가 두 가지 상태를 가진다.
     //   (a) jobId 없음 → 파일 선택·의도 입력 화면(기존)
     //   (b) jobId 있음 + 분석 중 → 데이터 파악 진행 화면(15단계 백엔드 작업).
-    //       이 화면을 끝까지 보여주다 G1 proposals 도착 시 poll() 이 cur=1 로 전환.
+    //       이 화면을 끝까지 보여주다 G2 proposals 도착 시 poll() 이 cur=1 로 전환.
     if(jobId){
       return '<div class="ahdr"><h2>데이터를 파악하는 중입니다</h2>'
-        +'<div class="en">G0 — Data Understanding</div></div>'
+        +'<div class="en">G1 — Data Understanding</div></div>'
         +'<p class="desc">출처·스키마·도메인 의미·데이터 품질·카테고리 판정·PII 점검까지 마치는 중입니다. '
         +'끝나면 자동으로 분석 방향 추천이 표시됩니다.</p>'
         +loadingBlock();
@@ -621,7 +677,7 @@ function render(){
     if(it){ it.value=intentText; it.oninput=function(){ intentText=it.value; }; }
   }
   if(cur>=1 && cur<=5){
-    const isG5=curGate()==='G5';
+    const isG5=curGate()==='G6';
     document.querySelectorAll('.opt').forEach(function(el){ el.onclick=function(){
       const pid=el.dataset.pid;
       if(isG5){ g5Checked[+pid]=!g5Checked[+pid]; render(); }
@@ -638,13 +694,13 @@ function render(){
   prev.disabled=(cur===0);
   next.disabled=(cur>=maxReached);
   stop.style.display=(!paused && analyzing())?'inline-flex':'none';
-  const _tg='G'+cur;
+  const _tg='G'+(cur+1);  // 새 컨벤션: cur 인덱스 → 백엔드 게이트 코드
   const _cd=gateCache[_tg]||{};
   const _llmCount=function(d){ return (d.proposals||[]).filter(function(p){return !p.is_custom;}).length; };
   const atCurrentGate=(cur===frontier)&&!!curGate()&&_llmCount(gateData)>0;
   const atPastGate=(cur<frontier)&&cur>=1&&cur<=5&&_llmCount(_cd)>0;
   const atGate=atCurrentGate||atPastGate;
-  const g5ok=curGate()!=='G5'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
+  const g5ok=curGate()!=='G6'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
   prim.innerHTML=primaryLabel();
   prim.classList.toggle('resume', paused);
   if(busy) prim.disabled=true;
