@@ -90,7 +90,7 @@ class Job(Base):
     retry_count = Column(Integer, default=0)
     error_message = Column(Text)
     # v2 ALTER (§2)
-    current_gate = Column(String(8))  # G0..G5
+    current_gate = Column(String(8))  # G1..G6
     auto_resolved = Column(Boolean, default=False)
     requested_outputs = Column(JSONB, default=list)  # ["OUT-01","OUT-04",...]
     user_intent = Column(Text)

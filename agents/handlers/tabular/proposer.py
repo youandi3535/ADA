@@ -1,4 +1,4 @@
-"""agents.handlers.tabular.proposer — G1/G2 fallback (jh 담당)."""
+"""agents.handlers.tabular.proposer — G2/G3 fallback (jh 담당)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ def g1(state: Any) -> list[dict[str, Any]]:
 
 
 def g2(state: Any) -> list[dict[str, Any]]:
-    """G2 — n_rows 충분하면 DL 도 후보."""
+    """G3 — n_rows 충분하면 DL 도 후보."""
     profile = state.data_profile or {}
     n_rows = int(profile.get("rows", 0))
     base = [

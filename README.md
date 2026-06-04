@@ -162,7 +162,7 @@ CPU 친화적이고 GTX 1060 3GB VRAM 환경에서도 안정 동작하는 정형
 
 | Day | 제목 | 핵심 산출물 |
 |---|---|---|
-| 15 | 산출물 패밀리 확장 | 5종 생성기 (OUT-01/02/03/04/07) + OutputTypeSelector (G5) + 병렬 fan-out |
+| 15 | 산출물 패밀리 확장 | 5종 생성기 (OUT-01/02/03/04/07) + OutputTypeSelector (G6) + 병렬 fan-out |
 | 16 | Guardian v2 자동 오류 처리 | 5-Tier AutoErrorHandler · Static Fixers 6종 · Error KB · Ollama coder · Claude CLI |
 | 17 | 보안 풀스택 | JWT · RBAC · RLS · PII · 프롬프트 인젝션 · Vault · 감사로그 · 침투 50종 |
 | 18 | 웹 대시보드 + 에이전트 현황판 | 3페이지 (현황판/분석시작/잡히스토리) · 게이트 카드 UI 12 컴포넌트 |
@@ -204,13 +204,13 @@ sec 프로파일 추가:
 
 | 게이트 | 시점 | 사용자 입력 | 자동 처리 정책 |
 |---|---|---|---|
-| **G0** | 데이터 업로드 직후 | 자유 텍스트 (의도) | 즉시 |
+| **G1** | 데이터 업로드 직후 | 자유 텍스트 (의도) | 즉시 |
 | **G0_PII** | PII 감지 시 (조건부) | 컬럼별 마스킹/제외/유지 | 24h → 기본=마스킹 |
-| **G1** | 데이터 프로파일링 후 | 3안 중 1안 선택 | 24h → 1순위 자동 채택 |
-| **G2** | EDA 후 | 방법론 1개 선택 (정형 ML / 정형 DL / 시계열 / 이상탐지) | 24h → 자동 |
-| **G3** | 전처리 + FE 후 | 모델 전략 1개 선택 | 24h → 자동 |
-| **G4** | Top-3 학습 후 | 비교표에서 최적 모델 선택 | 24h → 자동 |
-| **G5** | 평가 완료 후 | 산출물 5종 중 다중 선택 (체크박스) | 24h → 기본 [OUT-01, OUT-02] |
+| **G2** | 데이터 프로파일링 후 | 3안 중 1안 선택 | 24h → 1순위 자동 채택 |
+| **G3** | EDA 후 | 방법론 1개 선택 (정형 ML / 정형 DL / 시계열 / 이상탐지) | 24h → 자동 |
+| **G4** | 전처리 + FE 후 | 모델 전략 1개 선택 | 24h → 자동 |
+| **G5** | Top-3 학습 후 | 비교표에서 최적 모델 선택 | 24h → 자동 |
+| **G6** | 평가 완료 후 | 산출물 5종 중 다중 선택 (체크박스) | 24h → 기본 [OUT-01, OUT-02] |
 
 ### 27 에이전트 카탈로그
 
@@ -220,11 +220,11 @@ sec 프로파일 추가:
 | 02 | 입력·검증 | IntentElicitorAgent | Sonnet | 비즈니스 분석 인터뷰어 |
 | 03 | | DataProfilerAgent | none | 데이터 검수관 |
 | 04 | | SchemaValidatorAgent | none | 데이터 품질 감사관 |
-| 05 | 의사결정 게이트 | AnalysisProposerAgent | Opus | 데이터 전략 컨설턴트 (G1) |
-| 06 | | MethodologyProposerAgent | Sonnet | AutoML 자문가 (G2) |
-| 07 | | ModelStrategyProposerAgent | Opus | 모델링 아키텍트 (G3) |
-| 08 | | ModelComparisonReporterAgent | none | 모델 평가 리포터 (G4) |
-| 09 | | OutputTypeSelectorAgent | Sonnet | 리서치 디자인 큐레이터 (G5) |
+| 05 | 의사결정 게이트 | AnalysisProposerAgent | Opus | 데이터 전략 컨설턴트 (G2) |
+| 06 | | MethodologyProposerAgent | Sonnet | AutoML 자문가 (G3) |
+| 07 | | ModelStrategyProposerAgent | Opus | 모델링 아키텍트 (G4) |
+| 08 | | ModelComparisonReporterAgent | none | 모델 평가 리포터 (G5) |
+| 09 | | OutputTypeSelectorAgent | Sonnet | 리서치 디자인 큐레이터 (G6) |
 | 10 | 전처리·EDA | PreprocessingStrategistAgent | Sonnet | 시니어 데이터 엔지니어 |
 | 11 | | FeatureEngineerAgent | none | 피처 빌더 |
 | 12 | | EDAAgent | none | EDA 분석가 |
@@ -440,9 +440,9 @@ bash scripts/dev/end_of_day.sh
 | KP6 | AGENTS.md 자동 룰 ≥ 15 | Day20 |
 | KP7 | 자체학습 효과: 2회차 메트릭 +5%p, Optuna trial -30% | Day20 |
 | KP8 | 자동 오류 해결률 ≥ 60% (Guardian v2 5-Tier 기준) | Day20 |
-| KP9 | 트랜스포머 채택률 ≥ 25% (G4 기준) | Day20 |
+| KP9 | 트랜스포머 채택률 ≥ 25% (G5 기준) | Day20 |
 | KP10 | 보안 침투 0건 통과 (50종 페이로드) | Day20 |
-| KP11 | 사용자 1순위 채택률 ≥ 60% (G1 기준) | Day20 |
+| KP11 | 사용자 1순위 채택률 ≥ 60% (G2 기준) | Day20 |
 
 ---
 

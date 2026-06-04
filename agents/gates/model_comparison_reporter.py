@@ -1,4 +1,5 @@
-"""agents.gates.model_comparison_reporter — G4 Top-2 학습 결과 비교 + 커스텀 옵션."""
+"""agents.gates.model_comparison_reporter — G5 Top-2 학습 결과 비교 + 커스텀 옵션."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -22,15 +23,17 @@ _RATIONALE = [
 
 
 class ModelComparisonReporterAgent(BaseGate):
-    """G4 — 학습된 모델 Top-2 비교 + 커스텀 옵션. LLM 호출 없음."""
+    """G5 — 학습된 모델 Top-2 비교 + 커스텀 옵션. LLM 호출 없음."""
 
-    gate_code = "G4"
+    gate_code = "G5"
     uses_llm = False
 
     async def _propose(self, state: PipelineState) -> list[dict[str, Any]]:
         objective_metric = {
-            "tabular_ml": "val_f1", "tabular_dl": "val_f1",
-            "timeseries": "val_rmse", "anomaly_detection": "val_auc",
+            "tabular_ml": "val_f1",
+            "tabular_dl": "val_f1",
+            "timeseries": "val_rmse",
+            "anomaly_detection": "val_auc",
         }.get(state.category, "val_f1")
         direction = "min" if objective_metric == "val_rmse" else "max"
 
@@ -48,21 +51,22 @@ class ModelComparisonReporterAgent(BaseGate):
         for i, m in enumerate(models[:2], start=1):
             obj_val = _key(m)
             val_str = f"{obj_val:.4f}" if isinstance(obj_val, float) and abs(obj_val) < 1e17 else "—"
-            proposals.append({
-                "id": i,
-                "title": m.get("model_name", "?"),
-                "metrics": m.get("metrics") or {},
-                "minio_path": m.get("minio_path"),
-                "mlflow_run_id": m.get("mlflow_run_id"),
-                "model_sha256": m.get("model_sha256"),
-                "objective_value": obj_val,
-                "rationale": f"{_RATIONALE[i - 1]} ({objective_metric}: {val_str})",
-                "score": 1.0 - 0.15 * (i - 1),
-                "requires_finetune": False,
-            })
+            proposals.append(
+                {
+                    "id": i,
+                    "title": m.get("model_name", "?"),
+                    "metrics": m.get("metrics") or {},
+                    "minio_path": m.get("minio_path"),
+                    "mlflow_run_id": m.get("mlflow_run_id"),
+                    "model_sha256": m.get("model_sha256"),
+                    "objective_value": obj_val,
+                    "rationale": f"{_RATIONALE[i - 1]} ({objective_metric}: {val_str})",
+                    "score": 1.0 - 0.15 * (i - 1),
+                    "requires_finetune": False,
+                }
+            )
         if not proposals:
-            proposals = [{"id": 1, "title": "학습된 모델 없음",
-                          "rationale": "학습 결과가 없습니다.", "score": 0.0}]
+            proposals = [{"id": 1, "title": "학습된 모델 없음", "rationale": "학습 결과가 없습니다.", "score": 0.0}]
         return proposals + [_CUSTOM_OPTION]
 
     def _apply_choice(
@@ -78,8 +82,7 @@ class ModelComparisonReporterAgent(BaseGate):
         if isinstance(custom, str) and custom.strip():
             keyword = custom.strip().lower()
             matched = next(
-                (m for m in (state.trained_models or [])
-                 if keyword in (m.get("model_name") or "").lower()),
+                (m for m in (state.trained_models or []) if keyword in (m.get("model_name") or "").lower()),
                 None,
             )
             if matched:

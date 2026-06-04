@@ -8,13 +8,13 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 Category = Literal["tabular_ml", "tabular_dl", "timeseries", "anomaly_detection"]
-GateCode = Literal["G0", "G1", "G2", "G3", "G4", "G5"]
+GateCode = Literal["G1", "G2", "G3", "G4", "G5", "G6"]
 OutputCode = Literal["OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07"]
 
 
 class PipelineStartRequest(BaseModel):
     file_id: str
-    # 게이트 주도: 미지정 시 데이터 프로파일 기반 자동 탐지 → G1 에서 사용자 확인/override
+    # 게이트 주도: 미지정 시 데이터 프로파일 기반 자동 탐지 → G2 에서 사용자 확인/override
     category: Optional[Category] = None
     target_column: Optional[str] = None
     user_question: Optional[str] = None
@@ -63,18 +63,18 @@ class OutputItem(BaseModel):
     OUT-04 는 components.html 로 인라인 임베드, 나머지는 download_button 으로 처리.
     """
 
-    code: str                               # OUT-01..04, OUT-07
-    filename: str                           # presentation.pptx 등
-    minio_path: str                         # s3://bucket/outputs/...
+    code: str  # OUT-01..04, OUT-07
+    filename: str  # presentation.pptx 등
+    minio_path: str  # s3://bucket/outputs/...
     size_bytes: Optional[int] = None
     generation_ms: Optional[int] = None
     status: str = "completed"
-    url: Optional[str] = None               # presigned (1h)
+    url: Optional[str] = None  # presigned (1h)
     url_expires_in: int = 3600
 
 
 class PipelineResultResponse(BaseModel):
     job_id: str
-    status: str                             # job 상태 (completed / running / failed ...)
+    status: str  # job 상태 (completed / running / failed ...)
     outputs: list[OutputItem] = []
-    requested_outputs: list[str] = []       # 요청된 코드 (참고용)
+    requested_outputs: list[str] = []  # 요청된 코드 (참고용)

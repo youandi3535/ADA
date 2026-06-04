@@ -1,4 +1,4 @@
-"""agents.intent_elicitor -- IntentElicitorAgent (Day05 v2 / G0 gate).
+"""agents.intent_elicitor -- IntentElicitorAgent (Day05 v2 / G1 gate).
 
 free-form intent text -> structured intent_spec.
 """
@@ -70,9 +70,9 @@ class IntentElicitorAgent(BaseAgent):
                 }
 
             gate_responses = dict(state.gate_responses)
-            gate_responses["G0"] = {"intent_spec": spec}
+            gate_responses["G1"] = {"intent_spec": spec}
             return state.with_update(
                 gate_responses=gate_responses,
-                current_gate="G0",
+                current_gate="G1",
                 next_agent="data_profiler",
             )

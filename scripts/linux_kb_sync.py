@@ -28,9 +28,12 @@
   0 8,14,21 * * * cd /path/to/ADA && python3 scripts/linux_kb_sync.py --mode=both >> /var/log/ada_kb_sync.log 2>&1
 
 [환경변수 / .env]
-  KB_SERVER_URL       웹서버 주소  (기본: http://localhost:8000)
-  KB_COLLECT_SECRET   X-KB-Secret 헤더
-  DATABASE_URL        로컬 PostgreSQL (pgvector 포함)
+  KB_SERVER_URL          웹서버 주소  (기본: http://localhost:8000)
+  KB_COLLECT_SECRET      X-KB-Secret 헤더
+  DATABASE_URL           로컬 PostgreSQL (pgvector 포함, Docker 네트워크 기준)
+  KB_SYNC_DATABASE_URL   (선택) KB Sync 전용 DB URL. Docker 외부(Windows host/스케줄러)
+                         실행 시 'postgres' 컨테이너 alias 가 resolve 안 되므로
+                         published 포트(localhost:5433) 로 분리. 설정 시 DATABASE_URL 우선.
 """
 
 from __future__ import annotations
@@ -547,7 +550,10 @@ def main() -> None:
 
     server_url = _cfg("KB_SERVER_URL", "http://localhost:8000").rstrip("/")
     secret = _cfg("KB_COLLECT_SECRET", "")
-    db_url = _cfg("DATABASE_URL", "postgresql://autoai:changeme@postgres:5432/autoai")
+    # KB Sync 전용 DB URL 우선. 미설정 시 일반 DATABASE_URL fallback.
+    db_url = _cfg("KB_SYNC_DATABASE_URL", "") or _cfg(
+        "DATABASE_URL", "postgresql://autoai:changeme@postgres:5432/autoai"
+    )
 
     log.info(
         "KB Sync start  mode=%s  server=%s  limit=%d  dry_run=%s",

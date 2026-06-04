@@ -1,4 +1,4 @@
-"""agents.gates.analysis_proposer -- G1 analysis direction gate.
+"""agents.gates.analysis_proposer -- G2 analysis direction gate.
 
 Proposal structure:
   Option 1, 2 : LLM recommendations
@@ -123,9 +123,9 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
 
 
 class AnalysisProposerAgent(BaseGate):
-    """G1 -- LLM 2 proposals + fixed custom option 3."""
+    """G2 -- LLM 2 proposals + fixed custom option 3."""
 
-    gate_code = "G1"
+    gate_code = "G2"
     model_name = "claude-opus-4-6"
     n_proposals = 2  # LLM generates 2; option 3 is always _CUSTOM_OPTION
 
@@ -164,7 +164,7 @@ class AnalysisProposerAgent(BaseGate):
         user_choice: Any,
         proposals: list[dict[str, Any]],
     ) -> PipelineState:
-        """Apply G1 user selection to state.
+        """Apply G2 user selection to state.
 
         Frontend sends:
           Custom input  -> {adopted_rank: 0, custom_intent: "text"}

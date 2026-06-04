@@ -120,11 +120,11 @@ AGENT_PROGRESS_MAP["END"] = 100
 # 게이트 인터럽트(사용자 입력 대기) 시 표시할 진행률.
 # proposals 로드 완료 신호 → 프론트는 100% 로 올리므로 이 값은 "로딩 완료 직전" 수준.
 GATE_WAIT_PROGRESS: dict[str, int] = {
-    "G1": 18,
-    "G2": 33,
-    "G3": 50,
-    "G4": 85,
-    "G5": 98,
+    "G2": 18,
+    "G3": 33,
+    "G4": 50,
+    "G5": 85,
+    "G6": 98,
 }
 
 
@@ -263,7 +263,7 @@ def _get_callbacks() -> list:
 
 @celery_app.task(bind=True, name="ada.pipeline.run", max_retries=3)
 def run_pipeline_task(self: Any, job_id: str, initial_state: dict) -> dict:
-    """파이프라인 시작 — 첫 인터럽트(G1)까지 진행 후 대기 상태로 반환."""
+    """파이프라인 시작 — 첫 인터럽트(G2)까지 진행 후 대기 상태로 반환."""
     log.info("pipeline_start", job_id=job_id)
     publish_progress(job_id, "supervisor", "파이프라인 시작")
 
@@ -320,6 +320,12 @@ def _save_gate_data(job_id: str, final_dict: dict) -> None:
 
     API gate 엔드포인트가 matplotlib 등 워커 전용 패키지 없이도
     graph.get_state() 없이 이 키에서 데이터를 읽을 수 있다.
+
+    각 게이트 화면에서 직전 단계 결과를 표시하려면 그 결과 필드가
+    gate_data 안에 있어야 한다. 예:
+      - G3 (방법론): eda_summary (EDA 결과)
+      - G5 (모델 선택): best_model (학습 결과)
+      - G6 (산출물): eval_result + best_model + insights (학습평가 리포트)
     """
     gate = final_dict.get("current_gate")
     if not gate:
@@ -335,6 +341,15 @@ def _save_gate_data(job_id: str, final_dict: dict) -> None:
             "target_column": final_dict.get("target_column"),
             "insights": final_dict.get("insights"),
             "data_profile": final_dict.get("data_profile"),
+            # G3 이후 화면이 EDA 결과를 보여주기 위함
+            "eda_summary": final_dict.get("eda_summary"),
+            # G5 이후 화면이 학습 결과(최적 모델)를 표시하기 위함
+            "best_model": final_dict.get("best_model"),
+            # G6 화면이 학습·평가 리포트를 표시하기 위함
+            "eval_result": final_dict.get("eval_result"),
+            # G6/G7 산출물 영역을 즉시 표시
+            "requested_outputs": final_dict.get("requested_outputs") or [],
+            "output_paths": final_dict.get("output_paths") or {},
         }
         r.set(f"ada:gate_data:{job_id}", json.dumps(payload, ensure_ascii=False, default=str), ex=86400)
     except Exception:  # noqa: BLE001
@@ -571,7 +586,14 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         final_dict = _final_to_dict(final)
 
         # interrupt_after 는 pass-through 게이트에도 발화 → current_gate=None 이고
-        # 실제 완료 신호가 없으면 다음 게이트까지 ainvoke 반복
+        # 실제 완료 신호가 없으면 다음 게이트까지 ainvoke 반복.
+        #
+        # ❗ best_model 체크 제거 (2026-06-04):
+        #   best_model 은 metrics_aggregator 가 G5 (gate_best_model) 직전에 세팅한다.
+        #   G5 resume 시 _apply_choice 가 best_model 을 다시 채우는데, 이 체크가 살아 있으면
+        #   loop 가 G5 인터럽트 직후 종료되어 eval_agent → explainability → insight →
+        #   gate_outputs(G6) 까지 못 가고 is_terminal=True 로 잘못 완료 처리된다.
+        #   "정말 완료" 신호는 output_paths (report_composer 가 채움) 만으로 충분.
         _passes = len(_GN) + 2
         while (
             _passes > 0
@@ -579,7 +601,6 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             and not final_dict.get("current_gate")
             and not final_dict.get("error")
             and not final_dict.get("output_paths")
-            and not final_dict.get("best_model")
         ):
             final = await fresh_graph.ainvoke(None, config=config)
             final_dict = _final_to_dict(final)
@@ -613,7 +634,6 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             await _set_job_terminal(job_id, "failed", error=_leftover_err)
             return {"status": "failed", "error": _leftover_err}
 
-
         is_terminal = bool(final_dict) and not final_dict.get("current_gate")
         if is_terminal:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
@@ -631,6 +651,11 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                     _gd["best_model"] = final_dict["best_model"]
                 if final_dict.get("insights"):
                     _gd["insights"] = final_dict["insights"]
+                # G7 완료 화면이 평가 결과·EDA 요약까지 표시하도록 보존
+                if final_dict.get("eval_result"):
+                    _gd["eval_result"] = final_dict["eval_result"]
+                if final_dict.get("eda_summary"):
+                    _gd["eda_summary"] = final_dict["eda_summary"]
                 _r.set(f"ada:gate_data:{job_id}", json.dumps(_gd, ensure_ascii=False, default=str), ex=86400)
             except Exception:  # noqa: BLE001
                 pass

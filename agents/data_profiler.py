@@ -77,34 +77,43 @@ class DataProfilerAgent(BaseAgent):
                     next_agent="error_recovery",
                 )
 
-            # ② PII detection -- LLM  /  masking -- library
-            df, pii_extras = await self._llm_anonymize_df(df)
+            # ②③③.5 PII + 카테고리 + 도메인 분석 — asyncio.gather 로 병렬 실행
+            # 직렬 시 최대 90s+ 소요 → 병렬로 단일 LLM 왕복 시간(~20s)으로 단축.
+            import asyncio as _asyncio
 
-            # ③ Category / target detection -- LLM (only when unspecified)
-            category = state.category
-            target_column = state.target_column
-            detection: dict[str, Any] = {}
-            if (not category) or category in ("pending", "auto") or category not in CATEGORIES:
+            need_category = (
+                (not state.category) or state.category in ("pending", "auto") or state.category not in CATEGORIES
+            )
+            generic_for_cat = basic_dataframe_profile(df, target_column=None) if need_category else {}
+            intent = state.user_intent or state.user_question or ""
+
+            async def _detect_category_safe():
+                if not need_category:
+                    return state.category, state.target_column, {}
                 try:
-                    generic = basic_dataframe_profile(df, target_column=None)
-                    category, target_column, detection = await self._llm_detect_category(
-                        generic, df, state.user_intent or state.user_question or ""
-                    )
+                    return await self._llm_detect_category(generic_for_cat, df, intent)
                 except Exception as e:
                     self.logger.warning("llm_category_detection_failed", error=str(e))
-                    category, target_column = "tabular_ml", None
-                if category not in CATEGORIES:
-                    category = "tabular_ml"
-                await self._persist_detection(state, category, target_column)
+                    return "tabular_ml", None, {}
 
-            # ③.5 Domain analysis -- LLM (컬럼 의미·도메인·데이터셋 요약)
-            domain_analysis: dict[str, Any] = {}
-            try:
-                domain_analysis = await self._llm_domain_analysis(
-                    df, category, target_column, state.user_intent or state.user_question or ""
-                )
-            except Exception as e:
-                self.logger.warning("llm_domain_analysis_failed", error=str(e))
+            async def _domain_safe(cat, tgt):
+                try:
+                    return await self._llm_domain_analysis(df, cat, tgt, intent)
+                except Exception as e:
+                    self.logger.warning("llm_domain_analysis_failed", error=str(e))
+                    return {}
+
+            # PII + 카테고리 병렬 (도메인 분석은 카테고리 결과 필요 → 2단계)
+            (df, pii_extras), (category, target_column, detection) = await _asyncio.gather(
+                self._llm_anonymize_df(df),
+                _detect_category_safe(),
+            )
+            if category not in CATEGORIES:
+                category = "tabular_ml"
+            await self._persist_detection(state, category, target_column)
+
+            # 카테고리 확정 후 도메인 분석
+            domain_analysis: dict[str, Any] = await _domain_safe(category, target_column)
 
             # ④ Full statistics profile -- library
             profile = basic_dataframe_profile(df, target_column=target_column)
@@ -124,10 +133,25 @@ class DataProfilerAgent(BaseAgent):
                     self.logger.warning("profiler_handler_failed", category=category, error=str(e))
 
             merged_extras = _merge_pii_extras(state.category_extras, pii_extras)
+            # Phase 3+4 (2026-06-04) — Data Card v1 산출. 실패해도 본 흐름은 유지.
+            data_card: Any = None
+            try:
+                data_card = _build_data_card_v1(
+                    df,
+                    state,
+                    category,
+                    target_column,
+                    pii_extras or {},
+                    domain_analysis or {},
+                    profile,
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("data_card_build_failed", error=str(e))
             return state.with_update(
                 category=category,
                 target_column=target_column,
                 data_profile=profile,
+                data_card=data_card,
                 category_extras=merged_extras,
                 next_agent="schema_validator",
             )
@@ -311,3 +335,409 @@ def _merge_pii_extras(current_extras: dict[str, Any] | None, new_pii: dict[str, 
         "redaction": existing.get("redaction") or "***",
     }
     return extras
+
+
+# ============================================================================
+# Phase 3·4 (2026-06-04) — Data Card v1 빌더 + 카테고리 4종 특화 점검
+# ----------------------------------------------------------------------------
+# 데이터 파악 15 단계의 결과를 11 섹션 dict 로 통합하여 state.data_card 에 저장.
+# 다음 단계(EDA·전처리·게이트) 가 이 dict 를 참조한다.
+# ============================================================================
+
+
+def _safe_num(v: Any) -> Any:
+    """JSON/msgpack 직렬화 가능한 형태로 정리. numpy.float64 등도 강제 Python 기본 타입으로 변환."""
+    try:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, int):
+            return int(v)
+        if isinstance(v, float):
+            # numpy.float64 도 float 의 서브클래스 → 강제 Python float 로
+            f = float(v)
+            # NaN/Inf 는 msgpack 에서 처리 안 되는 경우 있어 None 으로
+            if f != f or f in (float("inf"), float("-inf")):
+                return None
+            return f
+        if isinstance(v, str):
+            return v
+        return float(v)
+    except Exception:
+        return None
+
+
+def _sanitize_for_serialization(obj: Any) -> Any:
+    """data_card 전체를 재귀 순회하며 numpy/pandas 타입을 Python 기본 타입으로 변환.
+    msgpack 이 인식하지 못하는 numpy.int64/float64/bool_, numpy.ndarray, pandas.Timestamp 등을 정리.
+    Celery 의 result_serializer='json' 환경에서도 안전.
+    """
+    try:
+        import numpy as _np
+        import pandas as _pd
+    except Exception:
+        _np = None  # type: ignore
+        _pd = None  # type: ignore
+    if obj is None or isinstance(obj, (str, bool)):
+        return obj
+    if isinstance(obj, int) and not isinstance(obj, bool):
+        return int(obj)
+    if isinstance(obj, float):
+        f = float(obj)
+        return None if (f != f or f in (float("inf"), float("-inf"))) else f
+    # numpy 스칼라
+    if _np is not None and isinstance(obj, _np.integer):
+        return int(obj)
+    if _np is not None and isinstance(obj, _np.floating):
+        f = float(obj)
+        return None if (f != f or f in (float("inf"), float("-inf"))) else f
+    if _np is not None and isinstance(obj, _np.bool_):
+        return bool(obj)
+    if _np is not None and isinstance(obj, _np.ndarray):
+        return [_sanitize_for_serialization(x) for x in obj.tolist()]
+    # pandas 타입
+    if _pd is not None and isinstance(obj, _pd.Timestamp):
+        return obj.isoformat()
+    if _pd is not None and isinstance(obj, (_pd.Series, _pd.Index)):
+        return [_sanitize_for_serialization(x) for x in obj.tolist()]
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_for_serialization(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_sanitize_for_serialization(x) for x in obj]
+    # 마지막 폴백 — 알 수 없는 객체는 문자열로
+    try:
+        return str(obj)
+    except Exception:
+        return None
+
+
+def _build_data_card_v1(
+    df: Any,
+    state: PipelineState,
+    category: str,
+    target_column: Any,
+    pii_extras: dict[str, Any],
+    domain_analysis: dict[str, Any],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    """15 단계 점검을 종합한 Data Card v1.
+
+    11 섹션:
+      §1 identity  §2 schema  §3 dictionary  §4 granularity  §5 dq_score
+      §6 category_target  §7 category_specific  §8 pii_legal
+      §9 temporal_drift  §10 reproducibility  §11 next_steps
+    """
+    import datetime
+    import hashlib
+
+    try:
+        n_rows, n_cols = int(df.shape[0]), int(df.shape[1])
+    except Exception:
+        n_rows, n_cols = 0, 0
+    columns = [str(c) for c in df.columns]
+    try:
+        dtypes = {c: str(df.dtypes[c]) for c in columns}
+    except Exception:
+        dtypes = {}
+    pii_cols = list((pii_extras or {}).get("columns") or [])
+
+    # §1 identity & provenance
+    identity = {
+        "file_id": state.file_id,
+        "job_id": state.job_id,
+        "collected_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "row_count": n_rows,
+        "col_count": n_cols,
+        "source_hint": "user_upload",  # 운영 환경에선 DB/API 식별자 주입 권장
+    }
+    # §2 schema
+    try:
+        mem = int(df.memory_usage(deep=True).sum())
+    except Exception:
+        mem = 0
+    schema = {
+        "columns": columns,
+        "dtypes": dtypes,
+        "memory_bytes": mem,
+        "index_type": str(type(df.index).__name__),
+    }
+    # §3 data dictionary (컬럼별 의미·단위·통계 요약)
+    column_meanings = (domain_analysis or {}).get("column_meanings") or {}
+    dictionary: dict[str, Any] = {}
+    for col in columns:
+        col_info: dict[str, Any] = {
+            "meaning": str(column_meanings.get(col, "")),
+            "dtype": dtypes.get(col, ""),
+            "is_target": (col == target_column),
+            "is_pii": col in pii_cols,
+        }
+        try:
+            s = df[col]
+            kind = getattr(s.dtype, "kind", "")
+            col_info["missing_pct"] = round(float(s.isna().mean()) * 100, 2)
+            col_info["nunique"] = int(s.nunique(dropna=True))
+            if kind in "iuf":
+                col_info["min"] = _safe_num(s.min()) if s.notna().any() else None
+                col_info["max"] = _safe_num(s.max()) if s.notna().any() else None
+                col_info["mean"] = _safe_num(s.mean()) if s.notna().any() else None
+            elif kind in "Mm":
+                col_info["min"] = str(s.min()) if s.notna().any() else None
+                col_info["max"] = str(s.max()) if s.notna().any() else None
+            else:
+                vc = s.value_counts(dropna=True).head(3)
+                col_info["top_values"] = {str(k): int(v) for k, v in vc.to_dict().items()}
+        except Exception:
+            pass
+        dictionary[col] = col_info
+    # §4 granularity
+    try:
+        dup_pct = round(float(df.duplicated().mean()) * 100, 2)
+    except Exception:
+        dup_pct = 0.0
+    pk_candidates = []
+    for c in columns:
+        try:
+            if df[c].nunique(dropna=True) == n_rows and df[c].notna().all():
+                pk_candidates.append(c)
+        except Exception:
+            continue
+    granularity = {
+        "unit_of_analysis": str((domain_analysis or {}).get("dataset_summary", ""))[:200],
+        "duplicate_pct": dup_pct,
+        "pk_candidates": pk_candidates[:5],
+    }
+    # §5 DQ Score (6 차원, 모두 0~1)
+    try:
+        completeness = 1.0 - float(df.isna().mean().mean())
+    except Exception:
+        completeness = 1.0
+    uniqueness = 1.0 - (dup_pct / 100.0)
+    # validity: dtype 가 object 가 아니거나(타입 명확), 또는 unique > 1 (모두 같은 값 아님)
+    validity_cnt = 0
+    for c in columns:
+        try:
+            if dtypes.get(c, "") != "object" or df[c].nunique(dropna=True) > 1:
+                validity_cnt += 1
+        except Exception:
+            continue
+    validity = validity_cnt / max(1, n_cols)
+    # consistency: 결측 패턴 상관 평균 (구조적 결측이면 1.0 에 가까움)
+    try:
+        if n_cols > 1:
+            mc = df.isna().corr().abs().fillna(0)
+            consistency = float(mc.values.mean())
+        else:
+            consistency = 1.0
+    except Exception:
+        consistency = 1.0
+    accuracy = 0.8  # 외부 검증 필요 영역 — 보수값
+    timeliness = 1.0  # 업로드 직후 = 최신으로 간주
+    overall = round((completeness + uniqueness + validity + consistency + accuracy + timeliness) / 6.0, 3)
+    dq_score = {
+        "completeness": round(completeness, 3),
+        "uniqueness": round(uniqueness, 3),
+        "validity": round(validity, 3),
+        "consistency": round(consistency, 3),
+        "accuracy": accuracy,
+        "timeliness": timeliness,
+        "overall": overall,
+    }
+    # §6 category & target
+    category_target = {
+        "category": category,
+        "target_column": target_column,
+        "reason": str((domain_analysis or {}).get("target_insight", "")),
+    }
+    # §7 category-specific
+    category_specific = _category_specific_checks(df, category, target_column, n_rows, columns, dtypes)
+    # §8 pii_legal
+    pii_legal = {
+        "pii_columns": pii_cols,
+        "masked": bool(pii_cols),
+        "license_status": "unknown",
+        "consent_status": "unknown",
+    }
+    # §9 temporal_drift
+    time_cols = []
+    for c in columns:
+        try:
+            if df[c].dtype.kind == "M":
+                time_cols.append(c)
+            elif any(tok in c.lower() for tok in ("date", "time", "ts", "일자", "시각")):
+                time_cols.append(c)
+        except Exception:
+            continue
+    temporal_drift = {
+        "has_time_column": bool(time_cols),
+        "time_columns": time_cols[:5],
+        "drift_risk_note": (
+            "운영 배포 시 train/test 시점 분리 필요" if time_cols else "시간 인덱스 없음 — 임의 split 가능"
+        ),
+    }
+    # §10 reproducibility
+    try:
+        sample_str = str(df.head(20).to_dict()).encode("utf-8", errors="replace")
+        data_hash = hashlib.sha256(sample_str).hexdigest()[:16]
+    except Exception:
+        data_hash = ""
+    reproducibility = {
+        "data_hash_sample": data_hash,
+        "seed": 42,
+        "schema_version": "data_card_v1",
+    }
+    # §11 next_steps (EDA·전처리·모델로 넘기는 권고)
+    next_steps: list[str] = []
+    if dq_score["overall"] < 0.7:
+        next_steps.append("DQ Score 낮음 → 전처리 단계에서 결측·중복 우선 처리")
+    if (not target_column) and category != "anomaly_detection":
+        next_steps.append("타깃 컬럼 미식별 → EDA 단계에서 후보 추가 검토")
+    if time_cols and category != "timeseries":
+        next_steps.append("시간 컬럼 발견 → 시계열 카테고리 재검토 가능")
+    if pii_cols:
+        next_steps.append("PII 컬럼 마스킹 적용 — 결과물 외부 공유 시 추가 검토")
+    if dup_pct > 5:
+        next_steps.append(f"중복 행 {dup_pct}% 발견 → 전처리에서 dedup 필요")
+    if not next_steps:
+        next_steps.append("EDA 단계로 진행 가능 — 특이사항 없음")
+
+    _card = {
+        "identity": identity,
+        "schema": schema,
+        "dictionary": dictionary,
+        "granularity": granularity,
+        "dq_score": dq_score,
+        "category_target": category_target,
+        "category_specific": category_specific,
+        "pii_legal": pii_legal,
+        "temporal_drift": temporal_drift,
+        "reproducibility": reproducibility,
+        "next_steps": next_steps,
+    }
+    # msgpack/JSON 직렬화 안전화 — 재귀로 numpy/pandas 타입을 Python 기본 타입으로 강제 변환.
+    # Celery 가 state.data_card 를 직렬화할 때 'Type is not msgpack serializable: numpy.float64'
+    # 같은 오류를 방지한다.
+    return _sanitize_for_serialization(_card)
+
+
+def _category_specific_checks(
+    df: Any,
+    category: str,
+    target_column: Any,
+    n_rows: int,
+    columns: list[str],
+    dtypes: dict[str, str],
+) -> dict[str, Any]:
+    """카테고리 4종 특화 사전 점검 (EDA 전).
+
+    tabular_ml: 클래스 균형, 타깃 누수 후보, 다중공선성 신호, 카디널리티 분포.
+    tabular_dl: 데이터 규모, 고카디널리티 임베딩 후보, 스케일 격차.
+    timeseries: 시간 컬럼, 빈도, gap, 멀티시리즈 ID, timezone.
+    anomaly_detection: 라벨 유무, contamination, 다변량 후보.
+    """
+    checks: dict[str, Any] = {"category": category}
+    try:
+        if category == "tabular_ml":
+            if target_column and target_column in df.columns:
+                vc = df[target_column].value_counts(dropna=True)
+                n = int(vc.sum())
+                if len(vc) <= 20 and n > 0:
+                    checks["task_type"] = "classification"
+                    checks["class_balance"] = {str(k): round(float(v / n), 3) for k, v in vc.items()}
+                    minor = float(vc.min())
+                    major = float(vc.max())
+                    checks["imbalance_ratio"] = round(major / max(1.0, minor), 2)
+                    checks["baseline_accuracy"] = round(major / n, 3)
+                else:
+                    checks["task_type"] = "regression"
+                    s = df[target_column].dropna()
+                    if len(s) > 0:
+                        checks["target_stats"] = {
+                            "mean": _safe_num(s.mean()),
+                            "std": _safe_num(s.std()) if len(s) > 1 else 0.0,
+                            "skew": _safe_num(s.skew()) if len(s) > 2 else 0.0,
+                        }
+            # 고카디널리티 범주 (>50)
+            checks["high_cardinality_cols"] = [
+                c for c in columns if dtypes.get(c, "") in ("object", "category") and df[c].nunique(dropna=True) > 50
+            ][:10]
+            if n_rows < 1000:
+                checks["dataset_size_note"] = "표본 부족 — ML 신뢰도 낮음"
+            elif n_rows > 1_000_000:
+                checks["dataset_size_note"] = "대용량 — 샘플링·DL 고려"
+            else:
+                checks["dataset_size_note"] = "ML 적정 규모"
+            # 타깃 누수 1차 의심: 컬럼명에 leak/leaked/post/after/result 등
+            leak_kw = ("leak", "post", "after", "result", "future")
+            checks["leakage_candidates"] = [
+                c for c in columns if c != target_column and any(k in c.lower() for k in leak_kw)
+            ][:5]
+        elif category == "tabular_dl":
+            checks["dataset_size_ok"] = bool(n_rows >= 10000)
+            checks["high_cardinality_embedding_candidates"] = [
+                c for c in columns if dtypes.get(c, "") in ("object", "category") and df[c].nunique(dropna=True) > 50
+            ][:10]
+            num_cols = [c for c in columns if dtypes.get(c, "").startswith(("int", "float"))]
+            ranges = []
+            for c in num_cols:
+                try:
+                    if df[c].notna().any():
+                        ranges.append(float(df[c].max()) - float(df[c].min()))
+                except Exception:
+                    continue
+            if ranges and min(ranges) > 0:
+                checks["scale_spread"] = round(max(ranges) / max(min(ranges), 1e-9), 2)
+            checks["seed"] = 42
+        elif category == "timeseries":
+            time_cols_kind = [c for c in columns if df[c].dtype.kind == "M"]
+            if not time_cols_kind:
+                # 휴리스틱: 컬럼명에 date/time/ts
+                for c in columns:
+                    if any(tok in c.lower() for tok in ("date", "time", "ts")):
+                        try:
+                            import pandas as pd
+
+                            pd.to_datetime(df[c], errors="raise")
+                            time_cols_kind.append(c)
+                            break
+                        except Exception:
+                            continue
+            checks["time_columns"] = time_cols_kind[:3]
+            if time_cols_kind:
+                try:
+                    import pandas as pd
+
+                    ts = pd.to_datetime(df[time_cols_kind[0]], errors="coerce").dropna().sort_values()
+                    if len(ts) > 1:
+                        diffs = ts.diff().dropna()
+                        if not diffs.empty:
+                            checks["frequency_hint"] = str(diffs.mode().iloc[0])
+                            checks["timezone"] = str(ts.dt.tz) if ts.dt.tz else "naive"
+                            checks["gap_count"] = int((diffs > diffs.median() * 2).sum())
+                except Exception:
+                    pass
+            checks["multi_series_id_candidates"] = [
+                c
+                for c in columns
+                if dtypes.get(c, "") in ("object", "category", "int64") and 1 < df[c].nunique(dropna=True) <= 100
+            ][:5]
+        elif category == "anomaly_detection":
+            if target_column and target_column in df.columns:
+                vc = df[target_column].value_counts(dropna=True)
+                n = int(vc.sum())
+                if len(vc) == 2 and n > 0:
+                    minor = float(vc.min())
+                    checks["labeled"] = True
+                    checks["contamination_pct"] = round((minor / n) * 100, 3)
+                else:
+                    checks["labeled"] = False
+            else:
+                checks["labeled"] = False
+                checks["contamination_pct"] = None
+            checks["dataset_size"] = n_rows
+            checks["anomaly_type_hint"] = "point_or_contextual"  # 도메인 입력 필요
+            num_cols = [c for c in columns if dtypes.get(c, "").startswith(("int", "float"))]
+            checks["numeric_feature_count"] = len(num_cols)
+    except Exception as e:  # noqa: BLE001
+        checks["error"] = str(e)
+    return checks
