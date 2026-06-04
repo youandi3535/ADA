@@ -81,34 +81,69 @@ celery_app.conf.update(
 # ---------------------------------------------------------------------------
 # Redis pub/sub progress
 # ---------------------------------------------------------------------------
-AGENT_PROGRESS_MAP: dict[str, int] = {
-    "supervisor": 3,
-    "intent_elicitor": 5,
-    "data_profiler": 8,
-    "schema_validator": 10,
-    "gate_direction": 15,
-    "eda_agent": 25,
-    "gate_methodology": 30,
-    "preprocessing_strategist": 33,
-    "feature_engineer": 38,
-    "preprocessing_choice": 40,
-    "gate_model_strategy": 45,
-    "model_selection": 50,
-    "hyperparameter_tuner": 55,
-    "training_executor": 65,
-    "training_monitor": 70,
-    "metrics_aggregator": 75,
-    "gate_best_model": 78,
-    "fine_tune_executor": 82,
-    "eval_agent": 86,
-    "explainability": 90,
-    "insight": 93,
-    "gate_outputs": 95,
-    "report_composer": 98,
-    "self_learning_dispatch": 99,
-    "error_recovery": 50,
-    "END": 100,
+# A 트랙(2026-06-04): agent 단위 단일 마일스톤(고정 %) 에서 phase 단위 (start, end) 범위로 확장.
+# BaseAgent 가 진입(start) → LLM 호출 전(llm_start) → LLM 호출 후(llm_end) → 종료(end) 4 시점에
+# publish_progress(progress=계산값) 를 호출하여 실제 시간 비례에 가깝게 진행률 보고.
+# (start, end) 폭은 그 agent 의 평균 작업 비중에 비례. 데이터 크기/방법에 따라 LLM 호출 시간이
+# 달라져도 phase 단위 4회 보고로 클라이언트가 시간 비례 화면을 그릴 수 있다.
+AGENT_PHASE_MAP: dict[str, tuple[int, int]] = {
+    "supervisor": (1, 3),
+    "intent_elicitor": (3, 5),
+    "data_profiler": (5, 12),
+    "schema_validator": (12, 14),
+    "gate_direction": (14, 18),
+    "eda_agent": (18, 28),
+    "gate_methodology": (28, 33),
+    "preprocessing_strategist": (33, 38),
+    "feature_engineer": (38, 43),
+    "preprocessing_choice": (43, 45),
+    "gate_model_strategy": (45, 50),
+    "model_selection": (50, 55),
+    "hyperparameter_tuner": (55, 65),
+    "training_executor": (65, 75),
+    "training_monitor": (75, 78),
+    "metrics_aggregator": (78, 82),
+    "gate_best_model": (82, 85),
+    "fine_tune_executor": (85, 88),
+    "eval_agent": (88, 92),
+    "explainability": (92, 95),
+    "insight": (95, 97),
+    "gate_outputs": (97, 98),
+    "report_composer": (98, 99),
+    "self_learning_dispatch": (99, 100),
+    "error_recovery": (50, 50),
 }
+# 호환: 기존 호출자들이 참조하는 AGENT_PROGRESS_MAP — 각 agent 의 end 값으로 자동 생성.
+AGENT_PROGRESS_MAP: dict[str, int] = {k: v[1] for k, v in AGENT_PHASE_MAP.items()}
+AGENT_PROGRESS_MAP["END"] = 100
+
+# 게이트 인터럽트(사용자 입력 대기) 시 표시할 진행률.
+# proposals 로드 완료 신호 → 프론트는 100% 로 올리므로 이 값은 "로딩 완료 직전" 수준.
+GATE_WAIT_PROGRESS: dict[str, int] = {
+    "G1": 18,
+    "G2": 33,
+    "G3": 50,
+    "G4": 85,
+    "G5": 98,
+}
+
+
+def agent_phase_progress(agent_key: str, phase: str) -> int:
+    """phase 별 진행률 계산. phase ∈ {start, llm_start, llm_end, end}.
+    LLM 호출이 없는 agent 도 start/end 만 publish 하면 자연스러운 두 시점 보고.
+    """
+    rng = AGENT_PHASE_MAP.get(agent_key)
+    if rng is None:
+        return AGENT_PROGRESS_MAP.get(agent_key, 0)
+    lo, hi = rng
+    width = hi - lo
+    if phase == "start":
+        return lo
+    if phase == "llm_start":
+        return int(lo + width * 0.25)
+    if phase == "llm_end":
+        return int(lo + width * 0.75)
+    return hi  # "end" 또는 알 수 없는 phase
 
 
 def _get_redis() -> Any:
@@ -124,6 +159,7 @@ def publish_progress(
     *,
     pipeline_status: str | None = None,
     error: str | None = None,
+    progress: int | None = None,
 ) -> None:
     """대시보드 SSE / WebSocket 채널.
 
@@ -131,11 +167,16 @@ def publish_progress(
         프론트는 이 값을 보고 폴링을 종료한다 (`error_recovery`가 보이는데도
         진행률이 멈춰 있는 좀비 상태 방지).
     error: 실패 시 사용자 안내용 메시지 (PII 마스킹 후 저장).
+    progress: 명시 진행률(0~100). 지정 시 그 값으로 발행, None 이면 AGENT_PROGRESS_MAP
+        의 agent 별 end 값으로 폴백(기존 호환). BaseAgent 는 phase 단위로 이 인자를
+        채워 호출해 시간 비례 진행을 구현한다.
     """
     r = _get_redis()
+    pct = progress if progress is not None else AGENT_PROGRESS_MAP.get(current_agent, 0)
+    pct = max(0, min(100, int(pct)))
     payload: dict[str, Any] = {
         "agent": current_agent,
-        "progress": AGENT_PROGRESS_MAP.get(current_agent, 0),
+        "progress": pct,
         "ts": time.time(),
         "message": message,
     }
@@ -354,7 +395,13 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
             await _set_job_terminal(job_id, "completed")
         else:
             gate = final_dict.get("current_gate") or "gate_wait"
-            publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")
+            publish_progress(
+                job_id,
+                gate,
+                "awaiting user input",
+                pipeline_status="awaiting_user",
+                progress=GATE_WAIT_PROGRESS.get(gate),
+            )
             _save_gate_data(job_id, final_dict)
             # resume 시 full state 복원을 위해 별도 저장 (aupdate_state partial 누락 방지)
             try:
@@ -436,66 +483,139 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         fs_gate_entry = full_state_dict.get("gate_responses", {}).get(gate_code, {})
         snap_gate_entry = new_responses.get(gate_code, {})
         new_responses[gate_code] = {
-            **fs_gate_entry,   # full_state proposals 를 base 로
+            **fs_gate_entry,  # full_state proposals 를 base 로
             **snap_gate_entry,  # snap 이 더 최신이면 덮어씀
             "user_choice": gate_response.get("choice"),  # 사용자 선택 항상 최우선
         }
 
-        # snap.values 를 base 로 사용해 EDA 등 계산된 필드를 보존
-        # full_state_dict 는 job_id 등 누락 필드 보완용으로만 사용
-        snap_dict: dict = {}
-        if isinstance(cur, dict):
-            snap_dict = dict(cur)
-        elif hasattr(cur, "model_dump"):
-            snap_dict = cur.model_dump()
-        elif hasattr(cur, "__dict__"):
-            snap_dict = dict(vars(cur))
-        # gate_code → LangGraph 노드명 매핑
-        _GATE_NODE = {
-            "G1": "gate_direction", "G2": "gate_methodology",
-            "G3": "gate_model_strategy", "G4": "gate_best_model", "G5": "gate_outputs",
-        }
-        gate_node_name = _GATE_NODE.get(gate_code)
+        from orchestrator.graph import GATE_NODES as _GN  # noqa: WPS433
 
-        base_state = {**full_state_dict, **snap_dict}  # snap 이 stale full_state 를 덮어씀
-        update_payload = {**base_state, "gate_responses": new_responses, "current_gate": None}
+        _gate_cls = next((cls for cls in _GN.values() if getattr(cls, "gate_code", None) == gate_code), None)
 
-        # G5: as_node 방식에서는 gate_outputs 노드가 재실행되지 않아 _apply_choice 가
-        # 호출되지 않음 → requested_outputs 가 state 에 반영 안 되는 버그.
-        # 사용자 선택을 여기서 직접 update_payload 에 주입해 report_composer 에 전달.
-        if gate_code == "G5":
-            _g5_choice = gate_response.get("choice") or {}
-            _g5_outs = _g5_choice.get("outputs")
-            _ALL_OUTS = {"OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07"}
-            if isinstance(_g5_outs, list):
-                _filtered = [o for o in _g5_outs if o in _ALL_OUTS]
-                if _filtered:
-                    update_payload["requested_outputs"] = _filtered
-                    log.info("g5_requested_outputs_injected", job_id=job_id, outputs=_filtered)
+        # 제출된 게이트보다 뒤에 있는 gate_responses 제거 + 다운스트림 상태 초기화
+        _gnum = int(gate_code[1]) if len(gate_code) == 2 and gate_code[0] == "G" and gate_code[1].isdigit() else 0
+        if _gnum > 0:
+            for _k in [
+                k for k in list(new_responses) if len(k) == 2 and k[0] == "G" and k[1:].isdigit() and int(k[1]) > _gnum
+            ]:
+                del new_responses[_k]
+            full_state_dict = {
+                **full_state_dict,
+                "preprocessing_plan": None,
+                "preprocessed_data_id": None,
+                "eda_charts": [],
+                "eda_summary": None,
+                "model_candidates": [],
+                "best_params": {},
+                "trained_models": [],
+                "training_warnings": [],
+                "best_model": None,
+                "eval_result": None,
+                "explanations": None,
+                "insights": None,
+                "output_paths": {},
+                "retry_count": 0,
+                "re_loop_count": 0,
+                "error": None,
+                "error_traceback": None,
+                "error_fingerprint": None,
+                "error_classified_as": None,
+                "next_agent": None,
+            }
+            try:
+                _get_redis().delete(f"ada:gate_data:{job_id}")
+            except Exception:  # noqa: BLE001
+                pass
 
-        # as_node 로 체크포인트 위치를 게이트 노드 실행 완료 시점으로 명시 →
-        # ainvoke(None) 이 게이트 다음 노드(model_selection 등)부터 재개
-        await graph.aupdate_state(config, update_payload, as_node=gate_node_name)
-        final = await graph.ainvoke(None, config=config)
+        # full_state_dict 가 비어 있으면 snap.values 로 보완 (jh 방식의 견고한 추출 적용)
+        if not full_state_dict.get("job_id"):
+            snap_dict: dict = {}
+            if isinstance(cur, dict):
+                snap_dict = dict(cur)
+            elif hasattr(cur, "model_dump"):
+                snap_dict = cur.model_dump()
+            elif hasattr(cur, "__dict__"):
+                snap_dict = dict(vars(cur))
+            full_state_dict = {**snap_dict, **full_state_dict}
+
+        # _apply_choice 를 미리 적용 (fresh invocation 의 게이트 통과 시 중복 적용되지만 멱등)
+        if _gate_cls:
+            try:
+                from ada.core.state import PipelineState as _PS  # noqa: WPS433
+
+                _base = {**full_state_dict, "gate_responses": new_responses}
+                _ps_fields = getattr(_PS, "model_fields", None) or _PS.__fields__
+                _temp = _PS(**{k: _base[k] for k in _ps_fields if k in _base})
+                _applied = _gate_cls()._apply_choice(
+                    _temp,
+                    gate_response.get("choice", {}),
+                    new_responses.get(gate_code, {}).get("proposals") or [],
+                )
+                for _f in _ps_fields:
+                    _orig, _new = getattr(_temp, _f, None), getattr(_applied, _f, None)
+                    if _new != _orig:
+                        full_state_dict = {**full_state_dict, _f: _new}
+            except Exception as _e:  # noqa: BLE001
+                log.warning("resume_apply_choice_failed", gate=gate_code, error=str(_e))
+
+        update_payload = {**full_state_dict, "gate_responses": new_responses, "current_gate": None}
+
+        # 항상 fresh invocation — 체크포인트 실행 위치에 의존하지 않음
+        fresh_cp = CompatMemorySaver()
+        fresh_graph = build_graph(checkpointer=fresh_cp)
+        from ada.core.state import PipelineState as _PS_r  # noqa: WPS433
+
+        _ps_r_fields = getattr(_PS_r, "model_fields", None) or _PS_r.__fields__
+        _fresh = _PS_r(**{k: update_payload[k] for k in _ps_r_fields if k in update_payload})
+        final = await fresh_graph.ainvoke(_fresh, config=config)
         final_dict = _final_to_dict(final)
 
-        # G4 eval 재루프 시 gate_best_model(interrupt_after)에서 조기 종료 방어:
-        # current_gate=None 인데 G5 proposals 가 없으면 ainvoke 한 번 더 실행.
-        if gate_code == "G4" and not final_dict.get("current_gate"):
-            _g5 = (final_dict.get("gate_responses") or {}).get("G5", {})
-            if not _g5.get("proposals") and not final_dict.get("error"):
-                log.info("g4_reloop_resume_extra", job_id=job_id)
-                final = await graph.ainvoke(None, config=config)
-                final_dict = _final_to_dict(final)
+        # interrupt_after 는 pass-through 게이트에도 발화 → current_gate=None 이고
+        # 실제 완료 신호가 없으면 다음 게이트까지 ainvoke 반복
+        _passes = len(_GN) + 2
+        while (
+            _passes > 0
+            and final_dict is not None
+            and not final_dict.get("current_gate")
+            and not final_dict.get("error")
+            and not final_dict.get("output_paths")
+            and not final_dict.get("best_model")
+        ):
+            final = await fresh_graph.ainvoke(None, config=config)
+            final_dict = _final_to_dict(final)
+            _passes -= 1
 
-        has_error = bool(final_dict.get("error"))
+        checkpointer = fresh_cp
+        log.info(
+            "resume_fresh_invocation",
+            gate=gate_code,
+            current_gate=final_dict.get("current_gate") if final_dict else None,
+        )
+
+        # 에러 잔존 시 failed 처리
+        if final_dict and final_dict.get("error"):
+            _leftover_err = str(final_dict.get("error", ""))
+            _leftover_tb = str(final_dict.get("error_traceback", ""))
+            log.warning("resume_ended_with_error", error=_leftover_err[:200])
+            try:
+                from ada.error_handler.auto_handler import capture_and_handle
+
+                await capture_and_handle(
+                    error_message=_leftover_err,
+                    stack_trace=_leftover_tb,
+                    job_id=job_id,
+                    source="runner_resume_end_state",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            _save_gate_data(job_id, final_dict)
+            publish_progress(job_id, "error_recovery", _leftover_err, pipeline_status="failed", error=_leftover_err)
+            await _set_job_terminal(job_id, "failed", error=_leftover_err)
+            return {"status": "failed", "error": _leftover_err}
+
+
         is_terminal = bool(final_dict) and not final_dict.get("current_gate")
-        if is_terminal and has_error:
-            # 에러로 인해 게이트가 스킵된 경우 — completed 가 아닌 failed 로 처리
-            _err = final_dict.get("error", "unknown error")
-            publish_progress(job_id, "error_recovery", _err, pipeline_status="failed", error=_err)
-            await _set_job_terminal(job_id, "failed", error=_err)
-        elif is_terminal:
+        if is_terminal:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
             await _set_job_terminal(job_id, "completed")
             # 완료 시 gate_data 갱신: gate 제거 + requested_outputs / best_model 보존
@@ -516,7 +636,13 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                 pass
         else:
             gate = final_dict.get("current_gate") or "gate_wait"
-            publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")
+            publish_progress(
+                job_id,
+                gate,
+                "awaiting user input",
+                pipeline_status="awaiting_user",
+                progress=GATE_WAIT_PROGRESS.get(gate),
+            )
             _save_gate_data(job_id, final_dict)
             # 다음 resume 를 위해 최신 full_state 저장 (stale 상태 덮어쓰기 방지)
             try:

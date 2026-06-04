@@ -131,10 +131,20 @@ class MethodologyProposerAgent(BaseGate):
     n_proposals = 2  # LLM generates 2; option 3 is always _CUSTOM_OPTION
 
     async def _propose(self, state: PipelineState) -> list[dict[str, Any]]:
+        # G1 선택 제목을 추출 — adopted_rank 숫자 대신 실제 방향 텍스트를 LLM 에 전달
+        g1_resp = (state.gate_responses or {}).get("G1", {})
+        g1_uc = g1_resp.get("user_choice") or {}
+        g1_rank = g1_uc.get("adopted_rank") if isinstance(g1_uc, dict) else None
+        g1_props = g1_resp.get("proposals") or []
+        g1_chosen = next(
+            (p for p in g1_props if isinstance(p, dict) and p.get("id") == g1_rank),
+            None,
+        )
         payload = {
             "category": state.category,
             "data_profile": state.data_profile,
-            "g1_choice": (state.gate_responses or {}).get("G1", {}).get("user_choice"),
+            "g1_direction": g1_chosen.get("title") if g1_chosen else (state.user_intent or ""),
+            "user_intent": state.user_intent,
         }
         try:
             raw = await self._call_llm(

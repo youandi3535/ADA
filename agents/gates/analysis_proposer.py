@@ -29,10 +29,50 @@ SYSTEM_PROMPT = (
     "For Option 1 pick the highest-confidence direction; "
     "for Option 2 pick the second-best direction that offers a meaningfully different angle. "
     "Both titles and rationales must be in Korean (1-2 sentences). "
+    "For EACH option, also determine:\n"
+    "  - category: one of tabular_ml | tabular_dl | timeseries | anomaly_detection\n"
+    "    (use anomaly_detection for clustering / unsupervised approaches)\n"
+    "  - approach: supervised_classification | supervised_regression | unsupervised_clustering"
+    " | anomaly_detection | time_series_forecasting | supervised_other\n"
+    "  - target_column: supervised target column name, or null for unsupervised\n"
     "Reply with a JSON array of exactly 2 objects, no markdown:\n"
-    '[{"id": 1, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0}, '
-    ' {"id": 2, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0}]'
+    '[{"id": 1, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0, '
+    '"category": "tabular_ml", "approach": "supervised_classification", "target_column": "col"}, '
+    '{"id": 2, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0, '
+    '"category": "anomaly_detection", "approach": "unsupervised_clustering", "target_column": null}]'
 )
+
+_UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
+
+# (category, keywords) — 앞쪽 항목일수록 우선순위 높음
+_CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
+    (
+        "anomaly_detection",
+        [
+            "클러스터",
+            "군집",
+            "cluster",
+            "비지도",
+            "unsupervised",
+            "이상탐지",
+            "anomaly",
+            "outlier",
+            "이상치",
+        ],
+    ),
+    ("timeseries", ["시계열", "예측", "forecast", "time series", "temporal"]),
+    ("tabular_dl", ["딥러닝", "deep learning", "transformer", "neural", "embedding"]),
+]
+
+
+def _infer_category_from_text(text: str, fallback: str) -> str:
+    """title/rationale 키워드로 category 를 추론. 매칭 없으면 fallback 반환."""
+    t = text.lower()
+    for cat, kws in _CATEGORY_KEYWORDS:
+        if any(k in t for k in kws):
+            return cat
+    return fallback
+
 
 _CUSTOM_OPTION: dict[str, Any] = {
     "id": 3,
@@ -146,6 +186,13 @@ class AnalysisProposerAgent(BaseGate):
         custom = uc.get("custom_intent")
         if isinstance(custom, str) and custom.strip():
             updates["user_intent"] = custom.strip()
+            # Method B: 키워드 휴리스틱으로 category 추론
+            if "category" not in updates:
+                inferred = _infer_category_from_text(custom.strip(), state.category)
+                if inferred != state.category:
+                    updates["category"] = inferred
+            if updates.get("category") in _UNSUPERVISED_CATEGORIES and "target_column" not in updates:
+                updates["target_column"] = None
             self.logger.info("g1_custom_intent_applied", intent=custom.strip()[:120])
         else:
             # adopted_rank 로 선택한 LLM 제안 반영
@@ -160,6 +207,36 @@ class AnalysisProposerAgent(BaseGate):
                 updates["user_intent"] = (
                     f"{base} (분석 방향: {direction})".strip() if base else f"분석 방향: {direction}"
                 )
-                self.logger.info("g1_proposal_adopted", rank=rank, title=direction)
+
+                # Method A: LLM 이 proposal 에 category 를 채워줬으면 그대로 반영
+                if "category" not in updates:
+                    new_cat = chosen.get("category")
+                    if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
+                        updates["category"] = new_cat
+                        self.logger.info("g1_category_changed", old=state.category, new=new_cat)
+
+                # Method B: LLM 이 category 를 안 채웠을 때 키워드 fallback
+                if "category" not in updates:
+                    inferred = _infer_category_from_text(direction, state.category)
+                    if inferred != state.category:
+                        updates["category"] = inferred
+                        self.logger.info("g1_category_inferred", direction=direction, category=inferred)
+
+                # 비지도 계열이면 target_column 무효화, 지도학습이면 LLM 제안 target 반영
+                if "target_column" not in updates:
+                    if updates.get("category", state.category) in _UNSUPERVISED_CATEGORIES:
+                        updates["target_column"] = None
+                    else:
+                        new_tgt = chosen.get("target_column")
+                        if isinstance(new_tgt, str) and new_tgt.strip():
+                            updates["target_column"] = new_tgt.strip()
+
+                self.logger.info(
+                    "g1_proposal_adopted",
+                    rank=rank,
+                    title=direction,
+                    category=updates.get("category"),
+                    target_column=updates.get("target_column"),
+                )
 
         return state.with_update(**updates) if updates else state

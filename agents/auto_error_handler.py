@@ -34,18 +34,25 @@ from agents.base import BaseAgent
 
 # action 분류 (auto_handler.py 의 반환값 기준)
 # Day24: auto_self_learning_match 추가 — SelfLearningKB 시맨틱 매칭도 RESOLVED.
+# Day25: Tier 0/2/3 가 검증 통과 즉시 git apply 하는 auto-apply 모드로 전환되어
+#         RESOLVED 집합이 auto_*_applied 3종 중심으로 확장됨. 큐 적재만 하고 끝나는
+#         경로는 사실상 없어졌고 (PATCH_QUEUED_ACTIONS 빈 집합), 다른 인스턴스에서
+#         재사용되는 케이스만 auto_self_learning_match / patch_reused_approved 로 남음.
 RESOLVED_ACTIONS = frozenset(
     {
         # ── 자동 적용 완료 (코드 수정까지 완료) ──────────────────────────────
-        "auto_kb_applied",  # Tier 0/legacy  static fixer diff 자동 적용
-        "auto_kb_match",  # 레거시 호환 alias
+        "auto_kb_applied",  # Tier 0  static fixer diff 자동 적용
+        "auto_kb_match",  # 레거시 호환 alias (예전 ErrorKB hash 매칭)
         "auto_self_learning_match",  # Tier 1  SelfLearningKB 시맨틱 매칭 + 패치 큐
-        "patch_reused_approved",  # 재사용 패치 승인 (apply-worker)
+        "patch_reused_approved",  # 재사용 패치 승인 (apply-worker, 레거시 호환)
         "auto_ollama_applied",  # Tier 2  Ollama diff 자동 적용
         "auto_claude_applied",  # Tier 3  Claude diff 자동 적용
     }
 )
-PATCH_QUEUED_ACTIONS = frozenset({"patch_queued_static"})
+# Day25 — Tier 0/2/3 모두 auto-apply 로 전환되어 본 집합은 비어 있음.
+# 이름은 verify_autofix_phase1.py 의 정적 검사가 의존하므로 유지.
+# 큐 적재 후 사람 검토만 하는 경로가 다시 도입되면 여기에 action 이름 추가.
+PATCH_QUEUED_ACTIONS: frozenset[str] = frozenset()
 # ADR-006 Phase 2-C/D/E: budget_exceeded / patch_rejected_scope 도 graceful degradation
 FAILED_ACTIONS = frozenset(
     {

@@ -44,6 +44,12 @@ class BaseAgent(abc.ABC):
     async def __call__(self, state: PipelineState) -> PipelineState:
         """진입점."""
 
+    @staticmethod
+    def _agent_progress_key(class_name: str) -> str:
+        """ClassName → snake_case key for AGENT_PROGRESS_MAP."""
+        name = class_name.removesuffix("Agent")
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
     @asynccontextmanager
     async def log_agent_run(self, state: PipelineState) -> AsyncIterator[None]:
         from ada.db.models import AgentRun
@@ -56,6 +62,20 @@ class BaseAgent(abc.ABC):
         self._current_job_id = state.job_id
         # Day 11 — per-agent KB 인용 카운터 리셋 (KP9 측정용)
         reset_kb_citation_counter()
+
+        # phase 단위 진행률 발행 — start 시점.
+        # 호환을 위해 기존 AGENT_PROGRESS_MAP/publish_progress 사용. end 는 finally 블록에서.
+        self._progress_agent_key: str | None = None
+        try:
+            from orchestrator.runner import AGENT_PHASE_MAP, agent_phase_progress, publish_progress
+
+            key = self._agent_progress_key(self.__class__.__name__)
+            if key in AGENT_PHASE_MAP and state.job_id:
+                self._progress_agent_key = key
+                publish_progress(state.job_id, key, progress=agent_phase_progress(key, "start"))
+        except Exception:
+            pass
+
         start = time.perf_counter()
         run_id = uuid.uuid4()
         if self.session is not None:
@@ -89,6 +109,19 @@ class BaseAgent(abc.ABC):
                 pass
             raise
         finally:
+            # phase='end' 발행 — agent 완전 종료 시점 (성공·실패 모두). 진행률이 다음 agent
+            # 시작 직전까지 그 agent 의 end 값을 유지하도록 보장.
+            if status == "completed" and self._progress_agent_key and state.job_id:
+                try:
+                    from orchestrator.runner import agent_phase_progress, publish_progress
+
+                    publish_progress(
+                        state.job_id,
+                        self._progress_agent_key,
+                        progress=agent_phase_progress(self._progress_agent_key, "end"),
+                    )
+                except Exception:
+                    pass
             duration_ms = int((time.perf_counter() - start) * 1000)
             log_agent_run(
                 job_id=state.job_id,
@@ -137,24 +170,91 @@ class BaseAgent(abc.ABC):
         prefix = f"{self.persona}\n\n" if self.persona else ""
         full_system = prefix + system_prompt
 
-        if settings.anthropic_api_key:
-            text = await self._call_llm_api(
-                system_prompt=full_system,
-                user_prompt=user_prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                model_name=model_name,
-            )
-        else:
-            text = await self._call_llm_cli(
-                system_prompt=full_system,
-                user_prompt=user_prompt,
-                max_tokens=max_tokens,
-            )
+        # LLM 호출 시작 시점 phase='llm_start' 발행 + 호출 중 매초 보간 task 가동.
+        # 호출 시간이 데이터·모델에 따라 가변이므로, llm_start→llm_end 사이를 elapsed/예측 시간
+        # 비례로 매초 갱신 → 클라이언트는 진짜 시간 비례 진행률을 본다.
+        interp_task = None
+        agent_key = getattr(self, "_progress_agent_key", None)
+        job_id = getattr(self, "_current_job_id", None)
+        if agent_key and job_id:
+            interp_task = await self._start_llm_progress_interp(agent_key, job_id)
+        try:
+            if settings.anthropic_api_key:
+                text = await self._call_llm_api(
+                    system_prompt=full_system,
+                    user_prompt=user_prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    model_name=model_name,
+                )
+            else:
+                text = await self._call_llm_cli(
+                    system_prompt=full_system,
+                    user_prompt=user_prompt,
+                    max_tokens=max_tokens,
+                )
+        finally:
+            # 보간 task 중지 + llm_end 발행 (성공·실패 모두).
+            if interp_task is not None:
+                interp_task.cancel()
+                try:
+                    await interp_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if agent_key and job_id:
+                try:
+                    from orchestrator.runner import agent_phase_progress, publish_progress
+
+                    publish_progress(job_id, agent_key, progress=agent_phase_progress(agent_key, "llm_end"))
+                except Exception:
+                    pass
 
         if json_mode:
             text = self._strip_md_fence(text)
         return text
+
+    async def _start_llm_progress_interp(self, agent_key: str, job_id: str):
+        """LLM 호출 도중 매초 llm_start→llm_end 사이를 보간 publish 하는 background task.
+
+        예상 시간(eta)은 EWMA 기반 동적 학습: 같은 agent 의 직전 LLM 호출 시간을 가중평균하여
+        다음 호출 eta 로 사용 → 데이터 크기/모델 변화에 자동 적응. 첫 호출은 보수적 기본값(15s).
+        보간이 llm_end 초과는 하지 않도록 cap.
+        """
+        import asyncio as _aio
+
+        from orchestrator.runner import agent_phase_progress, publish_progress
+
+        # class 변수로 EWMA 통계 보존 (워커 프로세스 lifetime)
+        cls = type(self)
+        if not hasattr(cls, "_llm_eta_ewma"):
+            cls._llm_eta_ewma = {}  # type: ignore[attr-defined]
+        eta = cls._llm_eta_ewma.get(agent_key, 15.0)  # type: ignore[attr-defined]
+
+        lo_pct = agent_phase_progress(agent_key, "llm_start")
+        hi_pct = agent_phase_progress(agent_key, "llm_end")
+        publish_progress(job_id, agent_key, progress=lo_pct)
+        self._llm_call_started_at = time.perf_counter()
+
+        async def _loop() -> None:
+            try:
+                while True:
+                    await _aio.sleep(1.0)
+                    elapsed = time.perf_counter() - self._llm_call_started_at
+                    ratio = min(1.0, elapsed / max(1.0, eta))
+                    pct = int(lo_pct + (hi_pct - lo_pct) * ratio)
+                    pct = max(lo_pct, min(hi_pct, pct))
+                    try:
+                        publish_progress(job_id, agent_key, progress=pct)
+                    except Exception:
+                        pass
+            except _aio.CancelledError:
+                # 실제 호출 시간으로 EWMA 갱신
+                actual = time.perf_counter() - self._llm_call_started_at
+                prev = cls._llm_eta_ewma.get(agent_key, actual)  # type: ignore[attr-defined]
+                cls._llm_eta_ewma[agent_key] = 0.3 * actual + 0.7 * prev  # type: ignore[attr-defined]
+                raise
+
+        return _aio.create_task(_loop())
 
     async def _call_llm_api(
         self,

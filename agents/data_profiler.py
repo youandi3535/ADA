@@ -3,6 +3,7 @@
 - File loading / statistics profile : library (pandas/numpy)
 - PII detection                      : LLM  / masking : library (PIIAnonymizer)
 - Category / target detection        : LLM
+- Domain analysis                    : LLM  (컬럼 의미·도메인·데이터셋 요약)
 
 수정 권한: HJ 단독 (dispatcher).
 """
@@ -41,6 +42,20 @@ _CATEGORY_SYSTEM_PROMPT = (
     "For anomaly_detection set target_column to null.\n\n"
     "Return ONLY JSON (no markdown):\n"
     '{"category": "tabular_ml", "target_column": "price", "reason": "brief"}'
+)
+
+_DOMAIN_SYSTEM_PROMPT = (
+    "You are an expert data analyst. "
+    "Given column names, data types, and sample rows from a dataset, analyze:\n"
+    "1. Which domain/industry this dataset belongs to (e.g. e-commerce, healthcare, finance, logistics, etc.)\n"
+    "2. What each column means in plain language\n"
+    "3. A 1-2 sentence Korean summary of what this dataset is about\n"
+    "4. Whether a clear prediction target exists, and why\n\n"
+    "Return ONLY JSON (no markdown), all text values in Korean:\n"
+    '{"domain": "e-commerce", '
+    '"dataset_summary": "이 데이터셋은 ...", '
+    '"column_meanings": {"col_name": "의미 설명", ...}, '
+    '"target_insight": "Survived 컬럼은 이진 분류의 타겟으로 적합합니다."}'
 )
 
 
@@ -82,10 +97,21 @@ class DataProfilerAgent(BaseAgent):
                     category = "tabular_ml"
                 await self._persist_detection(state, category, target_column)
 
+            # ③.5 Domain analysis -- LLM (컬럼 의미·도메인·데이터셋 요약)
+            domain_analysis: dict[str, Any] = {}
+            try:
+                domain_analysis = await self._llm_domain_analysis(
+                    df, category, target_column, state.user_intent or state.user_question or ""
+                )
+            except Exception as e:
+                self.logger.warning("llm_domain_analysis_failed", error=str(e))
+
             # ④ Full statistics profile -- library
             profile = basic_dataframe_profile(df, target_column=target_column)
             if detection:
                 profile["category_detection"] = detection
+            if domain_analysis:
+                profile["domain_analysis"] = domain_analysis
 
             # ⑤ Category-specific handler -- library (best-effort)
             handler = get_handler(category, "profile")
@@ -150,6 +176,42 @@ class DataProfilerAgent(BaseAgent):
         except Exception as e:
             self.logger.warning("llm_pii_anonymize_fallback", error=str(e))
             return df, {}
+
+    async def _llm_domain_analysis(self, df: Any, category: str, target_column: Any, intent: str) -> dict[str, Any]:
+        """LLM-based domain understanding: 컬럼 의미·도메인·데이터셋 요약."""
+        try:
+            sample = df.head(5).fillna("").astype(str).to_dict(orient="records")
+        except Exception:
+            sample = []
+        cols = list(map(str, df.columns))
+        try:
+            dtypes = {c: str(t) for c, t in df.dtypes.items()}
+        except Exception:
+            dtypes = {}
+        user_prompt = (
+            f"columns: {cols}\n"
+            f"dtypes: {_json.dumps(dtypes, ensure_ascii=False)}\n"
+            f"sample_rows (first 5): {_json.dumps(sample, ensure_ascii=False)[:3000]}\n"
+            f"detected_category: {category}\n"
+            f"detected_target: {target_column or 'none'}\n"
+            f"user_intent: {intent or 'none'}"
+        )
+        raw = await self._call_llm(
+            system_prompt=_DOMAIN_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            max_tokens=800,
+            temperature=0.2,
+            json_mode=True,
+        )
+        parsed = self._parse_json(raw)
+        if not isinstance(parsed, dict):
+            return {}
+        return {
+            "domain": parsed.get("domain", ""),
+            "dataset_summary": parsed.get("dataset_summary", ""),
+            "column_meanings": parsed.get("column_meanings", {}),
+            "target_insight": parsed.get("target_insight", ""),
+        }
 
     async def _llm_detect_category(
         self, profile: dict[str, Any], df: Any, intent: str

@@ -104,6 +104,7 @@ _FLOW_HTML = """
   .databar b{color:#176a45;}
   .loadwrap{text-align:center;margin-top:24px;}
   .loadtxt{font-size:22px;color:#52647d;}
+  .progbox{margin:28px auto 0;max-width:760px;text-align:center;}
   .lbar{height:20px;border-radius:10px;background:#e6edf6;overflow:hidden;max-width:760px;margin:22px auto 0;position:relative;}
   .lfill{height:100%;border-radius:10px;background:linear-gradient(90deg,#3f5d7e,#1f3e5c);transition:width .6s ease;}
   .lmeta{font-size:20px;color:#7e98ba;margin-top:16px;}
@@ -162,10 +163,14 @@ _FLOW_HTML = """
   .btn-primary{background:var(--deep);color:#fff;border:none;padding:18px 48px;box-shadow:0 13px 28px rgba(31,62,92,.26);}
   .btn-primary.resume{background:#1f7a52;}
   .btn-primary:disabled{opacity:.45;cursor:default;box-shadow:none;}
+  .btn-new{font-family:inherit;font-size:15px;font-weight:600;border-radius:999px;cursor:pointer;
+    background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
+    padding:7px 18px;margin-left:auto;margin-right:12px;white-space:nowrap;}
+  .btn-new:hover{background:rgba(255,255,255,.20);}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
   <div class="shell">
-    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span></div>
+    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><button class="btn-new" id="newBtn" style="display:none" onclick="resetAll()">＋ 새 분석</button><span class="status" id="status">대기</span></div>
     <div class="steps" id="steps"></div>
     <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
     <div class="card"><div class="content" id="content"></div>
@@ -189,6 +194,46 @@ let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg
 let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G5 멀티선택 상태 {proposal_id: bool}
+let gateCache={};  // {G1: gateData, G2: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
+
+// ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
+// 1순위: URL 해시(#ada=…) — window.parent.history.replaceState 로 기록.
+//   해시는 F5 후에도 URL 에 보존되며, origin 이슈 없이 동일 세션에서 접근 가능.
+// 2순위: window.parent.localStorage — 1순위 읽기 실패 시 폴백.
+var _FRESH_START=false;// __FRESH_START_INJECT__
+const _SK='ada_flow_v1';
+function _stateRead(){
+  try{
+    var h=window.parent.location.hash,m=h.match(/ada=([^&]*)/);
+    if(m) return decodeURIComponent(m[1]);
+  }catch(e){}
+  try{ return window.parent.localStorage.getItem(_SK); }catch(e){}
+  return null;
+}
+function saveState(){
+  if(!jobId) return;
+  if(isCompleted() || isFailed()){ clearState(); return; }
+  var d=JSON.stringify({jobId:jobId,fileId:fileId,cur:cur,maxReached:maxReached});
+  try{
+    var u=window.parent.location;
+    window.parent.history.replaceState({}, '', u.pathname+u.search+'#ada='+encodeURIComponent(d));
+  }catch(e){}
+  try{ window.parent.localStorage.setItem(_SK, d); }catch(e){}
+}
+function clearState(){
+  try{ window.parent.history.replaceState({}, '', window.parent.location.pathname); }catch(e){}
+  try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
+}
+function resetAll(){
+  clearState();
+  jobId=null; fileId=null; cur=0; frontier=0; maxReached=0;
+  paused=false; follow=true; busy=false; polling=false;
+  if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
+  status={}; gateData={}; selId=null; selectedFile=null;
+  intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
+  var nb=document.getElementById('newBtn'); if(nb) nb.style.display='none';
+  render();
+}
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성'};
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -196,7 +241,14 @@ function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s
 function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[1-5]$/.test(g))?g:null; }
 function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
 function isFailed(){ return (gateData.pipeline_status==='failed') || (status.status==='failed'); }
-function isCompleted(){ return ['completed','succeeded','success'].includes(status.status) || (gateData.pipeline_status==='completed') || (jobId && !curGate() && hasResults()); }
+function isCompleted(){
+  // 백엔드 status 를 우선 — 세 번째 fallback 조건은 G5 이후 최종 결과가 모두 갖춰진 경우만 허용.
+  // (jobId && !curGate() && hasResults()) 만으로는 분석 중간에도 true 가 되어
+  // clearState() 가 호출되므로, 반드시 pipeline_status 확인을 추가한다.
+  if(['completed','succeeded','success'].includes(status.status)) return true;
+  if(gateData.pipeline_status==='completed') return true;
+  return false;
+}
 function analyzing(){ return !!(jobId && !curGate() && !isCompleted() && !isFailed()); }
 function computeFrontier(){
   if(isCompleted()){ frontier=LAST; return; }
@@ -220,11 +272,16 @@ async function doUpload(){
       body:JSON.stringify({file_id:fileId,user_intent:intentText||null,requested_outputs:[]})});
     jobId=stt.job_id; follow=true; cur=1; frontier=1; maxReached=1; busy=false;
     gateData={}; analyzeStart=Date.now();
+    saveState();
     startPolling();
   }catch(e){ errMsg='업로드/시작 실패 — '+e.message; busy=false; render(); }
 }
 async function doResume(){
-  const props=(gateData.proposals)||[];
+  const tg='G'+cur;
+  const ag=curGate();
+  // cur 기준으로 올바른 proposals 선택 (이전 단계 재진행 시 캐시 사용)
+  const d=(ag===tg)?gateData:(gateCache[tg]||{});
+  const props=(d.proposals)||[];
   let choice;
   if(curGate()==='G5'){
     const outs=[];
@@ -236,13 +293,22 @@ async function doResume(){
     choice={adopted_rank:0, custom_intent:customText};
   } else if(selId!=null){ choice={adopted_rank:selId}; }
   else { choice={adopted_rank:(props[0]&&props[0].id)||1}; }
-  const gate=curGate() || ('G'+cur);
+  const gate=tg;  // curGate() 대신 cur 기준 게이트 코드 사용
   errMsg=''; busy=true; render();
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
-    lastSubmittedGate=gate;  // Celery가 task 집어가기 전에 Redis에 게이트 잔존 → 이 값이 바뀔 때까지 계속 폴링
-    follow=true; busy=false; gateData={}; selId=null; analyzeStart=Date.now();
+    lastSubmittedGate=gate;
+    // 이전 단계 재진행: 이후 게이트 캐시와 frontier 초기화
+    if(cur < maxReached){
+      Object.keys(gateCache).forEach(function(k){
+        if(parseInt(k.slice(1),10)>cur) delete gateCache[k];
+      });
+      frontier=cur; maxReached=cur;
+    }
+    // selId 를 초기화하지 않음 — 제출 직후 poll 이 돌아와도 선택이 옵션1로 리셋되지 않도록
+    follow=true; busy=false; gateData={}; analyzeStart=Date.now();
+    saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
 }
@@ -250,10 +316,22 @@ async function poll(){
   if(!jobId) return;
   try{ status=await api('/pipeline/status/'+jobId,{}); }catch(e){ status={_err:e.message}; }
   try{ gateData=await api('/pipeline/gate/'+jobId,{}); }catch(e){ gateData={proposals:[], _err:e.message}; }
+  // proposals 가 있는 게이트 응답은 캐시 — 이전 단계 뒤로가기 시 재사용
+  if(gateData.gate && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length){
+    gateCache[gateData.gate]=gateData;
+  }
+  // HTTP 4xx → 세션 만료(서버 재시작·DB 초기화): localStorage 정리 후 업로드 화면으로
+  if(status._err && /HTTP 4[0-9][0-9]/.test(status._err)){
+    clearState();
+    jobId=null; cur=0; frontier=0; maxReached=0; polling=false;
+    errMsg='이전 분석 세션이 만료됐습니다. 새 파일을 업로드해 주세요.';
+    render(); return;
+  }
   computeFrontier(); maxReached=Math.max(maxReached,frontier);
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
+  saveState();
   render();
   // resume 직후 Celery가 아직 task를 못 받아 Redis에 이전 게이트가 남아있을 수 있음 →
   // lastSubmittedGate 와 현재 게이트가 같으면 계속 폴링, 달라지면(새 게이트 or null) 클리어
@@ -264,47 +342,73 @@ async function poll(){
 }
 function startPolling(){ if(polling){ render(); return; } polling=true; clearTimeout(pollTimer); poll(); }
 
-// 1초 틱 — 분석 중 로딩바/경과시간 갱신
-setInterval(function(){ if(analyzing() && !paused) render(); }, 1000);
+// 0.5초 틱 — 진행률 보간을 더 부드럽게. 분석 종료 후에도 _shownPct 가 100% 에 도달할 때까지 계속 그린다.
+setInterval(function(){
+  if(paused) return;
+  if(analyzing() || _shownPct < 100) render();
+}, 500);
+
+// A 트랙(2026-06-04): 백엔드 BaseAgent 가 매초 phase 단위 진행률을 publish 하므로
+// 클라이언트 하드코딩(STAGE_AVG_SEC) 추정은 폐기. 백엔드 progress_pct 가 진실의 소스다.
+// 클라이언트는 그 값을 충실히 따라가되 (a) 단계 전환 시 0 리셋, (b) 큰 점프(예: 30→100)만
+// 부드럽게 보간(2초 안에 따라잡기), (c) 진행률이 거꾸로 가지 않도록 last-shown 유지.
+//
+// 단계의 의미:
+//   - cur=0 (업로드)  : jobId 없으면 0, 업로드 시작 후 백엔드 진행률 따름
+//   - cur=1~5 (게이트): proposals 도착 = 분석 끝 → 100% (단계 종료 신호)
+//   - cur=6 (완료)   : 항상 100%
+let _shownPct=0;
+let _progressKey=null;
+function _stageProgress(){
+  const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+cur);
+  if(_progressKey!==key){ _progressKey=key; _shownPct=0; }
+  if(isFailed()) return 0;
+  if(isCompleted()||cur===LAST){ _shownPct=100; return 100; }
+  if(cur===0 && !jobId){ _shownPct=0; return 0; }
+  // 목표 진행률: proposals 도착이면 100%, 아니면 백엔드 신호 그대로(없으면 0).
+  const tg='G'+cur;
+  const ag=curGate();
+  const d=(ag===tg)?gateData:(gateCache[tg]||{});
+  const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
+  let target;
+  if(ps.length){
+    target=100;
+  } else {
+    // 백엔드 신호가 진실 — 단, 단계 시작 직후 한두 차례 폴링까지는 0 일 수 있으므로
+    // _shownPct 유지 (백엔드 값이 도착하면 그쪽으로 따라간다).
+    target=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
+  }
+  // 점프 보간 — 매 호출(500ms) 최대 step 만큼 증가. step = max(2, diff/4) →
+  // 작은 차이는 즉시 따라잡고, 큰 점프(예: 30→100)는 약 2초간 부드럽게.
+  if(target>_shownPct){
+    const diff=target-_shownPct;
+    const step=Math.max(2, Math.ceil(diff/4));
+    _shownPct=Math.min(target, _shownPct+step);
+  }
+  // 거꾸로 가지 않음(백엔드 일시 감소도 무시).
+  return Math.round(_shownPct);
+}
 
 function failureBlock(){
-  const msg=gateData.pipeline_error||status.error||'알 수 없는 오류';
+  const msg=gateData.insights||gateData.pipeline_error||status.error||'알 수 없는 오류';
   return '<div class="loadwrap"><div class="loadtxt">⛔ 분석이 실패했습니다.</div>'
-    +'<div class="diag"><b>오류:</b> '+esc(msg)+'<br>'
+    +'<div class="diag">'+esc(msg)+'<br><br>'
     +'① 워커 로그 확인: <code>docker logs --tail 200 ada-worker-pipeline</code><br>'
     +'② 워커 재기동 후 새 파일로 재시도하세요.'
     +'</div></div>';
 }
 function loadingBlock(){
+  // 본 진행바·메타는 progressBar() 가 카드 하단에 일괄 표시 → 여기는 분석 중 텍스트와
+  // 현재 agent 라벨만 출력. 백엔드 무신호 5분 이상이면 진단 안내 추가.
   if(isFailed()) return failureBlock();
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
   const realP=(gateData.progress_pct!=null)?gateData.progress_pct:null;
-  // 지연/정체 판단 — 마지막 진행 갱신이 120초 이상 없으면 ETA 를 동결한다
-  let since=null;
-  if(gateData.progress_ts){ since=Math.max(0, Date.now()/1000 - gateData.progress_ts); }
-  const stale=(since!=null && since>120);
-  if(realP!=null){
-    const p=Math.max(2, Math.min(99, realP));
-    let etaStr='추정 중…';
-    if(stale){
-      etaStr='지연/멈춤 의심 — 추정 불가';
-    } else if(realP>5 && el>5){
-      // 진행률이 너무 낮으면 선형 외삽이 곧 elapsed 와 같아져 오해를 부른다 → 5% 미만은 표시 안 함
-      etaStr='약 '+fmtTime(Math.max(0, el*100/realP - el));
-    }
-    let agentLine='';
-    if(gateData.current_agent){ agentLine='<div class="lagent">현재 작업: <b>'+esc(AGENT_KO[gateData.current_agent]||gateData.current_agent)+'</b></div>'; }
-    let staleLine='';
-    if(since!=null){ staleLine=' · 마지막 갱신 '+fmtTime(since)+' 전'+(stale?' ⚠ 지연/멈춤 의심':''); }
-    return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine
-      +'<div class="lbar"><div class="lfill" style="width:'+p+'%"></div></div>'
-      +'<div class="lmeta">진행 <b>'+p+'%</b> · 분석 시간 <b>'+fmtTime(el)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'+staleLine+'</div></div>';
+  let agentLine='';
+  if(gateData.current_agent){
+    agentLine='<div class="lagent">현재 작업: <b>'+esc(AGENT_KO[gateData.current_agent]||gateData.current_agent)+'</b></div>';
   }
-  // 백엔드가 진행률을 안 보냄 → 가짜 % 대신 미정(indeterminate) 바 + 진단
   let diag='';
-  if(el>60 && el<=300){
-    diag='<div class="diag" style="border-color:#4a7fa5;background:#1e3a50">ℹ 분석 진행 중입니다. LLM 호출 또는 모델 학습 중일 수 있으며 최대 5분 소요됩니다. (<b>'+fmtTime(el)+'</b> 경과)</div>';
-  } else if(el>300){
+  if(realP==null && el>300){
     diag='<div class="diag">⚠ 백엔드에서 진행 신호가 <b>'+fmtTime(el)+'</b> 동안 없습니다. 워커가 실제로 분석 중이 아닐 가능성이 큽니다.<br>'
       +'① 워커 실행: <code>docker ps | grep worker</code> &nbsp; ② 로그: <code>docker logs --tail 120 ada-worker-pipeline</code><br>'
       +'③ <code>ANTHROPIC_API_KEY</code> 설정 여부 &nbsp; ④ 백엔드(api·worker) 파일 복사 후 <b>재기동</b> 했는지'
@@ -312,9 +416,31 @@ function loadingBlock(){
       +(gateData._state_error?('<br><b>state 오류:</b> '+esc(gateData._state_error)):'')
       +'</div>';
   }
-  return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석하는 중입니다…</div>'
-    +'<div class="lbar indet"><div class="lfill"></div></div>'
-    +'<div class="lmeta">분석 시간 <b>'+fmtTime(el)+'</b> · 백엔드 진행 신호 <b>대기 중</b></div>'+diag+'</div>';
+  return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine+diag+'</div>';
+}
+// 공통 진행바 — 1~7 모든 단계에서 카드 하단에 동일하게 표시.
+// 진행률은 _stageProgress() 가 단계 완료(proposals 도착·isCompleted)면 100% 강제 점프.
+function progressBar(){
+  if(isFailed()) return '';
+  const p=_stageProgress();
+  const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
+  let etaStr='';
+  if(p>=100){ etaStr='완료'; }
+  else if(analyzing()){
+    // ETA 는 elapsed × (남은%/현재%) 으로 외삽. 진행률이 너무 낮으면 표시 보류.
+    if(p>=5) etaStr='약 '+fmtTime(Math.max(0, el*(100-p)/p));
+    else etaStr='추정 중…';
+  }
+  const showMeta=analyzing() || p>=100;
+  let meta='';
+  if(showMeta){
+    meta='<div class="lmeta">진행 <b>'+p+'%</b>'
+      +(analyzing()?(' · 분석 시간 <b>'+fmtTime(el)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'):(p>=100?' · <b>'+etaStr+'</b>':''))
+      +'</div>';
+  } else {
+    meta='<div class="lmeta">진행 <b>'+p+'%</b></div>';
+  }
+  return '<div class="progbox"><div class="lbar"><div class="lfill" style="width:'+p+'%"></div></div>'+meta+'</div>';
 }
 function gateHeader(g){
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
@@ -344,9 +470,13 @@ function customCard(n){
     +'<textarea id="cust" placeholder="'+ph+'"></textarea><div class="time">자유 입력</div></div>';
 }
 function contentGate(){
-  const g=curGate() || ('G'+cur);
-  const props=(gateData.proposals)||[];
-  if(!curGate() || !props.length){ return gateHeader(g)+loadingBlock(); }
+  const tg='G'+cur;               // 사용자가 보고 싶은 게이트 (cur 기준)
+  const ag=curGate();             // 백엔드 현재 게이트
+  // 사용자 위치와 백엔드 위치가 같으면 실시간 gateData, 다르면 캐시 사용
+  const d=(ag===tg)?gateData:(gateCache[tg]||{});
+  const g=tg;
+  const props=(d.proposals)||[];
+  if(!props.length){ return gateHeader(g)+loadingBlock(); }
   // filter out backend-injected custom placeholder — customCard is added separately below
   const llmProps=props.filter(function(p){ return !p.is_custom; });
   if(!llmProps.length){ return gateHeader(g)+loadingBlock(); }
@@ -414,6 +544,7 @@ function primaryLabel(){
   if(paused) return '▶ 계속';
   if(cur===0) return '⬆ 업로드';
   if(cur===LAST) return '📥 완료';
+  if(cur>=1 && cur<=5 && cur<frontier) return '🔄 재진행 ▸';
   return '진행 ▸';
 }
 function render(){
@@ -431,9 +562,12 @@ function render(){
   sc.innerHTML=html;
   sc.querySelectorAll('.step.reachable').forEach(function(el){ el.onclick=function(){ cur=+el.dataset.i; if(cur<frontier) follow=false; paused=false; render(); }; });
 
-  document.getElementById('content').innerHTML=(errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur);
+  // 1~7 모든 단계 공통: 본문 + 진행바 (실패 시 진행바 생략 → progressBar() 내부에서 빈 문자열 반환).
+  document.getElementById('content').innerHTML=
+    (errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur)+progressBar();
   document.getElementById('curName').textContent=steps[cur].label;
-  document.getElementById('curPct').textContent=((gateData.progress_pct!=null && !isCompleted())?gateData.progress_pct:Math.round(fillPct))+'%';
+  // 상단 헤더 진행률 — progressBar 와 동일한 _stageProgress() 사용 → 카드 안 진행바와 항상 일치.
+  document.getElementById('curPct').textContent=_stageProgress()+'%';
   document.getElementById('curIdx').textContent=cur+1;
   document.getElementById('curTot').textContent=N;
   const stt=document.getElementById('status');
@@ -442,6 +576,7 @@ function render(){
   else if(isCompleted()){ stt.textContent='✓ 완료'; stt.className='status done'; }
   else if(jobId){ stt.textContent='진행 중'; stt.className='status'; }
   else { stt.textContent='대기'; stt.className='status'; }
+  var nb=document.getElementById('newBtn'); if(nb) nb.style.display=jobId?'inline-flex':'none';
 
   if(cur===0){
     const fi=document.getElementById('fileInput'), dz=document.getElementById('dz'),
@@ -470,7 +605,12 @@ function render(){
   prev.disabled=(cur===0);
   next.disabled=(cur>=maxReached);
   stop.style.display=(!paused && analyzing())?'inline-flex':'none';
-  const atGate=(cur===frontier) && !!curGate() && ((gateData.proposals||[]).length>0);
+  const _tg='G'+cur;
+  const _cd=gateCache[_tg]||{};
+  const _llmCount=function(d){ return (d.proposals||[]).filter(function(p){return !p.is_custom;}).length; };
+  const atCurrentGate=(cur===frontier)&&!!curGate()&&_llmCount(gateData)>0;
+  const atPastGate=(cur<frontier)&&cur>=1&&cur<=5&&_llmCount(_cd)>0;
+  const atGate=atCurrentGate||atPastGate;
   const g5ok=curGate()!=='G5'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
   prim.innerHTML=primaryLabel();
   prim.classList.toggle('resume', paused);
@@ -489,7 +629,26 @@ document.getElementById('primaryBtn').onclick=function(){
   if(cur===0){ doUpload(); return; }
   if(cur>=1 && cur<=5){ doResume(); return; }
 };
-render();
+// ── F5 복원: localStorage 에 저장된 jobId 있으면 현재 단계 유지, API 폴링 재개 ──
+// _FRESH_START=true 면 시작 버튼으로 진입 → 상태 초기화 후 업로드 화면
+(function(){
+  if(_FRESH_START){
+    // 시작 버튼: 이전 데이터·해시 제거, ?flow=1 은 유지 (F5 시 플로우 화면 유지)
+    try{ window.parent.history.replaceState({}, '', window.parent.location.pathname+'?flow=1'); }catch(e){}
+    try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
+    render(); return;
+  }
+  var raw=_stateRead();
+  try{
+    var s=JSON.parse(raw||'null');
+    if(s && s.jobId){
+      jobId=s.jobId; fileId=s.fileId||null;
+      cur=s.cur||1; maxReached=s.maxReached||cur; frontier=cur;
+      startPolling(); return;
+    }
+  }catch(e){}
+  render();
+})();
 </script></body></html>
 """
 
@@ -510,21 +669,37 @@ def _flow_screen() -> None:
         """,
         unsafe_allow_html=True,
     )
-    components.html(_FLOW_HTML, height=900, scrolling=True)
+    # 시작 버튼으로 진입 시 _FRESH_START=true 주입 → IIFE가 localStorage 초기화
+    fresh = bool(st.session_state.pop("_fresh_start", False))
+    flow_html = (
+        _FLOW_HTML.replace(
+            "var _FRESH_START=false;// __FRESH_START_INJECT__",
+            "var _FRESH_START=true;// __FRESH_START_INJECT__",
+        )
+        if fresh
+        else _FLOW_HTML
+    )
+    components.html(flow_html, height=900, scrolling=True)
 
 
 # ===========================================================================
 # 라우팅 — 랜딩 → 플로우
 # ===========================================================================
+# F5 새로고침 시 URL 쿼리 파라미터로 flow 상태 복원
+if st.query_params.get("flow") == "1":
+    st.session_state["studio_started"] = True
+
 if not st.session_state.get("studio_started"):
     # ── 스플래시(랜딩) ── (화면 세로 중앙 정렬, 히어로 이미지·폴백 공통)
+    # F5 복원은 saveState() 가 URL 해시(#ada=…)에 상태를 기록하고,
+    # F5 후 ?flow=1 이 URL 에 남아 Python 이 자동으로 플로우 화면을 보여주는 방식으로 처리.
+    # (height=0 redirect iframe 제거 → Streamlit iframe 경고 감소)
     st.markdown(
         """
         <style>
         .block-container {
             min-height: calc(100vh - 4rem);
             display: flex; flex-direction: column; justify-content: center;
-            padding-top: 1.5rem; padding-bottom: 1.5rem;
         }
         </style>
         """,
@@ -559,6 +734,8 @@ if not st.session_state.get("studio_started"):
     with _bc[1]:
         if st.button("✦  시작", type="primary", use_container_width=True):
             st.session_state["studio_started"] = True
+            st.session_state["_fresh_start"] = True  # localStorage 초기화 후 업로드 화면으로
+            st.query_params["flow"] = "1"
             st.rerun()
 else:
     _flow_screen()
