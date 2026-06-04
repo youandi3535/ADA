@@ -149,6 +149,9 @@ _FLOW_HTML = """
   .kpi .l{font-size:15px;color:var(--muted);margin-top:2px;}
   .chip{display:inline-block;font-size:18px;font-weight:600;color:var(--deep);background:#e6f0fc;border:1px solid var(--line2);border-radius:999px;padding:7px 16px;margin:5px 8px 0 0;}
   .chip.on{background:var(--deep);color:#fff;border-color:transparent;}
+  .dlbtn{display:inline-flex;align-items:center;gap:8px;background:var(--deep);color:#fff;border-radius:14px;padding:12px 22px;text-decoration:none;font-size:18px;font-weight:700;font-family:inherit;margin:6px 8px 0 0;transition:.15s;}
+  .dlbtn:hover{background:#284e74;}
+  .dlbtn.unavail{background:#c0cfe0;cursor:not-allowed;pointer-events:none;}
   .err{background:#fbeaea;border:1px solid #e7b7b7;color:#a33;border-radius:14px;padding:15px 20px;font-size:19px;margin:0 0 20px;}
   .footer{display:flex;align-items:center;gap:16px;margin-top:28px;padding-top:24px;border-top:1px solid #eef2f8;}
   .spacer{flex:1;}
@@ -185,6 +188,7 @@ let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, poll
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
 let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
+let g5Checked={};  // G5 멀티선택 상태 {proposal_id: bool}
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성'};
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -222,7 +226,12 @@ async function doUpload(){
 async function doResume(){
   const props=(gateData.proposals)||[];
   let choice;
-  if(selId==='custom'){
+  if(curGate()==='G5'){
+    const outs=[];
+    props.forEach(function(p){ if(g5Checked[p.id]&&p.outputs){ p.outputs.forEach(function(o){outs.push(o);}); } });
+    if(!outs.length){ errMsg='최소 1개 이상 산출물을 선택하세요.'; render(); return; }
+    choice={outputs:outs};
+  } else if(selId==='custom'){
     if(!customText.trim()){ errMsg='옵션: 분석 방향을 입력해 주세요.'; render(); return; }
     choice={adopted_rank:0, custom_intent:customText};
   } else if(selId!=null){ choice={adopted_rank:selId}; }
@@ -316,19 +325,23 @@ function gateHeader(g){
     +((cat||tgt)?('<div class="databar"><span class="t">✓ 데이터 분석 완료</span>'+cat+tgt+'</div>'):'');
 }
 function propCard(p, idx, recId){
-  const sel=(selId===p.id)?' sel':'';
-  const rec=(p.id===recId)?'<span class="rec">추천</span>':'';
+  const g5=curGate()==='G5';
+  const sel=g5?(g5Checked[p.id]?' sel':''):((selId===p.id)?' sel':'');
+  const rec=(!g5&&p.id===recId)?'<span class="rec">추천</span>':'';
   let extra='';
   if(p.models && p.models.length) extra='<div class="hint">🧩 모델: '+p.models.map(esc).join(', ')+'</div>';
   else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(function(k){return esc(k)+' '+esc(p.metrics[k]);}).join(' · ')+'</div>'; }
-  else if(p.outputs && p.outputs.length) extra='<div class="hint">📦 '+p.outputs.map(esc).join(', ')+'</div>';
+  else if(p.outputs && p.outputs.length){ var OL={'OUT-01':'PPT','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'}; extra='<div class="hint">📦 '+p.outputs.map(function(o){return esc(OL[o]||o);}).join(' · ')+'</div>'; }
   const score=(p.score!=null)?('<div class="time">⭐ 추천도 '+Math.round(p.score*100)+'%</div>'):'';
   return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><p>'+esc(p.rationale||'')+'</p>'+extra+score+'</div>';
 }
 function customCard(n){
   const sel=(selId==='custom')?' sel':'';
-  return '<div class="opt'+sel+'" data-pid="custom"><div class="ck">✓</div><div class="onum">OPTION 0'+(n+1)+'</div><h3>직접 입력</h3><div class="en2">Custom Direction</div>'
-    +'<textarea id="cust" placeholder="예) 1등석 여성 승객의 생존 요인을 집중 분석하고 싶어요"></textarea><div class="time">자유 입력</div></div>';
+  const g=curGate()||('G'+(cur));
+  const ph=g==='G5'?'예) PPT, 대시보드, 인사이트 요약 (선택: PPT · PDF 보고서 · 발표 대본 · 대시보드 · 인사이트)':'예) 1등석 여성 승객의 생존 요인을 집중 분석하고 싶어요';
+  const title=g==='G5'?'직접 선택':'직접 입력';
+  return '<div class="opt'+sel+'" data-pid="custom"><div class="ck">✓</div><div class="onum">OPTION 0'+(n+1)+'</div><h3>'+title+'</h3><div class="en2">Custom Direction</div>'
+    +'<textarea id="cust" placeholder="'+ph+'"></textarea><div class="time">자유 입력</div></div>';
 }
 function contentGate(){
   const g=curGate() || ('G'+cur);
@@ -342,7 +355,7 @@ function contentGate(){
   let cards=llmProps.map(function(p,i){ return propCard(p,i,recId); }).join('');
   if(g==='G1'||g==='G2'||g==='G3'||g==='G4') cards+=customCard(llmProps.length);
   let pop='';
-  if(animatedGate!==g){ pop=' popin'; animatedGate=g; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
+  if(animatedGate!==g){ pop=' popin'; animatedGate=g; if(g==='G5') g5Checked={}; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
   return gateHeader(g)+'<div class="opts'+pop+'">'+cards+'</div>';
 }
 function rcard(title, inner){ return '<div class="rcard"><h4>'+title+'</h4>'+inner+'</div>'; }
@@ -362,8 +375,23 @@ function contentResult(){
     if(h) panels+=rcard('평가 결과', h);
   }
   if(g.insights) panels+=rcard('인사이트','<p class="rtext">'+esc(g.insights)+'</p>');
-  const outs=Object.keys(g.output_paths||{});
-  if(outs.length) panels+=rcard('산출물', outs.map(function(o){return '<span class="chip on">'+esc(o)+'</span>';}).join(''));
+  const reqOuts=g.requested_outputs||[];
+  const OL={'OUT-01':'PPT 프레젠테이션','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'};
+  const outputPaths=g.output_paths||{};
+  const dlKeys=Object.keys(outputPaths);
+  if(reqOuts.length||dlKeys.length){
+    const allOuts=reqOuts.length?reqOuts:dlKeys;
+    const EXT={'OUT-01':'pptx','OUT-02':'pdf','OUT-03':'txt','OUT-04':'html','OUT-07':'md'};
+    const ICON={'OUT-01':'📊','OUT-02':'📄','OUT-03':'🎙️','OUT-04':'🖥️','OUT-07':'💡'};
+    const dlHtml=allOuts.map(function(o){
+      if(outputPaths[o]){
+        const url=API+'/pipeline/download/'+jobId+'/'+encodeURIComponent(o);
+        return '<a href="'+esc(url)+'" download="ada_'+esc(EXT[o]||'bin')+'" class="dlbtn">'+esc(ICON[o]||'📦')+' '+esc(OL[o]||o)+'<span style="font-size:13px;opacity:.75;margin-left:4px">다운로드</span></a>';
+      }
+      return '<span class="dlbtn unavail">'+esc(ICON[o]||'📦')+' '+esc(OL[o]||o)+'<span style="font-size:13px;opacity:.75;margin-left:4px">생성 실패</span></span>';
+    }).join('');
+    panels='<div class="rcard" style="grid-column:1/-1"><h4>📥 산출물 다운로드</h4><div style="display:flex;flex-wrap:wrap;margin-top:8px">'+dlHtml+'</div></div>'+panels;
+  }
   if(!panels) panels='<div class="rcard"><p class="rtext">결과를 불러오는 중…</p></div>';
   return '<div class="res"><div class="ahdr"><h2>분석 완료 🎉</h2></div><p class="desc">데이터를 분석한 결과입니다.</p><div class="grid2">'+panels+'</div></div>';
 }
@@ -425,7 +453,12 @@ function render(){
     if(it){ it.value=intentText; it.oninput=function(){ intentText=it.value; }; }
   }
   if(cur>=1 && cur<=5){
-    document.querySelectorAll('.opt').forEach(function(el){ el.onclick=function(){ const pid=el.dataset.pid; selId=(pid==='custom')?'custom':(+pid); render(); }; });
+    const isG5=curGate()==='G5';
+    document.querySelectorAll('.opt').forEach(function(el){ el.onclick=function(){
+      const pid=el.dataset.pid;
+      if(isG5){ g5Checked[+pid]=!g5Checked[+pid]; render(); }
+      else { selId=(pid==='custom')?'custom':(+pid); render(); }
+    }; });
     const tc=document.getElementById('cust');
     if(tc){ tc.value=customText; tc.onclick=function(e){ e.stopPropagation(); };
       tc.onfocus=function(){ selId='custom'; document.querySelectorAll('.opt').forEach(function(el){ el.classList.toggle('sel', el.dataset.pid==='custom'); }); };
@@ -438,13 +471,14 @@ function render(){
   next.disabled=(cur>=maxReached);
   stop.style.display=(!paused && analyzing())?'inline-flex':'none';
   const atGate=(cur===frontier) && !!curGate() && ((gateData.proposals||[]).length>0);
+  const g5ok=curGate()!=='G5'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
   prim.innerHTML=primaryLabel();
   prim.classList.toggle('resume', paused);
   if(busy) prim.disabled=true;
   else if(paused) prim.disabled=false;
   else if(cur===0) prim.disabled=(!selectedFile || !!jobId);
   else if(cur===LAST) prim.disabled=true;
-  else prim.disabled=!atGate;
+  else prim.disabled=!atGate||!g5ok;
 }
 document.getElementById('prevBtn').onclick=function(){ if(cur>0){ cur--; follow=false; render(); } };
 document.getElementById('nextBtn').onclick=function(){ if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };

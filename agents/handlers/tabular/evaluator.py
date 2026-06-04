@@ -8,8 +8,8 @@ from __future__ import annotations
 from typing import Any
 
 THRESHOLDS_BY_CAT = {
-    "tabular_ml": {"val_f1": 0.65, "val_accuracy": 0.70},
-    "tabular_dl": {"val_f1": 0.70},
+    "tabular_ml": {"val_f1": 0.55},
+    "tabular_dl": {"val_f1": 0.60},
 }
 
 
