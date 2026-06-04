@@ -586,7 +586,14 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         final_dict = _final_to_dict(final)
 
         # interrupt_after 는 pass-through 게이트에도 발화 → current_gate=None 이고
-        # 실제 완료 신호가 없으면 다음 게이트까지 ainvoke 반복
+        # 실제 완료 신호가 없으면 다음 게이트까지 ainvoke 반복.
+        #
+        # ❗ best_model 체크 제거 (2026-06-04):
+        #   best_model 은 metrics_aggregator 가 G5 (gate_best_model) 직전에 세팅한다.
+        #   G5 resume 시 _apply_choice 가 best_model 을 다시 채우는데, 이 체크가 살아 있으면
+        #   loop 가 G5 인터럽트 직후 종료되어 eval_agent → explainability → insight →
+        #   gate_outputs(G6) 까지 못 가고 is_terminal=True 로 잘못 완료 처리된다.
+        #   "정말 완료" 신호는 output_paths (report_composer 가 채움) 만으로 충분.
         _passes = len(_GN) + 2
         while (
             _passes > 0
@@ -594,7 +601,6 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             and not final_dict.get("current_gate")
             and not final_dict.get("error")
             and not final_dict.get("output_paths")
-            and not final_dict.get("best_model")
         ):
             final = await fresh_graph.ainvoke(None, config=config)
             final_dict = _final_to_dict(final)
