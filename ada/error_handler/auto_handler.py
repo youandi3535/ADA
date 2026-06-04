@@ -39,11 +39,15 @@ log = get_logger("auto_handler")
 
 # AutoErrorHandler 가 반환하는 "완전 해결" action 집합.
 # agents/auto_error_handler.py 의 RESOLVED_ACTIONS 와 동기화 유지.
+# Day25: 레거시 호환 별칭(auto_kb_match, patch_reused_approved) 도 포함하여
+#        agents/auto_error_handler.py 의 RESOLVED_ACTIONS 와 정확히 동일.
 RESOLVED_ACTIONS: frozenset[str] = frozenset(
     {
         # ── 자동 적용 완료 (코드 수정까지 완료) ──────────────────────────────
-        "auto_kb_applied",  # Tier 0/legacy  static fixer diff 자동 적용
+        "auto_kb_applied",  # Tier 0  static fixer diff 자동 적용
+        "auto_kb_match",  # 레거시 호환 alias (예전 ErrorKB hash 매칭)
         "auto_self_learning_match",  # Tier 1  SelfLearningKB 시맨틱 매칭 + 패치 큐
+        "patch_reused_approved",  # 재사용 패치 승인 (apply-worker, 레거시 호환)
         "auto_ollama_applied",  # Tier 2  Ollama diff 자동 적용
         "auto_claude_applied",  # Tier 3  Claude diff 자동 적용
     }
@@ -62,7 +66,8 @@ def fingerprint(error_message: str, stack: str = "") -> dict[str, str]:
       - ❌ 기존 `\\d+` 전체 치환 제거 — Python 3.10 vs 3.11, HTTP 200 vs 500
         같이 의미 있는 숫자까지 동일화되던 버그.
 
-    Stack 의 상위 3 프레임만 hash 에 반영 (deep stack 변동 무시).
+    Stack 의 상위 6 줄 (= 3 traceback 프레임, 프레임당 2 줄) 만 hash 에 반영해
+    deep stack 변동을 무시한다.
     """
     # --- error_message 정규화 ---
     # 순서가 중요: UUID 먼저 (8-4-4-4-12 형태) → 메모리주소 → 타임스탬프 → IP → 포트 → line 번호
@@ -104,7 +109,7 @@ def fingerprint(error_message: str, stack: str = "") -> dict[str, str]:
     # Windows 경로의 사용자명
     norm_stack = re.sub(r"[CD]:\\\\Users\\\\[^\\\\]+\\\\", r"C:\\\\Users\\\\<USER>\\\\", norm_stack)
 
-    # stack 상위 6줄만 hash 에 (Python 1 traceback frame = 2 lines)
+    # stack 상위 6줄 = 3 traceback 프레임 (Python 1 frame = "File ..." + 코드 라인 2줄)
     stack_top = "\n".join(norm_stack.split("\n")[:6])
     composite = f"{clean}\n---\n{stack_top}"
 
@@ -132,7 +137,16 @@ _CODER_SYSTEM_PROMPT = (
 
 
 def _ollama_coder_fix_sync(error_signature: str, stack: str) -> dict[str, Any]:
-    """Ollama qwen2.5-coder 동기 호출 → {diff, test_plan, confidence}."""
+    """Ollama qwen2.5-coder 동기 호출 → {diff, test_plan, confidence}.
+
+    Day25 정비 — 네트워크 에러 정밀 분리:
+        - URLError (connection refused / DNS) = 환경 미설정.
+          ``_offline=True`` graceful 반환 → 외부 CircuitBreaker 카운트 X.
+        - HTTPError (4xx/5xx) = 서버 응답 + 진짜 장애. re-raise 해서
+          외부 브레이커가 카운트하도록 함.
+        - TimeoutError / socket.timeout = URLError 자식 아님 → 처리 안 함
+          → 외부로 전파 → 브레이커 카운트 (의도된 동작).
+    """
     base_url = getattr(settings, "ollama_base_url", "http://localhost:11434").rstrip("/")
     model = getattr(settings, "ollama_coder_model", "qwen2.5-coder:7b")
 
@@ -169,8 +183,24 @@ def _ollama_coder_fix_sync(error_signature: str, stack: str) -> dict[str, Any]:
         method="POST",
     )
 
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError:
+        # HTTP 4xx/5xx — 서버 응답 받았는데 에러 = 진짜 서버 장애.
+        # 외부 브레이커가 카운트하도록 re-raise.
+        # HTTPError 는 URLError 의 자식이라 반드시 URLError 보다 위에 위치.
+        raise
+    except urllib.error.URLError as e:
+        # 연결 자체 실패 (DNS / connection refused / 서버 다운) = 환경 미설정.
+        # 브레이커 카운트 X, Tier 3 폴백 신호만.
+        return {
+            "diff": "",
+            "test_plan": "(ollama_offline)",
+            "confidence": 0.0,
+            "_offline": True,
+            "_reason": str(e),
+        }
 
     content = data.get("message", {}).get("content", "") or ""
 
@@ -393,9 +423,21 @@ class AutoErrorHandler:
         #   static_check(scope·format 검증) → 통과하면 PendingPatch 큐 적재.
         # apply_patch 는 백그라운드 apply-worker 가 처리. LLM 호출 없음, 비용 0.
         # source 신뢰도에 따라 review_status 결정:
-        #   ollama/claude/auto → "approved" (신뢰 소스, 바로 적용 가능)
-        #   team_manual 등    → "pending"  (사람 검토 후 적용)
-        _TRUSTED_SOURCES = frozenset({"ollama", "claude", "claude_code", "auto"})
+        #   ollama/claude_cli/claude_code/static/auto → "approved"
+        #     (모두 sandbox 검증 통과한 자동 패치 — 바로 적용 가능)
+        #   team_manual / 미지 / 사용자 입력 → "pending"
+        # Day25: Tier 3 가 source="claude_cli" 로 적재하는데 기존 집합엔 없어
+        #        다른 인스턴스에서 재사용시 trusted 인식 안 되던 문제 해결.
+        _TRUSTED_SOURCES = frozenset(
+            {
+                "ollama",
+                "claude_cli",  # Tier 3 source 값과 일치
+                "claude_code",  # Tier 3 full-access 별칭 (호환)
+                "claude",  # legacy 별칭 (호환)
+                "static",  # Tier 0 별칭 (호환)
+                "auto",  # 일반 별칭 (호환)
+            }
+        )
         try:
             from ada.harness.rag import KBRAG
 
@@ -478,8 +520,15 @@ class AutoErrorHandler:
         _ollama_cb = get_breaker("ollama", failure_threshold=3, recovery_timeout=300)
         try:
             patch = await _ollama_cb.call(_ollama_coder_fix, fp["signature"], clean_stack)
-            diff = (patch.get("diff") or "").strip()
-            confidence = float(patch.get("confidence", 0.0))
+
+            # _offline (URLError) — 환경 미설정, 브레이커 카운트 X, Tier 3 폴백
+            if patch.get("_offline"):
+                log.warning("ollama_coder_offline", reason=patch.get("_reason"))
+                diff = ""
+                confidence = 0.0
+            else:
+                diff = (patch.get("diff") or "").strip()
+                confidence = float(patch.get("confidence", 0.0))
 
             if diff and confidence >= 0.4:
                 # sandbox 전체 검증 (worktree + ruff, skip_tests=True で fast path)
@@ -595,12 +644,15 @@ class AutoErrorHandler:
                     stack=clean_stack,
                 )
 
-            # 토큰 비용 누적 (full-access 는 토큰 정보 없음 — 제한 모드만)
+            # 토큰 비용 누적 — Day25 부터 두 모드 모두 토큰 반환
+            # (claude_cli_bridge 가 --output-format json 의 usage 에서 추출).
             input_tokens = int(patch.get("input_tokens", 0) or 0)
             output_tokens = int(patch.get("output_tokens", 0) or 0)
             if input_tokens or output_tokens:
+                # patch["model"] 이 빈 문자열일 수 있으므로 truthy 폴백.
+                model_name = patch.get("model") or "claude-sonnet-4-6"
                 await budget.track_call(
-                    model=patch.get("model", "claude-sonnet-4-6"),
+                    model=model_name,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                 )

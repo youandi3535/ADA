@@ -159,7 +159,10 @@
       "Bash(.venv/Scripts/python.exe -c \"import json; json.load\\(open\\('.claude/settings.json'\\)\\); print\\('JSON OK'\\)\")",
       "Bash(.venv/Scripts/python.exe -X utf8 -c \"import json; json.load\\(open\\('.claude/settings.json', encoding='utf-8'\\)\\); print\\('JSON OK'\\)\")",
       "Bash(git rebase *)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_autofix_phase1.py::test_auto_error_handler_agent_resolved_clears_error tests/test_day24_kb_errorkb_bridge.py::test_auto_handler_tier_1_5_self_learning_match tests/test_day24_kb_errorkb_bridge.py::test_resolved_actions_includes_self_learning_match tests/test_day24_kb_errorkb_bridge.py::test_tier_1_5_trusted_source_auto_approved tests/test_day24_kb_errorkb_bridge.py::test_tier_1_5_untrusted_source_pending_only tests/test_day24_kb_errorkb_bridge.py::test_tier_1_5_malformed_jsonb_logs_warning -v)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_autofix_phase1.py::test_auto_error_handler_agent_resolved_clears_error tests/test_day24_kb_errorkb_bridge.py::test_auto_handler_tier_1_5_self_learning_match tests/test_day24_kb_errorkb_bridge.py::test_resolved_actions_includes_self_learning_match tests/test_day24_kb_errorkb_bridge.py::test_tier_1_5_trusted_source_auto_approved tests/test_day24_kb_errorkb_bridge.py::test_tier_1_5_untrusted_source_pending_only tests/test_day24_kb_errorkb_bridge.py::test_tier_1_5_malformed_jsonb_logs_warning -v)",
+      "Bash(.venv/Scripts/python.exe -c \"import streamlit; print\\(streamlit.__version__\\)\")",
+      "Bash(.venv/Scripts/ruff check *)",
+      "Bash(Start-Sleep -Seconds 8)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"

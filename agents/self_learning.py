@@ -319,7 +319,8 @@ async def validate_and_record(
     별도 DB 세션을 생성해서 호출자 트랜잭션과 격리.
 
     BLOCKER-2 누수 방지:
-        - sandbox 통과 후 KB 적재 실패 = 다음 동일 에러가 Tier 1.5 에서 누락
+        - sandbox 통과 후 KB 적재 실패 = 다음 동일 에러가 Tier 1 SelfLearningKB
+          시맨틱 매칭에서 누락 (Day25 — 이전 다이어그램의 Tier 1.5 와 동일 단계)
         - 따라서 적재 실패 시 FailureLog 에 audit 흔적 (error_category='kb_record_failed')
         - admin 대시보드에서 retry 가능
 

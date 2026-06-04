@@ -401,7 +401,13 @@ class PendingPatch(Base):
     patch_diff = Column(Text)
     test_plan = Column(Text)
     confidence = Column(Float)
-    review_status = Column(String(16), default="pending")  # pending / approved / rejected
+    # Day25 정비 — 신규 값 2종 추가 문서화 (CheckConstraint 는 미설정, String(16) 한도 내).
+    # pending       — 사람 검토 대기 (Tier 1 SelfLearningKB 비신뢰 소스 재사용 등)
+    # approved      — 사람 검토 완료, apply-worker 적용 대기 (Tier 1 신뢰 소스 재사용 포함)
+    # rejected      — 사람 검토 거부
+    # auto_applied  — Tier 0/2/3 자동 적용 완료 (git apply + commit 끝)
+    # apply_failed  — 자동 적용 실패 (git apply 거절·충돌 등)
+    review_status = Column(String(16), default="pending")
     reviewer = Column(String(128))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
