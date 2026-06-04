@@ -438,14 +438,15 @@ async def get_unprocessed(
 
 
 @router.patch("/{conv_id}/done")
+@router.patch("/{conv_id}/done")
 async def mark_processed(
     conv_id: str,
     body: ProcessedIn,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(_verify_secret),
 ) -> dict[str, Any]:
-    """수동 재처리 완료 표시 (자동 루프 실패 복구용)."""
-    from ada.db.models import ConversationLog
+    """수동 재처리 완료 표시. kb_id 는 클라이언트(로컬) ID 라 무시."""
+    from ada.db.models import ConversationLog, SelfLearningKB  # 추가
 
     try:
         cid = uuid.UUID(conv_id)
@@ -457,9 +458,17 @@ async def mark_processed(
         raise HTTPException(404, detail="conversation not found")
 
     row.processed = True
+
+    # kb_id 는 VPS self_learning_kb 에 존재하는 경우에만 set (FK 위반 방지)
     if body.kb_id:
         try:
-            row.kb_id = uuid.UUID(body.kb_id)
+            candidate = uuid.UUID(body.kb_id)
+            exists = await db.scalar(
+                select(SelfLearningKB.id).where(SelfLearningKB.id == candidate)
+            )
+            if exists:
+                row.kb_id = candidate
+            # 없으면 그냥 무시 (로컬 UUID 라서 정상)
         except ValueError:
             pass
 
