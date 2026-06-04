@@ -52,6 +52,12 @@ class PipelineState(BaseModel):
     preprocessing_plan: Optional[list[dict[str, Any]]] = None
     preprocessed_data_id: Optional[str] = None
 
+    # Phase 2 (2026-06-04) — G0 데이터 파악 종합 산출물 "Data Card v1".
+    # 11 섹션 dict: identity / schema / dictionary / granularity / dq_score /
+    # category_target / category_specific / pii_legal / temporal_drift /
+    # reproducibility / next_steps. data_profiler 가 채우고 다음 단계가 참조.
+    data_card: Optional[dict[str, Any]] = None
+
     # EDA
     eda_charts: list[str] = Field(default_factory=list)
     eda_summary: Optional[str] = None

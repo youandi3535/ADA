@@ -184,7 +184,7 @@ _FLOW_HTML = """
     </div>
   </div>
 <script>
-const steps=[{label:'업로드',sub:'데이터 파악'},{label:'분석 방향',sub:'G1 · EDA'},{label:'방법론',sub:'G2 · 전처리'},{label:'모델 전략',sub:'G3 · 피처링'},{label:'모델 선택',sub:'G4 · 학습·평가'},{label:'산출물',sub:'G5 · 리포트'},{label:'완료',sub:'인사이트'}];
+const steps=[{label:'업로드',sub:'G1 · 데이터 파악'},{label:'분석 방향',sub:'G2 · EDA'},{label:'방법론',sub:'G3 · 전처리'},{label:'모델 전략',sub:'G4 · 피처링'},{label:'모델 선택',sub:'G5 · 학습·평가'},{label:'산출물',sub:'G6 · 리포트'},{label:'완료',sub:'G7 · 인사이트'}];
 const N=steps.length, LAST=N-1;
 const ANALYZE_EST=45;  // 분석 중 진행률 추정용(초)
 const GATE_TITLE={G1:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G2:['어떤 방법론으로 진행할까요?','Choose your methodology'],G3:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G4:['어떤 모델을 채택할까요?','Pick the best model'],G5:['어떤 산출물을 만들까요?','Choose your outputs']};
@@ -270,7 +270,9 @@ async function doUpload(){
     fileId=up.file_id;
     const stt=await api('/pipeline/start',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({file_id:fileId,user_intent:intentText||null,requested_outputs:[]})});
-    jobId=stt.job_id; follow=true; cur=1; frontier=1; maxReached=1; busy=false;
+    // Phase 1 — G0 데이터 파악 단계 유지. cur=0 으로 두고 follow=false 로 자동 전환 방지.
+    // G1 proposals 도착 시점에 poll() 안에서 명시적으로 cur=1 전환 + follow=true 부여.
+    jobId=stt.job_id; follow=false; cur=0; frontier=0; maxReached=0; busy=false;
     gateData={}; analyzeStart=Date.now();
     saveState();
     startPolling();
@@ -328,6 +330,15 @@ async function poll(){
     render(); return;
   }
   computeFrontier(); maxReached=Math.max(maxReached,frontier);
+  // Phase 1 — G0 데이터 파악 완료(=백엔드가 G1 게이트 도달 + proposals 보유) + 클라이언트
+  // 표시 진행률이 99% 이상 도달한 시점에 cur=0 → cur=1 자동 전환.
+  // _shownPct 가 99 미만이면 _stageProgress 의 보간이 끝날 때까지 cur=0 화면을 유지하여,
+  // 사용자가 "G0 100% 표시 → G1 전환" 시퀀스를 시각적으로 끝까지 본다.
+  if(cur===0 && jobId && curGate()==='G1'
+      && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length
+      && _shownPct >= 99){
+    cur=1; follow=true;
+  }
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
@@ -365,21 +376,32 @@ function _stageProgress(){
   if(isFailed()) return 0;
   if(isCompleted()||cur===LAST){ _shownPct=100; return 100; }
   if(cur===0 && !jobId){ _shownPct=0; return 0; }
-  // 목표 진행률: proposals 도착이면 100%, 아니면 백엔드 신호 그대로(없으면 0).
-  const tg='G'+cur;
-  const ag=curGate();
-  const d=(ag===tg)?gateData:(gateCache[tg]||{});
-  const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
+  // 목표 진행률 계산
   let target;
-  if(ps.length){
-    target=100;
+  if(cur===0){
+    // Phase 1 — G0 데이터 파악 단계는 백엔드 진행률 0~18% 를 0~95% 로 정규화.
+    // G1 게이트(proposals 도착) 진입 = G0 완전 종료 → 100% 로 점프(잠시 후 cur=1 전환).
+    const g1Reached = curGate()==='G1' && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+    if(g1Reached){
+      target=100;
+    } else {
+      const raw=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
+      // G0 의 백엔드 진행률 천장 = 18 (AGENT_PHASE_MAP 의 gate_direction 시작). 정규화.
+      target=Math.min(95, Math.round((raw/18)*95));
+    }
   } else {
-    // 백엔드 신호가 진실 — 단, 단계 시작 직후 한두 차례 폴링까지는 0 일 수 있으므로
-    // _shownPct 유지 (백엔드 값이 도착하면 그쪽으로 따라간다).
-    target=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
+    // 게이트 단계(G1~G5): proposals 도착=100%, 아니면 백엔드 progress_pct 그대로.
+    const tg='G'+cur;
+    const ag=curGate();
+    const d=(ag===tg)?gateData:(gateCache[tg]||{});
+    const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
+    if(ps.length){
+      target=100;
+    } else {
+      target=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
+    }
   }
-  // 점프 보간 — 매 호출(500ms) 최대 step 만큼 증가. step = max(2, diff/4) →
-  // 작은 차이는 즉시 따라잡고, 큰 점프(예: 30→100)는 약 2초간 부드럽게.
+  // 점프 보간 — 매 호출(500ms) 최대 step. 작은 차이는 즉시, 큰 점프(예: 30→100)는 약 2초간 부드럽게.
   if(target>_shownPct){
     const diff=target-_shownPct;
     const step=Math.max(2, Math.ceil(diff/4));
@@ -527,6 +549,17 @@ function contentResult(){
 }
 function content(i){
   if(i===0){
+    // Phase 1 — G0 단계가 두 가지 상태를 가진다.
+    //   (a) jobId 없음 → 파일 선택·의도 입력 화면(기존)
+    //   (b) jobId 있음 + 분석 중 → 데이터 파악 진행 화면(15단계 백엔드 작업).
+    //       이 화면을 끝까지 보여주다 G1 proposals 도착 시 poll() 이 cur=1 로 전환.
+    if(jobId){
+      return '<div class="ahdr"><h2>데이터를 파악하는 중입니다</h2>'
+        +'<div class="en">G0 — Data Understanding</div></div>'
+        +'<p class="desc">출처·스키마·도메인 의미·데이터 품질·카테고리 판정·PII 점검까지 마치는 중입니다. '
+        +'끝나면 자동으로 분석 방향 추천이 표시됩니다.</p>'
+        +loadingBlock();
+    }
     const has=!!selectedFile;
     const t=has?('선택됨: '+esc(selectedFile.name)):'파일을 끌어다 놓거나 선택';
     return '<div class="ahdr"><h2>데이터 업로드</h2></div><p class="desc">파일을 올리면 ADA가 데이터를 분석해 방향을 제안합니다.</p>'
