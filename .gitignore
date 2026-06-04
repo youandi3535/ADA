@@ -18,6 +18,7 @@ ENV/
 .env
 .env.local
 .env.*.local
+.env.vps
 *.key
 *.pem
 secrets.json
