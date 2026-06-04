@@ -293,7 +293,9 @@ function loadingBlock(){
   }
   // 백엔드가 진행률을 안 보냄 → 가짜 % 대신 미정(indeterminate) 바 + 진단
   let diag='';
-  if(el>75){
+  if(el>60 && el<=300){
+    diag='<div class="diag" style="border-color:#4a7fa5;background:#1e3a50">ℹ 분석 진행 중입니다. LLM 호출 또는 모델 학습 중일 수 있으며 최대 5분 소요됩니다. (<b>'+fmtTime(el)+'</b> 경과)</div>';
+  } else if(el>300){
     diag='<div class="diag">⚠ 백엔드에서 진행 신호가 <b>'+fmtTime(el)+'</b> 동안 없습니다. 워커가 실제로 분석 중이 아닐 가능성이 큽니다.<br>'
       +'① 워커 실행: <code>docker ps | grep worker</code> &nbsp; ② 로그: <code>docker logs --tail 120 ada-worker-pipeline</code><br>'
       +'③ <code>ANTHROPIC_API_KEY</code> 설정 여부 &nbsp; ④ 백엔드(api·worker) 파일 복사 후 <b>재기동</b> 했는지'
@@ -338,7 +340,7 @@ function contentGate(){
   let recId=llmProps.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, llmProps[0]).id;
   if(selId===null || selGate!==g){ selId=recId; selGate=g; }
   let cards=llmProps.map(function(p,i){ return propCard(p,i,recId); }).join('');
-  if(g==='G1'||g==='G2'||g==='G3') cards+=customCard(llmProps.length);
+  if(g==='G1'||g==='G2'||g==='G3'||g==='G4') cards+=customCard(llmProps.length);
   let pop='';
   if(animatedGate!==g){ pop=' popin'; animatedGate=g; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
   return gateHeader(g)+'<div class="opts'+pop+'">'+cards+'</div>';

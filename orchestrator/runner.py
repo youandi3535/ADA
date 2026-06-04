@@ -251,9 +251,19 @@ def run_pipeline_task(self: Any, job_id: str, initial_state: dict) -> dict:
 
 @celery_app.task(bind=True, name="ada.pipeline.resume", max_retries=3)
 def resume_pipeline_task(self: Any, job_id: str, gate_response: dict) -> dict:
-    """게이트 응답 후 재개."""
-    log.info("pipeline_resume", job_id=job_id, gate=gate_response.get("gate"))
-    return asyncio.run(_resume(job_id=job_id, gate_response=gate_response))
+    """게이트 응답 후 재개. 동일 job 의 concurrent resume 를 Redis 락으로 차단."""
+    lock_key = f"ada:resume_lock:{job_id}"
+    r = _get_redis()
+    # NX=True: 락이 없을 때만 SET, ex=300: 5분 후 자동 해제
+    acquired = r.set(lock_key, "1", nx=True, ex=300)
+    if not acquired:
+        log.warning("resume_skipped_concurrent", job_id=job_id, gate=gate_response.get("gate"))
+        return {"status": "skipped", "reason": "concurrent resume in progress"}
+    try:
+        log.info("pipeline_resume", job_id=job_id, gate=gate_response.get("gate"))
+        return asyncio.run(_resume(job_id=job_id, gate_response=gate_response))
+    finally:
+        r.delete(lock_key)
 
 
 @celery_app.task(name="ada.meta.ping")
@@ -420,9 +430,15 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         if not existing and full_state_dict:
             existing = full_state_dict.get("gate_responses", {})
         new_responses = dict(existing)
+
+        # proposals 보존: snap 이 stale 하여 해당 gate 의 proposals 가 없으면
+        # full_state_dict 에서 fallback — BaseGate 재진입 시 _apply_choice 에 필요
+        fs_gate_entry = full_state_dict.get("gate_responses", {}).get(gate_code, {})
+        snap_gate_entry = new_responses.get(gate_code, {})
         new_responses[gate_code] = {
-            **new_responses.get(gate_code, {}),
-            "user_choice": gate_response.get("choice"),
+            **fs_gate_entry,   # full_state proposals 를 base 로
+            **snap_gate_entry,  # snap 이 더 최신이면 덮어씀
+            "user_choice": gate_response.get("choice"),  # 사용자 선택 항상 최우선
         }
 
         # snap.values 를 base 로 사용해 EDA 등 계산된 필드를 보존
@@ -434,9 +450,18 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             snap_dict = cur.model_dump()
         elif hasattr(cur, "__dict__"):
             snap_dict = dict(vars(cur))
+        # gate_code → LangGraph 노드명 매핑
+        _GATE_NODE = {
+            "G1": "gate_direction", "G2": "gate_methodology",
+            "G3": "gate_model_strategy", "G4": "gate_best_model", "G5": "gate_outputs",
+        }
+        gate_node_name = _GATE_NODE.get(gate_code)
+
         base_state = {**full_state_dict, **snap_dict}  # snap 이 stale full_state 를 덮어씀
         update_payload = {**base_state, "gate_responses": new_responses, "current_gate": None}
-        await graph.aupdate_state(config, update_payload)
+        # as_node 로 체크포인트 위치를 게이트 노드 실행 완료 시점으로 명시 →
+        # ainvoke(None) 이 게이트 다음 노드(model_selection 등)부터 재개
+        await graph.aupdate_state(config, update_payload, as_node=gate_node_name)
         final = await graph.ainvoke(None, config=config)
         final_dict = _final_to_dict(final)
         has_error = bool(final_dict.get("error"))
