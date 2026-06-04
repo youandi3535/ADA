@@ -511,3 +511,509 @@ def test_diagnostic_keys_present(ts_df, ts_state):
     assert isinstance(result["target_max"], float)
     assert isinstance(result["target_has_zeros"], bool)
     assert isinstance(result["target_has_negatives"], bool)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  신규 Phase 8~12 + §6 테스트 (cs-profiler 디벨롭, 설계 §10-2)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Phase 8 — 시간축 무결성 ───────────────────────────────────────────────────
+
+
+def test_phase8_duplicate_ts():
+    """중복 타임스탬프 → duplicate_ts_count > 0."""
+    import pandas as pd
+
+    from agents.handlers.timeseries.profiler import _phase8_timeaxis_integrity
+
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]),
+            "sales": [1, 2, 3, 4, 5],
+        }
+    )
+    res = _phase8_timeaxis_integrity(df, "date", 7)
+    assert res["duplicate_ts_count"] > 0
+
+
+def test_phase8_missing_ts():
+    """결측 시점(행 누락) → missing_ts_count > 0."""
+    import pandas as pd
+
+    from agents.handlers.timeseries.profiler import _phase8_timeaxis_integrity
+
+    dates = pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-04", "2024-01-05", "2024-01-06"])
+    df = pd.DataFrame({"date": dates, "sales": range(len(dates))})
+    res = _phase8_timeaxis_integrity(df, "date", 7)
+    assert res["missing_ts_count"] > 0
+
+
+def test_phase8_reverse_not_monotonic():
+    """역순 정렬 df → is_monotonic == False."""
+    import pandas as pd
+
+    from agents.handlers.timeseries.profiler import _phase8_timeaxis_integrity
+
+    dates = pd.to_datetime(["2024-01-05", "2024-01-04", "2024-01-03", "2024-01-02", "2024-01-01"])
+    df = pd.DataFrame({"date": dates, "sales": range(5)})
+    res = _phase8_timeaxis_integrity(df, "date", 7)
+    assert res["is_monotonic"] is False
+
+
+def test_phase8_no_date_col():
+    """정수 인덱스(date_col=None) → has_time_axis=False, 크래시 X."""
+    import pandas as pd
+
+    from agents.handlers.timeseries.profiler import _phase8_timeaxis_integrity
+
+    df = pd.DataFrame({"sales": [1, 2, 3, 4, 5]})
+    res = _phase8_timeaxis_integrity(df, None, 7)
+    assert res["has_time_axis"] is False
+    assert res["is_monotonic"] is None
+
+
+# ── Phase 9 — 가법/승법 ───────────────────────────────────────────────────────
+
+
+def test_phase9_airpassengers_multiplicative(air_passengers_df):
+    """AirPassengers (분산∝레벨) → is_multiplicative=True, confidence 높음."""
+    from agents.handlers.timeseries.profiler import _phase9_multiplicative
+
+    series = air_passengers_df["passengers"].astype(float)
+    res = _phase9_multiplicative(series, 12)
+    assert res["is_multiplicative"] is True
+    assert res["confidence"] > 0.5
+
+
+def test_phase9_additive_false():
+    """합성 가법 시계열(일정 분산) → False."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase9_multiplicative
+
+    rng = np.random.default_rng(0)
+    n = 120
+    series = np.arange(n) * 2.0 + rng.normal(0, 5, n)  # 레벨 상승, 분산 일정
+    res = _phase9_multiplicative(series, 12)
+    assert res["is_multiplicative"] is False
+
+
+def test_phase9_constant_none():
+    """상수 시계열 → None, basis='no_level_variation'."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase9_multiplicative
+
+    series = np.full(120, 5.0)
+    res = _phase9_multiplicative(series, 12)
+    assert res["is_multiplicative"] is None
+    assert res["basis"] == "no_level_variation"
+
+
+def test_phase9_insufficient_data_none():
+    """n < 2*period → None, basis='insufficient_data'."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase9_multiplicative
+
+    res = _phase9_multiplicative(np.arange(10.0), 12)
+    assert res["is_multiplicative"] is None
+    assert res["basis"] == "insufficient_data"
+
+
+# ── Phase 10 — 레짐 변화 ──────────────────────────────────────────────────────
+
+
+def test_phase10_levelshift_detected():
+    """level-shift 합성(중간 +30 점프) → count ≥ 1."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase10_changepoints
+
+    rng = np.random.default_rng(1)
+    n = 120
+    series = rng.normal(0, 1, n)
+    series[60:] += 30.0
+    res = _phase10_changepoints(series, {}, 7)
+    assert res["count"] >= 1
+
+
+def test_phase10_smooth_low_count(air_passengers_df):
+    """매끈한 추세(AirPassengers) → 과검출 안 함."""
+    from agents.handlers.timeseries.profiler import _phase10_changepoints
+
+    series = air_passengers_df["passengers"].astype(float)
+    res = _phase10_changepoints(series, {}, 12)
+    assert res["count"] <= 5
+
+
+def test_phase10_short_series_zero():
+    """n<20 → count=0, 크래시 X."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase10_changepoints
+
+    res = _phase10_changepoints(np.arange(10.0), {}, 7)
+    assert res["count"] == 0
+
+
+def test_phase10_constant_zero():
+    """상수 → count=0."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase10_changepoints
+
+    res = _phase10_changepoints(np.full(60, 3.0), {}, 7)
+    assert res["count"] == 0
+
+
+# ── Phase 11 — 누적/증분 ──────────────────────────────────────────────────────
+
+
+def test_phase11_cumsum_cumulative():
+    """np.cumsum(positive) → 'cumulative'."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase11_target_kind
+
+    rng = np.random.default_rng(2)
+    series = np.cumsum(np.abs(rng.normal(5, 1, 120)))
+    res = _phase11_target_kind(series, {"hurst_exponent": 0.95})
+    assert res["target_kind"] == "cumulative"
+
+
+def test_phase11_level():
+    """정상 변동 시계열 → 'level'."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase11_target_kind
+
+    rng = np.random.default_rng(3)
+    series = rng.normal(0, 1, 120)
+    res = _phase11_target_kind(series, {"hurst_exponent": 0.5})
+    assert res["target_kind"] == "level"
+
+
+def test_phase11_short_unknown():
+    """n<10 → 'unknown'."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase11_target_kind
+
+    res = _phase11_target_kind(np.arange(5.0), {})
+    assert res["target_kind"] == "unknown"
+
+
+# ── Phase 12 — CCF + 누수 ─────────────────────────────────────────────────────
+
+
+def test_phase12_leakage_detected():
+    """타겟 복사 컬럼 → leakage_suspect 에 잡힘."""
+    import numpy as np
+    import pandas as pd
+
+    from agents.handlers.timeseries.profiler import _phase12_ccf_leakage
+
+    rng = np.random.default_rng(4)
+    n = 120
+    target = rng.normal(0, 1, n).cumsum()
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=n, freq="D"),
+            "sales": target,
+            "leak": target,
+        }
+    )
+    res = _phase12_ccf_leakage(df, "sales", "date")
+    assert "leak" in res["leakage_suspect_cols"]
+
+
+def test_phase12_ccf_lag():
+    """lag-3 시프트 컬럼 → ccf_top_lags 에 lag≈3."""
+    import numpy as np
+    import pandas as pd
+
+    from agents.handlers.timeseries.profiler import _phase12_ccf_leakage
+
+    rng = np.random.default_rng(5)
+    n = 200
+    base = rng.normal(0, 1, n)
+    target = base.cumsum()
+    exog = np.empty(n)
+    exog[:] = np.nan
+    exog[: n - 3] = base[3:]  # exog 가 target 변화를 3 시점 선행
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=n, freq="D"),
+            "sales": target,
+            "lead": exog,
+        }
+    )
+    res = _phase12_ccf_leakage(df, "sales", "date", max_lag=10)
+    assert "lead" in res["ccf_top_lags"]
+    assert abs(res["ccf_top_lags"]["lead"]["lag"] - 3) <= 1
+
+
+def test_phase12_no_exog():
+    """exog 없음 → is_multivariate=False, 빈 dict."""
+    import numpy as np
+    import pandas as pd
+
+    from agents.handlers.timeseries.profiler import _phase12_ccf_leakage
+
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=50, freq="D"),
+            "sales": np.random.default_rng(6).normal(0, 1, 50),
+        }
+    )
+    res = _phase12_ccf_leakage(df, "sales", "date")
+    assert res["is_multivariate"] is False
+    assert res["ccf_top_lags"] == {}
+
+
+# ── 통합 / 견고성 ─────────────────────────────────────────────────────────────
+
+
+def test_new_keys_present(ts_df, ts_state):
+    """profile() 반환에 신규 키 전부 존재."""
+    from agents.handlers.timeseries.profiler import profile
+
+    result = profile(ts_df, ts_state)
+    for key in (
+        "timeaxis_integrity",
+        "is_multiplicative",
+        "changepoints",
+        "changepoints_detail",
+        "target_kind",
+        "ccf_leakage",
+    ):
+        assert key in result, f"신규 키 누락: {key}"
+
+
+def test_new_keys_none_when_no_target(ts_df):
+    """target 없음 → 신규 진단 키 None, timeaxis_integrity 는 측정됨."""
+    from ada.core.state import PipelineState
+    from agents.handlers.timeseries.profiler import profile
+
+    state = PipelineState(
+        job_id="00000000-0000-0000-0000-000000000a03",
+        file_id="uploads/test/no_target.csv",
+        category="timeseries",
+        target_column="nonexistent_col",
+        user_intent="x",
+    )
+    result = profile(ts_df, state)
+    assert result["is_multiplicative"] is None
+    assert result["changepoints"] is None
+    assert result["target_kind"] is None
+    assert result["ccf_leakage"] is None
+    assert result["timeaxis_integrity"]["has_time_axis"] is True
+
+
+def test_dirty_data_no_crash():
+    """엣지 5종 — 크래시 0 (전부 NaN/상수/초단기/중복/비수치 exog)."""
+    import numpy as np
+    import pandas as pd
+
+    from ada.core.state import PipelineState
+    from agents.handlers.timeseries.profiler import profile
+
+    def _state(target="sales"):
+        return PipelineState(
+            job_id="00000000-0000-0000-0000-000000000a04",
+            file_id="uploads/test/dirty.csv",
+            category="timeseries",
+            target_column=target,
+            user_intent="x",
+        )
+
+    df1 = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=30, freq="D"), "sales": [np.nan] * 30})
+    df2 = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=60, freq="D"), "sales": [5.0] * 60})
+    df3 = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=5, freq="D"), "sales": [1, 2, 3, 4, 5]})
+    df4 = pd.DataFrame({"date": pd.to_datetime(["2024-01-01"] * 30), "sales": np.arange(30.0)})
+    df5 = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=60, freq="D"),
+            "sales": np.random.default_rng(7).normal(0, 1, 60).cumsum(),
+            "junk": ["a", "b"] * 30,
+        }
+    )
+
+    for df in (df1, df2, df3, df4, df5):
+        result = profile(df, _state())
+        assert isinstance(result, dict)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Phase 13~15 테스트 (이분산 · 이상치성격 · 0vsNaN) — 방법론 1·2단계 보강
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Phase 13 — 이분산 ─────────────────────────────────────────────────────────
+
+
+def test_phase13_heteroscedastic_detected():
+    """후반 분산이 전반보다 크게 증가 → is_heteroscedastic=True."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase13_heteroscedasticity
+
+    rng = np.random.default_rng(0)
+    n = 120
+    first = rng.normal(0, 1, n // 2)
+    second = rng.normal(0, 5, n // 2)  # 분산 5배
+    series = np.concatenate([first, second])
+    res = _phase13_heteroscedasticity(series, 7)
+    assert res["is_heteroscedastic"] is True
+    assert res["var_ratio"] > 2.0
+
+
+def test_phase13_homoscedastic_false():
+    """일정 분산 → False."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase13_heteroscedasticity
+
+    rng = np.random.default_rng(1)
+    series = rng.normal(0, 1, 120)
+    res = _phase13_heteroscedasticity(series, 7)
+    assert res["is_heteroscedastic"] is False
+
+
+def test_phase13_constant_none():
+    """상수 → None, basis=no_variance."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase13_heteroscedasticity
+
+    res = _phase13_heteroscedasticity(np.full(60, 3.0), 7)
+    assert res["is_heteroscedastic"] is None
+    assert res["basis"] == "no_variance"
+
+
+def test_phase13_short_insufficient():
+    """n<20 → None, insufficient_data."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase13_heteroscedasticity
+
+    res = _phase13_heteroscedasticity(np.arange(10.0), 7)
+    assert res["is_heteroscedastic"] is None
+    assert res["basis"] == "insufficient_data"
+
+
+# ── Phase 14 — 이상치 성격 ────────────────────────────────────────────────────
+
+
+def test_phase14_error_suspect_negative():
+    """전부 양수 계열에 음수 이상치 → error_suspect, investigate_errors."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase14_outlier_kind
+
+    vals = np.concatenate([np.full(50, 100.0) + np.random.default_rng(2).normal(0, 5, 50), [-999.0]])
+    res = _phase14_outlier_kind(vals)
+    assert res["error_suspect_count"] >= 1
+    assert res["recommend"] == "investigate_errors"
+
+
+def test_phase14_event_suspect():
+    """양수 계열에 중간 z 이상치(세일 스파이크) → event_suspect, flag_as_event."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase14_outlier_kind
+
+    rng = np.random.default_rng(3)
+    vals = np.concatenate([rng.normal(100, 5, 60), [140.0, 145.0]])  # 적당히 높은 스파이크
+    res = _phase14_outlier_kind(vals)
+    assert res["outlier_count"] >= 1
+    assert res["event_suspect_count"] >= 1
+
+
+def test_phase14_no_outlier():
+    """이상치 없음 → count 0, none."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase14_outlier_kind
+
+    rng = np.random.default_rng(4)
+    res = _phase14_outlier_kind(rng.normal(100, 1, 60))
+    assert res["recommend"] in ("none", "flag_as_event")  # 깨끗하면 none, 약한 꼬리면 event
+
+
+# ── Phase 15 — 0 vs NaN ───────────────────────────────────────────────────────
+
+
+def test_phase15_zero_suspect_long_run():
+    """긴 연속 0 런 → zero_suspect=True."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase15_zero_vs_nan
+
+    vals = np.concatenate([np.full(40, 5.0), np.zeros(10), np.full(40, 5.0)])  # 10연속 0
+    res = _phase15_zero_vs_nan(vals)
+    assert res["max_zero_run"] >= 7
+    assert res["zero_suspect"] is True
+
+
+def test_phase15_clean_no_suspect():
+    """0 거의 없음 → zero_suspect=False."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase15_zero_vs_nan
+
+    rng = np.random.default_rng(5)
+    res = _phase15_zero_vs_nan(rng.normal(100, 5, 100))
+    assert res["zero_suspect"] is False
+
+
+def test_phase15_has_nan_flag():
+    """NaN 혼재 감지 → has_nan=True."""
+    import numpy as np
+
+    from agents.handlers.timeseries.profiler import _phase15_zero_vs_nan
+
+    vals = np.array([1.0, 2.0, np.nan, 0.0, 0.0, 3.0])
+    res = _phase15_zero_vs_nan(vals)
+    assert res["has_nan"] is True
+
+
+# ── 통합 — profile() 에 신규 키 존재 ──────────────────────────────────────────
+
+
+def test_phase13_15_keys_present(ts_df, ts_state):
+    """profile() 반환에 heteroscedasticity·outlier_kind·zero_vs_nan 존재."""
+    from agents.handlers.timeseries.profiler import profile
+
+    result = profile(ts_df, ts_state)
+    for key in ("heteroscedasticity", "outlier_kind", "zero_vs_nan"):
+        assert key in result, f"신규 키 누락: {key}"
+
+
+def test_phase13_15_none_when_no_target(ts_df):
+    """target 없음 → 신규 3키 None."""
+    from ada.core.state import PipelineState
+    from agents.handlers.timeseries.profiler import profile
+
+    state = PipelineState(
+        job_id="00000000-0000-0000-0000-000000000a05",
+        file_id="x",
+        category="timeseries",
+        target_column="nonexistent",
+        user_intent="x",
+    )
+    result = profile(ts_df, state)
+    assert result["heteroscedasticity"] is None
+    assert result["outlier_kind"] is None
+    assert result["zero_vs_nan"] is None
+
+
+def test_profile_exposes_n_rows(ts_df, ts_state):
+    """profile() 가 n_rows 를 직접 노출 (proposer/preprocessor fallback 용 — 중간점검 보강)."""
+    from agents.handlers.timeseries.profiler import profile
+
+    result = profile(ts_df, ts_state)
+    assert result["n_rows"] == len(ts_df)
+    assert isinstance(result["n_rows"], int)
