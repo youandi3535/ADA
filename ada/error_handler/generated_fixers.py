@@ -7,7 +7,17 @@
     성공 자동 수정되면 → Claude 가 패턴을 분석해 이 파일에 fixer 함수를 자동 추가.
     새 변형(variation) 이 관찰될 때마다 기존 함수에 elif 분기가 추가됨.
 
-함수 시그니처: (error_message: str, stack_trace: str) -> dict | None
+함수 시그니처 (static_fixers.try_static_fix 가 호출하는 계약):
+
+    def _fix_gen_<slug>(error_message: str, stack_trace: str) -> dict | None:
+        '''매칭 성공 시 dict, 아니면 None.
+
+        성공 dict 키:
+            - diff       : str   — unified diff 패치
+            - test_plan  : str   — 적용 후 검증할 pytest 표현
+            - confidence : float — 0.0 ~ 1.0
+            - explanation: str   — 사람 가독 한 줄
+        '''
 """
 
 from __future__ import annotations

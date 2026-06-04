@@ -1,4 +1,8 @@
-"""scripts.seed_agent_registry — agent_registry 27 행 + rules 시드 (Day02/Day21)."""
+#!/usr/bin/env python3
+"""scripts.seed_agent_registry — agent_registry 27 행 + rules 시드 (Day02/Day21).
+
+직접 실행: ``python -m scripts.seed_agent_registry`` 또는 ``./scripts/seed_agent_registry.py``
+"""
 
 from __future__ import annotations
 

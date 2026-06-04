@@ -61,9 +61,23 @@ class SecurityGuardAgent(BaseAgent):
             # Day 4 — PII anonymize: 텍스트의 PII 를 토큰으로 치환하고 매핑 저장
             from ada.security.guardrails import PIIAnonymizer
 
+            # PII anonymizer 의 토큰 할당이 anonymize_text 호출마다 독립이라
+            # 같은 PII 가 intent / question 양쪽에 있어도 다른 토큰을 받을 수 있다.
+            # → 같은 anonymizer 인스턴스를 재사용해 토큰 카운터 공유 +
+            #   mapping 병합 시 동일 토큰이면 값 일치, 다른 토큰이면 둘 다 보존.
             anonymizer = PIIAnonymizer()
             mapped_intent, mapping_intent = anonymizer.anonymize_text(state.user_intent or "")
             mapped_question, mapping_question = anonymizer.anonymize_text(state.user_question or "")
+            # 토큰 키 충돌 검사 — 동일 키에 다른 값이 들어 있으면 데이터 손실이므로 경고.
+            _conflict_keys = [
+                k for k in mapping_intent if k in mapping_question and mapping_intent[k] != mapping_question[k]
+            ]
+            if _conflict_keys:
+                self.logger.warning(
+                    "pii_mapping_token_conflict",
+                    keys=_conflict_keys[:10],
+                    n=len(_conflict_keys),
+                )
             mapping = {**mapping_intent, **mapping_question}
 
             extras = dict(state.category_extras or {})

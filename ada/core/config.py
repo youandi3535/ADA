@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     max_upload_size_mb: int = Field(default=100, validation_alias="MAX_UPLOAD_SIZE_MB")
     pipeline_timeout_min: int = Field(default=30, validation_alias="PIPELINE_TIMEOUT_MIN")
+    # Heavy 모델(GPU 카테고리)을 학원 worker-training 에 위임할 때 sync wait 타임아웃.
+    # 타임아웃 시 TrainingExecutorAgent 가 CPU 인라인 폴백.
+    training_task_timeout_sec: int = Field(default=900, validation_alias="TRAINING_TASK_TIMEOUT_SEC")
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
     max_daily_llm_usd: float = Field(default=20.0, validation_alias="MAX_DAILY_LLM_USD")
 

@@ -374,7 +374,12 @@ class AnomalyPipeline(BasePipeline):
         model_name: str,
         params: dict[str, Any],
     ) -> Any:
-        """단일 모델 학습 (PyOD 우선, sklearn fallback). MLflow 로깅."""
+        """단일 모델 학습 (PyOD 우선, sklearn fallback). MLflow 로깅.
+
+        학습된 model 에 ``_ada_model_name`` 속성을 부착해 predict/evaluate 가
+        모델 종류별 분기(_get_anomaly_scores 의 IsolationForest_sklearn 등)를
+        정확히 수행할 수 있게 한다.
+        """
         with self._start_mlflow_run(tags={"model": model_name}):
             try:
                 import mlflow  # noqa: WPS433
@@ -382,11 +387,24 @@ class AnomalyPipeline(BasePipeline):
                 mlflow.log_params({**params, "model_name": model_name})
             except Exception:
                 pass
-            return _train_one_model(model_name, X_train, params)
+            model = _train_one_model(model_name, X_train, params)
+            try:
+                model._ada_model_name = model_name  # noqa: SLF001
+            except Exception:  # noqa: BLE001  — 일부 C 확장 모델은 동적 속성 불가
+                pass
+            return model
+
+    @staticmethod
+    def _resolve_model_name(model: Any) -> str:
+        """train 에서 부착한 _ada_model_name 우선, 없으면 클래스명 fallback."""
+        nm = getattr(model, "_ada_model_name", None)
+        if isinstance(nm, str) and nm:
+            return nm
+        return type(model).__name__
 
     def predict(self, model: Any, X: Any) -> np.ndarray:
         """anomaly_score 반환 (높을수록 이상)."""
-        return _get_anomaly_scores(model, X, model_name="")
+        return _get_anomaly_scores(model, X, model_name=self._resolve_model_name(model))
 
     def evaluate(
         self,
@@ -396,8 +414,9 @@ class AnomalyPipeline(BasePipeline):
         task: str = "anomaly",
     ) -> dict[str, float]:
         """AUC + Otsu + predicted_anomalies. ★ DoD: AUC > 0.8."""
-        scores = _get_anomaly_scores(model, X_val, "")
-        threshold = self.otsu_threshold(scores)
+        scores = _get_anomaly_scores(model, X_val, self._resolve_model_name(model))
+        # static method 이므로 클래스 경유 호출이 스타일상 명확
+        threshold = AnomalyPipeline.otsu_threshold(scores)
         predicted = (scores > threshold).astype(bool)
         metrics: dict[str, Any] = {
             "threshold": threshold,

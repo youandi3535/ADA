@@ -251,13 +251,46 @@ def _schedule_validate_and_record(
     try:
         from agents.self_learning import validate_and_record
     except Exception as e:  # noqa: BLE001
-        # import 실패 = 코드 망가짐 = ERROR
+        # import 실패 = 코드 망가짐 = ERROR + FailureLog audit
+        # 본 함수는 KB 적재(post-patch) 스케줄러이지 Tier 1/1.5 lookup 이 아니므로,
+        # 여기서 return 해도 호출자의 패치 적용 흐름은 영향 받지 않는다.
+        # 다만 적재 누수는 admin 이 추후 재시도해야 하므로 FailureLog 에 기록.
         log.error(
             "schedule_record_import_failed",
             error=str(e),
             error_hash=error_hash[:16],
             source=source,
         )
+        try:
+            import asyncio as _aio
+
+            from ada.db.models import FailureLog  # noqa: WPS433
+            from ada.db.session import AsyncSessionLocal  # noqa: WPS433
+
+            # Python 은 except 절 종료 시 e 를 삭제하므로 클로저 캡처 전에 보존.
+            _err_msg = f"validate_and_record import failed: {e}"[:2000]
+
+            async def _audit() -> None:
+                try:
+                    async with AsyncSessionLocal() as sess:
+                        sess.add(
+                            FailureLog(
+                                error_hash=error_hash,
+                                error_message=_err_msg,
+                                stack_trace=f"source={source}; cannot schedule KB record"[:5000],
+                                error_category="kb_record_failed",
+                            )
+                        )
+                        await sess.commit()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            try:
+                _aio.get_running_loop().create_task(_audit())
+            except RuntimeError:
+                _aio.run(_audit())
+        except Exception:  # noqa: BLE001
+            pass
         return
 
     async def _wrapped() -> None:
@@ -777,12 +810,19 @@ async def capture_and_handle(
                 except (ValueError, TypeError):
                     pass
 
+            # R-103: 원본(미마스킹) 에러는 raw_error_encrypted 에 암호화 저장.
+            # 평문 컬럼은 redactor 통과한 clean_msg/clean_stack 만 들어간다.
+            from ada.security.raw_error_crypto import encrypt_raw_error  # noqa: WPS433
+
+            raw_blob = encrypt_raw_error(f"{error_message}\n---STACK---\n{stack_trace or ''}")
+
             fl = FailureLog(
                 job_id=job_id_val,
                 error_hash=fp["hash"],
                 error_message=clean_msg[:2000],
                 stack_trace=clean_stack[:5000],
                 error_category=source,
+                raw_error_encrypted=raw_blob,
             )
             session.add(fl)
             await session.flush()

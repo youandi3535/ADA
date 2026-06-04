@@ -129,10 +129,76 @@ class ModelStrategyProposerAgent(BaseGate):
                     opt["id"] = i
                 return llm_opts + [_CUSTOM_OPTION]
         except Exception as e:
-            self.logger.warning("g3_llm_failed", error=str(e))
+            self.logger.warning("g4_llm_failed", error=str(e))
 
         base = _FALLBACK_DEFAULTS.get(
             state.category,
             [{"id": 1, "title": "기본 전략", "models": ["XGBoost"], "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
         )
         return list(base) + [_CUSTOM_OPTION]
+
+    def _apply_choice(
+        self,
+        state: PipelineState,
+        user_choice: Any,
+        proposals: list[dict[str, Any]],
+    ) -> PipelineState:
+        """G4 사용자 선택을 state 에 반영.
+
+        프론트 형식:
+            - 직접 입력  → {adopted_rank: 0, custom_intent: "text"}
+            - 옵션 1/2   → {adopted_rank: 1} or {adopted_rank: 2}
+
+        반영 필드:
+            - user_intent           : 선택한 전략 제목 누적
+            - model_candidates      : proposal.models 가 있으면 다운스트림 후보로 미리 채움
+                                      (model_selection 이 LLM 으로 top3 재선정할 수 있으나
+                                       LLM 실패 시 본 값이 fallback 으로 그대로 쓰임)
+            - category_extras["g4_strategy"]: 감사·디버깅용 선택 메타데이터
+        """
+        uc = user_choice if isinstance(user_choice, dict) else {}
+        updates: dict[str, Any] = {}
+
+        custom = uc.get("custom_intent")
+        chosen: dict[str, Any] | None = None
+        if isinstance(custom, str) and custom.strip():
+            chosen = {"title": custom.strip(), "models": [], "is_custom": True}
+            updates["user_intent"] = f"{(state.user_intent or '').strip()} (모델 전략: {custom.strip()})".strip()
+            self.logger.info("g4_custom_intent_applied", intent=custom.strip()[:120])
+        else:
+            rank = uc.get("adopted_rank")
+            chosen = next(
+                (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
+                None,
+            )
+            if chosen and isinstance(chosen.get("title"), str):
+                strategy = chosen["title"].strip()
+                base = (state.user_intent or "").strip()
+                updates["user_intent"] = f"{base} (모델 전략: {strategy})" if base else f"모델 전략: {strategy}"
+                self.logger.info(
+                    "g4_proposal_adopted",
+                    rank=rank,
+                    title=strategy,
+                    models=chosen.get("models"),
+                )
+
+        if chosen:
+            models = chosen.get("models") or []
+            if isinstance(models, list) and models:
+                # 다운스트림 model_selection 이 LLM 으로 다시 정할 수 있지만,
+                # 본 값이 미리 채워져 있으면 LLM 실패 시 안전한 fallback 이 된다.
+                updates["model_candidates"] = [str(m) for m in models if isinstance(m, str)]
+            # category_extras 에 감사용 메타데이터 기록 (R-005 with_update 패턴 유지)
+            cat = state.category or "_default"
+            extras = dict(state.category_extras or {})
+            cat_block = dict(extras.get(cat) or {})
+            cat_block["g4_strategy"] = {
+                "title": chosen.get("title"),
+                "models": chosen.get("models") or [],
+                "rationale": chosen.get("rationale", ""),
+                "is_custom": bool(chosen.get("is_custom")),
+            }
+            extras[cat] = cat_block
+            updates["category_extras"] = extras
+
+        return state.with_update(**updates) if updates else state
