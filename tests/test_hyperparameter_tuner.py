@@ -129,14 +129,10 @@ def test_executor_uses_best_params(monkeypatch, base_state, titanic_df):
         }
     )
 
-    class _MC:
-        def load_dataframe(self, file_id, fmt="csv"):
-            return titanic_df
+    # load_dataframe_from_state 직접 monkeypatch (MinIO 우회)
+    import agents.handlers.common.shared as shared_mod
 
-    # MinIO 우회
-    import tools.minio_tool as mt
-
-    monkeypatch.setattr(mt, "get_minio_client", lambda: _MC())
+    monkeypatch.setattr(shared_mod, "load_dataframe_from_state", lambda state: titanic_df)
     from pipelines import factory as factory_mod
 
     monkeypatch.setattr(factory_mod.PipelineFactory, "create", staticmethod(lambda cat: _DummyPipeline()))

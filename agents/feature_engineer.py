@@ -31,7 +31,11 @@ class FeatureEngineerAgent(BaseAgent):
             handler = get_handler(state.category, "apply")
             if handler is not None:
                 try:
-                    df = handler(df, state.preprocessing_plan or [], state)
+                    result = handler(df, state.preprocessing_plan or [], state)
+                    if isinstance(result, tuple) and len(result) == 2:
+                        df, state = result
+                    else:
+                        df = result
                 except Exception as e:
                     self.logger.warning("feature_engineer_handler_failed", category=state.category, error=str(e))
 
