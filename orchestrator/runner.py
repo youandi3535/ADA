@@ -476,6 +476,10 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
 
         gate_code = gate_response.get("gate", "G?")
 
+        # 재개 시 이전 실행의 stale progress·agent 를 덮어씀.
+        # (예: G3 응답 후 재개 시 이전 97%·하이퍼파라미터 튜닝이 G4 로딩 화면에 잔존하는 버그 방지)
+        publish_progress(job_id, "supervisor", "파이프라인 재개", progress=GATE_WAIT_PROGRESS.get(gate_code, 0))
+
         # full_state 를 Redis 에서 먼저 로드 (aupdate_state partial 누락 방지)
         full_state_dict: dict = {}
         try:
