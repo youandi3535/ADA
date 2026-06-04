@@ -79,11 +79,10 @@ class HyperparameterTunerAgent(BaseAgent):
     async def _load_xy(self, state: PipelineState):
         """training_executor 와 동일한 _split_xy 사용. MinIO 로드 실패 시 (None, None)."""
         try:
+            from agents.handlers.common.shared import load_dataframe_from_state
             from agents.training_executor import _split_xy
-            from tools.minio_tool import get_minio_client
 
-            mc = get_minio_client()
-            df = mc.load_dataframe(state.file_id, fmt=state.file_id.rsplit(".", 1)[-1].lower())
+            df = load_dataframe_from_state(state)
             return _split_xy(df, state.target_column)
         except Exception as e:
             self.logger.warning("hpo_load_failed", error=str(e))

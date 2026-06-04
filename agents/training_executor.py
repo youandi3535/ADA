@@ -35,7 +35,9 @@ class TrainingExecutorAgent(BaseAgent):
             mc = get_minio_client()
 
             try:
-                df = mc.load_dataframe(state.file_id, fmt=state.file_id.rsplit(".", 1)[-1].lower())
+                from agents.handlers.common.shared import load_dataframe_from_state
+
+                df = load_dataframe_from_state(state)
             except Exception as e:
                 return state.with_update(error=f"학습 데이터 로딩 실패: {e}", next_agent="error_recovery")
 
