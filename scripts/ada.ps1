@@ -1,15 +1,23 @@
-ï»¿# ADA Docker ë‹¨ì¶• ëª…ë ¹ì–´ (PowerShell)
-# VS Code í„°ë¯¸ë„ì—ì„œ ë¡œë“œ: . .\scriptsda.ps1
+# ADA Docker ´ÜÃà ¸í·É¾î (PowerShell)
+# VS Code ÅÍ¹Ì³Î¿¡¼­ ·Îµå: . .\scriptsda.ps1
 
 $ADA_ROOT = "C:\IT\workspace_python\ADA"
 
+# °¡»óÈ¯°æ ÀÚµ¿ È°¼ºÈ­
+$_venv = "$ADA_ROOT\.venv\Scripts\Activate.ps1"
+if (Test-Path $_venv) {
+    & $_venv
+    Write-Host "[ADA] .venv È°¼ºÈ­µÊ" -ForegroundColor DarkGreen
+}
+
+
 function ada-up {
-    Write-Host "[ADA] ì»¨í…Œì´ë„ˆ ì‹œì‘ (core + ml)..." -ForegroundColor Cyan
+    Write-Host "[ADA] ÄÁÅ×ÀÌ³Ê ½ÃÀÛ (core + ml)..." -ForegroundColor Cyan
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml up -d --pull never
 }
 
 function ada-down {
-    Write-Host "[ADA] ì»¨í…Œì´ë„ˆ ì¢…ë£Œ (core + ml)..." -ForegroundColor Yellow
+    Write-Host "[ADA] ÄÁÅ×ÀÌ³Ê Á¾·á (core + ml)..." -ForegroundColor Yellow
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml down
 }
 
@@ -29,46 +37,46 @@ function ada-logs {
 }
 
 function ada-build {
-    Write-Host "[ADA] ì´ë¯¸ì§€ ë¹Œë“œ ì¤‘ (core + ml)..." -ForegroundColor Cyan
+    Write-Host "[ADA] ÀÌ¹ÌÁö ºôµå Áß (core + ml)..." -ForegroundColor Cyan
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml build
 }
 
 function ada-mlflow-init {
-    Write-Host "[ADA] MLflow ì‹¤í—˜ ì´ˆê¸°í™”..." -ForegroundColor Cyan
+    Write-Host "[ADA] MLflow ½ÇÇè ÃÊ±âÈ­..." -ForegroundColor Cyan
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm worker-pipeline python scripts/mlflow_init.py
 }
 
 function ada-migrate {
-    Write-Host "[ADA] DB ë§ˆì´ê·¸ë ˆì´ì…˜ ì ìš© (alembic upgrade head)..." -ForegroundColor Cyan
+    Write-Host "[ADA] DB ¸¶ÀÌ±×·¹ÀÌ¼Ç Àû¿ë (alembic upgrade head)..." -ForegroundColor Cyan
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic upgrade head
 }
 
 function ada-migrate-down {
-    Write-Host "[ADA] ê°€ì¥ ìµœê·¼ 1ê°œ ë§ˆì´ê·¸ë ˆì´ì…˜ ë¡¤ë°± (alembic downgrade -1)..." -ForegroundColor Yellow
+    Write-Host "[ADA] °¡Àå ÃÖ±Ù 1°³ ¸¶ÀÌ±×·¹ÀÌ¼Ç ·Ñ¹é (alembic downgrade -1)..." -ForegroundColor Yellow
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic downgrade -1
 }
 
 function ada-migrate-status {
-    Write-Host "[ADA] í˜„ì¬ ë¦¬ë¹„ì „ + íˆìŠ¤í† ë¦¬..." -ForegroundColor Cyan
+    Write-Host "[ADA] ÇöÀç ¸®ºñÀü + È÷½ºÅä¸®..." -ForegroundColor Cyan
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic current
     docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic history
 }
 
 function ada-help {
     Write-Host ""
-    Write-Host "  ada-up             ì»¨í…Œì´ë„ˆ ì‹œì‘ (core + ml: serving/training/output í¬í•¨)" -ForegroundColor Green
-    Write-Host "  ada-down           ì»¨í…Œì´ë„ˆ ì¢…ë£Œ (core + ml ì „ë¶€)" -ForegroundColor Green
-    Write-Host "  ada-ps             ìƒíƒœ í™•ì¸" -ForegroundColor Green
-    Write-Host "  ada-logs           ì „ì²´ ë¡œê·¸" -ForegroundColor Green
-    Write-Host "  ada-logs api       api ë¡œê·¸ë§Œ" -ForegroundColor Green
-    Write-Host "  ada-logs mlflow    mlflow ë¡œê·¸ë§Œ" -ForegroundColor Green
-    Write-Host "  ada-build          ì´ë¯¸ì§€ ë¹Œë“œ" -ForegroundColor Green
-    Write-Host "  ada-mlflow-init    MLflow ì‹¤í—˜ ì´ˆê¸°í™”" -ForegroundColor Green
+    Write-Host "  ada-up             ÄÁÅ×ÀÌ³Ê ½ÃÀÛ (core + ml: serving/training/output Æ÷ÇÔ)" -ForegroundColor Green
+    Write-Host "  ada-down           ÄÁÅ×ÀÌ³Ê Á¾·á (core + ml ÀüºÎ)" -ForegroundColor Green
+    Write-Host "  ada-ps             »óÅÂ È®ÀÎ" -ForegroundColor Green
+    Write-Host "  ada-logs           ÀüÃ¼ ·Î±×" -ForegroundColor Green
+    Write-Host "  ada-logs api       api ·Î±×¸¸" -ForegroundColor Green
+    Write-Host "  ada-logs mlflow    mlflow ·Î±×¸¸" -ForegroundColor Green
+    Write-Host "  ada-build          ÀÌ¹ÌÁö ºôµå" -ForegroundColor Green
+    Write-Host "  ada-mlflow-init    MLflow ½ÇÇè ÃÊ±âÈ­" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  ada-migrate         DB ë§ˆì´ê·¸ë ˆì´ì…˜ ì ìš© (alembic upgrade head)" -ForegroundColor Green
-    Write-Host "  ada-migrate-down    ê°€ì¥ ìµœê·¼ 1ê°œ ë§ˆì´ê·¸ë ˆì´ì…˜ ë¡¤ë°±" -ForegroundColor Green
-    Write-Host "  ada-migrate-status  í˜„ì¬ ë¦¬ë¹„ì „ + íˆìŠ¤í† ë¦¬" -ForegroundColor Green
+    Write-Host "  ada-migrate         DB ¸¶ÀÌ±×·¹ÀÌ¼Ç Àû¿ë (alembic upgrade head)" -ForegroundColor Green
+    Write-Host "  ada-migrate-down    °¡Àå ÃÖ±Ù 1°³ ¸¶ÀÌ±×·¹ÀÌ¼Ç ·Ñ¹é" -ForegroundColor Green
+    Write-Host "  ada-migrate-status  ÇöÀç ¸®ºñÀü + È÷½ºÅä¸®" -ForegroundColor Green
     Write-Host ""
 }
 
-Write-Host "[ADA] ë¡œë“œ ì™„ë£Œ - ada-help ë¡œ ëª…ë ¹ì–´ ëª©ë¡ í™•ì¸" -ForegroundColor Green
+Write-Host "[ADA] ·Îµå ¿Ï·á - ada-help ·Î ¸í·É¾î ¸ñ·Ï È®ÀÎ" -ForegroundColor Green

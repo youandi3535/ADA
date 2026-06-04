@@ -163,7 +163,12 @@ def route_after_feature_engineer(state: PipelineState) -> str:
 
 
 def route_after_metrics(state: PipelineState) -> str:
-    """ModelComparisonReporter 가 G4 게이트로 진입."""
+    """metrics_aggregator 완료 후 라우팅. 에러 발생 시 error 핸들러로 우회."""
+    state = _coerce_to_pipeline_state(state)
+    if state.error:
+        if state.auto_fix_attempts >= state.max_auto_fix_attempts:
+            return "error_recovery"
+        return "auto_error_handler"
     return "gate_best_model"
 
 
@@ -257,7 +262,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_node("preprocessing_choice", safe_node(PreprocessingChoiceAgent()))
     g.add_node("gate_model_strategy", safe_node(GATE_NODES["gate_model_strategy"]()))
     g.add_node("model_selection", safe_node(ModelSelectionAgent()))
-    g.add_node("hyperparameter_tuner", safe_node(HyperparameterTunerAgent()))
+    g.add_node("hyperparameter_tuner", safe_node(HyperparameterTunerAgent(n_trials=5, timeout_per_model_sec=60)))
     g.add_node("training_executor", safe_node(TrainingExecutorAgent()))
     g.add_node("training_monitor", safe_node(TrainingMonitorAgent()))
     g.add_node("metrics_aggregator", safe_node(MetricsAggregatorAgent()))
@@ -322,7 +327,11 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_conditional_edges(
         "metrics_aggregator",
         route_after_metrics,
-        {"gate_best_model": "gate_best_model"},
+        {
+            "gate_best_model": "gate_best_model",
+            "auto_error_handler": "auto_error_handler",
+            "error_recovery": "error_recovery",
+        },
     )
     g.add_conditional_edges(
         "gate_best_model",
