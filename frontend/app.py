@@ -104,6 +104,7 @@ _FLOW_HTML = """
   .databar b{color:#176a45;}
   .loadwrap{text-align:center;margin-top:24px;}
   .loadtxt{font-size:22px;color:#52647d;}
+  .progbox{margin:28px auto 0;max-width:760px;text-align:center;}
   .lbar{height:20px;border-radius:10px;background:#e6edf6;overflow:hidden;max-width:760px;margin:22px auto 0;position:relative;}
   .lfill{height:100%;border-radius:10px;background:linear-gradient(90deg,#3f5d7e,#1f3e5c);transition:width .6s ease;}
   .lmeta{font-size:20px;color:#7e98ba;margin-top:16px;}
@@ -341,8 +342,52 @@ async function poll(){
 }
 function startPolling(){ if(polling){ render(); return; } polling=true; clearTimeout(pollTimer); poll(); }
 
-// 1초 틱 — 분석 중 로딩바/경과시간 갱신
-setInterval(function(){ if(analyzing() && !paused) render(); }, 1000);
+// 0.5초 틱 — 진행률 보간을 더 부드럽게. 분석 종료 후에도 _shownPct 가 100% 에 도달할 때까지 계속 그린다.
+setInterval(function(){
+  if(paused) return;
+  if(analyzing() || _shownPct < 100) render();
+}, 500);
+
+// A 트랙(2026-06-04): 백엔드 BaseAgent 가 매초 phase 단위 진행률을 publish 하므로
+// 클라이언트 하드코딩(STAGE_AVG_SEC) 추정은 폐기. 백엔드 progress_pct 가 진실의 소스다.
+// 클라이언트는 그 값을 충실히 따라가되 (a) 단계 전환 시 0 리셋, (b) 큰 점프(예: 30→100)만
+// 부드럽게 보간(2초 안에 따라잡기), (c) 진행률이 거꾸로 가지 않도록 last-shown 유지.
+//
+// 단계의 의미:
+//   - cur=0 (업로드)  : jobId 없으면 0, 업로드 시작 후 백엔드 진행률 따름
+//   - cur=1~5 (게이트): proposals 도착 = 분석 끝 → 100% (단계 종료 신호)
+//   - cur=6 (완료)   : 항상 100%
+let _shownPct=0;
+let _progressKey=null;
+function _stageProgress(){
+  const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+cur);
+  if(_progressKey!==key){ _progressKey=key; _shownPct=0; }
+  if(isFailed()) return 0;
+  if(isCompleted()||cur===LAST){ _shownPct=100; return 100; }
+  if(cur===0 && !jobId){ _shownPct=0; return 0; }
+  // 목표 진행률: proposals 도착이면 100%, 아니면 백엔드 신호 그대로(없으면 0).
+  const tg='G'+cur;
+  const ag=curGate();
+  const d=(ag===tg)?gateData:(gateCache[tg]||{});
+  const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
+  let target;
+  if(ps.length){
+    target=100;
+  } else {
+    // 백엔드 신호가 진실 — 단, 단계 시작 직후 한두 차례 폴링까지는 0 일 수 있으므로
+    // _shownPct 유지 (백엔드 값이 도착하면 그쪽으로 따라간다).
+    target=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
+  }
+  // 점프 보간 — 매 호출(500ms) 최대 step 만큼 증가. step = max(2, diff/4) →
+  // 작은 차이는 즉시 따라잡고, 큰 점프(예: 30→100)는 약 2초간 부드럽게.
+  if(target>_shownPct){
+    const diff=target-_shownPct;
+    const step=Math.max(2, Math.ceil(diff/4));
+    _shownPct=Math.min(target, _shownPct+step);
+  }
+  // 거꾸로 가지 않음(백엔드 일시 감소도 무시).
+  return Math.round(_shownPct);
+}
 
 function failureBlock(){
   const msg=gateData.insights||gateData.pipeline_error||status.error||'알 수 없는 오류';
@@ -353,35 +398,17 @@ function failureBlock(){
     +'</div></div>';
 }
 function loadingBlock(){
+  // 본 진행바·메타는 progressBar() 가 카드 하단에 일괄 표시 → 여기는 분석 중 텍스트와
+  // 현재 agent 라벨만 출력. 백엔드 무신호 5분 이상이면 진단 안내 추가.
   if(isFailed()) return failureBlock();
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
   const realP=(gateData.progress_pct!=null)?gateData.progress_pct:null;
-  // 지연/정체 판단 — 마지막 진행 갱신이 120초 이상 없으면 ETA 를 동결한다
-  let since=null;
-  if(gateData.progress_ts){ since=Math.max(0, Date.now()/1000 - gateData.progress_ts); }
-  const stale=(since!=null && since>120);
-  if(realP!=null){
-    const p=Math.max(2, Math.min(99, realP));
-    let etaStr='추정 중…';
-    if(stale){
-      etaStr='지연/멈춤 의심 — 추정 불가';
-    } else if(realP>5 && el>5){
-      // 진행률이 너무 낮으면 선형 외삽이 곧 elapsed 와 같아져 오해를 부른다 → 5% 미만은 표시 안 함
-      etaStr='약 '+fmtTime(Math.max(0, el*100/realP - el));
-    }
-    let agentLine='';
-    if(gateData.current_agent){ agentLine='<div class="lagent">현재 작업: <b>'+esc(AGENT_KO[gateData.current_agent]||gateData.current_agent)+'</b></div>'; }
-    let staleLine='';
-    if(since!=null){ staleLine=' · 마지막 갱신 '+fmtTime(since)+' 전'+(stale?' ⚠ 지연/멈춤 의심':''); }
-    return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine
-      +'<div class="lbar"><div class="lfill" style="width:'+p+'%"></div></div>'
-      +'<div class="lmeta">진행 <b>'+p+'%</b> · 분석 시간 <b>'+fmtTime(el)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'+staleLine+'</div></div>';
+  let agentLine='';
+  if(gateData.current_agent){
+    agentLine='<div class="lagent">현재 작업: <b>'+esc(AGENT_KO[gateData.current_agent]||gateData.current_agent)+'</b></div>';
   }
-  // 백엔드가 진행률을 안 보냄 → 가짜 % 대신 미정(indeterminate) 바 + 진단
   let diag='';
-  if(el>60 && el<=300){
-    diag='<div class="diag" style="border-color:#4a7fa5;background:#1e3a50">ℹ 분석 진행 중입니다. LLM 호출 또는 모델 학습 중일 수 있으며 최대 5분 소요됩니다. (<b>'+fmtTime(el)+'</b> 경과)</div>';
-  } else if(el>300){
+  if(realP==null && el>300){
     diag='<div class="diag">⚠ 백엔드에서 진행 신호가 <b>'+fmtTime(el)+'</b> 동안 없습니다. 워커가 실제로 분석 중이 아닐 가능성이 큽니다.<br>'
       +'① 워커 실행: <code>docker ps | grep worker</code> &nbsp; ② 로그: <code>docker logs --tail 120 ada-worker-pipeline</code><br>'
       +'③ <code>ANTHROPIC_API_KEY</code> 설정 여부 &nbsp; ④ 백엔드(api·worker) 파일 복사 후 <b>재기동</b> 했는지'
@@ -389,9 +416,31 @@ function loadingBlock(){
       +(gateData._state_error?('<br><b>state 오류:</b> '+esc(gateData._state_error)):'')
       +'</div>';
   }
-  return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석하는 중입니다…</div>'
-    +'<div class="lbar indet"><div class="lfill"></div></div>'
-    +'<div class="lmeta">분석 시간 <b>'+fmtTime(el)+'</b> · 백엔드 진행 신호 <b>대기 중</b></div>'+diag+'</div>';
+  return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine+diag+'</div>';
+}
+// 공통 진행바 — 1~7 모든 단계에서 카드 하단에 동일하게 표시.
+// 진행률은 _stageProgress() 가 단계 완료(proposals 도착·isCompleted)면 100% 강제 점프.
+function progressBar(){
+  if(isFailed()) return '';
+  const p=_stageProgress();
+  const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
+  let etaStr='';
+  if(p>=100){ etaStr='완료'; }
+  else if(analyzing()){
+    // ETA 는 elapsed × (남은%/현재%) 으로 외삽. 진행률이 너무 낮으면 표시 보류.
+    if(p>=5) etaStr='약 '+fmtTime(Math.max(0, el*(100-p)/p));
+    else etaStr='추정 중…';
+  }
+  const showMeta=analyzing() || p>=100;
+  let meta='';
+  if(showMeta){
+    meta='<div class="lmeta">진행 <b>'+p+'%</b>'
+      +(analyzing()?(' · 분석 시간 <b>'+fmtTime(el)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'):(p>=100?' · <b>'+etaStr+'</b>':''))
+      +'</div>';
+  } else {
+    meta='<div class="lmeta">진행 <b>'+p+'%</b></div>';
+  }
+  return '<div class="progbox"><div class="lbar"><div class="lfill" style="width:'+p+'%"></div></div>'+meta+'</div>';
 }
 function gateHeader(g){
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
@@ -513,9 +562,12 @@ function render(){
   sc.innerHTML=html;
   sc.querySelectorAll('.step.reachable').forEach(function(el){ el.onclick=function(){ cur=+el.dataset.i; if(cur<frontier) follow=false; paused=false; render(); }; });
 
-  document.getElementById('content').innerHTML=(errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur);
+  // 1~7 모든 단계 공통: 본문 + 진행바 (실패 시 진행바 생략 → progressBar() 내부에서 빈 문자열 반환).
+  document.getElementById('content').innerHTML=
+    (errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur)+progressBar();
   document.getElementById('curName').textContent=steps[cur].label;
-  document.getElementById('curPct').textContent=((gateData.progress_pct!=null && !isCompleted())?gateData.progress_pct:Math.round(fillPct))+'%';
+  // 상단 헤더 진행률 — progressBar 와 동일한 _stageProgress() 사용 → 카드 안 진행바와 항상 일치.
+  document.getElementById('curPct').textContent=_stageProgress()+'%';
   document.getElementById('curIdx').textContent=cur+1;
   document.getElementById('curTot').textContent=N;
   const stt=document.getElementById('status');
@@ -648,7 +700,6 @@ if not st.session_state.get("studio_started"):
         .block-container {
             min-height: calc(100vh - 4rem);
             display: flex; flex-direction: column; justify-content: center;
-            padding-top: 1.5rem; padding-bottom: 1.5rem;
         }
         </style>
         """,

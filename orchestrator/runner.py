@@ -81,34 +81,69 @@ celery_app.conf.update(
 # ---------------------------------------------------------------------------
 # Redis pub/sub progress
 # ---------------------------------------------------------------------------
-AGENT_PROGRESS_MAP: dict[str, int] = {
-    "supervisor": 3,
-    "intent_elicitor": 5,
-    "data_profiler": 8,
-    "schema_validator": 10,
-    "gate_direction": 15,
-    "eda_agent": 25,
-    "gate_methodology": 30,
-    "preprocessing_strategist": 33,
-    "feature_engineer": 38,
-    "preprocessing_choice": 40,
-    "gate_model_strategy": 45,
-    "model_selection": 50,
-    "hyperparameter_tuner": 55,
-    "training_executor": 65,
-    "training_monitor": 70,
-    "metrics_aggregator": 75,
-    "gate_best_model": 78,
-    "fine_tune_executor": 82,
-    "eval_agent": 86,
-    "explainability": 90,
-    "insight": 93,
-    "gate_outputs": 95,
-    "report_composer": 98,
-    "self_learning_dispatch": 99,
-    "error_recovery": 50,
-    "END": 100,
+# A 트랙(2026-06-04): agent 단위 단일 마일스톤(고정 %) 에서 phase 단위 (start, end) 범위로 확장.
+# BaseAgent 가 진입(start) → LLM 호출 전(llm_start) → LLM 호출 후(llm_end) → 종료(end) 4 시점에
+# publish_progress(progress=계산값) 를 호출하여 실제 시간 비례에 가깝게 진행률 보고.
+# (start, end) 폭은 그 agent 의 평균 작업 비중에 비례. 데이터 크기/방법에 따라 LLM 호출 시간이
+# 달라져도 phase 단위 4회 보고로 클라이언트가 시간 비례 화면을 그릴 수 있다.
+AGENT_PHASE_MAP: dict[str, tuple[int, int]] = {
+    "supervisor": (1, 3),
+    "intent_elicitor": (3, 5),
+    "data_profiler": (5, 12),
+    "schema_validator": (12, 14),
+    "gate_direction": (14, 18),
+    "eda_agent": (18, 28),
+    "gate_methodology": (28, 33),
+    "preprocessing_strategist": (33, 38),
+    "feature_engineer": (38, 43),
+    "preprocessing_choice": (43, 45),
+    "gate_model_strategy": (45, 50),
+    "model_selection": (50, 55),
+    "hyperparameter_tuner": (55, 65),
+    "training_executor": (65, 75),
+    "training_monitor": (75, 78),
+    "metrics_aggregator": (78, 82),
+    "gate_best_model": (82, 85),
+    "fine_tune_executor": (85, 88),
+    "eval_agent": (88, 92),
+    "explainability": (92, 95),
+    "insight": (95, 97),
+    "gate_outputs": (97, 98),
+    "report_composer": (98, 99),
+    "self_learning_dispatch": (99, 100),
+    "error_recovery": (50, 50),
 }
+# 호환: 기존 호출자들이 참조하는 AGENT_PROGRESS_MAP — 각 agent 의 end 값으로 자동 생성.
+AGENT_PROGRESS_MAP: dict[str, int] = {k: v[1] for k, v in AGENT_PHASE_MAP.items()}
+AGENT_PROGRESS_MAP["END"] = 100
+
+# 게이트 인터럽트(사용자 입력 대기) 시 표시할 진행률.
+# proposals 로드 완료 신호 → 프론트는 100% 로 올리므로 이 값은 "로딩 완료 직전" 수준.
+GATE_WAIT_PROGRESS: dict[str, int] = {
+    "G1": 18,
+    "G2": 33,
+    "G3": 50,
+    "G4": 85,
+    "G5": 98,
+}
+
+
+def agent_phase_progress(agent_key: str, phase: str) -> int:
+    """phase 별 진행률 계산. phase ∈ {start, llm_start, llm_end, end}.
+    LLM 호출이 없는 agent 도 start/end 만 publish 하면 자연스러운 두 시점 보고.
+    """
+    rng = AGENT_PHASE_MAP.get(agent_key)
+    if rng is None:
+        return AGENT_PROGRESS_MAP.get(agent_key, 0)
+    lo, hi = rng
+    width = hi - lo
+    if phase == "start":
+        return lo
+    if phase == "llm_start":
+        return int(lo + width * 0.25)
+    if phase == "llm_end":
+        return int(lo + width * 0.75)
+    return hi  # "end" 또는 알 수 없는 phase
 
 
 def _get_redis() -> Any:
@@ -124,6 +159,7 @@ def publish_progress(
     *,
     pipeline_status: str | None = None,
     error: str | None = None,
+    progress: int | None = None,
 ) -> None:
     """대시보드 SSE / WebSocket 채널.
 
@@ -131,11 +167,16 @@ def publish_progress(
         프론트는 이 값을 보고 폴링을 종료한다 (`error_recovery`가 보이는데도
         진행률이 멈춰 있는 좀비 상태 방지).
     error: 실패 시 사용자 안내용 메시지 (PII 마스킹 후 저장).
+    progress: 명시 진행률(0~100). 지정 시 그 값으로 발행, None 이면 AGENT_PROGRESS_MAP
+        의 agent 별 end 값으로 폴백(기존 호환). BaseAgent 는 phase 단위로 이 인자를
+        채워 호출해 시간 비례 진행을 구현한다.
     """
     r = _get_redis()
+    pct = progress if progress is not None else AGENT_PROGRESS_MAP.get(current_agent, 0)
+    pct = max(0, min(100, int(pct)))
     payload: dict[str, Any] = {
         "agent": current_agent,
-        "progress": AGENT_PROGRESS_MAP.get(current_agent, 0),
+        "progress": pct,
         "ts": time.time(),
         "message": message,
     }
@@ -354,7 +395,13 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
             await _set_job_terminal(job_id, "completed")
         else:
             gate = final_dict.get("current_gate") or "gate_wait"
-            publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")
+            publish_progress(
+                job_id,
+                gate,
+                "awaiting user input",
+                pipeline_status="awaiting_user",
+                progress=GATE_WAIT_PROGRESS.get(gate),
+            )
             _save_gate_data(job_id, final_dict)
             # resume 시 full state 복원을 위해 별도 저장 (aupdate_state partial 누락 방지)
             try:
@@ -436,7 +483,7 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         fs_gate_entry = full_state_dict.get("gate_responses", {}).get(gate_code, {})
         snap_gate_entry = new_responses.get(gate_code, {})
         new_responses[gate_code] = {
-            **fs_gate_entry,   # full_state proposals 를 base 로
+            **fs_gate_entry,  # full_state proposals 를 base 로
             **snap_gate_entry,  # snap 이 더 최신이면 덮어씀
             "user_choice": gate_response.get("choice"),  # 사용자 선택 항상 최우선
         }
@@ -589,7 +636,13 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                 pass
         else:
             gate = final_dict.get("current_gate") or "gate_wait"
-            publish_progress(job_id, gate, "awaiting user input", pipeline_status="awaiting_user")
+            publish_progress(
+                job_id,
+                gate,
+                "awaiting user input",
+                pipeline_status="awaiting_user",
+                progress=GATE_WAIT_PROGRESS.get(gate),
+            )
             _save_gate_data(job_id, final_dict)
             # 다음 resume 를 위해 최신 full_state 저장 (stale 상태 덮어쓰기 방지)
             try:
