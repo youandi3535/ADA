@@ -30,10 +30,6 @@ class TrainingExecutorAgent(BaseAgent):
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
-            from tools.minio_tool import get_minio_client
-
-            mc = get_minio_client()
-
             try:
                 from agents.handlers.common.shared import load_dataframe_from_state
 
