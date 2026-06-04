@@ -126,18 +126,36 @@ def _exog_columns(state: Any) -> list[str]:
         return []
 
 
-def _decide_lags(state: Any, n_rows: int) -> list[int]:
-    """data_profile 기반 lag 목록 결정.
+def _decide_lags(state: Any, n_rows: int, horizon: int = 1) -> list[int]:
+    """data_profile 기반 lag 목록 결정 (horizon-aware — 누수 1-2 차단).
 
     - [1] 항상 포함 (직전 시점).
     - 계절성 period p: [p, 2*p] 추가.
     - period 없으면: [7, 14] (일별 기본).
     - 최대 lag 상한 = min(n//4, 28).
+    - horizon-aware: horizon>1(다단계) 이면 lag < horizon 제외. 예측 시점엔 horizon
+      보다 짧은 과거값을 알 수 없음(가장 최근=lag-horizon). lag-1 같은 짧은 시차는
+      다단계 누수 1순위 (방법론 3-2 / 누수 1-2). horizon=1 이면 기존 동일.
     """
     max_lag = min(n_rows // 4, 28) if n_rows >= 8 else 2
     period = _seasonality_period(state)
     candidates = sorted({1, period, period * 2}) if period else [1, 7, 14]
-    return [lag for lag in candidates if lag <= max_lag]
+    h = int(horizon) if horizon and horizon >= 1 else 1
+    out = [lag for lag in candidates if lag <= max_lag and lag >= h]
+    if not out and h <= max_lag:
+        out = [h]
+    return out
+
+
+def _horizon(state: Any) -> int:
+    """예측 지평(horizon) — category_extras 우선, 없으면 1(단기). 누수 1-2 가드 입력."""
+    try:
+        h = (getattr(state, "category_extras", None) or {}).get("timeseries", {}).get("horizon")
+        if h and int(h) >= 1:
+            return int(h)
+    except (TypeError, AttributeError, ValueError):
+        pass
+    return 1
 
 
 def _decide_windows(n_rows: int) -> list[int]:
@@ -170,7 +188,8 @@ def plan(state: Any) -> list[dict[str, Any]]:
 
     stationary = _is_stationary(state)
     period = _seasonality_period(state)
-    lags = _decide_lags(state, n_rows)
+    horizon = _horizon(state)  # 다단계 누수 가드 입력
+    lags = _decide_lags(state, n_rows, horizon)
     windows = _decide_windows(n_rows)
     exog_cols = _exog_columns(state)
     max_warmup = (max(lags) if lags else 14) + (max(windows) if windows else 14)
@@ -276,6 +295,16 @@ def plan(state: Any) -> list[dict[str, Any]]:
                 "needs_review": False,
             }
         )
+
+    # Phase 6b: 달력 피처 (방법론 3-2)
+    steps.append({"name": "calendar", "leakage_safe": True, "needs_review": False})
+
+    # Phase 6c: 푸리에 피처 (방법론 3-2 다중 계절성) — period 있을 때만 의미
+    if period:
+        steps.append({"name": "fourier", "period": period, "n_terms": 3, "leakage_safe": True, "needs_review": False})
+
+    # Phase 6d: 이벤트/레짐 더미 (방법론 3-1) — profiler changepoint 소비
+    steps.append({"name": "event_flags", "leakage_safe": True, "needs_review": False})
 
     # Phase 7: 특성 생성 후 구조적 NaN 처리
     steps.append(
@@ -389,6 +418,15 @@ def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
                     rolling_windows=step.get("rolling_windows", [7]),
                 )
 
+            elif name == "calendar":
+                out = _apply_calendar(out, state)
+
+            elif name == "fourier":
+                out = _apply_fourier(out, state, period=step.get("period"), n_terms=step.get("n_terms", 3))
+
+            elif name == "event_flags":
+                out = _apply_event_flags(out, state)
+
             elif name == "fill_feature_nans":
                 out = _apply_fill_feature_nans(
                     out,
@@ -475,9 +513,9 @@ def _apply_fill_missing(
             continue
         out[col] = (
             out[col]
-            .ffill(limit=ffill_limit)
-            .bfill(limit=bfill_limit)
-            .interpolate(method="linear", limit_direction="both")
+            .ffill(limit=ffill_limit)  # 1) 과거 값 복사 (과거-충실)
+            .interpolate(method="linear", limit_direction="forward")  # 2) 과거 방향만 (누수 1-3 차단)
+            .bfill(limit=bfill_limit)  # 3) 시작 구간 leading NaN 만
         )
     return out
 
@@ -493,6 +531,7 @@ def _apply_boxcox(
     shift_min: bool = True,
     lambda_clip: tuple[float, float] = (-5.0, 5.0),
     fallback: str = "log1p",
+    train_ratio: float | None = None,
 ) -> Any:
     """{target}_bc 컬럼 생성. 원본 target 절대 수정 안 함.
 
@@ -528,12 +567,20 @@ def _apply_boxcox(
     shifted = series + offset
     bc_col = f"{target}_bc"
 
+    # ★ 누수 1-3 차단: train_ratio 주어지면 λ 는 학습 구간에서만 추정하고
+    #   전체에 그 λ 로 변환만 적용 (검증/미래 통계 참조 금지). None 이면 기존 동작.
+    fit_part = shifted
+    if train_ratio is not None and 0.0 < train_ratio < 1.0 and len(shifted) >= 6:
+        cut = max(3, int(len(shifted) * train_ratio))
+        fit_part = shifted.iloc[:cut]
+
     try:
+        from scipy.special import boxcox as boxcox_transform  # noqa: WPS433
         from scipy.stats import boxcox  # noqa: WPS433
 
-        transformed_arr, lam = boxcox(shifted)
+        _, lam = boxcox(fit_part)  # λ 는 학습 구간만으로 추정
         lam = float(np.clip(lam, lambda_clip[0], lambda_clip[1]))
-        transformed = transformed_arr
+        transformed = boxcox_transform(shifted.values, lam)  # 전체에 train λ 로 변환
     except Exception as exc:
         logger.warning("boxcox 실패(%s) → fallback=%r", exc, fallback)
         if fallback == "log1p":
@@ -712,6 +759,101 @@ def _apply_exog(
         for w in rolling_windows:
             mp = max(2, w // 2)
             out[f"{col}_rmean{w}"] = shifted.rolling(w, min_periods=mp).mean()
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 6b — calendar (달력 피처, 방법론 3-2)
+# ════════════════════════════════════════════════════════
+
+
+def _apply_calendar(df: Any, state: Any) -> Any:
+    """날짜 컬럼 기반 달력 피처 (방법론 3-2 1순위 도메인 피처).
+
+    요일/월/분기/월초·월말 — 도메인 주기를 모델에 명시 주입.
+    날짜 컬럼 없으면 skip (인라인 안전). leakage_safe: 각 시점의 달력값은
+    그 시점에 이미 결정돼 있으므로 미래 누수 없음.
+    """
+    out = df.copy()
+    date_col = _detect_date_col(state, out)
+    if date_col is None:
+        return out
+    try:
+        import pandas as pd  # noqa: WPS433
+
+        dt = pd.to_datetime(out[date_col], errors="coerce")
+        out["cal_dayofweek"] = dt.dt.dayofweek.astype("float")
+        out["cal_month"] = dt.dt.month.astype("float")
+        out["cal_quarter"] = dt.dt.quarter.astype("float")
+        out["cal_is_month_start"] = dt.dt.is_month_start.astype("float")
+        out["cal_is_month_end"] = dt.dt.is_month_end.astype("float")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("calendar 피처 실패: %s — skip", exc)
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 6c — fourier (푸리에 피처, 방법론 3-2 다중 계절성)
+# ════════════════════════════════════════════════════════
+
+
+def _apply_fourier(df: Any, state: Any, period: int | None, n_terms: int = 3) -> Any:
+    """period 기반 푸리에 sin/cos 항 (방법론 3-2 — 다중 계절성은 더미보다 푸리에).
+
+    period 가 없거나 <2 면 skip. n_terms 쌍의 (sin, cos) 생성.
+    위치 인덱스 t 기반이라 미래 누수 없음 (leakage_safe).
+    """
+    out = df.copy()
+    p = int(period) if period and int(period) >= 2 else 0
+    if p < 2:
+        return out
+    try:
+        import numpy as np  # noqa: WPS433
+
+        t = np.arange(len(out), dtype=float)
+        k_max = max(1, min(int(n_terms), p // 2))
+        for k in range(1, k_max + 1):
+            ang = 2.0 * np.pi * k * t / p
+            out[f"fourier_sin{k}_p{p}"] = np.sin(ang)
+            out[f"fourier_cos{k}_p{p}"] = np.cos(ang)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fourier 피처 실패: %s — skip", exc)
+    return out
+
+
+# ════════════════════════════════════════════════════════
+# Phase 6d — event_flags (이벤트/레짐 더미, 방법론 3-1)
+# ════════════════════════════════════════════════════════
+
+
+def _apply_event_flags(df: Any, state: Any) -> Any:
+    """profiler 가 탐지한 changepoint/이벤트 시점을 더미 피처로 (방법론 3-1).
+
+    "진짜 이벤트는 제거가 아니라 플래그" — profiler changepoints_detail.indices
+    를 받아 해당 시점 이후를 표시하는 레짐 더미(event_regime)와 시점 더미
+    (event_at_*)를 만든다. profiler 산출물 없으면 skip (인라인 안전).
+    leakage_safe: 과거에 관측된 구조적 변화 시점이라 미래 누수 없음.
+    """
+    out = df.copy()
+    try:
+        profile = getattr(state, "data_profile", None) or {}
+        cp = profile.get("changepoints_detail") or {}
+        indices = cp.get("indices") if isinstance(cp, dict) else None
+        if not indices:
+            return out
+        import numpy as np  # noqa: WPS433
+
+        n = len(out)
+        valid = sorted({int(i) for i in indices if isinstance(i, (int, float)) and 0 <= int(i) < n})
+        if not valid:
+            return out
+        # 레짐 더미: 각 changepoint 이후 구간을 1로 누적 (레짐 단계)
+        regime = np.zeros(n, dtype=float)
+        for idx in valid[:20]:  # 상한
+            regime[idx:] += 1.0
+        out["event_regime"] = regime
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("event_flags 피처 실패: %s — skip", exc)
     return out
 
 

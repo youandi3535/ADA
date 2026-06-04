@@ -600,8 +600,635 @@ def _phase7_outliers(series: Any) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────
+#  Phase 8 — 시간축 무결성 (방법론 1단계 + 누수 1-2)
+#  target 유무와 무관하게 항상 실행.
+# ─────────────────────────────────────────────────────────────────
+
+
+def _phase8_timeaxis_integrity(df: Any, date_col: Optional[str], period: int) -> dict[str, Any]:
+    """
+    원본(정렬 전) 시간축의 무결성을 진단한다. profile() 이 나중에 정렬하므로
+    여기서는 "원본이 정렬돼 있었나 / 중복·결측 시점 / 불규칙 빈도" 를 측정한다.
+
+    반환 계약
+    ---------
+    has_time_axis      : bool          (date_col 유무)
+    is_monotonic       : bool | None   (date_col 없으면 None)
+    duplicate_ts_count : int           (기본 0)
+    missing_ts_count   : int           (기본 0)
+    missing_ts_ratio   : float [0~1]   (기본 0.0)
+    tz_aware           : bool          (기본 False)
+    irregular          : bool | None   (간격 계산 불가 시 None)
+    """
+    # 8-A — date_col None 가드 (정수 인덱스 강등 케이스)
+    base: dict[str, Any] = {
+        "has_time_axis": False,
+        "is_monotonic": None,
+        "duplicate_ts_count": 0,
+        "missing_ts_count": 0,
+        "missing_ts_ratio": 0.0,
+        "tz_aware": False,
+        "irregular": None,
+    }
+    if date_col is None:
+        return base
+
+    try:
+        import pandas as pd
+
+        raw = df[date_col]
+
+        # 8-C — 타임존 (to_datetime 단계 try/except, 실패 시 부분 결과)
+        ts = pd.to_datetime(raw, errors="coerce")
+        try:
+            tz_aware = bool(getattr(ts.dt, "tz", None) is not None)
+        except Exception:
+            tz_aware = False
+
+        # 8-B — 원본(정렬 전) 순서 단조성. NaT 제거 후 raw 순서 그대로 평가.
+        valid = ts.dropna()
+        is_monotonic: Optional[bool] = bool(valid.is_monotonic_increasing) if len(valid) >= 2 else None
+
+        # 8-D — 중복 타임스탬프 (같은 시각 여러 행)
+        duplicate_ts_count = int(valid.duplicated().sum())
+
+        # 유효 시점 3개 미만 → 결측·불규칙 계산 skip, 기본값
+        uniq = valid.drop_duplicates().sort_values().reset_index(drop=True)
+        if len(uniq) < 3:
+            base.update(
+                has_time_axis=True,
+                is_monotonic=is_monotonic,
+                duplicate_ts_count=duplicate_ts_count,
+                tz_aware=tz_aware,
+                irregular=None,
+            )
+            return base
+
+        deltas = uniq.diff().dropna()
+        missing_ts_count = 0
+        missing_ts_ratio = 0.0
+        irregular: Optional[bool] = None
+        try:
+            # 8-E — 최빈 간격(step)으로 완전 그리드 생성 → 누락 행 수
+            step = deltas.mode().iloc[0]
+            if step.total_seconds() > 0:
+                expected = pd.date_range(start=uniq.iloc[0], end=uniq.iloc[-1], freq=step)
+                missing_ts_count = int(max(0, len(expected) - len(uniq)))
+                missing_ts_ratio = round(missing_ts_count / max(1, len(expected)), 4)
+                # 8-F — 최빈 간격 외 간격 비율 > 5% → 불규칙
+                off_step = int((deltas != step).sum())
+                irregular = bool(off_step / max(1, len(deltas)) > 0.05)
+            else:
+                irregular = None  # step=0 (전부 같은 날짜 등) → 간격 계산 불가
+        except Exception:
+            irregular = None
+
+        return {
+            "has_time_axis": True,
+            "is_monotonic": is_monotonic,
+            "duplicate_ts_count": duplicate_ts_count,
+            "missing_ts_count": missing_ts_count,
+            "missing_ts_ratio": missing_ts_ratio,
+            "tz_aware": tz_aware,
+            "irregular": irregular,
+        }
+    except Exception:
+        # 타임존 혼재·파싱 실패 등 — date_col 은 있었으므로 has_time_axis=True
+        base["has_time_axis"] = True
+        return base
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Phase 9 — 가법/승법 판정 (방법론 2-2)
+# ─────────────────────────────────────────────────────────────────
+
+
+def _phase9_multiplicative(series: Any, period: int) -> dict[str, Any]:
+    """
+    period 길이 블록의 (평균, 표준편차) 상관으로 분산-레벨 비례 여부를 판정.
+    분산이 레벨에 비례(승법) -> mean 상승 시 std 상승 -> corr 큼.
+
+    반환 계약
+    ---------
+    is_multiplicative : bool | None   (블록<2 또는 무변동 시 None)
+    confidence        : float [0~1]   (|corr|)
+    basis             : str
+    """
+    import numpy as np
+
+    out: dict[str, Any] = {
+        "is_multiplicative": None,
+        "confidence": 0.0,
+        "basis": "insufficient_data",
+    }
+    try:
+        vals = np.asarray(series, dtype=float)
+        vals = vals[~np.isnan(vals)]
+        p = int(period) if period and period >= 2 else 0
+        n = len(vals)
+        if p < 2 or n < 2 * p:
+            return out  # 블록 2개 미만
+
+        n_blocks = n // p
+        blocks = vals[: n_blocks * p].reshape(n_blocks, p)
+        means = blocks.mean(axis=1)
+        stds = blocks.std(axis=1, ddof=1)  # 블록 내 2관측치 이상 -> ddof=1 안전
+
+        # 블록 평균/표준편차 변동이 없으면 corr 무의미
+        if float(np.ptp(means)) < 1e-9 or float(np.ptp(stds)) < 1e-9:
+            return {"is_multiplicative": None, "confidence": 0.0, "basis": "no_level_variation"}
+
+        corr = float(np.corrcoef(means, stds)[0, 1])
+        if np.isnan(corr):
+            return {"is_multiplicative": None, "confidence": 0.0, "basis": "no_level_variation"}
+
+        return {
+            "is_multiplicative": bool(corr > 0.6),
+            "confidence": round(abs(corr), 4),
+            "basis": "block_mean_std_corr",
+        }
+    except Exception:
+        return out
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Phase 10 — 레짐 변화 / changepoint (방법론 2-1 · 롤백5)
+#  ruptures 등 외부 lib 안 씀. numpy/pandas 만.
+# ─────────────────────────────────────────────────────────────────
+
+
+def _phase10_changepoints(series: Any, stl_result: dict[str, Any], period: int) -> dict[str, Any]:
+    """
+    1차 차분(추세 제거 근사) 후 rolling z-score spike 와 CUSUM drift 를 교차.
+    병합 규칙: 교집합 우선(보수적) -> 비면 합집합 -> 인접(window 이내) 1건 병합.
+
+    반환 계약
+    ---------
+    count   : int          (병합 개수 — proposer 호환)
+    indices : list[int]    (대표 위치, 최대 20)
+    method  : str          ("intersection"/"union"/"none")
+    """
+    import numpy as np
+    import pandas as pd
+
+    out: dict[str, Any] = {"count": 0, "indices": [], "method": "none"}
+    try:
+        vals = np.asarray(series, dtype=float)
+        vals = vals[~np.isnan(vals)]
+        n = len(vals)
+        if n < 20:  # changepoint 판정 의미 없음
+            return out
+
+        resid = np.diff(vals)
+        if float(np.std(resid)) < 1e-12:  # 상수 / 무변동
+            return out
+
+        p = int(period) if period and period >= 2 else 5
+        window = max(5, p)
+
+        rs = pd.Series(resid)
+        # 1) rolling z-score spike
+        rmean = rs.rolling(window, min_periods=2).mean()
+        rstd = rs.rolling(window, min_periods=2).std(ddof=0)
+        z = ((rs - rmean) / rstd.replace(0.0, np.nan)).fillna(0.0)
+        spike = set(np.where(np.abs(z.to_numpy()) > 3.0)[0].tolist())
+
+        # 2) CUSUM drift
+        cusum = np.cumsum(resid - float(np.mean(resid)))
+        sigma = float(np.std(resid))
+        drift = set(np.where(np.abs(cusum) > 5.0 * sigma)[0].tolist()) if sigma > 0 else set()
+
+        # 병합 규칙: 교집합 우선
+        inter = spike & drift
+        if inter:
+            cand, method = sorted(inter), "intersection"
+        else:
+            uni = spike | drift
+            cand, method = sorted(uni), ("union" if uni else "none")
+
+        if not cand:
+            return {"count": 0, "indices": [], "method": "none"}
+
+        # 인접(window 이내) 지점 1건 병합
+        merged: list[int] = []
+        last = -(10**9)
+        for idx in cand:
+            if idx - last > window:
+                merged.append(idx)
+            last = idx
+
+        # diff 인덱스 -> 원계열 인덱스 보정(+1)
+        indices = [int(i + 1) for i in merged][:20]
+        return {"count": int(len(merged)), "indices": indices, "method": method}
+    except Exception:
+        return out
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Phase 11 — 누적/증분 판정 (방법론 1단계)
+# ─────────────────────────────────────────────────────────────────
+
+
+def _phase11_target_kind(series: Any, trend: dict[str, Any]) -> dict[str, Any]:
+    """
+    diff 의 비감소 비율 + Hurst(Phase 6 재활용) 로 누적(cumulative) 여부 판정.
+
+    반환 계약
+    ---------
+    target_kind : "cumulative" | "level" | "unknown"
+    confidence  : float
+    basis       : str
+    """
+    import numpy as np
+
+    out: dict[str, Any] = {
+        "target_kind": "unknown",
+        "confidence": 0.0,
+        "basis": "insufficient_data",
+    }
+    try:
+        vals = np.asarray(series, dtype=float)
+        vals = vals[~np.isnan(vals)]
+        n = len(vals)
+        if n < 10:
+            return out
+
+        diffs = np.diff(vals)
+        scale = float(np.nanmax(np.abs(vals))) if n else 0.0
+        eps = 1e-9 * max(1.0, scale)
+        nonneg_ratio = float(np.mean(diffs >= -eps))
+
+        hurst = (trend or {}).get("hurst_exponent")
+        hurst_high = bool(hurst is not None and hurst > 0.9)
+
+        if nonneg_ratio > 0.97 and (hurst_high or nonneg_ratio > 0.995):
+            return {
+                "target_kind": "cumulative",
+                "confidence": round(nonneg_ratio, 4),
+                "basis": "nonneg_diff_ratio" + ("+hurst" if hurst_high else ""),
+            }
+
+        # level: 부호 균형 기반 신뢰도
+        pos = float(np.mean(diffs > eps))
+        neg = float(np.mean(diffs < -eps))
+        balance = 1.0 - abs(pos - neg)
+        return {
+            "target_kind": "level",
+            "confidence": round(max(0.0, min(1.0, balance)), 4),
+            "basis": "sign_balance",
+        }
+    except Exception:
+        return out
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Phase 12 — CCF(시차 상관) + 누수 사전탐지 (방법론 2-5 · 누수 1-1)
+# ─────────────────────────────────────────────────────────────────
+
+
+def _phase12_ccf_leakage(df: Any, target_col: str, date_col: Optional[str], max_lag: int = 14) -> dict[str, Any]:
+    """
+    exog(수치형, target·date 제외) 와 target 의 누수·시차상관 진단.
+
+    1) 누수 사전탐지: 동시점 원계열 |corr|>0.98 -> leakage_suspect_cols
+    2) CCF: target·exog 1차 차분 후 lag 0~max_lag 상관, |corr| 최대 lag 기록
+
+    반환 계약
+    ---------
+    is_multivariate      : bool          (exog >= 1)
+    n_exog               : int
+    ccf_top_lags         : dict[str, {lag:int, corr:float}]
+    leakage_suspect_cols : list[str]
+    """
+    import numpy as np
+    import pandas as pd
+
+    out: dict[str, Any] = {
+        "is_multivariate": False,
+        "n_exog": 0,
+        "ccf_top_lags": {},
+        "leakage_suspect_cols": [],
+    }
+    try:
+        target = pd.to_numeric(df[target_col], errors="coerce")
+
+        exclude = {target_col}
+        if date_col:
+            exclude.add(date_col)
+        exog_cols: list[str] = []
+        for col in df.columns:
+            if col in exclude:
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_bool_dtype(df[col]):
+                exog_cols.append(col)
+        exog_cols = exog_cols[:30]  # 비용 상한
+
+        if not exog_cols:
+            return out
+
+        ccf_top_lags: dict[str, Any] = {}
+        leakage_suspect: list[str] = []
+        t_diff_full = target.diff()
+
+        for col in exog_cols:
+            try:
+                ex = pd.to_numeric(df[col], errors="coerce")
+
+                # 1) 누수 사전탐지 — 동시점 원계열 상관
+                pair = pd.concat([target, ex], axis=1).dropna()
+                if len(pair) >= 3:
+                    c0 = float(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
+                    if not np.isnan(c0) and abs(c0) > 0.98:
+                        leakage_suspect.append(col)
+
+                # 2) CCF — 차분 후 lag 시프트 상관 (허위상관 방지)
+                ex_diff = ex.diff()
+                best_lag, best_corr = 0, 0.0
+                for lag in range(0, max_lag + 1):
+                    shifted = ex_diff.shift(lag)
+                    dd = pd.concat([t_diff_full, shifted], axis=1).dropna()
+                    if len(dd) < 3:
+                        continue
+                    c = float(dd.iloc[:, 0].corr(dd.iloc[:, 1]))
+                    if np.isnan(c):
+                        continue
+                    if abs(c) > abs(best_corr):
+                        best_lag, best_corr = lag, c
+                if abs(best_corr) > 0.2:  # 의미 있는 신호만
+                    ccf_top_lags[col] = {"lag": int(best_lag), "corr": round(best_corr, 4)}
+            except Exception:
+                continue
+
+        return {
+            "is_multivariate": True,
+            "n_exog": len(exog_cols),
+            "ccf_top_lags": ccf_top_lags,
+            "leakage_suspect_cols": leakage_suspect,
+        }
+    except Exception:
+        return out
+
+
+# ─────────────────────────────────────────────────────────────────
+#  §6 보강 — freq="unknown" 시 ACF 기반 period 재추론
+#  기존 seasonality.period 불변. 별도 키 period_acf_inferred 로만 노출.
+# ─────────────────────────────────────────────────────────────────
+
+
+def _infer_period_from_acf(acf_pacf: dict[str, Any], n: int, current_period: int) -> Optional[int]:
+    """seasonal_lags 또는 유의 ACF peak 중 최댓값을 period 후보로. 2<=p<=n//2 면 채택."""
+    try:
+        cand: Optional[int] = None
+        seasonal_lags = (acf_pacf or {}).get("seasonal_lags") or []
+        if seasonal_lags:
+            cand = int(max(seasonal_lags))
+        else:
+            sig = (acf_pacf or {}).get("significant_lags_acf") or []
+            if sig:
+                cand = int(max(sig))
+        if cand is None:
+            return None
+        if 2 <= cand <= n // 2:
+            return cand
+        return None
+    except Exception:
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Phase 13 — 이분산 진단 (방법론 2-1 "분산의 시간 변화")
+#  분산이 시간/레벨에 따라 변하는지 → 고정 임계·등분산 가정 모델 경고.
+# ─────────────────────────────────────────────────────────────────
+
+
+def _phase13_heteroscedasticity(series: Any, period: int) -> dict[str, Any]:
+    """
+    시계열을 앞/뒤 절반(또는 블록)으로 나눠 분산이 유의하게 변하는지 진단.
+    승법성(Phase 9)이 '레벨↔분산'이라면, 이분산은 '시간↔분산'을 본다.
+
+    반환 계약
+    ---------
+    is_heteroscedastic : bool | None   (n 부족/무변동 시 None)
+    var_ratio          : float | None  (후반 분산 / 전반 분산)
+    basis              : str           ("half_split_var_ratio"/"insufficient_data"/"no_variance")
+    """
+    import numpy as np
+
+    out: dict[str, Any] = {"is_heteroscedastic": None, "var_ratio": None, "basis": "insufficient_data"}
+    try:
+        vals = np.asarray(series, dtype=float)
+        vals = vals[~np.isnan(vals)]
+        n = len(vals)
+        if n < 20:  # 분산 비교 의미 없음
+            return out
+
+        # 추세가 분산을 오염시키지 않도록 1차 차분 후 분산 비교
+        resid = np.diff(vals)
+        if float(np.std(resid)) < 1e-12:
+            return {"is_heteroscedastic": None, "var_ratio": None, "basis": "no_variance"}
+
+        half = len(resid) // 2
+        first = resid[:half]
+        second = resid[half:]
+        if len(first) < 2 or len(second) < 2:
+            return out
+
+        v1 = float(np.var(first, ddof=1))
+        v2 = float(np.var(second, ddof=1))
+        if v1 < 1e-12 and v2 < 1e-12:
+            return {"is_heteroscedastic": None, "var_ratio": None, "basis": "no_variance"}
+
+        # var_ratio: 큰 쪽/작은 쪽 (>1). 2배 이상 차이면 이분산으로 판정(보수적).
+        hi, lo = (v2, v1) if v2 >= v1 else (v1, v2)
+        var_ratio = float(hi / lo) if lo > 1e-12 else None
+        if var_ratio is None:
+            return {"is_heteroscedastic": None, "var_ratio": None, "basis": "no_variance"}
+
+        return {
+            "is_heteroscedastic": bool(var_ratio > 2.0),
+            "var_ratio": round(var_ratio, 4),
+            "basis": "half_split_var_ratio",
+        }
+    except Exception:
+        return out
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Phase 14 — 이상치 성격 구분 (방법론 2-1·3-1 "오류 vs 진짜 이벤트")
+#  IQR 이상치 중 '물리적 오류 의심' vs '진짜 이벤트 의심' 을 휴리스틱 분리.
+# ─────────────────────────────────────────────────────────────────
+
+
+def _phase14_outlier_kind(series: Any) -> dict[str, Any]:
+    """
+    IQR Tukey fence 이상치를 두 갈래로 분류:
+      - error_suspect : 물리적으로 비현실적인 값 의심 — 음수(전부 양수 계열에서),
+                        또는 |z| 가 극단(>8)인 단발 스파이크. → 제거/정정 후보.
+      - event_suspect : fence 는 벗어나지만 z 가 중간(3~8)인 값 — 세일·연휴 등
+                        진짜 이벤트 의심. → 제거가 아니라 이벤트 더미 후보.
+
+    반환 계약
+    ---------
+    outlier_count      : int
+    error_suspect_count: int     (제거/정정 후보)
+    event_suspect_count: int     (이벤트 더미 후보)
+    recommend          : str     ("flag_as_event"/"investigate_errors"/"none")
+    """
+    import numpy as np
+
+    out: dict[str, Any] = {
+        "outlier_count": 0,
+        "error_suspect_count": 0,
+        "event_suspect_count": 0,
+        "recommend": "none",
+    }
+    try:
+        vals = np.asarray(series, dtype=float)
+        vals = vals[~np.isnan(vals)]
+        n = len(vals)
+        if n < 8:
+            return out
+
+        q1, q3 = np.percentile(vals, [25, 75])
+        iqr = float(q3 - q1)
+        if iqr <= 0:
+            return out
+
+        lo_fence = q1 - 1.5 * iqr
+        hi_fence = q3 + 1.5 * iqr
+        mask = (vals < lo_fence) | (vals > hi_fence)
+        outlier_count = int(mask.sum())
+        if outlier_count == 0:
+            return out
+
+        mean = float(np.mean(vals))
+        std = float(np.std(vals, ddof=1)) if n > 1 else 0.0
+        # "정상 영역(이상치 제외)이 전부 양수인가" — 이상치 음수 자체가
+        # all_positive 판정을 뒤집지 않도록 inlier 기준으로 본다.
+        inliers = vals[~mask]
+        normally_positive = bool(len(inliers) > 0 and np.all(inliers >= 0))
+
+        error_suspect = 0
+        event_suspect = 0
+        for v in vals[mask]:
+            z = abs((v - mean) / std) if std > 1e-12 else 0.0
+            # 정상 영역이 양수인데 음수 이상치 = 물리 오류 의심 / z 극단(>8) = 오류 의심
+            if (normally_positive and v < 0) or z > 8.0:
+                error_suspect += 1
+            else:
+                event_suspect += 1
+
+        if error_suspect > 0:
+            recommend = "investigate_errors"
+        elif event_suspect > 0:
+            recommend = "flag_as_event"
+        else:
+            recommend = "none"
+
+        return {
+            "outlier_count": outlier_count,
+            "error_suspect_count": error_suspect,
+            "event_suspect_count": event_suspect,
+            "recommend": recommend,
+        }
+    except Exception:
+        return out
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Phase 15 — 0 vs NaN 도메인 구분 (방법론 1단계 "센서 미작동 vs 값 0")
+#  0 을 결측 대용으로 쓴 정황(연속 0 런·과다 0 비율)을 신호로 노출.
+# ─────────────────────────────────────────────────────────────────
+
+
+def _phase15_zero_vs_nan(series: Any) -> dict[str, Any]:
+    """
+    target 의 0 값이 '진짜 0' 인지 '결측을 0 으로 채운 것(센서 미작동)' 인지
+    직접 단정할 수는 없으나, 의심 신호를 정량화한다.
+
+    신호:
+      - zero_ratio          : 0 값 비율
+      - max_zero_run        : 연속 0 최대 길이 (긴 0 런 = 미작동 의심)
+      - has_nan             : 원본에 NaN 도 함께 존재하는가 (0 과 NaN 혼재 = 의미 구분 필요)
+      - zero_suspect        : zero_ratio>0.3 또는 max_zero_run>=period 면 True
+
+    반환 계약
+    ---------
+    zero_ratio    : float [0~1]
+    max_zero_run  : int
+    has_nan       : bool
+    zero_suspect  : bool
+    basis         : str
+    """
+    import numpy as np
+
+    out: dict[str, Any] = {
+        "zero_ratio": 0.0,
+        "max_zero_run": 0,
+        "has_nan": False,
+        "zero_suspect": False,
+        "basis": "ok",
+    }
+    try:
+        raw = np.asarray(series, dtype=float)
+        n_total = len(raw)
+        if n_total == 0:
+            return {**out, "basis": "empty"}
+
+        has_nan = bool(np.isnan(raw).any())
+        vals = raw[~np.isnan(raw)]
+        n = len(vals)
+        if n == 0:
+            return {**out, "has_nan": has_nan, "basis": "all_nan"}
+
+        is_zero = vals == 0.0
+        zero_ratio = float(np.mean(is_zero))
+
+        # 연속 0 런 최대 길이
+        max_run = 0
+        cur = 0
+        for z in is_zero:
+            if z:
+                cur += 1
+                if cur > max_run:
+                    max_run = cur
+            else:
+                cur = 0
+
+        zero_suspect = bool(zero_ratio > 0.3 or max_run >= 7)
+
+        return {
+            "zero_ratio": round(zero_ratio, 4),
+            "max_zero_run": int(max_run),
+            "has_nan": has_nan,
+            "zero_suspect": zero_suspect,
+            "basis": "zero_run_and_ratio",
+        }
+    except Exception:
+        return out
+
+
+# ─────────────────────────────────────────────────────────────────
 #  진입점
 # ─────────────────────────────────────────────────────────────────
+
+# target 없음 / 로드 실패 early-return 시 None 으로 채울 키.
+# timeaxis_integrity 는 target 무관(항상 측정)이라 이 목록에서 제외.
+_NONE_ON_NO_TARGET = (
+    "stationarity",
+    "acf_pacf",
+    "stl_decompose",
+    "seasonality",
+    "trend",
+    "outlier_iqr_ratio",
+    "is_multiplicative",
+    "changepoints",
+    "target_kind",
+    "ccf_leakage",
+    "heteroscedasticity",
+    "outlier_kind",
+    "zero_vs_nan",
+)
 
 
 def profile(df: Any, state: Any) -> dict[str, Any]:
@@ -609,13 +1236,19 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
 
     Phase 실행 순서
     ---------------
-    1 → date_col, freq, period  (이후 모든 Phase 에서 사용)
-    2 → diff_order              (Phase 3 에서 사용)
-    3 → AR/MA 힌트              (Phase 2 결과 소비)
-    4 → STL stl_result          (Phase 5, 6 에서 사용)
-    5 → seasonality             (Phase 4 결과 소비)
-    6 → trend                   (Phase 4 결과 소비)
-    7 → outlier_iqr_ratio       (독립)
+    1  → date_col, freq, period  (이후 모든 Phase 에서 사용)
+    8  → timeaxis_integrity      (target 무관, 항상 실행)
+    2  → diff_order              (Phase 3 에서 사용)
+    3  → AR/MA 힌트              (Phase 2 결과 소비)
+    4  → STL stl_result          (Phase 5, 6 에서 사용)
+    5  → seasonality             (Phase 4 결과 소비)
+    6  → trend                   (Phase 4 결과 소비)
+    7  → outlier_iqr_ratio       (독립)
+    9  → is_multiplicative       (가법/승법)
+    10 → changepoints            (레짐 변화)
+    11 → target_kind             (누적/증분)
+    12 → ccf_leakage             (CCF + 누수 사전탐지)
+    §6 → period_acf_inferred     (freq=unknown 일 때만)
     """
     target_col = state.target_column
     date_col = _detect_date_column(df)
@@ -634,11 +1267,19 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
     extra: dict[str, Any] = {
         "date_col": date_col,
         "freq": freq_str,
+        "n_rows": int(len(df)),  # 행수 직접 노출 — 공통 basic_profile 의 rows 없을 때 fallback
     }
+
+    # Phase 8 — 시간축 무결성 (target 무관, 항상 실행. early-return 직전에 둔다)
+    try:
+        extra["timeaxis_integrity"] = _phase8_timeaxis_integrity(df, date_col, period)
+    except Exception as e:
+        logger.warning("phase8_failed", error=str(e))
+        extra["timeaxis_integrity"] = None
 
     if not target_col or target_col not in df.columns:
         extra["timeseries_warning"] = "target_column 누락 — 시계열 분석 일부 생략"
-        for key in ("stationarity", "acf_pacf", "stl_decompose", "seasonality", "trend", "outlier_iqr_ratio"):
+        for key in _NONE_ON_NO_TARGET:
             extra[key] = None
         return extra
 
@@ -649,7 +1290,7 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
 
     except Exception as e:
         extra["timeseries_error"] = str(e)
-        for key in ("stationarity", "acf_pacf", "stl_decompose", "seasonality", "trend", "outlier_iqr_ratio"):
+        for key in _NONE_ON_NO_TARGET:
             extra[key] = None
         return extra
 
@@ -716,6 +1357,70 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
         extra["target_has_zeros"] = None
         extra["target_has_negatives"] = None
 
+    # Phase 9 — 가법/승법 판정
+    try:
+        extra["is_multiplicative"] = _phase9_multiplicative(series, period)
+    except Exception as e:
+        logger.warning("phase9_failed", error=str(e))
+        extra["is_multiplicative"] = None
+
+    # Phase 10 — 레짐 변화 (count 평탄화 + 상세 분리)
+    try:
+        cp = _phase10_changepoints(series, stl_result, period)
+        extra["changepoints"] = int(cp.get("count", 0))  # proposer 호환(평탄 int)
+        extra["changepoints_detail"] = cp
+    except Exception as e:
+        logger.warning("phase10_failed", error=str(e))
+        extra["changepoints"] = None
+        extra["changepoints_detail"] = None
+
+    # Phase 11 — 누적/증분 판정
+    try:
+        extra["target_kind"] = _phase11_target_kind(series, extra.get("trend") or {})
+    except Exception as e:
+        logger.warning("phase11_failed", error=str(e))
+        extra["target_kind"] = None
+
+    # Phase 12 — CCF + 누수 사전탐지 (정렬된 df 사용)
+    try:
+        extra["ccf_leakage"] = _phase12_ccf_leakage(df, target_col, date_col)
+    except Exception as e:
+        logger.warning("phase12_failed", error=str(e))
+        extra["ccf_leakage"] = None
+
+    # §6 보강 — freq=unknown 일 때만 ACF 기반 period 후보를 별도 키로 노출.
+    # 기존 seasonality.period 는 불변 (회귀 0).
+    try:
+        if freq_str == "unknown":
+            inferred = _infer_period_from_acf(extra.get("acf_pacf") or {}, len(series), period)
+            if inferred is not None:
+                extra["period_acf_inferred"] = inferred
+    except Exception as e:
+        logger.warning("period_reinference_failed", error=str(e))
+
+    # Phase 13 — 이분산 진단 (분산의 시간 변화)
+    try:
+        extra["heteroscedasticity"] = _phase13_heteroscedasticity(series, period)
+    except Exception as e:
+        logger.warning("phase13_failed", error=str(e))
+        extra["heteroscedasticity"] = None
+
+    # Phase 14 — 이상치 성격 구분 (오류 vs 진짜 이벤트)
+    try:
+        extra["outlier_kind"] = _phase14_outlier_kind(series)
+    except Exception as e:
+        logger.warning("phase14_failed", error=str(e))
+        extra["outlier_kind"] = None
+
+    # Phase 15 — 0 vs NaN 도메인 구분 (센서 미작동 의심)
+    # 원본 target(정렬 후, dropna 전 0 포함)을 봐야 0/NaN 패턴이 보존됨.
+    try:
+        raw_target = df[target_col] if (target_col and target_col in df.columns) else series
+        extra["zero_vs_nan"] = _phase15_zero_vs_nan(raw_target)
+    except Exception as e:
+        logger.warning("phase15_failed", error=str(e))
+        extra["zero_vs_nan"] = None
+
     logger.info(
         "profile_done",
         job_id=getattr(state, "job_id", None),
@@ -725,5 +1430,6 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
         consensus=(extra.get("stationarity") or {}).get("consensus"),
         has_seasonality=(extra.get("seasonality") or {}).get("has_seasonality"),
         outlier_ratio=extra.get("outlier_iqr_ratio"),
+        changepoints=extra.get("changepoints"),
     )
     return extra
