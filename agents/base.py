@@ -198,8 +198,8 @@ class BaseAgent(abc.ABC):
             if interp_task is not None:
                 interp_task.cancel()
                 try:
-                    await interp_task
-                except (asyncio.CancelledError, Exception):
+                    await asyncio.wait_for(asyncio.shield(interp_task), timeout=2.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                     pass
             if agent_key and job_id:
                 try:

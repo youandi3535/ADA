@@ -77,34 +77,43 @@ class DataProfilerAgent(BaseAgent):
                     next_agent="error_recovery",
                 )
 
-            # ② PII detection -- LLM  /  masking -- library
-            df, pii_extras = await self._llm_anonymize_df(df)
+            # ②③③.5 PII + 카테고리 + 도메인 분석 — asyncio.gather 로 병렬 실행
+            # 직렬 시 최대 90s+ 소요 → 병렬로 단일 LLM 왕복 시간(~20s)으로 단축.
+            import asyncio as _asyncio
 
-            # ③ Category / target detection -- LLM (only when unspecified)
-            category = state.category
-            target_column = state.target_column
-            detection: dict[str, Any] = {}
-            if (not category) or category in ("pending", "auto") or category not in CATEGORIES:
+            need_category = (
+                (not state.category) or state.category in ("pending", "auto") or state.category not in CATEGORIES
+            )
+            generic_for_cat = basic_dataframe_profile(df, target_column=None) if need_category else {}
+            intent = state.user_intent or state.user_question or ""
+
+            async def _detect_category_safe():
+                if not need_category:
+                    return state.category, state.target_column, {}
                 try:
-                    generic = basic_dataframe_profile(df, target_column=None)
-                    category, target_column, detection = await self._llm_detect_category(
-                        generic, df, state.user_intent or state.user_question or ""
-                    )
+                    return await self._llm_detect_category(generic_for_cat, df, intent)
                 except Exception as e:
                     self.logger.warning("llm_category_detection_failed", error=str(e))
-                    category, target_column = "tabular_ml", None
-                if category not in CATEGORIES:
-                    category = "tabular_ml"
-                await self._persist_detection(state, category, target_column)
+                    return "tabular_ml", None, {}
 
-            # ③.5 Domain analysis -- LLM (컬럼 의미·도메인·데이터셋 요약)
-            domain_analysis: dict[str, Any] = {}
-            try:
-                domain_analysis = await self._llm_domain_analysis(
-                    df, category, target_column, state.user_intent or state.user_question or ""
-                )
-            except Exception as e:
-                self.logger.warning("llm_domain_analysis_failed", error=str(e))
+            async def _domain_safe(cat, tgt):
+                try:
+                    return await self._llm_domain_analysis(df, cat, tgt, intent)
+                except Exception as e:
+                    self.logger.warning("llm_domain_analysis_failed", error=str(e))
+                    return {}
+
+            # PII + 카테고리 병렬 (도메인 분석은 카테고리 결과 필요 → 2단계)
+            (df, pii_extras), (category, target_column, detection) = await _asyncio.gather(
+                self._llm_anonymize_df(df),
+                _detect_category_safe(),
+            )
+            if category not in CATEGORIES:
+                category = "tabular_ml"
+            await self._persist_detection(state, category, target_column)
+
+            # 카테고리 확정 후 도메인 분석
+            domain_analysis: dict[str, Any] = await _domain_safe(category, target_column)
 
             # ④ Full statistics profile -- library
             profile = basic_dataframe_profile(df, target_column=target_column)
@@ -337,13 +346,68 @@ def _merge_pii_extras(current_extras: dict[str, Any] | None, new_pii: dict[str, 
 
 
 def _safe_num(v: Any) -> Any:
-    """JSON 직렬화 가능한 형태로 정리."""
+    """JSON/msgpack 직렬화 가능한 형태로 정리. numpy.float64 등도 강제 Python 기본 타입으로 변환."""
     try:
         if v is None:
             return None
-        if isinstance(v, (int, float, str, bool)):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, int):
+            return int(v)
+        if isinstance(v, float):
+            # numpy.float64 도 float 의 서브클래스 → 강제 Python float 로
+            f = float(v)
+            # NaN/Inf 는 msgpack 에서 처리 안 되는 경우 있어 None 으로
+            if f != f or f in (float("inf"), float("-inf")):
+                return None
+            return f
+        if isinstance(v, str):
             return v
         return float(v)
+    except Exception:
+        return None
+
+
+def _sanitize_for_serialization(obj: Any) -> Any:
+    """data_card 전체를 재귀 순회하며 numpy/pandas 타입을 Python 기본 타입으로 변환.
+    msgpack 이 인식하지 못하는 numpy.int64/float64/bool_, numpy.ndarray, pandas.Timestamp 등을 정리.
+    Celery 의 result_serializer='json' 환경에서도 안전.
+    """
+    try:
+        import numpy as _np
+        import pandas as _pd
+    except Exception:
+        _np = None  # type: ignore
+        _pd = None  # type: ignore
+    if obj is None or isinstance(obj, (str, bool)):
+        return obj
+    if isinstance(obj, int) and not isinstance(obj, bool):
+        return int(obj)
+    if isinstance(obj, float):
+        f = float(obj)
+        return None if (f != f or f in (float("inf"), float("-inf"))) else f
+    # numpy 스칼라
+    if _np is not None and isinstance(obj, _np.integer):
+        return int(obj)
+    if _np is not None and isinstance(obj, _np.floating):
+        f = float(obj)
+        return None if (f != f or f in (float("inf"), float("-inf"))) else f
+    if _np is not None and isinstance(obj, _np.bool_):
+        return bool(obj)
+    if _np is not None and isinstance(obj, _np.ndarray):
+        return [_sanitize_for_serialization(x) for x in obj.tolist()]
+    # pandas 타입
+    if _pd is not None and isinstance(obj, _pd.Timestamp):
+        return obj.isoformat()
+    if _pd is not None and isinstance(obj, (_pd.Series, _pd.Index)):
+        return [_sanitize_for_serialization(x) for x in obj.tolist()]
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_for_serialization(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_sanitize_for_serialization(x) for x in obj]
+    # 마지막 폴백 — 알 수 없는 객체는 문자열로
+    try:
+        return str(obj)
     except Exception:
         return None
 
@@ -537,7 +601,7 @@ def _build_data_card_v1(
     if not next_steps:
         next_steps.append("EDA 단계로 진행 가능 — 특이사항 없음")
 
-    return {
+    _card = {
         "identity": identity,
         "schema": schema,
         "dictionary": dictionary,
@@ -550,6 +614,10 @@ def _build_data_card_v1(
         "reproducibility": reproducibility,
         "next_steps": next_steps,
     }
+    # msgpack/JSON 직렬화 안전화 — 재귀로 numpy/pandas 타입을 Python 기본 타입으로 강제 변환.
+    # Celery 가 state.data_card 를 직렬화할 때 'Type is not msgpack serializable: numpy.float64'
+    # 같은 오류를 방지한다.
+    return _sanitize_for_serialization(_card)
 
 
 def _category_specific_checks(
