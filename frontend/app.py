@@ -405,20 +405,20 @@ function _stageProgress(){
     // G2 게이트(proposals 도착) 진입 = G1 완전 종료 → 100% 로 점프(잠시 후 cur=1 전환).
     const g1Reached = curGate()==='G2' && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
     if(g1Reached){
-      target=100;
+      _shownPct=100; return 100;  // proposals 도착 = G1 완전 종료 → 즉시 100%
     } else {
       const raw=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
       // G1 의 백엔드 진행률 천장 = 18 (AGENT_PHASE_MAP 의 gate_direction 시작). 정규화.
       target=Math.min(95, Math.round((raw/18)*95));
     }
   } else {
-    // 게이트 단계(G2~G6): proposals 도착=100%, 아니면 백엔드 progress_pct 그대로.
+    // 게이트 단계(G2~G6): proposals 도착 = 즉시 100% 스냅(애니메이션 지연 없음).
     const tg='G'+(cur+1);  // cur 1~5 → 백엔드 G2~G6
     const ag=curGate();
     const d=(ag===tg)?gateData:(gateCache[tg]||{});
     const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
     if(ps.length){
-      target=100;
+      _shownPct=100; return 100;  // proposals 도착 즉시 100%
     } else {
       target=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
     }
