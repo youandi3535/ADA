@@ -265,8 +265,14 @@ def _run_inference(model: Any, X: Any) -> tuple[list[Any], Optional[list[Any]], 
     """
     import numpy as np  # noqa: WPS433
 
-    # MLflow pyfunc
-    if hasattr(model, "predict") and hasattr(model, "_model_impl"):
+    # MLflow pyfunc — 다양한 MLflow 버전에서 안전한 식별:
+    #   - 신버전: PyFuncModel 클래스 또는 _model_impl 속성
+    #   - 구버전: metadata 속성 (flavor 정보)
+    # 어느 쪽이든 실패 시 sklearn-style 폴백.
+    _is_mlflow_pyfunc = (
+        type(model).__module__.startswith("mlflow.") or hasattr(model, "_model_impl") or hasattr(model, "metadata")
+    )
+    if hasattr(model, "predict") and _is_mlflow_pyfunc:
         try:
             import pandas as pd  # noqa: WPS433
 

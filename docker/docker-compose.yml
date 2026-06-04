@@ -329,8 +329,12 @@ services:
     restart: unless-stopped
     command: celery -A orchestrator.runner worker -Q training -c 1 -n training@%h --loglevel=info
     env_file: ../.env
+    # 학원 GPU 워커가 DL 학습 위임 받을 때 Tier 3 폴백/insight LLM 호출이 필요할 수 있어
+    # ANTHROPIC_API_KEY 명시. env_file 로 이미 들어오지만 명시해서 누락 방지.
     environment:
       PYTHONPATH: /app
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ADA_FAILURELOG_ENC_KEY: ${ADA_FAILURELOG_ENC_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

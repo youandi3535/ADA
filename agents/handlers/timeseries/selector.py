@@ -24,6 +24,8 @@ from __future__ import annotations
 from typing import Any
 
 # ── 모듈 상수 ─────────────────────────────────────────────────────
+# 시계열 카테고리 전용. anomaly 카테고리의 COPOD/IsolationForest/LOF/OneClassSVM/
+# AutoEncoder/TranAD/AnomalyTransformer 는 여기 포함하지 않는다 (카테고리 격리).
 SUPPORTED_MODELS = ("ARIMA", "SARIMA", "SARIMAX", "Prophet", "Informer", "TFT", "PatchTST")
 DL_MODELS = ("Informer", "TFT", "PatchTST")
 BASE_SCORE = 0.70

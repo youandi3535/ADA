@@ -42,6 +42,14 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,  # R-202 Bulkhead
     task_time_limit=settings.pipeline_timeout_min * 60,
     task_soft_time_limit=settings.pipeline_timeout_min * 60 - 60,
+    # 워커가 시작될 때 추가 모듈을 import 해 task 데코레이터가 등록되도록 한다.
+    # 본 파일에 모든 task 가 있지 않으므로 (harness_tasks, training_tasks 분리)
+    # 명시적으로 include 하지 않으면 worker-harness / worker-training 가 task 미등록
+    # 상태로 idle 이 된다 (NY 가 보고한 정확한 증상).
+    include=[
+        "orchestrator.harness_tasks",
+        "orchestrator.training_tasks",
+    ],
     task_routes={
         "ada.pipeline.run": {"queue": "pipeline"},
         "ada.pipeline.resume": {"queue": "pipeline"},

@@ -150,7 +150,7 @@ class AnalysisProposerAgent(BaseGate):
                     opt["id"] = i
                 return llm_opts + [_CUSTOM_OPTION]
         except Exception as e:
-            self.logger.warning("g1_llm_failed", error=str(e))
+            self.logger.warning("g2_llm_failed", error=str(e))
 
         base = _FALLBACK_DEFAULTS.get(
             state.category,
@@ -193,7 +193,7 @@ class AnalysisProposerAgent(BaseGate):
                     updates["category"] = inferred
             if updates.get("category") in _UNSUPERVISED_CATEGORIES and "target_column" not in updates:
                 updates["target_column"] = None
-            self.logger.info("g1_custom_intent_applied", intent=custom.strip()[:120])
+            self.logger.info("g2_custom_intent_applied", intent=custom.strip()[:120])
         else:
             # adopted_rank 로 선택한 LLM 제안 반영
             rank = uc.get("adopted_rank")
@@ -213,14 +213,14 @@ class AnalysisProposerAgent(BaseGate):
                     new_cat = chosen.get("category")
                     if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
                         updates["category"] = new_cat
-                        self.logger.info("g1_category_changed", old=state.category, new=new_cat)
+                        self.logger.info("g2_category_changed", old=state.category, new=new_cat)
 
                 # Method B: LLM 이 category 를 안 채웠을 때 키워드 fallback
                 if "category" not in updates:
                     inferred = _infer_category_from_text(direction, state.category)
                     if inferred != state.category:
                         updates["category"] = inferred
-                        self.logger.info("g1_category_inferred", direction=direction, category=inferred)
+                        self.logger.info("g2_category_inferred", direction=direction, category=inferred)
 
                 # 비지도 계열이면 target_column 무효화, 지도학습이면 LLM 제안 target 반영
                 if "target_column" not in updates:
@@ -232,7 +232,7 @@ class AnalysisProposerAgent(BaseGate):
                             updates["target_column"] = new_tgt.strip()
 
                 self.logger.info(
-                    "g1_proposal_adopted",
+                    "g2_proposal_adopted",
                     rank=rank,
                     title=direction,
                     category=updates.get("category"),

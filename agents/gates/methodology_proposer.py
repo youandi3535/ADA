@@ -5,8 +5,29 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ada.core.state import PipelineState
+from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
+
+_UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
+
+# 방법론 제목/근거 텍스트에서 카테고리를 키워드로 추론하기 위한 사전.
+# 우선순위 높음 → 낮음 순서 (anomaly_detection 먼저 검사하지 않으면 timeseries 가 흡수).
+_CATEGORY_KEYWORDS_KO: list[tuple[str, list[str]]] = [
+    ("anomaly_detection", ["이상탐지", "anomaly", "outlier", "이상치", "이상", "OneClass", "Isolation"]),
+    ("timeseries", ["시계열", "예측", "forecast", "time series", "temporal", "SARIMA", "Prophet", "LSTM"]),
+    ("tabular_dl", ["딥러닝", "deep learning", "transformer", "FTTransformer", "TabTransformer"]),
+    ("tabular_ml", ["정형 ML", "XGBoost", "LightGBM", "RandomForest", "tree", "boosting"]),
+]
+
+
+def _infer_category_from_text(text: str, fallback: str) -> str:
+    """proposal title/rationale 키워드로 category 를 추론."""
+    t = (text or "").lower()
+    for cat, kws in _CATEGORY_KEYWORDS_KO:
+        if any(k.lower() in t for k in kws):
+            return cat
+    return fallback
+
 
 SYSTEM_PROMPT = (
     "You are an AutoML strategy consultant. "
@@ -161,10 +182,80 @@ class MethodologyProposerAgent(BaseGate):
                     opt["id"] = i
                 return llm_opts + [_CUSTOM_OPTION]
         except Exception as e:
-            self.logger.warning("g2_llm_failed", error=str(e))
+            self.logger.warning("g3_llm_failed", error=str(e))
 
         base = _FALLBACK_DEFAULTS.get(
             state.category,
             [{"id": 1, "title": "기본 분석", "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
         )
         return list(base) + [_CUSTOM_OPTION]
+
+    def _apply_choice(
+        self,
+        state: PipelineState,
+        user_choice: Any,
+        proposals: list[dict[str, Any]],
+    ) -> PipelineState:
+        """G3 사용자 선택을 state 에 반영.
+
+        프론트 형식:
+            - 직접 입력  → {adopted_rank: 0, custom_intent: "text"}
+            - 옵션 1/2   → {adopted_rank: 1} or {adopted_rank: 2}
+
+        반영 필드:
+            - user_intent  : 사용자가 본 방법론 선택을 user_intent 에 누적 표기
+                            (다음 게이트 LLM 프롬프트가 컨텍스트로 활용)
+            - category     : proposal 또는 custom_intent 텍스트에서 키워드 추론
+            - target_column: 비지도(anomaly_detection) 로 바뀌면 None
+        """
+        uc = user_choice if isinstance(user_choice, dict) else {}
+        updates: dict[str, Any] = {}
+
+        # 1) 명시적 category 키 (LLM proposal 이 채워줬을 수도) — 최우선
+        explicit_cat = uc.get("category")
+        if isinstance(explicit_cat, str) and explicit_cat in CATEGORIES and explicit_cat != state.category:
+            updates["category"] = explicit_cat
+
+        # 2) custom_intent — 사용자가 직접 입력
+        custom = uc.get("custom_intent")
+        if isinstance(custom, str) and custom.strip():
+            updates["user_intent"] = f"{(state.user_intent or '').strip()} (방법론: {custom.strip()})".strip()
+            if "category" not in updates:
+                inferred = _infer_category_from_text(custom, state.category)
+                if inferred != state.category:
+                    updates["category"] = inferred
+            self.logger.info("g3_custom_intent_applied", intent=custom.strip()[:120])
+        else:
+            # 3) adopted_rank — proposals 에서 선택한 항목
+            rank = uc.get("adopted_rank")
+            chosen = next(
+                (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
+                None,
+            )
+            if chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
+                method = chosen["title"].strip()
+                base = (state.user_intent or "").strip()
+                updates["user_intent"] = f"{base} (방법론: {method})" if base else f"방법론: {method}"
+                # proposal 에 category 가 들어 있으면 우선 사용
+                if "category" not in updates:
+                    new_cat = chosen.get("category")
+                    if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
+                        updates["category"] = new_cat
+                # 그래도 없으면 title/rationale 텍스트로 추론
+                if "category" not in updates:
+                    blob = method + " " + (chosen.get("rationale") or "")
+                    inferred = _infer_category_from_text(blob, state.category)
+                    if inferred != state.category:
+                        updates["category"] = inferred
+                self.logger.info(
+                    "g3_proposal_adopted",
+                    rank=rank,
+                    title=method,
+                    category=updates.get("category"),
+                )
+
+        # 4) 비지도로 카테고리 바뀐 경우 target_column 무효화
+        if updates.get("category") in _UNSUPERVISED_CATEGORIES and state.target_column:
+            updates["target_column"] = None
+
+        return state.with_update(**updates) if updates else state

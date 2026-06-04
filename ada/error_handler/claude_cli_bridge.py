@@ -149,7 +149,13 @@ class ClaudeCLIBridge:
             "3",
         ]
 
-    async def request_patch(self, *, error_signature: str, stack: str) -> dict[str, Any]:
+    async def request_patch(
+        self,
+        *,
+        error_signature: str,
+        stack: str,
+        system_override: str | None = None,
+    ) -> dict[str, Any]:
         """읽기 전용 3턴으로 JSON diff 생성.
 
         Returns:
@@ -157,14 +163,26 @@ class ClaudeCLIBridge:
             output_tokens, model. --output-format json wrapper 의 usage 에서
             토큰 추출 → BudgetManager.track_call 이 비용 누적 가능.
 
+        Args:
+            error_signature: 에러 본문 또는 사용자 프롬프트.
+            stack: 스택 트레이스 (선택, 비어도 됨).
+            system_override: 기본 프롬프트(에러 분석) 대신 사용할 사용자 정의 프롬프트.
+                fixer_promoter 가 fixer 함수 생성 요청 등 다른 용도로 호출할 때 사용.
+                None 이면 기본 에러 분석 프롬프트 사용.
+
         브레이커는 호출자(auto_handler) 의 외부 ada.error_handler.circuit_breaker
         의 claude_cli 인스턴스 하나만 사용 (Day25 정비 — 2중 카운트 회피).
         """
-        prompt = (
-            "다음 오류를 분석해 최소 변경 unified diff 와 test_plan 을 JSON 으로 반환:\n"
-            f"## error\n{error_signature}\n\n## stack\n{stack[:2000]}\n\n"
-            "JSON 키: diff, test_plan, confidence(0~1)"
-        )
+        if system_override:
+            # 호출자(예: fixer_promoter) 가 직접 작성한 전체 프롬프트를 그대로 사용.
+            # error_signature 는 user_prompt body 로 간주.
+            prompt = f"{system_override}\n\n{error_signature}"
+        else:
+            prompt = (
+                "다음 오류를 분석해 최소 변경 unified diff 와 test_plan 을 JSON 으로 반환:\n"
+                f"## error\n{error_signature}\n\n## stack\n{stack[:2000]}\n\n"
+                "JSON 키: diff, test_plan, confidence(0~1)"
+            )
         if shutil.which("claude") is None:
             return _empty_patch_result("(no claude-cli)")
 

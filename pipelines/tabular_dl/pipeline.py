@@ -103,6 +103,11 @@ class TabularDLPipeline(BasePipeline):
             return np.asarray(model.predict(pd.DataFrame(X)))
 
     def evaluate(self, model: Any, X_val: Any, y_val: Any, task: str) -> dict[str, float]:
+        # 평가 로직 자체는 TabularMLPipeline.evaluate 와 동일 (분류/회귀 sklearn metric).
+        # 이전엔 _TMP().evaluate(...) 처럼 새 인스턴스를 만들어 호출했는데,
+        # 이 경우 self.mlflow_run_id / self._start_mlflow_run() 상태가 분리되어
+        # log_metrics 가 잘못된 run 으로 흘러갈 위험이 있었다.
+        # 같은 모듈의 unbound 함수처럼 직접 호출해 self 의 mlflow 컨텍스트를 유지한다.
         from pipelines.tabular_ml.pipeline import TabularMLPipeline as _TMP
 
-        return _TMP().evaluate(model, X_val, y_val, task)
+        return _TMP.evaluate(self, model, X_val, y_val, task)

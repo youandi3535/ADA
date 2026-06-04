@@ -74,6 +74,12 @@ async def set_rls_user(session: AsyncSession, user_id: str | None, role: str = "
     """v2.2 RLS 미들웨어 — 세션 단위 변수 설정.
 
     Postgres 의 `current_setting('ada.current_user', true)` 와 매칭된다.
+
+    ⚠️ 현재 상태 (2026-06-04):
+        본 함수가 정의돼 있으나 ``get_db`` 의존성 체인에서 호출되지 않는다.
+        Postgres RLS 정책을 실제로 활성화하려면 인증 미들웨어가 JWT 디코딩 후
+        ``set_rls_user(session, user.id, user.role)`` 를 호출해야 한다.
+        ``get_db_rls`` (아래) 를 사용하면 헤더에서 user_id 를 받아 적용 가능.
     """
     if user_id:
         await session.execute(
@@ -84,3 +90,26 @@ async def set_rls_user(session: AsyncSession, user_id: str | None, role: str = "
         text("SELECT set_config('ada.role', :role, true)"),
         {"role": role},
     )
+
+
+async def get_db_rls(
+    x_user_id: str | None = None,
+    x_role: str = "analyst",
+) -> AsyncIterator[AsyncSession]:
+    """RLS 가 적용된 세션 의존성.
+
+    FastAPI 라우터에서 직접 의존성으로 쓰지 말고, 인증 미들웨어가
+    Request.state.user_id / role 을 채운 뒤 본 함수를 호출해 사용한다.
+    또는 헤더(X-User-Id) 기반 fallback. user_id 가 None 이면 RLS bypass 상황.
+
+    Postgres 측 RLS 정책(migrations/001) 이 ``current_setting('ada.current_user')``
+    를 참조하므로 세션 시작 시 SET 해야 행 단위 격리가 발동한다.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            await set_rls_user(session, x_user_id, x_role)
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise

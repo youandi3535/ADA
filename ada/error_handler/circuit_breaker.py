@@ -61,7 +61,14 @@ _inmem_state: dict[str, dict[str, Any]] = {}
 
 
 class _InMemoryBackend:
-    """Redis 없을 때 폴백 — 단일 프로세스 안에서만 동작."""
+    """Redis 없을 때 폴백 — 단일 프로세스 안에서만 동작.
+
+    ⚠️ 다중 워커(worker-pipeline / worker-training / worker-harness) 환경:
+        Redis 가 다운되면 각 워커가 독립된 _InMemoryBackend 를 가지므로 회로 상태가
+        프로세스 간에 동기화되지 않는다. 즉 ollama/claude 가 죽어도 워커마다 따로
+        carrier 호출이 카운트돼 각자 OPEN 까지 도달한다 → 트래픽 ×N 발생.
+        운영에서는 Redis 가용성을 SLO 로 관리하고 본 폴백은 개발 환경 안전망용.
+    """
 
     @staticmethod
     async def get_state(name: str) -> Optional[str]:

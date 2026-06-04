@@ -210,21 +210,28 @@ def route_after_metrics(state: PipelineState) -> str:
     return "gate_best_model"
 
 
-def route_after_g4(state: PipelineState) -> str:
-    """G5 응답에 따라 finetune 갈지 평가로 갈지.
+def route_after_gate_best_model(state: PipelineState) -> str:
+    """gate_best_model (G5) 응답에 따라 finetune 갈지 평가로 갈지.
 
     이전엔 state.error 를 보지 않아, 학습/메트릭 단계가 한도 내에서 실패해도
     eval_agent 로 넘어가 cascade 가 길어졌다. error 라우팅 추가.
+
+    (구 함수명 route_after_g4 → route_after_gate_best_model. 의미는 G5 게이트 응답
+     라우팅이므로 노드명 기반으로 변경. 기존 호출자가 있다면 alias 유지.)
     """
     state = _coerce_to_pipeline_state(state)
     if state.error:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
-    g4 = state.gate_responses.get("G5", {})
-    if g4.get("user_choice", {}).get("requires_finetune"):
+    g5 = state.gate_responses.get("G5", {})
+    if g5.get("user_choice", {}).get("requires_finetune"):
         return "fine_tune_executor"
     return "eval_agent"
+
+
+# 외부 임포트 호환을 위한 alias (기존 코드/테스트가 route_after_g4 를 참조할 수 있음)
+route_after_g4 = route_after_gate_best_model
 
 
 def route_after_eval(state: PipelineState) -> str:
@@ -235,7 +242,6 @@ def route_after_eval(state: PipelineState) -> str:
         return "auto_error_handler"
     # 재루프(re_loop) 제거 — LLM 평가 실패 시 재훈련보다 G6 진행을 우선
     return "explainability"
-    return "error_recovery"
 
 
 def route_after_g5(state: PipelineState) -> str:

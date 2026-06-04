@@ -216,7 +216,11 @@ class BudgetManager:
         try:
             from ada.core.config import settings
 
-            v = getattr(settings, "autofix_daily_budget_usd", None)
+            # 우선 max_daily_llm_usd (config.py 정식 정의) 를 본다.
+            # autofix_daily_budget_usd 는 과거 명칭 — 호환 위해 fallback 으로만 검사.
+            v = getattr(settings, "max_daily_llm_usd", None)
+            if v is None:
+                v = getattr(settings, "autofix_daily_budget_usd", None)
             if v is not None:
                 return float(v)
         except Exception:

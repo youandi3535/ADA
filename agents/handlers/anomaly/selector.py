@@ -181,10 +181,17 @@ def _build_card(rank: int, name: str, breakdown: dict[str, float]) -> dict[str, 
 
 
 def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """top3 카드 list + rationale + citations 반환.
+    """모델 선정 점수화. dispatcher 계약: top3 = list[str].
 
-    ★ E-1 결정 (2026-05-28): top3 list[dict] 형식. score_matrix 제거 (카드 안 통합).
-    Day 4 proposer.g2() 호출 → 4 차원 점수 매트릭스 → top3 카드 빌드. R-501 준수.
+    반환 키:
+        - top3       : list[str]   — 모델명 (model_selection dispatcher 가 직접 소비)
+        - cards      : list[dict]  — 점수 상세, 디버깅·테스트용
+        - rationale  : str         — 전체 한 줄 요약
+        - citations  : list[str]   — R-501 KB 인용
+
+    ★ X-1 정정 (2026-05-29): top3 = list[str] 모델명 (옛 E-1 list[dict] 뒤집음).
+        E-1 (구) → X-1 (현). dispatcher (model_selection.py) 가 list[str] 만 인식.
+    proposer.g2() 호출 → 5 차원 점수 매트릭스 (base/dim/time/contam/interp) → top3 빌드.
     """
     recipes = recipes or []
 

@@ -56,11 +56,14 @@ async def scan_new_failures_async(session: Any) -> dict[str, Any]:
         "patches_queued": 0,
         "errors": [],
     }
+    # auto_kb_match 는 레거시 명칭, 현 코드는 Tier 1 SelfLearningKB 매칭 시
+    # "auto_self_learning_match" 를 발행한다. 두 액션 모두 KB 자동 해결로 집계.
+    _KB_MATCH_ACTIONS = {"auto_kb_match", "auto_self_learning_match"}
     for row in rows:
         try:
             outcome = await handler.handle(row)
             action = outcome.get("action", "")
-            if action == "auto_kb_match":
+            if action in _KB_MATCH_ACTIONS:
                 result["auto_kb_matched"] += 1
             elif action.startswith("patch"):
                 result["patches_queued"] += 1
