@@ -162,10 +162,14 @@ _FLOW_HTML = """
   .btn-primary{background:var(--deep);color:#fff;border:none;padding:18px 48px;box-shadow:0 13px 28px rgba(31,62,92,.26);}
   .btn-primary.resume{background:#1f7a52;}
   .btn-primary:disabled{opacity:.45;cursor:default;box-shadow:none;}
+  .btn-new{font-family:inherit;font-size:15px;font-weight:600;border-radius:999px;cursor:pointer;
+    background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
+    padding:7px 18px;margin-left:auto;margin-right:12px;white-space:nowrap;}
+  .btn-new:hover{background:rgba(255,255,255,.20);}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
   <div class="shell">
-    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span></div>
+    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><button class="btn-new" id="newBtn" style="display:none" onclick="resetAll()">＋ 새 분석</button><span class="status" id="status">대기</span></div>
     <div class="steps" id="steps"></div>
     <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
     <div class="card"><div class="content" id="content"></div>
@@ -189,6 +193,45 @@ let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg
 let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G5 멀티선택 상태 {proposal_id: bool}
+
+// ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
+// 1순위: URL 해시(#ada=…) — window.parent.history.replaceState 로 기록.
+//   해시는 F5 후에도 URL 에 보존되며, origin 이슈 없이 동일 세션에서 접근 가능.
+// 2순위: window.parent.localStorage — 1순위 읽기 실패 시 폴백.
+var _FRESH_START=false;// __FRESH_START_INJECT__
+const _SK='ada_flow_v1';
+function _stateRead(){
+  try{
+    var h=window.parent.location.hash,m=h.match(/ada=([^&]*)/);
+    if(m) return decodeURIComponent(m[1]);
+  }catch(e){}
+  try{ return window.parent.localStorage.getItem(_SK); }catch(e){}
+  return null;
+}
+function saveState(){
+  if(!jobId) return;
+  if(isCompleted() || isFailed()){ clearState(); return; }
+  var d=JSON.stringify({jobId:jobId,fileId:fileId,cur:cur,maxReached:maxReached});
+  try{
+    var u=window.parent.location;
+    window.parent.history.replaceState({}, '', u.pathname+u.search+'#ada='+encodeURIComponent(d));
+  }catch(e){}
+  try{ window.parent.localStorage.setItem(_SK, d); }catch(e){}
+}
+function clearState(){
+  try{ window.parent.history.replaceState({}, '', window.parent.location.pathname); }catch(e){}
+  try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
+}
+function resetAll(){
+  clearState();
+  jobId=null; fileId=null; cur=0; frontier=0; maxReached=0;
+  paused=false; follow=true; busy=false; polling=false;
+  if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
+  status={}; gateData={}; selId=null; selectedFile=null;
+  intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
+  var nb=document.getElementById('newBtn'); if(nb) nb.style.display='none';
+  render();
+}
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성'};
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -196,7 +239,14 @@ function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s
 function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[1-5]$/.test(g))?g:null; }
 function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
 function isFailed(){ return (gateData.pipeline_status==='failed') || (status.status==='failed'); }
-function isCompleted(){ return ['completed','succeeded','success'].includes(status.status) || (gateData.pipeline_status==='completed') || (jobId && !curGate() && hasResults()); }
+function isCompleted(){
+  // 백엔드 status 를 우선 — 세 번째 fallback 조건은 G5 이후 최종 결과가 모두 갖춰진 경우만 허용.
+  // (jobId && !curGate() && hasResults()) 만으로는 분석 중간에도 true 가 되어
+  // clearState() 가 호출되므로, 반드시 pipeline_status 확인을 추가한다.
+  if(['completed','succeeded','success'].includes(status.status)) return true;
+  if(gateData.pipeline_status==='completed') return true;
+  return false;
+}
 function analyzing(){ return !!(jobId && !curGate() && !isCompleted() && !isFailed()); }
 function computeFrontier(){
   if(isCompleted()){ frontier=LAST; return; }
@@ -220,6 +270,7 @@ async function doUpload(){
       body:JSON.stringify({file_id:fileId,user_intent:intentText||null,requested_outputs:[]})});
     jobId=stt.job_id; follow=true; cur=1; frontier=1; maxReached=1; busy=false;
     gateData={}; analyzeStart=Date.now();
+    saveState();
     startPolling();
   }catch(e){ errMsg='업로드/시작 실패 — '+e.message; busy=false; render(); }
 }
@@ -243,6 +294,7 @@ async function doResume(){
       body:JSON.stringify({gate:gate,choice:choice})});
     lastSubmittedGate=gate;  // Celery가 task 집어가기 전에 Redis에 게이트 잔존 → 이 값이 바뀔 때까지 계속 폴링
     follow=true; busy=false; gateData={}; selId=null; analyzeStart=Date.now();
+    saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
 }
@@ -250,10 +302,18 @@ async function poll(){
   if(!jobId) return;
   try{ status=await api('/pipeline/status/'+jobId,{}); }catch(e){ status={_err:e.message}; }
   try{ gateData=await api('/pipeline/gate/'+jobId,{}); }catch(e){ gateData={proposals:[], _err:e.message}; }
+  // HTTP 4xx → 세션 만료(서버 재시작·DB 초기화): localStorage 정리 후 업로드 화면으로
+  if(status._err && /HTTP 4[0-9][0-9]/.test(status._err)){
+    clearState();
+    jobId=null; cur=0; frontier=0; maxReached=0; polling=false;
+    errMsg='이전 분석 세션이 만료됐습니다. 새 파일을 업로드해 주세요.';
+    render(); return;
+  }
   computeFrontier(); maxReached=Math.max(maxReached,frontier);
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
+  saveState();
   render();
   // resume 직후 Celery가 아직 task를 못 받아 Redis에 이전 게이트가 남아있을 수 있음 →
   // lastSubmittedGate 와 현재 게이트가 같으면 계속 폴링, 달라지면(새 게이트 or null) 클리어
@@ -442,6 +502,7 @@ function render(){
   else if(isCompleted()){ stt.textContent='✓ 완료'; stt.className='status done'; }
   else if(jobId){ stt.textContent='진행 중'; stt.className='status'; }
   else { stt.textContent='대기'; stt.className='status'; }
+  var nb=document.getElementById('newBtn'); if(nb) nb.style.display=jobId?'inline-flex':'none';
 
   if(cur===0){
     const fi=document.getElementById('fileInput'), dz=document.getElementById('dz'),
@@ -489,7 +550,26 @@ document.getElementById('primaryBtn').onclick=function(){
   if(cur===0){ doUpload(); return; }
   if(cur>=1 && cur<=5){ doResume(); return; }
 };
-render();
+// ── F5 복원: localStorage 에 저장된 jobId 있으면 현재 단계 유지, API 폴링 재개 ──
+// _FRESH_START=true 면 시작 버튼으로 진입 → 상태 초기화 후 업로드 화면
+(function(){
+  if(_FRESH_START){
+    // 시작 버튼: 이전 데이터·해시 제거, ?flow=1 은 유지 (F5 시 플로우 화면 유지)
+    try{ window.parent.history.replaceState({}, '', window.parent.location.pathname+'?flow=1'); }catch(e){}
+    try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
+    render(); return;
+  }
+  var raw=_stateRead();
+  try{
+    var s=JSON.parse(raw||'null');
+    if(s && s.jobId){
+      jobId=s.jobId; fileId=s.fileId||null;
+      cur=s.cur||1; maxReached=s.maxReached||cur; frontier=cur;
+      startPolling(); return;
+    }
+  }catch(e){}
+  render();
+})();
 </script></body></html>
 """
 
@@ -510,14 +590,31 @@ def _flow_screen() -> None:
         """,
         unsafe_allow_html=True,
     )
-    components.html(_FLOW_HTML, height=900, scrolling=True)
+    # 시작 버튼으로 진입 시 _FRESH_START=true 주입 → IIFE가 localStorage 초기화
+    fresh = bool(st.session_state.pop("_fresh_start", False))
+    flow_html = (
+        _FLOW_HTML.replace(
+            "var _FRESH_START=false;// __FRESH_START_INJECT__",
+            "var _FRESH_START=true;// __FRESH_START_INJECT__",
+        )
+        if fresh
+        else _FLOW_HTML
+    )
+    components.html(flow_html, height=900, scrolling=True)
 
 
 # ===========================================================================
 # 라우팅 — 랜딩 → 플로우
 # ===========================================================================
+# F5 새로고침 시 URL 쿼리 파라미터로 flow 상태 복원
+if st.query_params.get("flow") == "1":
+    st.session_state["studio_started"] = True
+
 if not st.session_state.get("studio_started"):
     # ── 스플래시(랜딩) ── (화면 세로 중앙 정렬, 히어로 이미지·폴백 공통)
+    # F5 복원은 saveState() 가 URL 해시(#ada=…)에 상태를 기록하고,
+    # F5 후 ?flow=1 이 URL 에 남아 Python 이 자동으로 플로우 화면을 보여주는 방식으로 처리.
+    # (height=0 redirect iframe 제거 → Streamlit iframe 경고 감소)
     st.markdown(
         """
         <style>
@@ -559,6 +656,8 @@ if not st.session_state.get("studio_started"):
     with _bc[1]:
         if st.button("✦  시작", type="primary", use_container_width=True):
             st.session_state["studio_started"] = True
+            st.session_state["_fresh_start"] = True  # localStorage 초기화 후 업로드 화면으로
+            st.query_params["flow"] = "1"
             st.rerun()
 else:
     _flow_screen()
