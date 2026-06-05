@@ -119,6 +119,7 @@
 /agents/handlers/timeseries/               @chang-seon
 /pipelines/timeseries/                     @chang-seon
 /tests/handlers/timeseries/                @chang-seon
+/tests/pipelines/timeseries/               @chang-seon
 /requirements/handlers-timeseries.txt      @chang-seon
 
 # ============================================================

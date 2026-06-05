@@ -11,18 +11,49 @@ import tempfile
 from typing import Any, Optional
 
 
-def load_dataframe_from_state(state: Any) -> Any:
-    """state.file_id → MinIO 로딩.
+def load_dataframe_from_state(state: Any, *, prefer_processed: bool = True) -> Any:
+    """state.preprocessed_data_id 우선 로드 → uploads/ fallback (HJ-A, 2026-06-05).
 
-    파일은 uploads/{file_id}/{original_name} 경로에 저장된다.
-    file_id 자체가 확장자를 포함할 경우(레거시)에도 동작한다.
+    HJ-A 단절 해소: preprocessor.apply() 가 processed/{job}.parquet 으로 저장한
+    전처리 결과 (lag/달력/푸리에/exog/diff/boxcox 모든 파생 피처 포함) 를
+    training_executor·output_extras 가 우선 로드. 미존재 시 원본 uploads/ fallback.
+
+    Parameters
+    ----------
+    state : PipelineState
+    prefer_processed : bool
+        True (기본) — preprocessed_data_id 우선. False — 항상 원본 로드 (profiler/eda 단계용).
+
+    Returns
+    -------
+    pd.DataFrame
     """
     from tools.minio_tool import get_minio_client
 
     client = get_minio_client()
+
+    # 1순위: preprocessed_data_id (HJ-A 해소)
+    if prefer_processed:
+        pid = getattr(state, "preprocessed_data_id", None)
+        if isinstance(pid, str) and pid:
+            try:
+                fmt = pid.rsplit(".", 1)[-1].lower() if "." in pid else "parquet"
+                return client.load_dataframe(pid, fmt=fmt)
+            except Exception as exc:  # noqa: BLE001
+                # graceful fallback — 로드 실패 시 원본으로
+                try:
+                    import logging as _log
+
+                    _log.getLogger(__name__).warning(
+                        "preprocessed_load_failed_fallback_uploads",
+                        extra={"preprocessed_data_id": pid, "error": str(exc)},
+                    )
+                except Exception:
+                    pass
+
+    # 2순위: 원본 uploads/ (기존 동작)
     file_id = state.file_id
 
-    # uploads/{file_id}/ 아래 첫 번째 파일 사용
     keys = client.list_objects(prefix=f"uploads/{file_id}/")
     if keys:
         object_name = keys[0]

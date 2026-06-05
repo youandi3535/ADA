@@ -216,46 +216,79 @@ class MethodologyProposerAgent(BaseGate):
         if isinstance(explicit_cat, str) and explicit_cat in CATEGORIES and explicit_cat != state.category:
             updates["category"] = explicit_cat
 
-        # 2) custom_intent — 사용자가 직접 입력
+        # 2) 사용자 선택 추출 — custom_intent 우선, 없으면 adopted_rank 로 proposals 에서 검색.
+        # chosen 변수는 nullable 이며 아래 HJ-7 블록 (chosen_recipe 채움) 에서도 재사용.
         custom = uc.get("custom_intent")
-        if isinstance(custom, str) and custom.strip():
+        is_custom_choice = isinstance(custom, str) and custom.strip() != ""
+        chosen: dict[str, Any] | None = None
+        rank: Any = None
+        if not is_custom_choice:
+            rank = uc.get("adopted_rank")
+            chosen = next(
+                (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
+                None,
+            )
+
+        # 3) user_intent / category 채움
+        if is_custom_choice:
             updates["user_intent"] = f"{(state.user_intent or '').strip()} (방법론: {custom.strip()})".strip()
             if "category" not in updates:
                 inferred = _infer_category_from_text(custom, state.category)
                 if inferred != state.category:
                     updates["category"] = inferred
             self.logger.info("g3_custom_intent_applied", intent=custom.strip()[:120])
-        else:
-            # 3) adopted_rank — proposals 에서 선택한 항목
-            rank = uc.get("adopted_rank")
-            chosen = next(
-                (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
-                None,
+        elif chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
+            method = chosen["title"].strip()
+            base = (state.user_intent or "").strip()
+            updates["user_intent"] = f"{base} (방법론: {method})" if base else f"방법론: {method}"
+            # proposal 에 category 가 들어 있으면 우선 사용
+            if "category" not in updates:
+                new_cat = chosen.get("category")
+                if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
+                    updates["category"] = new_cat
+            # 그래도 없으면 title/rationale 텍스트로 추론
+            if "category" not in updates:
+                blob = method + " " + (chosen.get("rationale") or "")
+                inferred = _infer_category_from_text(blob, state.category)
+                if inferred != state.category:
+                    updates["category"] = inferred
+            self.logger.info(
+                "g3_proposal_adopted",
+                rank=rank,
+                title=method,
+                category=updates.get("category"),
             )
-            if chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
-                method = chosen["title"].strip()
-                base = (state.user_intent or "").strip()
-                updates["user_intent"] = f"{base} (방법론: {method})" if base else f"방법론: {method}"
-                # proposal 에 category 가 들어 있으면 우선 사용
-                if "category" not in updates:
-                    new_cat = chosen.get("category")
-                    if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
-                        updates["category"] = new_cat
-                # 그래도 없으면 title/rationale 텍스트로 추론
-                if "category" not in updates:
-                    blob = method + " " + (chosen.get("rationale") or "")
-                    inferred = _infer_category_from_text(blob, state.category)
-                    if inferred != state.category:
-                        updates["category"] = inferred
-                self.logger.info(
-                    "g3_proposal_adopted",
-                    rank=rank,
-                    title=method,
-                    category=updates.get("category"),
-                )
 
         # 4) 비지도로 카테고리 바뀐 경우 target_column 무효화
         if updates.get("category") in _UNSUPERVISED_CATEGORIES and state.target_column:
             updates["target_column"] = None
+
+        # 5) HJ-7 (2026-06-05) — chosen_recipe 정식 필드 채움 (위 2)·3) 결과 재사용)
+        # CS evaluator/insight/selector 가 state.chosen_recipe.meta.* 우선 활용.
+        # meta 4 키는 G4(model_strategy) 또는 카테고리별 proposer.g1 에서 보강할 수 있도록
+        # proposal 의 meta 가 있으면 그대로, 없으면 기본 None 채움.
+        _DEFAULT_META = {"variate": None, "forecast_kind": None, "task_kind": None, "horizon_hint": None}
+        recipe: dict[str, Any] = {}
+        if is_custom_choice:
+            recipe = {
+                "id": 0,
+                "title": custom.strip(),
+                "methodology": custom.strip(),
+                "is_custom": True,
+                "meta": dict(_DEFAULT_META),
+            }
+        elif chosen:
+            chosen_meta = chosen.get("meta")
+            recipe = {
+                "id": chosen.get("id"),
+                "title": chosen.get("title"),
+                "methodology": chosen.get("title"),
+                "rationale": chosen.get("rationale", ""),
+                "is_custom": False,
+                "meta": chosen_meta if isinstance(chosen_meta, dict) else dict(_DEFAULT_META),
+            }
+        if recipe:
+            updates["chosen_recipe"] = recipe
+            self.logger.info("g3_chosen_recipe_set", recipe_title=recipe.get("title"))
 
         return state.with_update(**updates) if updates else state
