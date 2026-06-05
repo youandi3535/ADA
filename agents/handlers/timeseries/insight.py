@@ -15,8 +15,8 @@ DoD (불변):
 cs-day8 v3 디벨롭 (재정독 후 헌장 갭 7건 해소):
   H1 slope 키 버그 수정 — profiler 의 trend["slope_per_obs"] (legacy "slope" 도 fallback)
   H2 0단계 메타 명시 — proposer.g1(state) 직접 호출해서 meta(variate/forecast_kind/
-     task_kind/horizon_hint) 추출 (chosen_recipe 가 PipelineState 정식 필드가 아니라
-     운영 경로에서 못 들어오는 호환성 단절 우회)
+     task_kind/horizon_hint) 추출. HJ-5 (2026-06-05) 이후 chosen_recipe 가 PipelineState
+     정식 필드가 됐으나 채우는 곳은 HJ-7 후속 — 정상 채워질 때까지 proposer.g1 직접 호출 fallback 유지
   H3 누수 의심 한계 안내 — eval_result.leakage_suspect_signals 받아 정직한 한계 인정
      ("검증 신호 X 감지 — 운영 적용 전 점검 필요"). cs-day10 "정직한 실패" 원칙
   H4 fold 분산 인용 — eval_result.fold_diagnostics 받아 "fold N개 평균 X (안정성 Y)"
@@ -135,8 +135,9 @@ def _zero_step_meta(state: Any) -> dict:
     """proposer.g1(state) 의 top recipe 의 meta 추출 — 0단계 성격 (variate/
     forecast_kind/task_kind/horizon_hint).
 
-    호환성: chosen_recipe 는 PipelineState 정식 필드가 아니라 운영 경로에서
-    state 에 안 들어옴. 대신 proposer.g1 을 직접 호출해서 top1 의 meta 활용.
+    호환성: HJ-5 (2026-06-05) 이후 chosen_recipe 는 PipelineState 정식 필드이지만,
+    채우는 dispatcher 로직은 HJ-7 후속 (현재 dead field). 채워질 때까지 1순위로
+    state.chosen_recipe.meta 를 시도하고, 빈 경우 proposer.g1 의 top1 meta 로 fallback.
     실패해도 graceful (모든 키 None).
     """
     default = {"variate": None, "forecast_kind": None, "task_kind": None, "horizon_hint": None}
@@ -335,7 +336,6 @@ def _build_fallback(state: Any) -> str:
     sentences: list[str] = []
 
     # 문장 1 — 추세 + slope + (H6) 도메인 가이드
-    # P14: slope 있을 때 자연스러운 위치 — "추세를 보이며 (평균 +5.0%)"
     if slope_text:
         base_sent = f"본 시계열은 {direction_ko} 추세를 보이며{slope_text} 입니다"
     else:
@@ -350,13 +350,12 @@ def _build_fallback(state: Any) -> str:
         sentences.append(f"{period}{unit_ko} 주기 계절성이 관측됩니다.")
 
     # 문장 3 — 모델 성능 + improvement (수치 보장)
-    # P12: perf_text 가 "성능"으로 끝나면 "을 보입니다" 띄어쓰기 자연스럽게
     if perf_text.endswith("성능"):
         sentences.append(f"{model_name} 모델은 {perf_text}을 보입니다.")
     else:
         sentences.append(f"{model_name} 모델은 {perf_text}입니다.")
 
-    # 문장 3-b (H4) — walk-forward fold 진단 (fold_diag.available 시만)
+    # 문장 3-b (H4) — walk-forward fold 진단
     if fold_diag.get("available"):
         n_folds = fold_diag.get("n_folds")
         fmean = fold_diag.get("mean")
@@ -364,8 +363,7 @@ def _build_fallback(state: Any) -> str:
         if n_folds and fmean is not None:
             sentences.append(f"walk-forward 검증 {n_folds}개 fold 평균 개선율 {fmean:+.3f} ({stability or 'N/A'}).")
 
-    # 문장 4 — horizon + 0단계 (수치 인용 보강)
-    # P11: zero_step_phrase 에 "예측" 포함 시 중복 방지
+    # 문장 4 — horizon + 0단계
     if zero_step_phrase and "예측" in zero_step_phrase:
         sentences.append(f"{horizon_text} 동안{zero_step_phrase}으로 활용 가능합니다.")
     elif zero_step_phrase:
@@ -373,13 +371,12 @@ def _build_fallback(state: Any) -> str:
     else:
         sentences.append(f"{horizon_text} 동안 예측에 활용 가능합니다.")
 
-    # 문장 5 (H3) — 누수 의심 한계 인정 (정직한 보고 — 낙관 톤 제거)
+    # 문장 5 (H3) — 누수 의심 한계 인정
     if leakage:
         kinds = ", ".join(s.get("kind", "?") for s in leakage[:3])
         sentences.append(f"단, 검증 신호 ({kinds}) 가 감지되어 운영 적용 전 누수 점검이 필요합니다.")
 
     # 문장 6 (H5) — 증상 + 롤백 우선순위 (정상 아닐 때)
-    # P10 — 가드의 sentence split (정규식 [.!?]) 회피 위해 단일 문장으로 통합
     sym_code = symptom.get("symptom")
     if sym_code and sym_code not in ("normal",):
         sym_label = symptom.get("label") or SYMPTOM_KO_LABEL.get(sym_code, sym_code)
@@ -387,38 +384,26 @@ def _build_fallback(state: Any) -> str:
         rb_phrase = f"이며 권장 조치는 {rb[0]} 입니다" if rb else "입니다"
         sentences.append(f"진단 결과 증상은 {sym_code} ({sym_label}){rb_phrase}.")
 
-    # 문장 7 (H7) — task_kind_hint (분류형 안내)
+    # 문장 7 (H7) — task_kind_hint
     if task_hint:
         sentences.append(task_hint)
 
-    # 문장 마지막 — 행동 권고 (기본; 누수·증상 있을 때는 위 문장이 권고 역할)
+    # 문장 마지막 — 행동 권고
     if not leakage and (not sym_code or sym_code == "normal"):
         sentences.append("운영팀은 주간 단위로 모델 결과를 모니터링할 것을 권장합니다.")
 
-    # 수치 0 최악 케이스 보강 (기존 매트릭스 유지)
+    # 수치 0 최악 케이스 보강
     if not has_seas and improvement is None and slope_pct is None and mase is None:
-        # period 대신 horizon_n 수치 인용 — 인덱스 -1 직전에 삽입
         insert_at = max(0, len(sentences) - 1)
         sentences.insert(insert_at, f"{horizon_n}{unit_ko} 후 예측을 위해 추가 모니터링이 필요합니다.")
 
-    # P10: 5문장 하드 제한 — guardrails.insight_must_cite 가 5문장 초과 시 위반
-    # 우선순위 보존:
-    #   1 (추세+도메인) > 3 (모델 성능, 수치 인용) > 4 (horizon+0단계) >
-    #   5 (누수 한계 - 정직한 보고) > 6 (증상+롤백) > 7 (task_hint) > 2 (계절) > 3b (fold) > 마지막 (권고)
-    # 6+ 시: 위에서 부터 핵심 유지, 가장 덜 중요한 것부터 통합/제거
-    # P10: 5문장 하드 제한 — guardrails.insight_must_cite 가드 통과 보장.
-    # drop 우선순위 (적은 정보 손실 순):
-    #   1) walk-forward fold 문장 (수치는 이미 문장 3 에 있음)
-    #   2) 계절성 문장 (period 가 horizon_text 에 들어감)
-    #   3) 마지막 일반 권고 ("운영팀은 주간 단위로...") — 증상 권장 조치가 대체
-    #   4) task_kind_hint (마지막 문장)
-    # 최종 안전망: sentences[:5] 강제 절단
+    # P10: 5문장 하드 제한
     if len(sentences) > 5:
         drop_patterns = [
-            lambda s: s.startswith("walk-forward"),  # fold 인용
-            lambda s: "주기 계절성" in s,  # 계절성
-            lambda s: "운영팀은" in s and "모니터링" in s,  # 기본 권고
-            lambda s: task_hint and s == task_hint,  # task_kind_hint
+            lambda s: s.startswith("walk-forward"),
+            lambda s: "주기 계절성" in s,
+            lambda s: "운영팀은" in s and "모니터링" in s,
+            lambda s: task_hint and s == task_hint,
         ]
         for pred in drop_patterns:
             if len(sentences) <= 5:
@@ -427,11 +412,10 @@ def _build_fallback(state: Any) -> str:
                 if pred(s):
                     sentences.pop(i)
                     break
-        # 최종 안전망 — 절대 5문장 강제
         if len(sentences) > 5:
             sentences = sentences[:5]
 
-    # 3~5 문장 보장 — 너무 짧으면 (1~2문장만) 안전한 보강
+    # 3~5 문장 보장
     while len(sentences) < 3:
         sentences.append("추가 검증이 필요한 시점입니다.")
 
