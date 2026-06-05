@@ -74,6 +74,30 @@ def _infer_category_from_text(text: str, fallback: str) -> str:
     return fallback
 
 
+# 카테고리별 최소 행 수 — schema_validator.CATEGORY_RULES 와 동기화.
+# 직접 import 하면 순환 의존 가능성이 있으므로 여기서 독립 선언.
+_CATEGORY_MIN_ROWS: dict[str, int] = {
+    "tabular_ml": 100,
+    "tabular_dl": 1000,
+    "timeseries": 50,
+    "anomaly_detection": 500,
+}
+
+
+def _category_feasible(category: str, data_profile: dict | None) -> bool:
+    """데이터셋 행 수가 category 의 최소 요건을 충족하는지 확인.
+
+    data_profile 이 없거나 rows 정보가 없으면 True 반환(보수적 허용).
+    """
+    if not data_profile:
+        return True
+    rows = int(data_profile.get("rows", 0) or 0)
+    if rows == 0:
+        return True
+    min_rows = _CATEGORY_MIN_ROWS.get(category, 0)
+    return rows >= min_rows
+
+
 _CUSTOM_OPTION: dict[str, Any] = {
     "id": 3,
     "title": "직접 입력",
@@ -212,13 +236,21 @@ class AnalysisProposerAgent(BaseGate):
                 if "category" not in updates:
                     new_cat = chosen.get("category")
                     if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
-                        updates["category"] = new_cat
-                        self.logger.info("g2_category_changed", old=state.category, new=new_cat)
+                        if _category_feasible(new_cat, state.data_profile):
+                            updates["category"] = new_cat
+                            self.logger.info("g2_category_changed", old=state.category, new=new_cat)
+                        else:
+                            self.logger.info(
+                                "g2_category_change_blocked",
+                                reason="min_rows_not_met",
+                                blocked_cat=new_cat,
+                                kept_cat=state.category,
+                            )
 
                 # Method B: LLM 이 category 를 안 채웠을 때 키워드 fallback
                 if "category" not in updates:
                     inferred = _infer_category_from_text(direction, state.category)
-                    if inferred != state.category:
+                    if inferred != state.category and _category_feasible(inferred, state.data_profile):
                         updates["category"] = inferred
                         self.logger.info("g2_category_inferred", direction=direction, category=inferred)
 

@@ -29,6 +29,24 @@ def _infer_category_from_text(text: str, fallback: str) -> str:
     return fallback
 
 
+_CATEGORY_MIN_ROWS: dict[str, int] = {
+    "tabular_ml": 100,
+    "tabular_dl": 1000,
+    "timeseries": 50,
+    "anomaly_detection": 500,
+}
+
+
+def _category_feasible(category: str, data_profile: dict | None) -> bool:
+    """데이터셋 행 수가 category 최소 요건을 충족하는지 확인."""
+    if not data_profile:
+        return True
+    rows = int(data_profile.get("rows", 0) or 0)
+    if rows == 0:
+        return True
+    return rows >= _CATEGORY_MIN_ROWS.get(category, 0)
+
+
 SYSTEM_PROMPT = (
     "You are an AutoML strategy consultant. "
     "Given the data profile and the G2 analysis direction chosen by the user, "
@@ -236,16 +254,17 @@ class MethodologyProposerAgent(BaseGate):
                 method = chosen["title"].strip()
                 base = (state.user_intent or "").strip()
                 updates["user_intent"] = f"{base} (방법론: {method})" if base else f"방법론: {method}"
-                # proposal 에 category 가 들어 있으면 우선 사용
+                # proposal 에 category 가 들어 있으면 우선 사용 (데이터셋 행 수 충족 시만)
                 if "category" not in updates:
                     new_cat = chosen.get("category")
                     if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
-                        updates["category"] = new_cat
-                # 그래도 없으면 title/rationale 텍스트로 추론
+                        if _category_feasible(new_cat, state.data_profile):
+                            updates["category"] = new_cat
+                # 그래도 없으면 title/rationale 텍스트로 추론 (데이터셋 행 수 충족 시만)
                 if "category" not in updates:
                     blob = method + " " + (chosen.get("rationale") or "")
                     inferred = _infer_category_from_text(blob, state.category)
-                    if inferred != state.category:
+                    if inferred != state.category and _category_feasible(inferred, state.data_profile):
                         updates["category"] = inferred
                 self.logger.info(
                     "g3_proposal_adopted",

@@ -231,6 +231,8 @@ function resetAll(){
   if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
+  gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={};
+  _progressKey=null; _shownPct=0;
   var nb=document.getElementById('newBtn'); if(nb) nb.style.display='none';
   render();
 }
@@ -312,13 +314,11 @@ async function doResume(){
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
     lastSubmittedGate=gate;
-    // 이전 단계 재진행 시 tg 이후 게이트 캐시 초기화
-    if(cur < maxReached){
-      Object.keys(gateCache).forEach(function(k){
-        if(parseInt(k.slice(1),10)>cur+1) delete gateCache[k];
-      });
-    }
-    delete gateCache[tg];   // 제출 게이트 stale proposals 제거 → _stageProgress 오판 방지
+    // 제출 게이트 이상 모든 캐시 초기화 — forward/backward 양방향 stale proposals 방지
+    var _tgNum=parseInt(tg[1],10);
+    Object.keys(gateCache).forEach(function(k){
+      if(parseInt(k.slice(1),10)>=_tgNum) delete gateCache[k];
+    });
     cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
     saveState();
@@ -426,7 +426,8 @@ function _stageProgress(){
     // 게이트 단계(G2~G6): proposals 도착 = 즉시 100% 스냅(애니메이션 지연 없음).
     const tg='G'+(cur+1);  // cur 1~5 → 백엔드 G2~G6
     const ag=curGate();
-    const d=(ag===tg)?gateData:(gateCache[tg]||{});
+    // analyzing()=true(게이트 간 이동 중)이면 캐시 무시 — stale proposals로 인한 100% 방지
+    const d=(ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{}));
     const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
     // proposals 도착 즉시 100% — 단, 제출 직후 분석 대기(lastSubmittedGate=tg & ag=null) 상태는 제외
     if(ps.length && !(lastSubmittedGate===tg && !ag)){
@@ -567,8 +568,9 @@ function contentGate(){
   const ag=curGate();             // 백엔드 현재 게이트
   // 방금 제출한 게이트이고 다음 게이트 미도착(분석 중) → 캐시 proposals 재표시 방지
   if(lastSubmittedGate===tg && !ag){ return gateHeader(tg)+loadingBlock(); }
-  // 사용자 위치와 백엔드 위치가 같으면 실시간 gateData, 다르면 캐시 사용
-  const d=(ag===tg)?gateData:(gateCache[tg]||{});
+  // 실시간: ag===tg면 gateData, 뒤로가기 등 이전 단계: 캐시 사용
+  // analyzing()=true(게이트 간 이동 중)이면 캐시 무시 — stale proposals 표시 방지
+  const d=(ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{}));
   const g=tg;
   const props=(d.proposals)||[];
   if(!props.length){ return gateHeader(g)+loadingBlock(); }
