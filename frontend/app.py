@@ -212,7 +212,7 @@ function _stateRead(){
 }
 function saveState(){
   if(!jobId) return;
-  if(isCompleted() || isFailed()){ clearState(); return; }
+  if(isFailed()){ clearState(); return; }  // 완료 시엔 유지 — F5 새로고침 후 결과 화면 복원
   var d=JSON.stringify({jobId:jobId,fileId:fileId,cur:cur,maxReached:maxReached});
   try{
     var u=window.parent.location;
@@ -310,14 +310,14 @@ async function doResume(){
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
     lastSubmittedGate=gate;
-    // 이전 단계 재진행: 이후 게이트 캐시와 frontier 초기화
+    // 이전 단계 재진행 시 tg 이후 게이트 캐시 초기화
     if(cur < maxReached){
       Object.keys(gateCache).forEach(function(k){
-        if(parseInt(k.slice(1),10)>cur+1) delete gateCache[k];  // 새 컨벤션: 캐시 키 G2~G6, cur=1→G2 가 현재이므로 G3+ 삭제
+        if(parseInt(k.slice(1),10)>cur+1) delete gateCache[k];
       });
-      frontier=cur; maxReached=cur;
     }
-    // selId 를 초기화하지 않음 — 제출 직후 poll 이 돌아와도 선택이 옵션1로 리셋되지 않도록
+    delete gateCache[tg];   // 제출 게이트 stale proposals 제거 → _stageProgress 오판 방지
+    cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
     saveState();
     startPolling();
@@ -420,7 +420,13 @@ function _stageProgress(){
     if(ps.length){
       _shownPct=100; return 100;  // proposals 도착 즉시 100%
     } else {
-      target=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
+      // 단계별 독립 0~100% — 백엔드 전체 진행률(0~100)을 이 단계 구간으로 정규화.
+      // cur=2(G3 로딩):18~33%, cur=3(G4):33~50%, cur=4(G5):50~85%, cur=5(G6):85~98%
+      const STAGE_LO={2:18,3:33,4:50,5:85};
+      const STAGE_HI={2:33,3:50,4:85,5:98};
+      const lo=STAGE_LO[cur]||0, hi=STAGE_HI[cur]||100;
+      const raw=(gateData.progress_pct!=null)?gateData.progress_pct:lo;
+      target=Math.max(0, Math.min(99, Math.round((raw-lo)/(hi-lo)*100)));
     }
   }
   // 점프 보간 — 매 호출(500ms) 최대 step. 작은 차이는 즉시, 큰 점프(예: 30→100)는 약 2초간 부드럽게.
@@ -466,6 +472,7 @@ function loadingBlock(){
 // 진행률은 _stageProgress() 가 단계 완료(proposals 도착·isCompleted)면 100% 강제 점프.
 function progressBar(){
   if(isFailed()) return '';
+  if(cur===LAST) return '';  // G7 완료 페이지에서는 진행바 표시 안 함
   const p=_stageProgress();
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
   let etaStr='';
@@ -709,7 +716,18 @@ function render(){
   else if(cur===LAST) prim.disabled=true;
   else prim.disabled=!atGate||!g5ok;
 }
-document.getElementById('prevBtn').onclick=function(){ if(cur>0){ cur--; follow=false; render(); } };
+document.getElementById('prevBtn').onclick=function(){
+  if(cur>0){
+    const goTo=cur-1;
+    // G2~G5 구간에서 되돌아갈 때 이후 작업 무효화 경고
+    if(goTo>=1 && goTo<=4 && maxReached>goTo){
+      if(!window.confirm(steps[goTo].label+' 단계로 돌아가면 이후 분석 결과가 초기화됩니다.\n다른 옵션으로 재분석하려면 확인을 누르세요.')) return;
+      Object.keys(gateCache).forEach(function(k){ if(parseInt(k.slice(1),10)>goTo+1) delete gateCache[k]; });
+      maxReached=goTo; frontier=goTo;
+    }
+    cur=goTo; follow=false; render();
+  }
+};
 document.getElementById('nextBtn').onclick=function(){ if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
 document.getElementById('stopBtn').onclick=function(){ paused=true; if(pollTimer) clearTimeout(pollTimer); polling=false; render(); };
 document.getElementById('primaryBtn').onclick=function(){
