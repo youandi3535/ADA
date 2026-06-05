@@ -28,18 +28,41 @@ SYSTEM_PROMPT = (
     "those are steps within an analysis, not a direction itself. "
     "For Option 1 pick the highest-confidence direction; "
     "for Option 2 pick the second-best direction that offers a meaningfully different angle. "
-    "Both titles and rationales must be in Korean (1-2 sentences). "
+    "Titles must be in Korean (concise, 10-20 chars). "
+    "Each rationale MUST follow this exact 3-line Korean format (use \\n to separate lines in JSON):\n"
+    "• 방식: <핵심 분석 접근법·알고리즘 포함, 15~30자>\n"
+    "• 이유: <이 데이터·맥락에 적합한 이유, 15~30자>\n"
+    "• 결과: <사용자가 얻을 인사이트·지표·산출물, 15~30자>\n"
+    "Rationale rules: each line = one sentence, noun-ending preferred. "
+    "All 3 lines combined under 100 chars. "
+    "FORBIDDEN in rationale: 전형적인·다양한·체계적으로·최적화되어 있어·~에 적합합니다 류 수식어, "
+    "row/column count re-mention, two sentences per line. "
     "For EACH option, also determine:\n"
     "  - category: one of tabular_ml | tabular_dl | timeseries | anomaly_detection\n"
     "    (use anomaly_detection for clustering / unsupervised approaches)\n"
     "  - approach: supervised_classification | supervised_regression | unsupervised_clustering"
     " | anomaly_detection | time_series_forecasting | supervised_other\n"
     "  - target_column: supervised target column name, or null for unsupervised\n"
+    "\n## 절대 강제 사항 (반드시 지킬 것)\n"
+    "각 옵션 객체에는 다음 키를 한 글자도 빠뜨리지 말 것:\n"
+    "  - \"category\": tabular_ml | tabular_dl | timeseries | anomaly_detection 중 하나\n"
+    "  - \"approach\": supervised_classification | supervised_regression\n"
+    "                | unsupervised_clustering | anomaly_detection\n"
+    "                | time_series_forecasting | supervised_other 중 하나\n"
+    "  - \"target_column\": 지도학습이면 컬럼명 문자열, 아니면 null\n\n"
+    "Option 1 과 Option 2 는 반드시 서로 다른 \"category\" 를 가져야 한다.\n"
+    "(같은 category 안의 세부 차이는 G2 단계에서 제시하지 말 것 — G3 에서 다룬다.)\n\n"
+    "이 두 옵션은 사용자가 G3 의 후보군을 결정하는 분기점이다.\n"
+    "사용자가 Option 1 (예: tabular_ml) 을 고르면 다음 게이트(G3) 에서는\n"
+    "오직 tabular_ml 안의 세부 방법론만 보게 된다. category 를 의도와 다르게 채우면\n"
+    "사용자 경험이 깨진다.\n"
     "Reply with a JSON array of exactly 2 objects, no markdown:\n"
-    '[{"id": 1, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0, '
-    '"category": "tabular_ml", "approach": "supervised_classification", "target_column": "col"}, '
-    '{"id": 2, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0, '
-    '"category": "anomaly_detection", "approach": "unsupervised_clustering", "target_column": null}]'
+    '[{"id": 1, "title": "한국어 제목", '
+    '"rationale": "• 방식: 지도학습 이진 분류 (XGBoost)\\n• 이유: 0/1 명확 타겟 + 구조화 피처\\n• 결과: 생존 예측 + 핵심 영향 변수 식별", '
+    '"score": 0.0-1.0, "category": "tabular_ml", "approach": "supervised_classification", "target_column": "col"}, '
+    '{"id": 2, "title": "한국어 제목", '
+    '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ...", '
+    '"score": 0.0-1.0, "category": "anomaly_detection", "approach": "unsupervised_clustering", "target_column": null}]'
 )
 
 _UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
@@ -171,7 +194,7 @@ class AnalysisProposerAgent(BaseGate):
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
-                max_tokens=600,
+                max_tokens=1500,
                 temperature=0.3,
                 json_mode=True,
             )
@@ -279,4 +302,10 @@ class AnalysisProposerAgent(BaseGate):
                     target_column=updates.get("target_column"),
                 )
 
+        self.logger.info(
+            "g2_apply_done",
+            old_category=state.category,
+            new_category=updates.get("category", state.category),
+            chosen_has_category=bool(chosen.get("category")) if chosen else False,
+        )
         return state.with_update(**updates) if updates else state

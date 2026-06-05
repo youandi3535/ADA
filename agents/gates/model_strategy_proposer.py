@@ -12,14 +12,22 @@ SYSTEM_PROMPT = (
     "You are a modeling architect. "
     "Given the data profile, EDA summary, and the G3 methodology chosen by the user, "
     "propose exactly TWO distinct model strategy options. "
-    "For each option write a concise Korean rationale of 1-2 sentences: "
-    "why this strategy fits the data, and what result the user can expect. Keep it short and clear. "
-    "Titles must be in Korean (concise). "
+    "Titles must be in Korean (concise, 10-20 chars). "
+    "Each rationale MUST follow this exact 3-line Korean format (use \\n to separate lines in JSON):\n"
+    "• 방식: <핵심 모델명·전략 포함, 15~30자>\n"
+    "• 이유: <이 데이터·맥락에 적합한 이유, 15~30자>\n"
+    "• 결과: <사용자가 얻을 인사이트·지표·산출물, 15~30자>\n"
+    "Rationale rules: each line = one sentence, noun-ending preferred. "
+    "All 3 lines combined under 100 chars. "
+    "FORBIDDEN in rationale: 전형적인·다양한·체계적으로·최적화되어 있어·~에 적합합니다 류 수식어, "
+    "row/column count re-mention, two sentences per line. "
     "Reply with a JSON array of exactly 2 objects, no markdown:\n"
     '[{"id": 1, "title": "한국어 제목", "models": ["Model1", "Model2"], '
-    '"rationale": "한국어 1-2문장", "score": 0.0-1.0}, '
-    ' {"id": 2, "title": "한국어 제목", "models": ["Model1", "Model2"], '
-    '"rationale": "한국어 1-2문장", "score": 0.0-1.0}]'
+    '"rationale": "• 방식: XGBoost + LightGBM 앙상블\\n• 이유: 정형 분류에 부스팅 계열 강점\\n• 결과: 최고 정확도 모델 자동 선정", '
+    '"score": 0.0-1.0}, '
+    '{"id": 2, "title": "한국어 제목", "models": ["Model1", "Model2"], '
+    '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ...", '
+    '"score": 0.0-1.0}]'
 )
 
 _CUSTOM_OPTION: dict[str, Any] = {
@@ -118,7 +126,7 @@ class ModelStrategyProposerAgent(BaseGate):
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
-                max_tokens=700,
+                max_tokens=1500,
                 temperature=0.2,
                 json_mode=True,
             )

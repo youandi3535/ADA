@@ -16,9 +16,9 @@ _CUSTOM_OPTION: dict[str, Any] = {
     "is_custom": True,
 }
 
-_RATIONALE = [
-    "학습 결과 최고 성능 모델입니다. 교차 검증 지표 기준 1순위 추천.",
-    "안정성과 일반화 균형이 좋은 차선 모델입니다. 과적합 위험이 상대적으로 낮습니다.",
+_RATIONALE_LINES = [
+    ("교차 검증 지표 기준 1순위 성능.", "최종 추천 모델로 자동 선정."),
+    ("안정성·일반화 균형 기준 2순위.", "과적합 위험 낮은 대안 제공."),
 ]
 
 
@@ -60,7 +60,11 @@ class ModelComparisonReporterAgent(BaseGate):
                     "mlflow_run_id": m.get("mlflow_run_id"),
                     "model_sha256": m.get("model_sha256"),
                     "objective_value": obj_val,
-                    "rationale": f"{_RATIONALE[i - 1]} ({objective_metric}: {val_str})",
+                    "rationale": (
+                        f"• 방식: {m.get('model_name', '?')} ({objective_metric}: {val_str})\n"
+                        f"• 이유: {_RATIONALE_LINES[i - 1][0]}\n"
+                        f"• 결과: {_RATIONALE_LINES[i - 1][1]}"
+                    ),
                     "score": 1.0 - 0.15 * (i - 1),
                     "requires_finetune": False,
                 }

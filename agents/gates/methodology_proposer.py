@@ -13,8 +13,8 @@ _UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
 # 방법론 제목/근거 텍스트에서 카테고리를 키워드로 추론하기 위한 사전.
 # 우선순위 높음 → 낮음 순서 (anomaly_detection 먼저 검사하지 않으면 timeseries 가 흡수).
 _CATEGORY_KEYWORDS_KO: list[tuple[str, list[str]]] = [
-    ("anomaly_detection", ["이상탐지", "anomaly", "outlier", "이상치", "이상", "OneClass", "Isolation"]),
-    ("timeseries", ["시계열", "예측", "forecast", "time series", "temporal", "SARIMA", "Prophet", "LSTM"]),
+    ("anomaly_detection", ["이상탐지", "anomaly", "outlier", "이상치", "OneClass", "Isolation"]),  # "이상" 제거 — "0.85 이상의" 등 일반 용어와 충돌
+    ("timeseries", ["시계열", "forecast", "time series", "temporal", "SARIMA", "Prophet", "LSTM"]),  # "예측" 제거 — 분류 타이틀에도 흔히 등장
     ("tabular_dl", ["딥러닝", "deep learning", "transformer", "FTTransformer", "TabTransformer"]),
     ("tabular_ml", ["정형 ML", "XGBoost", "LightGBM", "RandomForest", "tree", "boosting"]),
 ]
@@ -55,18 +55,49 @@ def _category_feasible(category: str, data_profile: dict | None) -> bool:
 
 
 SYSTEM_PROMPT = (
-    "You are an AutoML strategy consultant. "
-    "Given the data profile and the G2 analysis direction chosen by the user, "
-    "propose exactly TWO distinct methodology options from: tabular_ml, tabular_dl, timeseries, anomaly_detection. "
-    "Option 1 should be the best fit; Option 2 should offer a meaningfully different angle. "
-    "For each option, write a detailed Korean rationale of 2-3 sentences that explains: "
-    "(1) why this methodology suits the data characteristics, "
-    "(2) which specific algorithms or model families would be used, "
-    "(3) what concrete insight or result the user can expect. "
-    "Titles must be in Korean (concise and descriptive). "
-    "Reply with a JSON array of exactly 2 objects, no markdown:\n"
-    '[{"id": 1, "title": "한국어 제목", "rationale": "한국어 2-3문장 상세 설명", "score": 0.0-1.0}, '
-    ' {"id": 2, "title": "한국어 제목", "rationale": "한국어 2-3문장 상세 설명", "score": 0.0-1.0}]'
+    "You are an AutoML methodology specialist.\n\n"
+    "The user has already chosen an analysis direction in the previous gate (G2). "
+    "That choice fixes the analytical CATEGORY for this run. "
+    "Your job is NOT to re-decide the category — your job is to offer two concrete "
+    "methodology options WITHIN that fixed category.\n\n"
+    "Input JSON keys you will receive:\n"
+    "  - locked_category: tabular_ml | tabular_dl | timeseries | anomaly_detection "
+    "(the user's G2 decision; treat as immutable)\n"
+    "  - g2_title: the G2 option title the user picked (Korean)\n"
+    "  - data_profile: rows, cols, dtypes, target info\n"
+    "  - user_intent: original user goal (Korean free text)\n\n"
+    "## 절대 강제 사항\n"
+    "1. 두 옵션 모두 locked_category 안에 머무를 것. 카테고리 점프 금지.\n"
+    "   locked_category=tabular_ml 이면 anomaly_detection / timeseries / tabular_dl 안을 절대 제안하지 말 것.\n\n"
+    "2. 같은 카테고리 안에서 알고리즘 계열이 명확히 다른 두 안을 낼 것. 카테고리별 허용 분기 축:\n"
+    "   - tabular_ml:\n"
+    "       Option 1 = 트리 앙상블 (XGBoost / LightGBM / CatBoost / RandomForest 스태킹)\n"
+    "       Option 2 = 선형·커널 (Logistic Regression / SVM / Elastic Net) — 해석성 강조\n"
+    "   - tabular_dl:\n"
+    "       Option 1 = Transformer (TabTransformer / FT-Transformer)\n"
+    "       Option 2 = 경량 MLP / TabPFN — 학습 시간·소형 데이터 강점\n"
+    "   - timeseries:\n"
+    "       Option 1 = 통계 모델 (SARIMA / Prophet) — 해석성·계절성\n"
+    "       Option 2 = 딥러닝 (TFT / PatchTST / Informer) — 장기 의존성\n"
+    "   - anomaly_detection:\n"
+    "       Option 1 = 고전 앙상블 (IsolationForest / LOF / OneClassSVM)\n"
+    "       Option 2 = 딥러닝 재구성 (AutoEncoder / TranAD / AnomalyTransformer)\n\n"
+    "3. 위 분기 축 외 조합 금지 (예: tabular_ml 인데 한쪽에 이상탐지 끼우기).\n"
+    "4. Option 1 score 는 0.80~0.95, Option 2 는 0.60~0.78.\n\n"
+    "## rationale 작성 규칙 (3줄 글머리)\n"
+    "한국어. 정확히 3줄. 각 줄 '• ' 로 시작.\n"
+    "  • 방식: 구체 알고리즘 1~3개 명시 (15~30자)\n"
+    "  • 이유: data_profile + g2_title 에서 가져온 근거 (15~30자)\n"
+    "  • 결과: 사용자가 얻을 인사이트·지표 (15~30자)\n"
+    "줄 사이는 반드시 '\\n' 개행. JSON 안에서 "
+    '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ..."\n\n'
+    "## 출력 (마크다운 금지, JSON array of 2 objects)\n"
+    '[{"id":1, "title":"한국어 제목 (계열명 포함)", '
+    '"category":"<locked_category 그대로>", '
+    '"rationale":"• 방식: ...\\n• 이유: ...\\n• 결과: ...", "score":0.80},\n'
+    ' {"id":2, "title":"한국어 제목 (대조 계열)", '
+    '"category":"<locked_category 그대로>", '
+    '"rationale":"• 방식: ...\\n• 이유: ...\\n• 결과: ...", "score":0.65}]'
 )
 
 _CUSTOM_OPTION: dict[str, Any] = {
@@ -187,16 +218,16 @@ class MethodologyProposerAgent(BaseGate):
             None,
         )
         payload = {
-            "category": state.category,
+            "locked_category": state.category,
+            "g2_title": g1_chosen.get("title") if g1_chosen else "",
             "data_profile": state.data_profile,
-            "g1_direction": g1_chosen.get("title") if g1_chosen else (state.user_intent or ""),
             "user_intent": state.user_intent,
         }
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
-                max_tokens=700,
+                max_tokens=1500,
                 temperature=0.2,
                 json_mode=True,
             )

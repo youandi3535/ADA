@@ -169,6 +169,26 @@ _FLOW_HTML = """
   .btn-new:hover{background:rgba(255,255,255,.20);}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
+  <!-- 랜딩 오버레이 — G1 이전 단계 클릭 시 표시. 원본 Python 랜딩과 동일한 스타일 -->
+  <div id="landingOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+    z-index:9999;background:#dbe7f6;flex-direction:column;align-items:center;justify-content:center;
+    overflow-y:auto;padding:40px 20px;font-family:'Pretendard','Inter',-apple-system,sans-serif;">
+    <!-- 히어로 카드 (원본 ada_hero.png 대체 — Python fallback 과 동일한 스타일) -->
+    <div style="max-width:960px;width:100%;border-radius:34px;padding:80px 64px;
+      background:linear-gradient(160deg,#2b4a6b 0%,#3f5d7e 100%);color:#e6eef8;text-align:center;
+      box-shadow:0 32px 80px rgba(31,62,92,.34);margin-bottom:44px;">
+      <div style="font-size:18px;letter-spacing:.30em;opacity:.85;font-weight:600">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</div>
+      <div style="font-size:160px;line-height:1.0;margin:24px 0 4px">🌐</div>
+    </div>
+    <!-- 텍스트 + 버튼 -->
+    <div style="text-align:center;">
+      <div style="font-size:72px;font-weight:800;color:#19395a;margin:0 0 18px">ADA Studio</div>
+      <div style="font-size:24px;color:#52647d;margin:0 0 40px">다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로!</div>
+      <button onclick="startFromLanding()" style="font-family:inherit;font-size:20px;font-weight:600;
+        border:none;border-radius:999px;cursor:pointer;background:#1f3e5c;color:#fff;
+        padding:.7rem 2.4rem;box-shadow:0 10px 24px rgba(31,62,92,.28)">✦&nbsp;&nbsp;시작</button>
+    </div>
+  </div>
   <div class="shell">
     <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><button class="btn-new" id="newBtn" style="display:none" onclick="resetAll()">＋ 새 분석</button><span class="status" id="status">대기</span></div>
     <div class="steps" id="steps"></div>
@@ -195,6 +215,7 @@ let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, ani
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
 let gateCache={};  // {G2: gateData, G3: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
+let _sawAnalyzingAfterSubmit=false;  // resume 후 analyzing() 상태를 거쳤는지 — stale gate 차단
 
 // ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
 // 1순위: URL 해시(#ada=…) — window.parent.history.replaceState 로 기록.
@@ -224,6 +245,11 @@ function clearState(){
   try{ window.parent.history.replaceState({}, '', window.parent.location.pathname); }catch(e){}
   try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
 }
+function startFromLanding(){
+  var ov=document.getElementById('landingOverlay');
+  if(ov){ ov.style.display='none'; }
+  resetAll();
+}
 function resetAll(){
   clearState();
   jobId=null; fileId=null; cur=0; frontier=0; maxReached=0;
@@ -232,7 +258,7 @@ function resetAll(){
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
   gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={};
-  _progressKey=null; _shownPct=0;
+  _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false;
   var nb=document.getElementById('newBtn'); if(nb) nb.style.display='none';
   render();
 }
@@ -314,14 +340,14 @@ async function doResume(){
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
     lastSubmittedGate=gate;
-    // 제출 게이트 이상 모든 캐시 초기화 — forward/backward 양방향 stale proposals 방지
+    // 제출 게이트 이후 캐시 삭제 — 현재 게이트(tg) 캐시는 유지(뒤로가기 복원용)
     var _tgNum=parseInt(tg[1],10);
     Object.keys(gateCache).forEach(function(k){
-      if(parseInt(k.slice(1),10)>=_tgNum) delete gateCache[k];
+      if(parseInt(k.slice(1),10)>_tgNum) delete gateCache[k];
     });
     cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
-    _progressKey=null; _shownPct=0;  // gate 제출 직후 진행바 0 리셋 — snap-back 시 100% 잔상 방지
+    _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false;  // gate 제출 직후 리셋
     saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
@@ -361,7 +387,11 @@ async function poll(){
   // resume 직후 Celery가 아직 task를 못 받아 Redis에 이전 게이트가 남아있을 수 있음 →
   // lastSubmittedGate 와 현재 게이트가 같으면 계속 폴링.
   // 분석 중(curGate=null)에는 유지 — 새 게이트 등장 시에만 클리어.
-  if(lastSubmittedGate && curGate() && curGate()!==lastSubmittedGate) lastSubmittedGate=null;
+  // 실패·완료 시 stale 가드 즉시 해제 — 이전 단계 캐시 proposals 복원 가능하게
+  if(isFailed()||isCompleted()){ lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; }
+  // resume 후 analyzing() 통과 확인 — stale gate_data 로 lastSubmittedGate 조기 클리어 방지
+  if(lastSubmittedGate && analyzing()) _sawAnalyzingAfterSubmit=true;
+  if(lastSubmittedGate && _sawAnalyzingAfterSubmit && curGate() && curGate()!==lastSubmittedGate) lastSubmittedGate=null;
   // G1→G2 자동 전환 대기 중에는 polling 을 유지해야 한다.
   // 백엔드가 G2 게이트 도달 시점에 analyzing()=false 가 되어 기존 조건만으론 폴링이 멈추고,
   // 그 결과 _shownPct 가 99 에 도달해도 cur 전환을 못 한 채 화면이 stuck 된다(2026-06-04 발견).
@@ -427,8 +457,9 @@ function _stageProgress(){
     // 게이트 단계(G2~G6): proposals 도착 = 즉시 100% 스냅(애니메이션 지연 없음).
     const tg='G'+(cur+1);  // cur 1~5 → 백엔드 G2~G6
     const ag=curGate();
-    // analyzing()=true(게이트 간 이동 중)이면 캐시 무시 — stale proposals로 인한 100% 방지
-    const d=(ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{}));
+    // stale: resume 직후 analyzing() 미확인 구간은 이전 gate_data 무시
+    const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+    const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
     const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
     // proposals 도착 즉시 100% — 단, 제출 직후 분석 대기(lastSubmittedGate=tg & ag=null) 상태는 제외
     if(ps.length && !(lastSubmittedGate===tg && !ag)){
@@ -468,7 +499,8 @@ function loadingBlock(){
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
   const realP=(gateData.progress_pct!=null)?gateData.progress_pct:null;
   let agentLine='';
-  if(gateData.current_agent){
+  // stale 구간(resume 직후 analyzing 미확인)에는 이전 에이전트 라벨 숨김
+  if(gateData.current_agent && !(lastSubmittedGate&&!_sawAnalyzingAfterSubmit)){
     agentLine='<div class="lagent">현재 작업: <b>'+esc(AGENT_KO[gateData.current_agent]||gateData.current_agent)+'</b></div>';
   }
   let diag='';
@@ -488,7 +520,8 @@ function isGateLoading(){
   const tg='G'+(cur+1);
   const ag=curGate();
   if(lastSubmittedGate===tg && !ag) return true;
-  const d=(ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{}));
+  const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+  const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
   const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
   return !llmProps.length;
 }
@@ -496,6 +529,7 @@ function isGateLoading(){
 function progressBar(){
   if(isFailed()) return '';
   if(cur===LAST) return '';  // G7 완료 페이지
+  if(cur===0 && !jobId) return '';  // 업로드 전 초기 화면 → 진행바 숨김
   if(cur>=1 && cur<=5 && !isGateLoading()) return '';  // proposals 표시 중 → 숨김
   const p=_stageProgress();
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
@@ -534,7 +568,8 @@ function propCard(p, idx, recId){
   else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(function(k){return esc(k)+' '+esc(p.metrics[k]);}).join(' · ')+'</div>'; }
   else if(p.outputs && p.outputs.length){ var OL={'OUT-01':'PPT','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'}; extra='<div class="hint">📦 '+p.outputs.map(function(o){return esc(OL[o]||o);}).join(' · ')+'</div>'; }
   const score=(p.score!=null)?('<div class="time">⭐ 추천도 '+Math.round(p.score*100)+'%</div>'):'';
-  return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><p>'+esc(p.rationale||'')+'</p>'+extra+score+'</div>';
+  const rat=esc(p.rationale||'').replace(/\\n/g,'<br><br>');
+  return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><p>'+rat+'</p>'+extra+score+'</div>';
 }
 function customCard(n){
   const sel=(selId==='custom')?' sel':'';
@@ -580,8 +615,9 @@ function contentGate(){
   // 방금 제출한 게이트이고 다음 게이트 미도착(분석 중) → 캐시 proposals 재표시 방지
   if(lastSubmittedGate===tg && !ag){ return gateHeader(tg)+loadingBlock(); }
   // 실시간: ag===tg면 gateData, 뒤로가기 등 이전 단계: 캐시 사용
-  // analyzing()=true(게이트 간 이동 중)이면 캐시 무시 — stale proposals 표시 방지
-  const d=(ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{}));
+  // stale: resume 직후 analyzing() 미확인 구간은 이전 gate_data 무시
+  const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+  const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
   const g=tg;
   const props=(d.proposals)||[];
   if(!props.length){ return gateHeader(g)+loadingBlock(); }
@@ -652,9 +688,9 @@ function content(i){
     const t=has?('선택됨: '+esc(selectedFile.name)):'파일을 끌어다 놓거나 선택';
     return '<div class="ahdr"><h2>데이터 업로드</h2></div><p class="desc">파일을 올리면 ADA가 데이터를 분석해 방향을 제안합니다.</p>'
       +'<div class="dz'+(has?' has':'')+'" id="dz"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 8.5a3.5 3.5 0 0 1 .5 6.96"/><path d="M12 19v-7"/><path d="m9 14 3-3 3 3"/></svg>'
-      +'<div style="flex:1"><div class="t" id="dzt">'+t+'</div><div class="s">CSV · XLSX · PARQUET · JSON · PDF · ZIP · TXT (최대 100MB)</div></div>'
+      +'<div style="flex:1"><div class="t" id="dzt">'+t+'</div><div class="s">CSV · XLSX · JSON (최대 100MB)</div></div>'
       +'<button class="browse" id="browseBtn">찾아보기</button></div>'
-      +'<input type="file" id="fileInput" style="display:none" accept=".csv,.parquet,.xlsx,.zip,.json,.pdf,.txt,.html">'
+      +'<input type="file" id="fileInput" style="display:none" accept=".csv,.xlsx,.json">'
       +'<textarea class="intent" id="intentInput" placeholder="💬 분석 의도 — 예) 타이타닉 승객의 생존 여부를 예측하고 싶어요"></textarea>';
   }
   if(i>=1 && i<=5) return contentGate();
@@ -723,7 +759,8 @@ function render(){
 
   const prev=document.getElementById('prevBtn'), next=document.getElementById('nextBtn'),
         stop=document.getElementById('stopBtn'), prim=document.getElementById('primaryBtn');
-  prev.disabled=(cur===0);
+  prev.disabled=false;  // cur=0 에서도 활성 — 클릭 시 시작 화면으로
+  prev.innerHTML=(cur===0)?'← 시작 화면':'← 이전 단계';
   next.disabled=(cur>=maxReached);
   stop.style.display=(!paused && analyzing())?'inline-flex':'none';
   const _tg='G'+(cur+1);  // 새 컨벤션: cur 인덱스 → 백엔드 게이트 코드
@@ -744,11 +781,19 @@ function render(){
   else prim.disabled=!atGate||!g5ok;
 }
 document.getElementById('prevBtn').onclick=function(){
+  if(cur===0){
+    // G1 에서 이전 = 랜딩 오버레이 표시 (iframe sandbox 로 부모 navigate 불가 → 자체 오버레이)
+    clearState();
+    var ov=document.getElementById('landingOverlay');
+    if(ov){ ov.style.display='flex'; }
+    return;
+  }
   if(cur>0){
     const goTo=cur-1;
     // G2~G5 구간에서 되돌아갈 때 이후 작업 무효화 경고
     if(goTo>=1 && goTo<=4 && maxReached>goTo){
-      if(!window.confirm(steps[goTo].label+' 단계로 돌아가면 이후 분석 결과가 초기화됩니다.\\n다른 옵션으로 재분석하려면 확인을 누르세요.')) return;
+      // 실패 상태에서는 confirm 없이 즉시 — 이미 분析이 실패했으므로 경고 불필요
+      if(!isFailed() && !window.confirm(steps[goTo].label+' 단계로 돌아가면 이후 분석 결과가 초기화됩니다.\\n다른 옵션으로 재분석하려면 확인을 누르세요.')) return;
       Object.keys(gateCache).forEach(function(k){ if(parseInt(k.slice(1),10)>goTo+1) delete gateCache[k]; });
       maxReached=goTo; frontier=goTo;
     }
@@ -778,6 +823,7 @@ document.getElementById('primaryBtn').onclick=function(){
     if(s && s.jobId){
       jobId=s.jobId; fileId=s.fileId||null;
       cur=s.cur||1; maxReached=s.maxReached||cur; frontier=cur;
+      render();  // 폴링 완료 전에 로딩 상태 즉시 렌더링
       startPolling(); return;
     }
   }catch(e){}
@@ -792,12 +838,13 @@ def _flow_screen() -> None:
     st.markdown(
         """
         <style>
-        [data-testid="stAppViewContainer"] { background: #1c3450; }
+        /* 외부 배경을 랜딩 오버레이 색과 통일 — 97vh 틈새 어두운 띠 방지 */
+        [data-testid="stAppViewContainer"] { background: #dbe7f6; }
         [data-testid="stHeader"] { display: none; }
-        .block-container { max-width: 100% !important; padding: 0 !important; }
-        [data-testid="stMain"] .block-container { padding: 0 !important; }
+        .block-container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
+        [data-testid="stMain"] .block-container { padding: 0 !important; margin: 0 !important; }
         [data-testid="stIFrame"] iframe, .block-container iframe {
-            width: 100% !important; height: 97vh !important; border: 0; display: block;
+            width: 100% !important; height: 100vh !important; border: 0; display: block;
         }
         </style>
         """,

@@ -4,7 +4,7 @@
 
 진입함수 (dispatcher 자동 등록):
   - plan(state) -> list[dict]                메타
-  - apply(df, plan_steps, state) -> dict     학습 시 (17 필드 반환)
+  - apply(df, plan_steps, state) -> (df, state)  학습 시 (HJ PR2 contract)
   - apply_transform(df, fitted_state) -> ndarray  추론 시 (학습/추론 일관성)
 
 DoD: pytest 그린 + scaler 객체 보존 + 차원 축소된 행렬.
@@ -47,15 +47,17 @@ def plan(state: Any) -> list[dict[str, Any]]:  # noqa: ARG001
 
 # ── 헬퍼: 빈 결과 ─────────────────────────────────────────────────
 def _empty_result(
+    state: Any,
     n_rows: int,
     reason: str,
     constant_cols_dropped: list[str] | None = None,
     high_missing_cols_dropped: list[str] | None = None,
-) -> dict[str, Any]:
+) -> tuple[Any, Any]:
     import numpy as np
+    import pandas as pd
 
-    return {
-        "X_processed": np.empty((n_rows, 0)),
+    empty_df = pd.DataFrame(np.empty((n_rows, 0)))
+    artifacts = {
         "n_rows_in": n_rows,
         "n_cols_in": 0,
         "n_cols_out": 0,
@@ -63,17 +65,23 @@ def _empty_result(
         "winsor_limits": {},
         "pca": None,
         "feature_names_in": [],
+        "feature_names_out": [],
         "dim_reduction_ratio": 0.0,
         "pca_components_used": 0,
         "applied_steps": [],
         "skipped_steps": [{"step": "all", "reason": reason}],
-        "feature_names_out": [],
         "constant_cols_dropped": constant_cols_dropped or [],
         "nearly_constant_cols": [],
         "high_missing_cols_dropped": high_missing_cols_dropped or [],
         "inf_rows_dropped": 0,
+        "has_time": False,
         "preprocessor_warnings": [reason],
     }
+    extras = dict(state.category_extras or {})
+    cat_block = dict(extras.get("anomaly_detection") or {})
+    cat_block["preprocessor_artifacts"] = artifacts
+    extras["anomaly_detection"] = cat_block
+    return empty_df, state.with_update(category_extras=extras)
 
 
 # ── 헬퍼: 거의-상수 컬럼 감지 (B-1) ──────────────────────────────
@@ -139,16 +147,17 @@ def _pca_reduce(X, variance_ratio=DEFAULT_PCA_VARIANCE):
 
 
 # ── 공개 진입점 2: apply (학습 시) ────────────────────────────────
-def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> dict[str, Any]:  # noqa: ARG001
-    """3 단계 전처리 + 17 필드 반환. 학습 시점에 사용."""
+def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> tuple[Any, Any]:  # noqa: ARG001
+    """3 단계 전처리. (df, state) 튜플 반환 (HJ PR2 contract). 학습 시점에 사용."""
     import numpy as np
+    import pandas as pd
 
     profile = getattr(state, "data_profile", {}) or {}
 
     # 1. 수치 컬럼
     num_df = df.select_dtypes(include=[np.number])
     if num_df.empty:
-        return _empty_result(len(df), "수치 컬럼 0개")
+        return _empty_result(state, len(df), "수치 컬럼 0개")
 
     # 2. B-2: Day 1 missing_ratio — 30% 초과 컬럼 drop
     missing_ratio = profile.get("missing_ratio_per_col", {})
@@ -162,7 +171,7 @@ def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> dict[str, Any]:
         num_df = num_df.drop(columns=const_cols)
     if num_df.shape[1] == 0:
         return _empty_result(
-            len(df), "모든 컬럼 상수/결측", constant_cols_dropped=const_cols, high_missing_cols_dropped=high_miss
+            state, len(df), "모든 컬럼 상수/결측", constant_cols_dropped=const_cols, high_missing_cols_dropped=high_miss
         )
 
     # 4. B-1: 거의-상수 알림
@@ -178,7 +187,7 @@ def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> dict[str, Any]:
     num_df = num_df.dropna()
     if num_df.shape[0] == 0:
         return _empty_result(
-            len(df), "모든 행 결측/inf", constant_cols_dropped=const_cols, high_missing_cols_dropped=high_miss
+            state, len(df), "모든 행 결측/inf", constant_cols_dropped=const_cols, high_missing_cols_dropped=high_miss
         )
 
     n_rows_in, n_cols_in = num_df.shape
@@ -209,8 +218,9 @@ def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> dict[str, Any]:
         skipped.append({"step": "pca", "reason": f"n_cols={n_cols_in}<2 or n_rows<{MIN_ROWS_FOR_PCA}"})
         feat_names = col_names
 
-    return {
-        "X_processed": X,
+    processed_df = pd.DataFrame(X, columns=feat_names)
+
+    artifacts = {
         "n_rows_in": n_rows_in,
         "n_cols_in": n_cols_in,
         "n_cols_out": int(X.shape[1]),
@@ -218,11 +228,11 @@ def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> dict[str, Any]:
         "winsor_limits": winsor_limits,
         "pca": pca,
         "feature_names_in": col_names,
+        "feature_names_out": feat_names,
         "dim_reduction_ratio": float(X.shape[1] / max(1, n_cols_in)),
         "pca_components_used": n_used,
         "applied_steps": applied,
         "skipped_steps": skipped,
-        "feature_names_out": feat_names,
         "constant_cols_dropped": const_cols,
         "nearly_constant_cols": nearly_const,
         "high_missing_cols_dropped": high_miss,
@@ -230,6 +240,13 @@ def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> dict[str, Any]:
         "has_time": has_time,
         "preprocessor_warnings": warnings_list,
     }
+    extras = dict(state.category_extras or {})
+    cat_block = dict(extras.get("anomaly_detection") or {})
+    cat_block["preprocessor_artifacts"] = artifacts
+    extras["anomaly_detection"] = cat_block
+    new_state = state.with_update(category_extras=extras)
+
+    return processed_df, new_state
 
 
 # ── 공개 진입점 3: apply_transform (추론 시) ★ E-1·E-2·E-3 ────
