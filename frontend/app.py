@@ -321,6 +321,7 @@ async function doResume(){
     });
     cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
+    _progressKey=null; _shownPct=0;  // gate 제출 직후 진행바 0 리셋 — snap-back 시 100% 잔상 방지
     saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
@@ -481,11 +482,21 @@ function loadingBlock(){
   }
   return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine+diag+'</div>';
 }
-// 공통 진행바 — 1~7 모든 단계에서 카드 하단에 동일하게 표시.
-// 진행률은 _stageProgress() 가 단계 완료(proposals 도착·isCompleted)면 100% 강제 점프.
+// 현재 게이트 화면이 로딩 중인지 여부 (proposals 없는 상태)
+function isGateLoading(){
+  if(cur<1 || cur>5) return false;
+  const tg='G'+(cur+1);
+  const ag=curGate();
+  if(lastSubmittedGate===tg && !ag) return true;
+  const d=(ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{}));
+  const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
+  return !llmProps.length;
+}
+// 공통 진행바 — 분析 대기 로딩 중에만 표시. 옵션 선택·완료 화면에서는 숨김.
 function progressBar(){
   if(isFailed()) return '';
-  if(cur===LAST) return '';  // G7 완료 페이지에서는 진행바 표시 안 함
+  if(cur===LAST) return '';  // G7 완료 페이지
+  if(cur>=1 && cur<=5 && !isGateLoading()) return '';  // proposals 표시 중 → 숨김
   const p=_stageProgress();
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
   let etaStr='';

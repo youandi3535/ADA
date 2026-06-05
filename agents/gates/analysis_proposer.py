@@ -85,7 +85,7 @@ _CATEGORY_MIN_ROWS: dict[str, int] = {
 
 
 def _category_feasible(category: str, data_profile: dict | None) -> bool:
-    """데이터셋 행 수가 category 의 최소 요건을 충족하는지 확인.
+    """데이터셋이 category 의 최소 요건(행 수·필수 컬럼)을 충족하는지 확인.
 
     data_profile 이 없거나 rows 정보가 없으면 True 반환(보수적 허용).
     """
@@ -94,8 +94,16 @@ def _category_feasible(category: str, data_profile: dict | None) -> bool:
     rows = int(data_profile.get("rows", 0) or 0)
     if rows == 0:
         return True
-    min_rows = _CATEGORY_MIN_ROWS.get(category, 0)
-    return rows >= min_rows
+    # 최소 행 수 검사
+    if rows < _CATEGORY_MIN_ROWS.get(category, 0):
+        return False
+    # timeseries: datetime 컬럼이 없으면 불가
+    if category == "timeseries":
+        dtypes = data_profile.get("dtypes") or {}
+        has_datetime = any("datetime" in str(v).lower() for v in dtypes.values())
+        if not has_datetime:
+            return False
+    return True
 
 
 _CUSTOM_OPTION: dict[str, Any] = {
@@ -210,10 +218,10 @@ class AnalysisProposerAgent(BaseGate):
         custom = uc.get("custom_intent")
         if isinstance(custom, str) and custom.strip():
             updates["user_intent"] = custom.strip()
-            # Method B: 키워드 휴리스틱으로 category 추론
+            # Method B: 키워드 휴리스틱으로 category 추론 (데이터셋 요건 충족 시만)
             if "category" not in updates:
                 inferred = _infer_category_from_text(custom.strip(), state.category)
-                if inferred != state.category:
+                if inferred != state.category and _category_feasible(inferred, state.data_profile):
                     updates["category"] = inferred
             if updates.get("category") in _UNSUPERVISED_CATEGORIES and "target_column" not in updates:
                 updates["target_column"] = None

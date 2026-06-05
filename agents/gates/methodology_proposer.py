@@ -38,13 +38,20 @@ _CATEGORY_MIN_ROWS: dict[str, int] = {
 
 
 def _category_feasible(category: str, data_profile: dict | None) -> bool:
-    """데이터셋 행 수가 category 최소 요건을 충족하는지 확인."""
+    """데이터셋이 category 의 최소 요건(행 수·필수 컬럼)을 충족하는지 확인."""
     if not data_profile:
         return True
     rows = int(data_profile.get("rows", 0) or 0)
     if rows == 0:
         return True
-    return rows >= _CATEGORY_MIN_ROWS.get(category, 0)
+    if rows < _CATEGORY_MIN_ROWS.get(category, 0):
+        return False
+    if category == "timeseries":
+        dtypes = data_profile.get("dtypes") or {}
+        has_datetime = any("datetime" in str(v).lower() for v in dtypes.values())
+        if not has_datetime:
+            return False
+    return True
 
 
 SYSTEM_PROMPT = (
@@ -240,7 +247,7 @@ class MethodologyProposerAgent(BaseGate):
             updates["user_intent"] = f"{(state.user_intent or '').strip()} (방법론: {custom.strip()})".strip()
             if "category" not in updates:
                 inferred = _infer_category_from_text(custom, state.category)
-                if inferred != state.category:
+                if inferred != state.category and _category_feasible(inferred, state.data_profile):
                     updates["category"] = inferred
             self.logger.info("g3_custom_intent_applied", intent=custom.strip()[:120])
         else:
