@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # 타임아웃 시 TrainingExecutorAgent 가 CPU 인라인 폴백.
     training_task_timeout_sec: int = Field(default=900, validation_alias="TRAINING_TASK_TIMEOUT_SEC")
     kpi_cache_ttl_seconds: int = Field(default=300, validation_alias="KPI_CACHE_TTL_SECONDS")
+    kpi_prometheus_url: str = Field(default="", validation_alias="KPI_PROMETHEUS_URL")
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
     max_daily_llm_usd: float = Field(default=20.0, validation_alias="MAX_DAILY_LLM_USD")
 
