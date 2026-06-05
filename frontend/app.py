@@ -375,9 +375,11 @@ setInterval(function(){
   // G1→G2 자동 전환: polling 이 멈춘 케이스에 대비해 매 500ms 도 조건 재확인.
   // proposals 조건 제거(2026-06-04) — G2 게이트 도달 신호만으로 전환.
   if(cur===0 && jobId && curGate()==='G2' && _shownPct >= 99){
-    cur=1; follow=true; _progressKey='G2'; _shownPct=100;
+    cur=1; follow=true;
+    // _progressKey/_shownPct 를 여기서 세팅하지 않음 — _stageProgress() 가 key 불일치 감지 후
+    // 자연스럽게 _shownPct=0 으로 리셋. G2 로딩 중에 100% 고정되는 버그 방지.
     saveState();
-    render();  // 전환 직후 명시적 렌더 — 조건 변경으로 setInterval 자동 렌더가 빠지는 버그 방지
+    render();
     if(!polling) startPolling();
   }
   // jobId 없는 업로드 대기 화면에서는 타이머 렌더 생략 — textarea 포커스 보호
@@ -425,9 +427,9 @@ function _stageProgress(){
       _shownPct=100; return 100;  // proposals 도착 즉시 100%
     } else {
       // 단계별 독립 0~100% — 백엔드 전체 진행률(0~100)을 이 단계 구간으로 정규화.
-      // cur=2(G3 로딩):18~33%, cur=3(G4):33~50%, cur=4(G5):50~85%, cur=5(G6):85~98%
-      const STAGE_LO={2:18,3:33,4:50,5:85};
-      const STAGE_HI={2:33,3:50,4:85,5:98};
+      // cur=1(G2 로딩):14~18%, cur=2(G3):18~33%, cur=3(G4):33~50%, cur=4(G5):50~85%, cur=5(G6):85~98%
+      const STAGE_LO={1:14,2:18,3:33,4:50,5:85};
+      const STAGE_HI={1:18,2:33,3:50,4:85,5:98};
       const lo=STAGE_LO[cur]||0, hi=STAGE_HI[cur]||100;
       const raw=(gateData.progress_pct!=null)?gateData.progress_pct:lo;
       target=Math.max(0, Math.min(99, Math.round((raw-lo)/(hi-lo)*100)));
