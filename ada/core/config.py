@@ -81,27 +81,30 @@ class Settings(BaseSettings):
     # 코드 오류 수정 전용 모델 (qwen2.5-coder 계열, diff 생성 특화)
     # GTX 1060 3GB 환경: num_gpu=0 CPU 전용, Ryzen 7 3800XT 16T → ~7 t/s
     ollama_coder_model: str = Field(default="qwen2.5-coder:7b", validation_alias="OLLAMA_CODER_MODEL")
-
-    # ----- KPI 측정 (Day 10) -----
-    kpi_cache_ttl_seconds: int = Field(default=60, validation_alias="KPI_CACHE_TTL_SECONDS")
-    kpi_default_window_hours: int = Field(default=24, validation_alias="KPI_DEFAULT_WINDOW_HOURS")
-    # 외부 Prometheus 서버 (옵션). 미설정 시 in-process registry 사용.
-    kpi_prometheus_url: str = Field(default="", validation_alias="KPI_PROMETHEUS_URL")
-
-    @property
-    def database_url_async(self) -> str:
-        if self.database_url.startswith("postgresql://"):
-            return self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        return self.database_url
-
-    @property
-    def is_production(self) -> bool:
-        return self.environment.lower() in ("production", "prod")
+    # ──────────────────────────────────────────────────────────
+    # 분석 파이프라인 LLM 전환 토글 (G1~G6 + 산출물 전 과정)
+    # ──────────────────────────────────────────────────────────
+    # True 면 BaseAgent._call_llm 이 Anthropic 대신 Ollama 호출.
+    # 에러 핸들러 (auto_error_handler / error_recovery) 의 3순위 Ollama 는
+    # 별도 로직이므로 이 토글과 무관하게 유지.
+    use_ollama_for_analysis: bool = Field(default=True, validation_alias="USE_OLLAMA_FOR_ANALYSIS")
+    # InsightAgent 만 옵션 유지 — True 면 인사이트 생성은 Anthropic 사용.
+    # use_ollama_for_analysis=True 여도 이 토글이 우선.
+    use_anthropic_for_insight: bool = Field(default=True, validation_alias="USE_ANTHROPIC_FOR_INSIGHT")
+    # 분석용 Ollama 모델 (Sonnet/Opus 대체) — qwen2.5:7b 고정 (서버·로컬 PC 성능 한계)
+    # 14b 는 GTX 1060 3GB + Ryzen 7 환경에서 미지원. 변경 금지.
+    ollama_model_analysis: str = Field(default="qwen2.5:7b", validation_alias="OLLAMA_MODEL_ANALYSIS")
+    # ──────────────────────────────────────────────────────────
+    # Ollama 추론 옵션 (속도 튜닝)
+    # ──────────────────────────────────────────────────────────
+    # GPU 레이어 수: 0=CPU 전용. GTX 1060 3GB 면 8~12 까지 시도 가능 (7b 32레이어 중 일부).
+    ollama_num_gpu: int = Field(default=0, validation_alias="OLLAMA_NUM_GPU")
+    # CPU 스레드 수: 물리 코어 수가 보통 SMT 보다 빠름. Ryzen 7 3800XT = 8 코어 → 8.
+    ollama_num_thread: int = Field(default=8, validation_alias="OLLAMA_NUM_THREAD")
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """모듈 레벨 싱글턴 캐시. 테스트에서는 lru_cache.cache_clear() 사용."""
     return Settings()
 
 

@@ -41,4 +41,24 @@ class FeatureEngineerAgent(BaseAgent):
 
             object_name = f"processed/{state.job_id}/{uuid.uuid4().hex}.parquet"
             get_minio_client().save_dataframe(df, object_name, fmt="parquet")
-            return state.with_update(preprocessed_data_id=object_name, next_agent="gate_model_strategy")
+            new_state = state.with_update(preprocessed_data_id=object_name, next_agent="gate_model_strategy")
+
+            # Phase 1.4 — ReportContext ④ features 적립.
+            # 핸들러가 명시 created 리스트를 안 주므로 최종 컬럼 수만 적립.
+            try:
+                final_count = int(df.shape[1])
+                schema_after = {str(c): str(df[c].dtype) for c in df.columns}
+                new_state = self.contribute_to_context(
+                    new_state,
+                    "features",
+                    {"final_feature_count": final_count},
+                )
+                # 전처리 schema_after 보강
+                new_state = self.contribute_to_context(
+                    new_state,
+                    "preprocessing",
+                    {"schema_after": schema_after},
+                )
+            except Exception as e:
+                self.logger.warning("contribute_features_failed", error=str(e))
+            return new_state

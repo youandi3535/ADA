@@ -1,4 +1,5 @@
 """agents.schema_validator — SchemaValidatorAgent (Day05 §2)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -38,17 +39,34 @@ class SchemaValidatorAgent(BaseAgent):
         async with self.log_agent_run(state):
             rules = CATEGORY_RULES.get(state.category)
             if rules is None:
-                v = {"is_valid": False,
-                     "errors": [f"Unsupported category: {state.category}"],
-                     "warnings": []}
-                return state.with_update(validation=v, next_agent="error_recovery",
-                                         error=v["errors"][0])
+                v = {"is_valid": False, "errors": [f"Unsupported category: {state.category}"], "warnings": []}
+                return state.with_update(validation=v, next_agent="error_recovery", error=v["errors"][0])
             v = self._validate(state.data_profile or {}, rules)
-            next_agent = "gate_direction" if v["is_valid"] else "error_recovery"
+            if v["is_valid"]:
+                return state.with_update(validation=v, next_agent="gate_direction", error=None)
+
+            # 데이터 검증 실패 = 사용자가 잘못된 카테고리를 선택한 경우.
+            # AutoErrorHandler(코드 패치)로 보내지 않고 tabular_ml 로 자동 보정 후
+            # gate_direction(G2)에서 재진행 — 사용자 입장에서는 자동 복구로 보임.
+            fallback = "tabular_ml"
+            fallback_rules = CATEGORY_RULES[fallback]
+            v2 = self._validate(state.data_profile or {}, fallback_rules)
+            warn_msg = (
+                f"선택한 카테고리({state.category})가 데이터와 맞지 않습니다 "
+                f"({'; '.join(v['errors'])}). "
+                f"'{fallback}'으로 자동 변경합니다."
+            )
+            self.logger.warning(
+                "category_auto_corrected",
+                original=state.category,
+                fallback=fallback,
+                errors=v["errors"],
+            )
             return state.with_update(
-                validation=v,
-                next_agent=next_agent,
-                error=None if v["is_valid"] else "; ".join(v["errors"]),
+                category=fallback,
+                validation={**v2, "warnings": [warn_msg] + (v2.get("warnings") or [])},
+                next_agent="gate_direction",
+                error=None,
             )
 
     @staticmethod
@@ -70,9 +88,7 @@ class SchemaValidatorAgent(BaseAgent):
         if rules.get("min_target_classes"):
             cd = profile.get("class_distribution") or {}
             if cd and len(cd) < rules["min_target_classes"]:
-                errors.append(
-                    f"target 클래스 수 부족: {len(cd)} < {rules['min_target_classes']}"
-                )
+                errors.append(f"target 클래스 수 부족: {len(cd)} < {rules['min_target_classes']}")
 
         if rules.get("requires_date_col") and not profile.get("date_col"):
             errors.append("시계열 카테고리: 날짜 컬럼 필수")

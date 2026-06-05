@@ -19,6 +19,25 @@ OUTPUT_CODES = ("OUT-01", "OUT-02", "OUT-03", "OUT-04", "OUT-07")
 # 5 게이트 (G1~G6 중 G1 의도 → G6 산출물)
 GATES = ("G1", "G2", "G3", "G4", "G5", "G6")
 
+# Phase 1.1 — report_context 13묶음 (Skeleton·SlideSpec 의 데이터 진실원)
+# 각 묶음은 outputs/context/schema.py 의 dataclass 직렬화 형태로 저장된다.
+# BaseAgent.contribute_to_context(state, stage, payload) 가 적립 진입점.
+REPORT_CONTEXT_STAGES: tuple[str, ...] = (
+    "dataset",  # ① DatasetProfile  ← DataProfiler
+    "domain",  # ② DomainContext   ← DomainEnricher + AudienceAdapter
+    "preprocessing",  # ③ PreprocessingTrace ← PreprocessingStrategist + handlers
+    "features",  # ④ FeatureEngineering ← FeatureEngineer
+    "eda",  # ⑤ EDAFindings    ← EDAAgent + handlers
+    "model_selection",  # ⑥ ModelSelection ← ModelSelection
+    "training",  # ⑦ Training       ← TrainingExecutor/Monitor/Tuner
+    "evaluation",  # ⑧ Evaluation     ← EvalAgent + MetricsAggregator + BusinessImpactQuantifier
+    "interpretation",  # ⑨ Interpretation ← Explainability
+    "limitations",  # ⑩ Limitations    ← EvalAgent self-reflection
+    "code",  # ⑪ CodeArtifacts  ← CodeArtifactExtractor (Redactor 강제)
+    "meta",  # ⑫ Meta           ← Orchestrator + IntentElicitor
+    "citations",  # ⑬ CitationIndex  ← CitationManager (정규화 only)
+)
+
 
 class PipelineState(BaseModel):
     """LangGraph 그래프 상태 모델 (Day03 §1).
@@ -108,6 +127,28 @@ class PipelineState(BaseModel):
     # 카테고리별 격리 컨테이너 (Day 0 H0-4)
     # 멤버 CS/NY/jh 가 자기 카테고리 키 안에만 쓰기 → 충돌 0건.
     category_extras: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    # ==========================================================
+    # 보고서 파이프라인 (Phase 1.1 — 산출물 컨설팅 퀄리티 업그레이드)
+    # ----------------------------------------------------------
+    # report_context : 분석 全단계의 메타 정보 (13묶음). outputs/context/schema.py
+    #                  의 ReportContext dataclass 직렬화 형태.
+    # report_plan    : ReportArchitect 가 만든 동적 목차 (Skeleton + SlideSpec[]).
+    # report_assets  : 생성된 비주얼·텍스트의 MinIO 경로 캐시 (slide_id → assets).
+    # report_citations: ref_id → source 색인 (CitationManager).
+    # report_qa      : ReportQA 7축 채점 결과.
+    # audience_profile: AudienceAdapter 가 추정한 청중 메타.
+    #
+    # 각 에이전트는 BaseAgent.contribute_to_context() 로 자기 묶음 적립.
+    # 기존 필드(insights/best_model/eval_result/eda_charts 등) 와 중복되어도
+    # builder.py 가 동기화하므로 안전.
+    # ==========================================================
+    report_context: dict[str, Any] = Field(default_factory=dict)
+    report_plan: Optional[dict[str, Any]] = None
+    report_assets: dict[str, Any] = Field(default_factory=dict)
+    report_citations: dict[str, Any] = Field(default_factory=dict)
+    report_qa: Optional[dict[str, Any]] = None
+    audience_profile: Optional[dict[str, Any]] = None
 
     # 옵저버빌리티
     trace_id: Optional[str] = None

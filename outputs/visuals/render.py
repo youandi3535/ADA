@@ -1,0 +1,481 @@
+"""outputs.visuals.render — VisualSpec → PNG 파일 실 렌더링.
+
+matplotlib 로 차트·다이어그램·KPI 카드·표를 PNG 로 그려서 carrier 가 임베드.
+한국어 폰트 부재 환경 대응 — 차트 라벨은 영문/숫자 우선, 한국어는 fallback.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from typing import Any, Optional
+
+from outputs.architect.plan import SlideSpec, VisualSpec
+from outputs.context.schema import ReportContext
+from outputs.style.palette import get_palette
+
+# ==============================================================
+# matplotlib 설정 — 한국어 폰트 폴백
+# ==============================================================
+
+_MPL_READY = False
+
+
+def _ensure_matplotlib() -> Optional[Any]:
+    """matplotlib import + 한국어 폰트 폴백 설정. 실패 시 None."""
+    global _MPL_READY
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        if not _MPL_READY:
+            # 한국어 폰트 — koreanize_matplotlib 가 있으면 import 만으로 자동 등록
+            try:
+                import koreanize_matplotlib  # noqa: F401
+            except Exception:
+                pass
+            # 한국어 폰트 후보 — 시스템에 있는 것 검색 (koreanize_matplotlib 가 NanumGothic 등록)
+            import matplotlib.font_manager as fm
+
+            ko_candidates = (
+                "NanumGothic",
+                "Noto Sans CJK KR",
+                "Noto Sans KR",
+                "Malgun Gothic",
+                "AppleGothic",
+                "Apple SD Gothic Neo",
+                "Baekmuk Gulim",
+                "UnDotum",
+            )
+            installed = {f.name for f in fm.fontManager.ttflist}
+            chosen = next((k for k in ko_candidates if k in installed), None)
+            if chosen:
+                plt.rcParams["font.family"] = chosen
+                plt.rcParams["axes.unicode_minus"] = False
+            # 일반 스타일
+            plt.rcParams["figure.facecolor"] = "white"
+            plt.rcParams["axes.facecolor"] = "white"
+            plt.rcParams["axes.edgecolor"] = "#CBD5E1"
+            plt.rcParams["axes.labelcolor"] = "#334155"
+            plt.rcParams["xtick.color"] = "#64748B"
+            plt.rcParams["ytick.color"] = "#64748B"
+            plt.rcParams["axes.grid"] = True
+            plt.rcParams["grid.color"] = "#E2E8F0"
+            plt.rcParams["grid.linestyle"] = "--"
+            plt.rcParams["grid.alpha"] = 0.6
+            _MPL_READY = True
+        return plt
+    except Exception:
+        return None
+
+
+# ==============================================================
+# 공개 API
+# ==============================================================
+
+
+def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec | None = None) -> Optional[str]:
+    """VisualSpec → PNG 파일 경로. 실패 시 None."""
+    plt = _ensure_matplotlib()
+    if plt is None:
+        return None
+
+    palette = get_palette(ctx.meta.category)
+    primary = palette["primary"]
+    accent = palette["accent"]
+    secondary = palette["secondary"]
+
+    try:
+        vtype = vs.type or ""
+        if vtype.startswith("chart_") or vtype == "bar":
+            return _render_bar(vs, ctx, primary, accent, plt)
+        if vtype == "diagram_process_linear":
+            return _render_process_linear(vs, ctx, primary, accent, secondary, plt, slide)
+        if vtype == "diagram_timeline_gantt":
+            return _render_gantt(vs, ctx, primary, plt)
+        if vtype == "diagram_tree":
+            return _render_tree(vs, ctx, primary, plt)
+        if vtype in (
+            "table_feature_matrix",
+            "table_score_card",
+            "table_before_after",
+            "table_risk_register",
+            "table_pros_cons",
+            "table_2x2_matrix",
+        ):
+            return _render_table(vs, ctx, primary, accent, plt, slide)
+        if vtype == "kpi_cards":
+            return _render_kpi_cards(vs, ctx, primary, plt, slide)
+        if vtype == "kpi_single":
+            return _render_kpi_single(vs, ctx, primary, plt, slide)
+        # 기타 — KPI 카드들 또는 일반 다이어그램
+        return _render_generic_box(vs, ctx, primary, plt, slide)
+    except Exception:
+        return None
+
+
+# ==============================================================
+# 각 타입별 렌더러
+# ==============================================================
+
+
+def _tmp_png() -> str:
+    return tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+
+
+def _ensure_ascii(text: str) -> str:
+    """한국어 폰트 없을 때 라벨 안 깨지게 영문 변환 — 핵심 한국어→영문 매핑.
+
+    matplotlib 가 한국어 폰트를 가졌으면 그대로 두지만, 없으면 fallback.
+    """
+    if not text:
+        return ""
+    # 시스템 폰트 ok 면 그대로
+    import matplotlib.pyplot as plt
+
+    if plt.rcParams.get("font.family") not in ("DejaVu Sans", "sans-serif"):
+        return text
+    # ko→en 핵심 매핑
+    mapping = {
+        "이탈": "Churn",
+        "정상": "Normal",
+        "이상": "Anomaly",
+        "성공": "Success",
+        "실패": "Fail",
+        "통과": "Pass",
+        "현황": "Status",
+        "문제": "Issue",
+        "결과": "Result",
+        "권고": "Action",
+        "한계": "Limit",
+        "기준": "Baseline",
+    }
+    out = text
+    for ko, en in mapping.items():
+        out = out.replace(ko, en)
+    # 그래도 한국어 남으면 ASCII 만 유지
+    return out
+
+
+def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, plt) -> str:
+    """막대 차트 — chart spec 의 items 또는 ctx.evaluation.metrics 활용."""
+    spec = vs.spec or {}
+    items = spec.get("items") or []
+    if not items and ctx.evaluation.metrics:
+        items = [
+            (k, float(m.get("value", 0)))
+            for k, m in list(ctx.evaluation.metrics.items())[:6]
+            if isinstance(m.get("value"), (int, float))
+        ]
+    if not items:
+        items = [("primary", 0.5), ("baseline", 0.3)]
+    labels = [_ensure_ascii(str(i[0]))[:20] for i in items]
+    values = [float(i[1]) for i in items]
+
+    from matplotlib.colors import LinearSegmentedColormap, to_rgb
+
+    def _light(h, a=0.4):
+        r, g, b = to_rgb(h)
+        return (r + (1 - r) * a, g + (1 - g) * a, b + (1 - b) * a)
+
+    cmap = LinearSegmentedColormap.from_list("brand", [primary, _light(primary, 0.5)])
+    max_v = max(values) if values else 1.0
+    colors_list = []
+    for i, v in enumerate(values):
+        if i < 3:
+            colors_list.append(cmap(0.2 + 0.7 * (v / max_v if max_v else 0)))
+        else:
+            colors_list.append("#E2E8F0")
+
+    fig, ax = plt.subplots(figsize=(8, 4.5), dpi=110)
+    fig.patch.set_facecolor("white")
+    bars = ax.bar(labels, values, color=colors_list, edgecolor="white", linewidth=2, width=0.6)
+    for bar, v in zip(bars, values):
+        y = bar.get_height()
+        lbl = f"{v:.3f}" if 0 < v < 1 else f"{v:.1f}"
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            y + max_v * 0.04,
+            lbl,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            color="#0F172A",
+            fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor=primary, linewidth=1.2),
+        )
+    title = _ensure_ascii(vs.title or "Chart")
+    ax.set_title(title, fontsize=14, color="#0F172A", pad=18, loc="left", fontweight="bold")
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_color("#CBD5E1")
+    ax.tick_params(axis="x", colors="#475569", labelsize=10)
+    ax.tick_params(axis="y", colors="#94A3B8", labelsize=9)
+    ax.grid(axis="y", linestyle="-", color="#F1F5F9", linewidth=0.8, zorder=0)
+    ax.set_axisbelow(True)
+    ax.set_ylim(0, max_v * 1.25)
+    plt.xticks(rotation=15, ha="right")
+    plt.tight_layout()
+    out = _tmp_png()
+    plt.savefig(out, dpi=130, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def _render_process_linear(
+    vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, secondary: str, plt, slide
+) -> str:
+    """좌→우 단계 박스 다이어그램."""
+    spec = vs.spec or {}
+    steps = (
+        spec.get("steps")
+        or spec.get("pipeline_steps")
+        or [
+            "Upload",
+            "Profile",
+            "Preprocess",
+            "EDA",
+            "Model",
+            "Eval",
+            "Output",
+        ]
+    )
+    steps = [_ensure_ascii(str(s))[:18] for s in steps]
+    n = len(steps)
+    if n == 0:
+        return ""
+    fig, ax = plt.subplots(figsize=(10, 3.5), dpi=100)
+    box_w = 1.6
+    gap = 0.4
+    total_w = n * box_w + (n - 1) * gap
+    x0 = -total_w / 2
+    for i, s in enumerate(steps):
+        x = x0 + i * (box_w + gap)
+        rect = plt.Rectangle((x, -0.5), box_w, 1.0, facecolor=primary, edgecolor="white", linewidth=2, alpha=0.92)
+        ax.add_patch(rect)
+        ax.text(x + box_w / 2, 0, s, ha="center", va="center", color="white", fontsize=10, fontweight="bold")
+        # 화살표
+        if i < n - 1:
+            ax.annotate(
+                "",
+                xy=(x + box_w + gap, 0),
+                xytext=(x + box_w, 0),
+                arrowprops=dict(arrowstyle="->", color=secondary, lw=2),
+            )
+    ax.set_xlim(x0 - 0.5, x0 + total_w + 0.5)
+    ax.set_ylim(-1.5, 1.5)
+    ax.axis("off")
+    ax.set_title(
+        _ensure_ascii(vs.title or "Pipeline"), fontsize=13, color="#0F172A", pad=14, loc="left", fontweight="bold"
+    )
+    out = _tmp_png()
+    plt.savefig(out, dpi=120, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def _render_gantt(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -> str:
+    """간트 차트 — 단순 horizontal bar."""
+    events = (vs.spec or {}).get("events") or [
+        {"phase": "Phase 1", "start": 0, "duration": 30},
+        {"phase": "Phase 2", "start": 30, "duration": 60},
+        {"phase": "Phase 3", "start": 90, "duration": 90},
+    ]
+    fig, ax = plt.subplots(figsize=(9, 3.5), dpi=100)
+    labels = [_ensure_ascii(str(e.get("phase", f"P{i}")))[:24] for i, e in enumerate(events)]
+    starts = [float(e.get("start_offset_days", e.get("start", 0))) for e in events]
+    durations = [float(e.get("duration_days", e.get("duration", 30))) for e in events]
+    y = list(range(len(events)))
+    ax.barh(y, durations, left=starts, color=primary, edgecolor="white", height=0.6)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("Days")
+    ax.set_title(
+        _ensure_ascii(vs.title or "Roadmap"), fontsize=13, color="#0F172A", pad=12, loc="left", fontweight="bold"
+    )
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    out = _tmp_png()
+    plt.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _render_tree(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -> str:
+    """간단 트리 다이어그램."""
+    # 가설 트리는 보통 H1~H4 — 박스로 표현
+    fig, ax = plt.subplots(figsize=(9, 5), dpi=100)
+    root_text = _ensure_ascii(vs.spec.get("root", "Root") if vs.spec else "Root")[:20]
+    rect = plt.Rectangle((-1.2, 1), 2.4, 0.8, facecolor=primary, edgecolor="white", linewidth=2)
+    ax.add_patch(rect)
+    ax.text(0, 1.4, root_text, ha="center", va="center", color="white", fontweight="bold", fontsize=11)
+    # 4 자식 박스
+    children = ["H1", "H2", "H3", "H4"]
+    for i, c in enumerate(children):
+        x = -4.5 + i * 3.0
+        rect = plt.Rectangle((x - 1, -0.6), 2, 0.8, facecolor="#CBD5E1", edgecolor="white", linewidth=2)
+        ax.add_patch(rect)
+        ax.text(x, -0.2, c, ha="center", va="center", color="#0F172A", fontweight="bold")
+        ax.plot([0, x], [1, 0.2], color="#94A3B8", lw=1.5)
+    ax.set_xlim(-6, 6)
+    ax.set_ylim(-1.5, 2.5)
+    ax.axis("off")
+    ax.set_title(
+        _ensure_ascii(vs.title or "Hypothesis Tree"),
+        fontsize=13,
+        color="#0F172A",
+        pad=12,
+        loc="left",
+        fontweight="bold",
+    )
+    out = _tmp_png()
+    plt.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _render_table(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, plt, slide) -> str:
+    """표 — matplotlib table 로 컬러 헤더 표 렌더."""
+    spec = vs.spec or {}
+    # 기본 columns/rows — slide.body_outline 활용
+    cols = spec.get("columns") or ["항목", "값"]
+    rows = spec.get("rows")
+    if not rows:
+        # slide.body_outline 의 각 항목 → (label, value) 분리 시도
+        rows = []
+        if slide and slide.body_outline:
+            for line in slide.body_outline[:8]:
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    rows.append([_ensure_ascii(k.strip())[:30], _ensure_ascii(v.strip())[:40]])
+                else:
+                    rows.append([_ensure_ascii(line)[:50], ""])
+    if not rows:
+        rows = [["data", "-"]]
+
+    fig, ax = plt.subplots(figsize=(10, max(2, len(rows) * 0.35 + 1)), dpi=100)
+    ax.axis("off")
+    ax.set_title(
+        _ensure_ascii(vs.title or "Table"), fontsize=13, color="#0F172A", pad=12, loc="left", fontweight="bold"
+    )
+    cell_text = [[_ensure_ascii(str(c))[:50] for c in row] for row in rows]
+    col_labels = [_ensure_ascii(str(c)) for c in cols]
+    tbl = ax.table(cellText=cell_text, colLabels=col_labels, loc="center", cellLoc="left")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1, 1.5)
+    # 헤더 컬러
+    for i in range(len(col_labels)):
+        cell = tbl[(0, i)]
+        cell.set_facecolor(primary)
+        cell.set_text_props(color="white", weight="bold")
+    # zebra striping
+    for r in range(1, len(rows) + 1):
+        for c in range(len(col_labels)):
+            if r % 2 == 0:
+                tbl[(r, c)].set_facecolor("#F8FAFC")
+    out = _tmp_png()
+    plt.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _render_kpi_cards(vs: VisualSpec, ctx: ReportContext, primary: str, plt, slide) -> str:
+    """KPI 카드 그리드 (3~6개)."""
+    items: list[tuple[str, str, str]] = []
+    # body_outline 첫 4개를 KPI 카드로
+    if slide and slide.body_outline:
+        for line in slide.body_outline[:6]:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                items.append((_ensure_ascii(k.strip())[:18], _ensure_ascii(v.strip())[:14], ""))
+            else:
+                items.append((_ensure_ascii(line)[:18], "—", ""))
+    # 폴백 — 메트릭에서
+    if not items and ctx.evaluation.metrics:
+        for k, m in list(ctx.evaluation.metrics.items())[:4]:
+            v = m.get("value")
+            items.append((k, f"{v:.3f}" if isinstance(v, float) else str(v), ""))
+    if not items:
+        items = [("Metric", "—", "")]
+
+    n = len(items)
+    cols = 3 if n <= 3 else 4 if n == 4 else 3 if n == 6 else 4
+    rows = (n + cols - 1) // cols
+    fig, ax = plt.subplots(figsize=(10, rows * 2.5), dpi=100)
+    ax.set_xlim(0, cols)
+    ax.set_ylim(0, rows)
+    ax.invert_yaxis()
+    ax.axis("off")
+    for i, (name, value, cap_) in enumerate(items):
+        r, c = i // cols, i % cols
+        # 박스
+        ax.add_patch(plt.Rectangle((c + 0.05, r + 0.05), 0.9, 0.9, facecolor="#F8FAFC", edgecolor=primary, linewidth=2))
+        # 라벨
+        ax.text(c + 0.5, r + 0.22, name, ha="center", va="center", fontsize=10, color="#64748B")
+        # 값
+        ax.text(c + 0.5, r + 0.55, value, ha="center", va="center", fontsize=20, color=primary, fontweight="bold")
+        # 캡션
+        if cap_:
+            ax.text(c + 0.5, r + 0.85, cap_, ha="center", va="center", fontsize=8, color="#94A3B8")
+    ax.set_title(_ensure_ascii(vs.title or "KPI"), fontsize=13, color="#0F172A", pad=12, loc="left", fontweight="bold")
+    out = _tmp_png()
+    plt.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _render_kpi_single(vs: VisualSpec, ctx: ReportContext, primary: str, plt, slide) -> str:
+    """1개 큰 수치 카드."""
+    pm = ctx.evaluation.primary_metric or {}
+    value = pm.get("value", "—")
+    name = pm.get("name", "Metric")
+    value_str = f"{value:.3f}" if isinstance(value, float) else str(value)
+    fig, ax = plt.subplots(figsize=(8, 3.5), dpi=100)
+    ax.axis("off")
+    ax.text(
+        0.5,
+        0.7,
+        value_str,
+        ha="center",
+        va="center",
+        fontsize=64,
+        color=primary,
+        fontweight="bold",
+        transform=ax.transAxes,
+    )
+    ax.text(
+        0.5, 0.25, _ensure_ascii(name), ha="center", va="center", fontsize=14, color="#64748B", transform=ax.transAxes
+    )
+    ax.set_title(
+        _ensure_ascii(vs.title or "Key Number"), fontsize=13, color="#0F172A", pad=12, loc="left", fontweight="bold"
+    )
+    out = _tmp_png()
+    plt.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _render_generic_box(vs: VisualSpec, ctx: ReportContext, primary: str, plt, slide) -> str:
+    """타입 매칭 실패 시 — 단순 텍스트 카드."""
+    fig, ax = plt.subplots(figsize=(9, 4), dpi=100)
+    ax.axis("off")
+    ax.add_patch(
+        plt.Rectangle(
+            (0.05, 0.05), 0.9, 0.9, facecolor="#F8FAFC", edgecolor=primary, linewidth=2, transform=ax.transAxes
+        )
+    )
+    ax.text(
+        0.5,
+        0.5,
+        _ensure_ascii(vs.title or vs.type or "Visual"),
+        ha="center",
+        va="center",
+        fontsize=14,
+        color=primary,
+        fontweight="bold",
+        transform=ax.transAxes,
+    )

@@ -155,7 +155,27 @@ class InsightAgent(BaseAgent):
                 # P3 보강: silent pass → logger.warning (PII 누출 추적용)
                 self.logger.warning("insight_pii_reattach_failed", error=str(e))
 
-            return state.with_update(insights=text.strip(), next_agent="gate_outputs")
+            new_state = state.with_update(insights=text.strip(), next_agent="gate_outputs")
+
+            # Phase 1.4 — ReportContext ⑨ interpretation 보조 적립.
+            # 본격적 SHAP/PDP 는 Explainability agent 가 글로벌 importance 적립.
+            # 여기서는 top_feats 와 인사이트 텍스트의 피처별 요약을 간단 저장.
+            try:
+                per_feature_story: dict[str, str] = {}
+                for feat in top_feats[:3]:
+                    # 인사이트에서 해당 피처를 포함한 문장만 추출 (best-effort).
+                    sents = [s.strip() for s in text.split(".") if feat in s]
+                    if sents:
+                        per_feature_story[str(feat)] = sents[0][:200]
+                if per_feature_story:
+                    new_state = self.contribute_to_context(
+                        new_state,
+                        "interpretation",
+                        {"per_feature_story": per_feature_story},
+                    )
+            except Exception as e:
+                self.logger.warning("contribute_interpretation_failed", error=str(e))
+            return new_state
 
     # ------------------------------------------------------------------
     async def _call_with_guard(

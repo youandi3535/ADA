@@ -19,6 +19,39 @@ from ada.db.models import SelfLearningKB
 from agents.base import BaseAgent
 from agents.handlers import get_handler
 
+_MODEL_FAMILY_MAP: dict[str, str] = {
+    # tabular_ml
+    "RandomForest": "Ensemble",
+    "XGBoost": "GBM",
+    "LightGBM": "GBM",
+    "CatBoost": "GBM",
+    # tabular_dl
+    "TabTransformer": "DL",
+    "FTTransformer": "DL",
+    "TabPFN": "DL",
+    # timeseries
+    "ARIMA": "Statistical",
+    "SARIMA": "Statistical",
+    "Prophet": "Statistical",
+    "Informer": "DL",
+    "TFT": "DL",
+    "PatchTST": "DL",
+    # anomaly
+    "IsolationForest": "Tree",
+    "LOF": "Density",
+    "OneClassSVM": "SVM",
+    "AutoEncoder": "DL",
+    "TranAD": "DL",
+    "AnomalyTransformer": "DL",
+}
+
+
+def _infer_family(model_name: Any) -> str:
+    """모델명 → family 매핑 (Phase 1.4 기여 보조)."""
+    name = str(model_name or "")
+    return _MODEL_FAMILY_MAP.get(name, "Other")
+
+
 SYSTEM_PROMPT = """당신은 AutoML 큐레이터입니다. 입력으로 받은
 data_profile, category, recipes 를 종합해 상위 3개 모델 후보를 JSON 으로 반환합니다.
 
@@ -90,11 +123,33 @@ class ModelSelectionAgent(BaseAgent):
                 except Exception:
                     pass
 
-            return state.with_update(
+            new_state = state.with_update(
                 model_candidates=top3,
                 kb_citations=list(set(state.kb_citations + citations)),
                 next_agent="hyperparameter_tuner",
             )
+
+            # Phase 1.4 — ReportContext ⑥ model_selection 적립.
+            try:
+                candidates_payload = [
+                    {"name": str(m), "family": _infer_family(m), "why_tried": rationale or "후보 풀에서 선정"}
+                    for m in top3
+                ]
+                chosen_payload: dict[str, Any] = {}
+                if top3:
+                    chosen_payload = {
+                        "name": str(top3[0]),
+                        "family": _infer_family(top3[0]),
+                        "justification": rationale or "최우선 후보",
+                    }
+                new_state = self.contribute_to_context(
+                    new_state,
+                    "model_selection",
+                    {"candidates": candidates_payload, "chosen": chosen_payload},
+                )
+            except Exception as e:
+                self.logger.warning("contribute_model_selection_failed", error=str(e))
+            return new_state
 
     async def _fetch_recipes(self, category: str) -> list[dict[str, Any]]:
         try:

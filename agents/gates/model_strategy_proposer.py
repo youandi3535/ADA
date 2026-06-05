@@ -5,22 +5,38 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ada.core.lang_guard import looks_non_korean, with_korean_guard
 from ada.core.state import PipelineState
 from agents.gates._base_gate import BaseGate
 
-SYSTEM_PROMPT = (
-    "You are a modeling architect. "
-    "Given the data profile, EDA summary, and the G3 methodology chosen by the user, "
-    "propose exactly TWO distinct model strategy options. "
-    "For each option write a concise Korean rationale of 1-2 sentences: "
-    "why this strategy fits the data, and what result the user can expect. Keep it short and clear. "
-    "Titles must be in Korean (concise). "
-    "Reply with a JSON array of exactly 2 objects, no markdown:\n"
+SYSTEM_PROMPT = with_korean_guard(
+    "당신은 모델링 아키텍트입니다. "
+    "데이터 프로파일·EDA 요약·G3 방법론을 보고 서로 다른 모델 전략 2개를 한국어로 제안합니다.\n\n"
+    "각 옵션의 rationale 은 한국어 1-2문장: "
+    "이 전략이 데이터에 적합한 이유 + 사용자가 기대할 결과.\n"
+    "title 은 간결한 한국어. 한자(汉字)·중국어 절대 금지. 모델명(XGBoost 등)만 영문 허용.\n\n"
+    "정확히 2개 객체의 JSON 배열만 반환 (마크다운 금지):\n"
     '[{"id": 1, "title": "한국어 제목", "models": ["Model1", "Model2"], '
     '"rationale": "한국어 1-2문장", "score": 0.0-1.0}, '
     ' {"id": 2, "title": "한국어 제목", "models": ["Model1", "Model2"], '
     '"rationale": "한국어 1-2문장", "score": 0.0-1.0}]'
 )
+
+KOREAN_RETRY_HINT = (
+    "이전 응답에 한자(中文)가 포함되어 거부됩니다. 반드시 한국어로만 다시 작성하세요. 한자·중국어 문장 금지."
+)
+
+
+def _has_non_korean_options(options: list[dict[str, Any]]) -> bool:
+    for opt in options:
+        if not isinstance(opt, dict):
+            continue
+        for key in ("title", "rationale"):
+            v = opt.get(key)
+            if isinstance(v, str) and looks_non_korean(v):
+                return True
+    return False
+
 
 _CUSTOM_OPTION: dict[str, Any] = {
     "id": 3,
@@ -64,35 +80,20 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "score": 0.7,
         },
     ],
-    # HJ-3 (2026-06-05) + DL 제거 — 시계열 ML 전용 (6 SUPPORTED_MODELS 와 정합)
-    # 통계 + 베이스라인 + 외생변수 3 옵션. DL (Informer/TFT/PatchTST) 비활성.
     "timeseries": [
         {
             "id": 1,
-            "title": "통계 + 베이스라인 (해석성 우선)",
-            "models": ["SARIMA", "ETS", "seasonal_naive"],
-            "rationale": "해석 가능한 통계 + 기준선 비교로 빠르고 안정적인 예측. 작은~중간 데이터에 최적.",
+            "title": "통계 + 딥러닝 혼합",
+            "models": ["SARIMA", "Prophet", "TFT"],
+            "rationale": "해석 가능한 통계 모델과 딥러닝을 결합해 단기·중기 예측 모두에서 균형 잡힌 성능을 냅니다.",
             "score": 0.85,
         },
         {
             "id": 2,
-            "title": "외생변수 회귀 + 검증",
-            "models": ["SARIMAX", "ETS", "seasonal_naive"],
-            "rationale": (
-                "외생변수(공휴일·프로모션 등)를 SARIMAX 회귀에 반영하고 ETS 계절성 모델과 "
-                "seasonal_naive 베이스라인을 함께 비교해 모델 우위를 객관적으로 검증합니다."
-            ),
-            "score": 0.80,
-        },
-        {
-            "id": 3,
-            "title": "고전 통계 단일 (안정성 우선)",
-            "models": ["ARIMA", "SARIMA", "ETS"],
-            "rationale": (
-                "해석 가능성과 빠른 학습이 중요한 환경에서 차분/계절 차분/지수평활 3종을 "
-                "비교해 가장 안정적인 통계 모델을 선택합니다."
-            ),
-            "score": 0.75,
+            "title": "딥러닝 장기 예측",
+            "models": ["TFT", "PatchTST", "Informer"],
+            "rationale": "Transformer 계열로 긴 시계열 의존성을 학습해 장기 예측에서 높은 정확도를 기대할 수 있습니다.",
+            "score": 0.7,
         },
     ],
     "anomaly_detection": [
@@ -129,15 +130,38 @@ class ModelStrategyProposerAgent(BaseGate):
             "g2_choice": (state.gate_responses or {}).get("G3", {}).get("user_choice"),
             "eda_summary": state.eda_summary,
         }
+        user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
-                user_prompt=json.dumps(payload, ensure_ascii=False, default=str)[:4000],
+                user_prompt=user_payload,
                 max_tokens=700,
                 temperature=0.2,
                 json_mode=True,
             )
             arr = self._safe_parse_json_array(raw)
+
+            if arr and _has_non_korean_options(arr):
+                self.logger.warning("g4_cjk_detected_retry")
+                retry_user = KOREAN_RETRY_HINT + "\n\n다시 작성할 데이터:\n" + user_payload
+                try:
+                    raw2 = await self._call_llm(
+                        system_prompt=SYSTEM_PROMPT,
+                        user_prompt=retry_user,
+                        max_tokens=700,
+                        temperature=0.2,
+                        json_mode=True,
+                    )
+                    arr2 = self._safe_parse_json_array(raw2)
+                    if arr2 and not _has_non_korean_options(arr2):
+                        arr = arr2
+                    else:
+                        self.logger.warning("g4_cjk_persist_after_retry")
+                        arr = []
+                except Exception as e:
+                    self.logger.warning("g4_retry_failed", error=str(e))
+                    arr = []
+
             if arr:
                 llm_opts = arr[: self.n_proposals]
                 for i, opt in enumerate(llm_opts, start=1):
@@ -182,11 +206,12 @@ class ModelStrategyProposerAgent(BaseGate):
             self.logger.info("g4_custom_intent_applied", intent=custom.strip()[:120])
         else:
             rank = uc.get("adopted_rank")
+            rank = uc.get("adopted_rank")
             chosen = next(
                 (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
                 None,
             )
-            if chosen and isinstance(chosen.get("title"), str):
+            if chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
                 strategy = chosen["title"].strip()
                 base = (state.user_intent or "").strip()
                 updates["user_intent"] = f"{base} (모델 전략: {strategy})" if base else f"모델 전략: {strategy}"
@@ -194,26 +219,18 @@ class ModelStrategyProposerAgent(BaseGate):
                     "g4_proposal_adopted",
                     rank=rank,
                     title=strategy,
-                    models=chosen.get("models"),
                 )
 
-        if chosen:
-            models = chosen.get("models") or []
+        if isinstance(chosen, dict):
+            models = chosen.get("models")
             if isinstance(models, list) and models:
-                # 다운스트림 model_selection 이 LLM 으로 다시 정할 수 있지만,
-                # 본 값이 미리 채워져 있으면 LLM 실패 시 안전한 fallback 이 된다.
-                updates["model_candidates"] = [str(m) for m in models if isinstance(m, str)]
-            # category_extras 에 감사용 메타데이터 기록 (R-005 with_update 패턴 유지)
-            cat = state.category or "_default"
+                updates["model_candidates"] = [str(m) for m in models if m]
             extras = dict(state.category_extras or {})
-            cat_block = dict(extras.get(cat) or {})
-            cat_block["g4_strategy"] = {
+            extras["g4_strategy"] = {
                 "title": chosen.get("title"),
                 "models": chosen.get("models") or [],
-                "rationale": chosen.get("rationale", ""),
                 "is_custom": bool(chosen.get("is_custom")),
             }
-            extras[cat] = cat_block
             updates["category_extras"] = extras
 
         return state.with_update(**updates) if updates else state
