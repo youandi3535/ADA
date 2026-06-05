@@ -161,6 +161,31 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     if not bm or not isinstance(bm, dict):
         return {}  # → RB-1 빈 dict 응급 (carrier 가 처리)
 
+    # ── A-1b (D4, 2026-06-05) : 상수 시계열 graceful 안내 (cs-day10 단계 9 ❌) ──
+    # _ConstantSeriesModel (pipeline D3) 이 학습되면 best_model.model_obj 가 _ada_constant_series 보유.
+    # 이 경우 forecast/decomposition 차트는 의미 없고 "분석 불가" 명시가 정직한 보고.
+    _model_obj = bm.get("model_obj")
+    if _model_obj is not None and getattr(_model_obj, "_ada_constant_series", False):
+        return {
+            "charts": [],
+            "tables": [
+                {
+                    "title": "상수 시계열 진단",
+                    "columns": ["항목", "값"],
+                    "rows": [
+                        ["타깃 분산", "0 (모든 시점 값 동일)"],
+                        ["모델 예측", f"{getattr(_model_obj, 'const_value', 0):.4f} (상수)"],
+                        ["판정", "예측 의미 없음 — 운영 데이터 점검 권장"],
+                    ],
+                }
+            ],
+            "text_blocks": [
+                "⚠ 분석 불가 — 입력 시계열의 분산이 0 입니다 (모든 시점이 동일 값). "
+                "예측 모델의 의미 있는 학습이 불가능하며, 데이터 수집·전처리 과정에서 "
+                "누락·고정값 주입·센서 오류 등이 없었는지 점검을 권장합니다."
+            ],
+        }
+
     # ── A-2 : eda_summary 가드 ──
     eda = _eda_dict(state)
 

@@ -57,6 +57,114 @@ FOLD_OUTLIER_SIGMA = 2.0  # 특정 fold > mean+2σ → 누수 의심
 FOLD_CV_STABLE = 0.5  # cv < 0.5 = 안정
 FOLD_CV_UNSTABLE = 1.0  # 0.5 ≤ cv < 1.0 = 불안정 / ≥ 1.0 = 매우 불안정
 
+# OF5 (2026-06-05) — 과적합/과소적합 진단 임계
+OVERFIT_GAP_WARN = 0.30  # val_rmse 가 train_rmse 의 +30% = 과적합 의심
+OVERFIT_GAP_SEVERE = 0.60  # +60% = 심각한 과적합
+UNDERFIT_MASE_MIN = 1.0  # MASE >= 1.0 + improvement <= 0 = 과소적합 (naive 못 이김)
+
+
+# X3 (2026-06-05) — 적응형 임계 (데이터 길이 따라 동적 조정)
+def _adaptive_thresholds(state: Any) -> dict[str, float]:
+    """데이터 특성에 맞춰 THRESHOLDS 동적 조정.
+
+    - n_rows < 100 (짧은 시계열): MASE_max 1.0 → 1.2 (완화), pi_coverage_min 0.90 → 0.85
+    - n_rows >= 1000 (긴 시계열): MASE_max 1.0 → 0.85 (강화), sMAPE_max 30 → 25
+    - 기타: 기본값 유지
+
+    헌장 5단계 "임계는 데이터 통계로 결정" 의 일관.
+    """
+    out = dict(THRESHOLDS)
+    try:
+        profile = getattr(state, "data_profile", None) or {}
+        n_rows = int(profile.get("rows") or profile.get("n_rows") or 0)
+        if n_rows == 0:
+            return out
+        if n_rows < 100:
+            out["MASE_max"] = 1.2
+            out["pi_coverage_min"] = 0.85
+        elif n_rows >= 1000:
+            out["MASE_max"] = 0.85
+            out["sMAPE_max"] = 25.0
+    except Exception:
+        pass
+    return out
+
+
+# ════════════════════════════════════════════════════════════════
+# §H4 (2026-06-05) — overfit / underfit 진단 (OF5)
+# ════════════════════════════════════════════════════════════════
+def _diagnose_fit_quality(metrics: dict) -> dict[str, Any]:
+    """train_rmse vs val_rmse 격차 + MASE + improvement 종합 진단.
+
+    반환:
+      kind     : "overfit" | "underfit" | "ok" | "unknown"
+      severity : "none" | "warn" | "severe"
+      train_rmse / val_rmse / overfit_gap : 인용용
+      hint     : 한국어 권장 조치
+    """
+    if not isinstance(metrics, dict):
+        return {"kind": "unknown", "severity": "none"}
+
+    train_rmse = metrics.get("train_rmse")
+    val_rmse = metrics.get("val_rmse")
+    overfit_gap = metrics.get("overfit_gap")
+    mase = metrics.get("MASE")
+    improvement = metrics.get("rmse_improvement_vs_naive")
+
+    # 과소적합 우선 판정
+    try:
+        imp_f = float(improvement) if improvement is not None else None
+        mase_f = float(mase) if mase is not None else None
+        if imp_f is not None and imp_f <= 0 and mase_f is not None and mase_f >= UNDERFIT_MASE_MIN:
+            return {
+                "kind": "underfit",
+                "severity": "severe",
+                "train_rmse": train_rmse,
+                "val_rmse": val_rmse,
+                "overfit_gap": overfit_gap,
+                "hint": (
+                    "naïve 기준선조차 못 이겼습니다 — 피처 부족 또는 모델 용량 부족. "
+                    "lag/달력/푸리에 피처 추가 또는 더 표현력 있는 모델 (TFT/Prophet) 시도 권장."
+                ),
+            }
+    except (TypeError, ValueError):
+        pass
+
+    # 과적합 판정
+    if isinstance(overfit_gap, (int, float)):
+        gap = float(overfit_gap)
+        if gap >= OVERFIT_GAP_SEVERE:
+            return {
+                "kind": "overfit",
+                "severity": "severe",
+                "train_rmse": train_rmse,
+                "val_rmse": val_rmse,
+                "overfit_gap": round(gap, 3),
+                "hint": (
+                    f"심각한 과적합 (val_rmse 가 train_rmse 의 +{gap:.0%}). "
+                    "정규화 강화 (ARIMA 차수 축소 / DL dropout↑ / Prophet changepoint_prior_scale↓) 권장."
+                ),
+            }
+        if gap >= OVERFIT_GAP_WARN:
+            return {
+                "kind": "overfit",
+                "severity": "warn",
+                "train_rmse": train_rmse,
+                "val_rmse": val_rmse,
+                "overfit_gap": round(gap, 3),
+                "hint": (f"과적합 의심 (val_rmse 가 train_rmse 의 +{gap:.0%}). fold 수 증가 또는 모델 용량 축소 검토."),
+            }
+        return {
+            "kind": "ok",
+            "severity": "none",
+            "train_rmse": train_rmse,
+            "val_rmse": val_rmse,
+            "overfit_gap": round(gap, 3),
+            "hint": "train/val 격차 정상.",
+        }
+
+    return {"kind": "unknown", "severity": "none"}
+
 
 # ════════════════════════════════════════════════════════════════
 # §0. 헬퍼
@@ -448,22 +556,21 @@ def evaluate(state: Any) -> dict[str, Any]:
     smape = metrics.get("sMAPE")
     cov = metrics.get("pi_coverage")
 
-    # ── B-2 : violations 누적 (기존 4 임계 불변) ──
+    # ── B-2 : violations 누적 (X3 — 적응형 임계 적용) ──
+    th = _adaptive_thresholds(state)
     if improvement is None:
         violations.append("rmse_improvement_vs_naive missing")
-    elif improvement <= THRESHOLDS["rmse_improvement_vs_naive_min"]:
-        violations.append(
-            f"rmse_improvement_vs_naive<={THRESHOLDS['rmse_improvement_vs_naive_min']} (got {improvement:.3f})"
-        )
+    elif improvement <= th["rmse_improvement_vs_naive_min"]:
+        violations.append(f"rmse_improvement_vs_naive<={th['rmse_improvement_vs_naive_min']} (got {improvement:.3f})")
 
-    if mase is not None and mase >= THRESHOLDS["MASE_max"]:
-        violations.append(f"MASE>={THRESHOLDS['MASE_max']} (got {mase:.3f})")
+    if mase is not None and mase >= th["MASE_max"]:
+        violations.append(f"MASE>={th['MASE_max']} (got {mase:.3f})")
 
-    if smape is not None and smape > THRESHOLDS["sMAPE_max"]:
-        violations.append(f"sMAPE>{THRESHOLDS['sMAPE_max']} (got {smape:.1f})")
+    if smape is not None and smape > th["sMAPE_max"]:
+        violations.append(f"sMAPE>{th['sMAPE_max']} (got {smape:.1f})")
 
-    if cov is not None and cov < THRESHOLDS["pi_coverage_min"]:
-        violations.append(f"pi_coverage<{THRESHOLDS['pi_coverage_min']} (got {cov:.3f})")
+    if cov is not None and cov < th["pi_coverage_min"]:
+        violations.append(f"pi_coverage<{th['pi_coverage_min']} (got {cov:.3f})")
 
     # ── B-3 (신규) : fold_scores + fold_metrics 추출 ──
     fold_scores = _extract_fold_scores(best)
@@ -543,6 +650,7 @@ def evaluate(state: Any) -> dict[str, Any]:
         "fold_diagnostics": fold_diag,
         "leakage_suspect_signals": leakage_signals,
         "symptom_classification": symptom,
+        "fit_quality": _diagnose_fit_quality(metrics),
         # L4 — task_kind 안내 (chosen_recipe 활용 시만)
         "task_kind_hint": classification_hint,
     }

@@ -30,6 +30,33 @@ import numpy as np
 from pipelines.base import BasePipeline
 
 
+class _ConstantSeriesModel:
+    """D3 (2026-06-05) — 상수 시계열 (분산 0) 용 graceful 폴백 모델.
+
+    fit/predict 인터페이스 호환. forecast/predict 모두 동일 상수값 반환.
+    cs-day10 §단계 3 의 "❌ 시리즈가 상수 → 예측 불가" 분기를 학습 단계에서
+    구현. evaluate() 의 분산 0 시 MASE/sMAPE 분모 가드와 정합.
+    """
+
+    def __init__(self, const_value: float) -> None:
+        self.const_value = float(const_value)
+        self._ada_constant_series = True  # output_extras 가 "분석 불가" 메시지 판정용
+
+    def forecast(self, steps: int = 1, exog: Any = None) -> Any:  # noqa: ARG002
+        import numpy as _np
+
+        return _np.full(int(steps), self.const_value, dtype=float)
+
+    def predict(self, X: Any) -> Any:
+        import numpy as _np
+
+        try:
+            n = len(X)
+        except Exception:
+            n = 1
+        return _np.full(int(n), self.const_value, dtype=float)
+
+
 class _SeasonalNaiveModel:
     """seasonal_naive 기준선 모델 — ARIMA-like 인터페이스 (forecast(steps)).
 
@@ -74,9 +101,6 @@ class TimeSeriesPipeline(BasePipeline):
         "Prophet",
         "ETS",
         "seasonal_naive",
-        "Informer",
-        "TFT",
-        "PatchTST",
     )
 
     def __init__(self) -> None:
@@ -100,9 +124,6 @@ class TimeSeriesPipeline(BasePipeline):
             return int(params.get("seasonal_periods") or 0)
         # Prophet : 명시적 seasonal_period 없음
         if model_name == "Prophet":
-            return int(params.get("seasonal_period", 0))
-        # DL : freq 와 input_size 로 추정 (옵션)
-        if model_name in ("Informer", "TFT", "PatchTST"):
             return int(params.get("seasonal_period", 0))
         # ARIMA / 기타 : 0 (simple naïve)
         return 0
@@ -161,6 +182,18 @@ class TimeSeriesPipeline(BasePipeline):
                 self._y_train_last = None
             self._seasonal_s = self._extract_seasonal_period(model_name, params)
 
+            # D3 (2026-06-05) — 상수 시계열 가드 (cs-day10 단계 3·9 "예측 불가, 상수 시계열")
+            # 분산 0 (모든 값 동일) 시 어떤 통계 모델도 의미 없음 + ARIMA/SARIMA 가 ConvergenceWarning
+            # 또는 LinAlgError 일으킬 수 있어 사전 차단. _ConstantSeriesModel 로 graceful 폴백.
+            if self._y_train_last is not None and len(self._y_train_last) > 0:
+                try:
+                    if float(np.var(self._y_train_last)) < 1e-12:
+                        const_val = float(self._y_train_last[-1])
+                        self._model_obj = _ConstantSeriesModel(const_val)
+                        return self._model_obj
+                except Exception:
+                    pass
+
             model = self._train_dispatch(X_train, y_train, model_name, params)
             self._model_obj = model  # PI 추출 가능 모델 한정
             return model
@@ -187,12 +220,19 @@ class TimeSeriesPipeline(BasePipeline):
             from statsmodels.tsa.statespace.sarimax import SARIMAX
 
             exog_tr = self._extract_exog(X_train, params)
-            return SARIMAX(
+            fitted = SARIMAX(
                 y_train,
                 exog=exog_tr,
                 order=params.get("order", (1, 1, 1)),
                 seasonal_order=params.get("seasonal_order", (1, 1, 1, 7)),
             ).fit(disp=False)
+            # D5 (2026-06-05) — exog 학습 여부 마커 (predict 시 누락 경고용)
+            if exog_tr is not None:
+                try:
+                    fitted._ada_exog_required = True  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            return fitted
         if model_name == "Prophet":
             import pandas as pd  # noqa: WPS433
             from prophet import Prophet  # type: ignore
@@ -237,8 +277,6 @@ class TimeSeriesPipeline(BasePipeline):
             # ── 신규 — seasonal_naive 기준선 ──
             period = int(params.get("seasonal_periods") or self._seasonal_s or 7)
             return _SeasonalNaiveModel(y_train, period=period)
-        if model_name in ("Informer", "TFT", "PatchTST"):
-            return self._train_neural_ts(X_train, y_train, model_name, params)
         # StatsForecast fallback
         try:
             import pandas as pd  # noqa: WPS433
@@ -252,31 +290,12 @@ class TimeSeriesPipeline(BasePipeline):
         except Exception as e:
             raise ValueError(f"Unknown timeseries model: {model_name}") from e
 
-    def _train_neural_ts(self, X: Any, y: Any, model_name: str, params: dict[str, Any]) -> Any:
-        try:
-            import pandas as pd  # noqa: WPS433
-            from neuralforecast import NeuralForecast  # type: ignore
-            from neuralforecast.models import TFT, Informer, PatchTST  # type: ignore
-
-            model_map = {"TFT": TFT, "PatchTST": PatchTST, "Informer": Informer}
-            cls = model_map[model_name]
-            horizon = params.get("horizon", 12)
-            df = pd.DataFrame({"ds": range(len(y)), "y": y, "unique_id": "ts_1"})
-            nf = NeuralForecast(models=[cls(h=horizon, input_size=params.get("input_size", 24))], freq="D")
-            nf.fit(df)
-            return nf
-        except Exception as e:
-            self._log_warning("neuralforecast_unavailable", error=str(e))
-            from statsmodels.tsa.arima.model import ARIMA
-
-            return ARIMA(y, order=(1, 1, 1)).fit()
-
+    # ════════════════════════════════════════════════════════════
+    # predict — BasePipeline 추상 메서드 구현
+    # ════════════════════════════════════════════════════════════
     def predict(self, model: Any, X: Any) -> np.ndarray:
-        """예측 — SARIMAX 등 exog 동반 모델 자동 처리.
-
-        ── 순서 (cs-day6 v3 보완) ──
-        1) model.forecast 보유 + X 가 DataFrame + 'ds' 외 수치형 컬럼 존재
-           → exog 동반 forecast 시도 (SARIMAX/SARIMA with exog 전용 호출)
+        """예측 분기 :
+        1) hasattr(model, "forecast") → forecast(steps=len(X)) (SARIMAX 는 exog 동반)
         2) 1) TypeError (exog 인자 미지원) → exog 없이 model.forecast(steps)
         3) model.forecast 없음 → model.predict(X)
         4) 1·2 둘 다 실패 + sklearn-like predict 보유 → model.predict(X)
@@ -284,6 +303,7 @@ class TimeSeriesPipeline(BasePipeline):
         try:
             if hasattr(model, "forecast"):
                 # exog 동반 forecast 시도 — SARIMAX 등
+                exog_attempted = False
                 try:
                     import pandas as pd  # noqa: WPS433
 
@@ -292,12 +312,23 @@ class TimeSeriesPipeline(BasePipeline):
                         if exog_cols:
                             exog = X[exog_cols].select_dtypes(include="number")
                             if not exog.empty:
+                                exog_attempted = True
                                 try:
                                     return np.asarray(model.forecast(steps=len(X), exog=exog))
                                 except TypeError:
                                     pass  # exog 인자 미지원 모델 → 다음 단계
                 except Exception:
                     pass
+                # D5 (2026-06-05) — SARIMAX 학습됐는데 미래 exog 미제공 시 경고 로그
+                if exog_attempted is False and getattr(model, "_ada_exog_required", False):
+                    try:
+                        import logging as _log
+
+                        _log.getLogger(__name__).warning(
+                            "predict_exog_missing — SARIMAX 학습 시 exog 사용했으나 예측 X 에 exog 미포함, 점예측만 반환"
+                        )
+                    except Exception:
+                        pass
                 # exog 없이 forecast (ARIMA/SARIMA 단변량/ETS/seasonal_naive)
                 return np.asarray(model.forecast(steps=len(X)))
             return np.asarray(model.predict(X))
@@ -355,7 +386,40 @@ class TimeSeriesPipeline(BasePipeline):
         # ── F-ext-2e : PI coverage (모델별 best-effort) ──
         pi_coverage, pi_lower, pi_upper = self._try_pi_coverage(model, X_val, y_true)
 
-        # ── F-ext-2f : 기존 12 키 ──
+        # ── OF4 (2026-06-05) : train_rmse + overfit_gap 계산 ──
+        # 과적합 감지 핵심 지표. 모델이 train 에 self.predict() 가능하면 fit 잔차 추출.
+        train_rmse: Optional[float] = None
+        overfit_gap: Optional[float] = None
+        try:
+            if model is not None and len(y_train_last) >= 5:
+                # model 별 in-sample fit 추출
+                y_train_fit = None
+                if hasattr(model, "fittedvalues"):  # statsmodels (ARIMA/SARIMA/SARIMAX/ETS)
+                    fv = np.asarray(model.fittedvalues).flatten()
+                    y_train_fit = fv[-len(y_train_last) :] if len(fv) >= len(y_train_last) else fv
+                elif hasattr(model, "predict") and not getattr(model, "_ada_constant_series", False):
+                    # 시도 — sklearn-like
+                    try:
+                        y_train_fit = np.asarray(model.predict(y_train_last)).flatten()
+                    except Exception:
+                        y_train_fit = None
+                if y_train_fit is not None and len(y_train_fit) >= 5:
+                    # 길이 정렬
+                    L = min(len(y_train_fit), len(y_train_last))
+                    y_train_fit = y_train_fit[-L:]
+                    y_train_true = y_train_last[-L:]
+                    # NaN 제거
+                    mask = ~(np.isnan(y_train_fit) | np.isnan(y_train_true))
+                    if int(mask.sum()) >= 5:
+                        train_rmse = float(np.sqrt(mean_squared_error(y_train_true[mask], y_train_fit[mask])))
+                        # overfit_gap = (val_rmse - train_rmse) / train_rmse
+                        if train_rmse > 1e-9:
+                            overfit_gap = float((val_rmse - train_rmse) / train_rmse)
+        except Exception:
+            train_rmse = None
+            overfit_gap = None
+
+        # ── F-ext-2f : 기존 12 키 + OF4 신규 2 키 ──
         out: dict[str, Any] = {
             "val_rmse": val_rmse,
             "val_mae": val_mae,
@@ -369,6 +433,9 @@ class TimeSeriesPipeline(BasePipeline):
             "naive_kind": naive_kind,
             "naive_s": s if s > 0 else None,
             "mlflow_run_id": self.mlflow_run_id,
+            # OF4 (2026-06-05) — 과적합 감지 키
+            "train_rmse": train_rmse,
+            "overfit_gap": overfit_gap,
         }
 
         # ── 신규 3 키 — output_extras forecast_chart 단절 C-5 해소 ──

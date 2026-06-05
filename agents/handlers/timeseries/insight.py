@@ -173,10 +173,10 @@ def _zero_step_meta(state: Any) -> dict:
 
 # H3·H4·H5·H7 — evaluator 신규 4 키 안전 추출
 def _eval_diagnostics(state: Any) -> dict:
-    """state.eval_result 에서 cs-day7 v3 신규 4키 안전 추출.
+    """state.eval_result 에서 cs-day7 v3 신규 4키 + OF5 fit_quality 안전 추출.
 
     state.eval_result 는 EvalAgent 가 with_update(eval_result=...) 로 저장.
-    우리 evaluator (cs-day7 v3) 가 채운 8 키 중 H3/H4/H5/H7 관련 4 키 추출.
+    우리 evaluator 가 채운 키 중 H3/H4/H5/H7/OF5 관련 5 키 추출.
     """
     er = _eval_result(state)
     return {
@@ -184,6 +184,7 @@ def _eval_diagnostics(state: Any) -> dict:
         "fold_diag": er.get("fold_diagnostics") or {},
         "symptom": er.get("symptom_classification") or {},
         "task_kind_hint": er.get("task_kind_hint"),
+        "fit_quality": er.get("fit_quality") or {},
     }
 
 
@@ -387,6 +388,15 @@ def _build_fallback(state: Any) -> str:
     # 문장 7 (H7) — task_kind_hint
     if task_hint:
         sentences.append(task_hint)
+
+    # 문장 7-b (OF6, 2026-06-05) — 과적합/과소적합 안내 (severity 가 warn/severe 일 때만)
+    fit_q = diag.get("fit_quality") or {}
+    fit_kind = fit_q.get("kind")
+    fit_sev = fit_q.get("severity")
+    if fit_kind in ("overfit", "underfit") and fit_sev in ("warn", "severe"):
+        hint = fit_q.get("hint") or ""
+        if hint:
+            sentences.append(hint)
 
     # 문장 마지막 — 행동 권고
     if not leakage and (not sym_code or sym_code == "normal"):

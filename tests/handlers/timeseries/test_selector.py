@@ -56,7 +56,7 @@ def test_dod_short_series_excludes_dl(ts_state):
         chosen_recipe={"title": "이상 시점 탐지"},
     )
     result = score(st, recipes=[])
-    # 이상 시점 candidates 에 TFT/PatchTST 가 있는데 페널티로 점수가 낮아져 정렬상 뒤로
+    # 이상 시점 candidates 는 통계 모델만 (DL 제거됨)
     # n=50 + 이상 recipe → top3 우선순위: Prophet/SARIMA > DL
     assert all(m in result["top3"] for m in ["Prophet", "SARIMA"])
 
@@ -135,20 +135,6 @@ def test_a_leakage_suspect_cols_excluded_from_exog(ts_state):
 # ════════════════════════════════════════════════════════════════
 # 7축 반영 (7) — 헌장 2-1 7개 축
 # ════════════════════════════════════════════════════════════════
-def test_7axis_length_dl_large_bonus(ts_state):
-    """7축 가: n ≥ 1000 → DL 약보너스."""
-    from agents.handlers.timeseries.selector import score
-
-    st = ts_state.with_update(
-        data_profile={"rows": 2000},
-        chosen_recipe={"title": "이상 시점 탐지"},
-        eda_summary={},
-    )
-    result = score(st, recipes=[])
-    # n=2000 + 이상 → TFT/PatchTST 가 보너스 받아 top3 진입 기대
-    assert any(m in result["top3"] for m in ("TFT", "PatchTST"))
-
-
 def test_7axis_horizon_long_prefers_prophet(ts_state):
     """7축 나: horizon ≥ 30 → Prophet 보너스."""
     from agents.handlers.timeseries.selector import score
@@ -256,9 +242,8 @@ def test_meta_baseline_seasonal_naive_and_ets(ts_state):
     result = score(st, recipes=[])
     assert "seasonal_naive" in result["meta"]["baseline_recommend"]
     assert "ETS" in result["meta"]["baseline_recommend"]
-    # top3 에 절대 들어가면 안 됨 (pipeline SUPPORTED_MODELS 미지원)
-    assert "seasonal_naive" not in result["top3"]
-    assert "ETS" not in result["top3"]
+    # 메타 노출 검증만 — pipeline.SUPPORTED_MODELS (6종, DL 제거 후) 에 ETS/seasonal_naive
+    # 모두 포함되므로 top3 진입은 정당함. (이전엔 미지원이라 top3 제외 였으나 지금은 허용)
 
 
 def test_meta_multistep_strategy(ts_state):

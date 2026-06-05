@@ -7,7 +7,7 @@
 DoD (불변):
   - top3 길이 ≥ 3
   - citations ≥ 1 (R-501) — recipes 비어 있을 땐 빈 list 허용 + warning
-  - n_rows < 100 → DL(Informer/TFT/PatchTST) 제외 (페널티)
+  - n_rows < 100 → 보수적 통계 모델만 유지
   - exog 0 → SARIMAX 제외 (top3 진입 X)
 
 방법론 헌장 매핑 (0~7단계 + 누수 1-1~1-7 + 모델선택 7축)
@@ -45,9 +45,8 @@ from __future__ import annotations
 from typing import Any
 
 # ── 모듈 상수 ─────────────────────────────────────────────────────
-SUPPORTED_MODELS = ("ARIMA", "SARIMA", "SARIMAX", "Prophet", "Informer", "TFT", "PatchTST")
-DL_MODELS = ("Informer", "TFT", "PatchTST")
-STAT_MODELS = ("ARIMA", "SARIMA", "SARIMAX")
+SUPPORTED_MODELS = ("ARIMA", "SARIMA", "SARIMAX", "Prophet", "ETS", "seasonal_naive")
+STAT_MODELS = ("ARIMA", "SARIMA", "SARIMAX", "ETS")
 
 BASE_SCORE = 0.70
 
@@ -59,21 +58,47 @@ SARIMAX_EXOG_BONUS = 0.20
 ARIMA_STAT_BONUS = 0.10
 ARIMA_NONSTAT_PENALTY = -0.05
 
-# A안 7축 디벨롭 가중 (신규)
-DL_MID_PENALTY = -0.05
-DL_LARGE_BONUS = 0.05
+# A안 7축 디벨롭 가중 (신규, ML 전용)
 PROPHET_LONG_HORIZON_BONUS = 0.05
-DL_LONG_HORIZON_BONUS = 0.05
 SARIMA_STRONG_SEASONAL_BONUS = 0.05
 MULTIVARIATE_SARIMAX_BONUS = 0.05
-MULTIVARIATE_DL_BONUS = 0.05
 HETERO_PROPHET_BONUS = 0.03
 HETERO_SARIMA_BONUS = 0.03
 CHANGEPOINTS_PROPHET_BONUS = 0.05
-TARGET_KIND_CUMULATIVE_DL_PENALTY = -0.05
 
 SEASONAL_PERIODS = (7, 12, 30, 365)
 ACF_STRONG_THRESHOLD = 2
+
+
+# ════════════════════════════════════════════════════════════════
+# 주제 적합도 매트릭스 (2026-06-05, 사용자 요청 — 주제 맞춤 최적 모델)
+# ════════════════════════════════════════════════════════════════
+# 키워드 → 토픽 신호 매핑 (한·영 혼용, 도메인 키워드 포함)
+TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "short_term": ("단기", "내일", "이번 주", "다음 주", "short", "next day", "near-term"),
+    "mid_term": ("중기", "한 달", "월간", "mid", "monthly", "monthly forecast"),
+    "long_term": ("장기", "분기", "연간", "long", "long-term", "long horizon", "annual"),
+    "multivariate": ("다변량", "외생", "exog", "multivariate", "다중", "공휴일", "프로모션", "holiday", "promo"),
+    "interval": ("구간", "신뢰구간", "신뢰", "interval", "confidence", "ci", "prediction interval", "pi", "분위"),
+    "anomaly": ("이상", "이상치", "이상 시점", "anomaly", "outlier", "감지", "탐지", "detection"),
+    "baseline": ("기준선", "베이스라인", "naive", "baseline", "단순", "비교"),
+    "seasonal_decomp": ("계절성", "계절 분해", "분해", "seasonality", "decomposition", "stl"),
+    "interpretable": ("해석", "설명", "interpret", "explain", "투명"),
+}
+
+# 모델 × 토픽 적합도 보너스 (작은 가중 — 기존 7축 매트릭스 균형 유지)
+# 양수 = 토픽에 적합, 음수 = 비적합. 토픽 미감지 시 적용 안 함.
+TOPIC_BONUS: dict[str, dict[str, float]] = {
+    "short_term": {"ARIMA": 0.05, "SARIMA": 0.05, "ETS": 0.05, "Prophet": 0.03},
+    "mid_term": {"SARIMA": 0.05, "Prophet": 0.05, "ETS": 0.03},
+    "long_term": {"Prophet": 0.08, "ARIMA": -0.03, "SARIMA": -0.03, "ETS": -0.03},
+    "multivariate": {"SARIMAX": 0.08, "ARIMA": -0.03, "ETS": -0.03},
+    "interval": {"SARIMA": 0.05, "SARIMAX": 0.05, "ETS": 0.05, "Prophet": 0.05, "ARIMA": 0.03},
+    "anomaly": {"Prophet": 0.05, "SARIMA": 0.05},
+    "baseline": {"seasonal_naive": 0.10, "ETS": 0.08, "ARIMA": 0.05},
+    "seasonal_decomp": {"Prophet": 0.05, "SARIMA": 0.05, "ETS": 0.03},
+    "interpretable": {"ARIMA": 0.05, "SARIMA": 0.05, "ETS": 0.05, "Prophet": 0.03},
+}
 
 
 # ════════════════════════════════════════════════════════════════
@@ -81,6 +106,74 @@ ACF_STRONG_THRESHOLD = 2
 # ════════════════════════════════════════════════════════════════
 def _clip(x: float) -> float:
     return max(0.0, min(1.0, x))
+
+
+# ════════════════════════════════════════════════════════════════
+# 주제 신호 추출 + 적합도 보너스 적용 (2026-06-05)
+# ════════════════════════════════════════════════════════════════
+def _topic_signals(state: Any, chosen_meta: dict, horizon: int, n_rows: int) -> dict[str, bool]:
+    """user_intent 키워드 + chosen_recipe.meta 종합해 토픽 신호 dict 반환.
+
+    토픽이 명확하면 selector 가 적합 모델에 가중치 부여 → "주제 맞춤 최적 모델".
+
+    user_intent 미상 + meta 빈 경우 → 모두 False (영향 0, 회귀 안전).
+    """
+    intent = (getattr(state, "user_intent", None) or "").lower()
+    signals = {k: False for k in TOPIC_KEYWORDS}
+
+    # 1) user_intent 키워드 매칭
+    if intent:
+        for topic, kws in TOPIC_KEYWORDS.items():
+            if any(kw.lower() in intent for kw in kws):
+                signals[topic] = True
+
+    # 2) chosen_recipe.meta 보강
+    meta = chosen_meta or {}
+    forecast_kind = meta.get("forecast_kind")
+    variate = meta.get("variate")
+    task_kind = meta.get("task_kind")
+
+    if forecast_kind in ("interval", "quantile"):
+        signals["interval"] = True
+    if variate == "multivariate":
+        signals["multivariate"] = True
+    if task_kind == "classification":
+        signals["anomaly"] = True
+
+    # 3) horizon 기반 시계열 길이 (intent 미명시 시 fallback)
+    if not (signals["short_term"] or signals["mid_term"] or signals["long_term"]):
+        if horizon > 0:
+            if horizon <= 7:
+                signals["short_term"] = True
+            elif horizon <= 30:
+                signals["mid_term"] = True
+            else:
+                signals["long_term"] = True
+
+    # 4) 짧은 계열 (n<100) → 베이스라인 토픽 자동 활성 (해석성 + 안정)
+    if n_rows > 0 and n_rows < 100:
+        signals["baseline"] = True
+        signals["interpretable"] = True
+
+    return signals
+
+
+def _apply_topic_bonus(adj: dict[str, float], signals: dict[str, bool]) -> dict[str, list[str]]:
+    """signals True 인 토픽의 TOPIC_BONUS 를 adj 에 더함.
+
+    반환: 각 모델별로 적용된 토픽 이름 list (rationale·meta 노출용).
+    candidates 풀에 없는 모델 보너스는 무시 (KeyError 안전).
+    """
+    applied: dict[str, list[str]] = {m: [] for m in adj}
+    for topic, active in signals.items():
+        if not active:
+            continue
+        bonus_map = TOPIC_BONUS.get(topic) or {}
+        for model, bonus in bonus_map.items():
+            if model in adj:
+                adj[model] += bonus
+                applied[model].append(f"{topic}:{bonus:+.2f}")
+    return applied
 
 
 def _chosen_recipe(state: Any) -> dict:
@@ -181,12 +274,7 @@ def _multistep_strategy(horizon: int, recipe_key: str, n_rows: int) -> str:
 
 
 def _hybrid_hint(top3: list[str], horizon: int, n_rows: int) -> str | None:
-    has_dl = any(m in DL_MODELS for m in top3)
-    has_stat = any(m in STAT_MODELS for m in top3)
-    if has_dl and has_stat and horizon >= 12 and n_rows >= 500:
-        stat_first = next(m for m in top3 if m in STAT_MODELS)
-        dl_first = next(m for m in top3 if m in DL_MODELS)
-        return f"{stat_first}->{dl_first}_residual"
+    """DL 비활성. 통계 모델만으로 하이브리드 힌트 없음 (시계열 ML 전용)."""
     return None
 
 
@@ -229,30 +317,19 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
 
     # ── §B : recipe_key 별 base candidates ──
     if recipe_key == "단기 예측":
-        candidates = ["ARIMA", "SARIMA", "Prophet", "SARIMAX"]
+        candidates = ["ARIMA", "SARIMA", "Prophet", "SARIMAX", "ETS"]
     elif recipe_key == "이상 시점":
-        candidates = ["Prophet", "SARIMA", "TFT", "PatchTST"]
+        candidates = ["Prophet", "SARIMA", "ETS"]
     elif recipe_key == "계절 분해":
-        candidates = ["Prophet", "SARIMA", "SARIMAX", "TFT", "PatchTST"]
+        candidates = ["Prophet", "SARIMA", "SARIMAX", "ETS"]
     else:
-        candidates = ["ARIMA", "SARIMA", "Prophet"]
+        candidates = ["ARIMA", "SARIMA", "Prophet", "ETS"]
 
     base = {m: BASE_SCORE for m in candidates}
     adj: dict[str, float] = {m: 0.0 for m in candidates}
 
-    # ── §C : 계열 길이 (7축 가) ──
-    if n_rows < 100:
-        for m in DL_MODELS:
-            if m in adj:
-                adj[m] += DL_PENALTY_SMALL
-    elif n_rows < 500:
-        for m in DL_MODELS:
-            if m in adj:
-                adj[m] += DL_MID_PENALTY
-    elif n_rows >= 1000:
-        for m in DL_MODELS:
-            if m in adj:
-                adj[m] += DL_LARGE_BONUS
+    # ── §C : 계열 길이 (7축 가) — DL 비활성, 통계 모델만 ──
+    # 짧은 데이터는 ARIMA/ETS/seasonal_naive 가 자동 적합 (selector 가 별도 페널티 불요)
 
     # ── §D : seasonal_period (7축 다) ──
     if s in SEASONAL_PERIODS:
@@ -283,21 +360,10 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
     if horizon >= 30:
         if "Prophet" in adj:
             adj["Prophet"] += PROPHET_LONG_HORIZON_BONUS
-        for m in DL_MODELS:
-            if m in adj:
-                adj[m] += DL_LONG_HORIZON_BONUS
-
-    if target_kind == "cumulative":
-        for m in DL_MODELS:
-            if m in adj:
-                adj[m] += TARGET_KIND_CUMULATIVE_DL_PENALTY
 
     if is_multivariate:
         if "SARIMAX" in adj:
             adj["SARIMAX"] += MULTIVARIATE_SARIMAX_BONUS
-        for m in DL_MODELS:
-            if m in adj:
-                adj[m] += MULTIVARIATE_DL_BONUS
 
     if heteroscedastic:
         if "Prophet" in adj:
@@ -307,6 +373,11 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
 
     if changepoints >= 3 and "Prophet" in adj:
         adj["Prophet"] += CHANGEPOINTS_PROPHET_BONUS
+
+    # ── §F++ (2026-06-05) : 주제 적합도 보너스 (user_intent + chosen_recipe.meta) ──
+    chosen_meta = chosen.get("meta") if isinstance(chosen, dict) else {}
+    topic_signals = _topic_signals(state, chosen_meta or {}, horizon, n_rows)
+    intent_match = _apply_topic_bonus(adj, topic_signals)
 
     # ── §G : 점수 매트릭스 + top3 정렬 ──
     scores = {m: _clip(base[m] + adj[m]) for m in candidates}
@@ -342,6 +413,9 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
         "multistep_strategy": multistep,
         "hybrid_hint": hybrid,
         "leakage_excluded": leakage_excluded,
+        # 주제 적합도 신호 (2026-06-05) — insight·output_extras 에서 활용
+        "topic_signals": {k: v for k, v in topic_signals.items() if v},
+        "intent_match": {m: lst for m, lst in intent_match.items() if lst},
     }
 
     rationale_parts = [
@@ -362,6 +436,9 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
         rationale_parts.append(f"hybrid={hybrid}")
     if leakage_excluded:
         rationale_parts.append(f"leakage_excluded={leakage_excluded}")
+    active_topics = [t for t, v in topic_signals.items() if v]
+    if active_topics:
+        rationale_parts.append(f"topics={active_topics}")
     rationale = ", ".join(rationale_parts)
 
     return {"top3": top3, "rationale": rationale, "citations": citations, "meta": meta}
