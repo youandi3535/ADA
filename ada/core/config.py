@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     # Heavy 모델(GPU 카테고리)을 학원 worker-training 에 위임할 때 sync wait 타임아웃.
     # 타임아웃 시 TrainingExecutorAgent 가 CPU 인라인 폴백.
     training_task_timeout_sec: int = Field(default=900, validation_alias="TRAINING_TASK_TIMEOUT_SEC")
+    kpi_cache_ttl_seconds: int = Field(default=300, validation_alias="KPI_CACHE_TTL_SECONDS")
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
     max_daily_llm_usd: float = Field(default=20.0, validation_alias="MAX_DAILY_LLM_USD")
 
@@ -99,8 +100,9 @@ class Settings(BaseSettings):
     # ──────────────────────────────────────────────────────────
     # GPU 레이어 수: 0=CPU 전용. GTX 1060 3GB 면 8~12 까지 시도 가능 (7b 32레이어 중 일부).
     ollama_num_gpu: int = Field(default=0, validation_alias="OLLAMA_NUM_GPU")
-    # CPU 스레드 수: 물리 코어 수가 보통 SMT 보다 빠름. Ryzen 7 3800XT = 8 코어 → 8.
-    ollama_num_thread: int = Field(default=8, validation_alias="OLLAMA_NUM_THREAD")
+    # CPU 스레드 수: 순수 CPU 추론은 SMT 포함 가능한 한 많은 스레드가 효율적.
+    # Ryzen 7 3800XT = 8C/16T → 14 (시스템용 2 여유).
+    ollama_num_thread: int = Field(default=14, validation_alias="OLLAMA_NUM_THREAD")
 
 
 @lru_cache(maxsize=1)

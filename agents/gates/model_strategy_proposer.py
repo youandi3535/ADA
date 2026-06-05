@@ -206,7 +206,6 @@ class ModelStrategyProposerAgent(BaseGate):
             self.logger.info("g4_custom_intent_applied", intent=custom.strip()[:120])
         else:
             rank = uc.get("adopted_rank")
-            rank = uc.get("adopted_rank")
             chosen = next(
                 (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
                 None,
@@ -226,11 +225,14 @@ class ModelStrategyProposerAgent(BaseGate):
             if isinstance(models, list) and models:
                 updates["model_candidates"] = [str(m) for m in models if m]
             extras = dict(state.category_extras or {})
-            extras["g4_strategy"] = {
+            cat_bucket = dict(extras.get(state.category) or {})
+            cat_bucket["g4_strategy"] = {
                 "title": chosen.get("title"),
                 "models": chosen.get("models") or [],
                 "is_custom": bool(chosen.get("is_custom")),
             }
+            extras[state.category] = cat_bucket
+            extras[state.category] = cat_bucket
             updates["category_extras"] = extras
 
         return state.with_update(**updates) if updates else state

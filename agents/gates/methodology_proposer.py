@@ -258,12 +258,20 @@ class MethodologyProposerAgent(BaseGate):
 
         # 2) custom_intent — 사용자가 직접 입력
         custom = uc.get("custom_intent")
+        _DEFAULT_META = {"variate": None, "forecast_kind": None, "task_kind": None, "horizon_hint": None}
         if isinstance(custom, str) and custom.strip():
             updates["user_intent"] = f"{(state.user_intent or '').strip()} (방법론: {custom.strip()})".strip()
             if "category" not in updates:
                 inferred = _infer_category_from_text(custom, state.category)
                 if inferred != state.category:
                     updates["category"] = inferred
+            updates["chosen_recipe"] = {
+                "id": 0,
+                "title": custom.strip(),
+                "methodology": custom.strip(),
+                "is_custom": True,
+                "meta": dict(_DEFAULT_META),
+            }
             self.logger.info("g3_custom_intent_applied", intent=custom.strip()[:120])
         else:
             # 3) adopted_rank — proposals 에서 선택한 항목
@@ -289,6 +297,14 @@ class MethodologyProposerAgent(BaseGate):
                 # 비지도 카테고리면 target_column 무효화
                 if updates.get("category", state.category) in _UNSUPERVISED_CATEGORIES:
                     updates["target_column"] = None
+                chosen_meta = chosen.get("meta")
+                updates["chosen_recipe"] = {
+                    "id": chosen.get("id"),
+                    "title": method,
+                    "methodology": method,
+                    "is_custom": False,
+                    "meta": dict(chosen_meta) if isinstance(chosen_meta, dict) else dict(_DEFAULT_META),
+                }
                 self.logger.info(
                     "g3_proposal_adopted",
                     rank=rank,
