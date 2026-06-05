@@ -378,6 +378,8 @@ setInterval(function(){
     cur=1; follow=true; _progressKey='G2'; _shownPct=100;
     saveState();
   }
+  // jobId 없는 업로드 대기 화면에서는 타이머 렌더 생략 — textarea 포커스 보호
+  if(!jobId && cur===0) return;
   if(analyzing() || _shownPct < 100 || (cur===0 && jobId)) render();
 }, 500);
 
