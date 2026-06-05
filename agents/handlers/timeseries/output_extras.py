@@ -1,12 +1,19 @@
-"""agents.handlers.timeseries.output_extras — 시계열 산출물 추가 자산 (CS 담당, cs-day9 v2).
+"""agents.handlers.timeseries.output_extras — 시계열 산출물 추가 자산 (CS 담당, cs-day9 v3).
 
 OUT-01(PPT) / OUT-02(PDF) / OUT-04(HTML) carrier 가 임베드할 시계열 전용 차트·표·텍스트.
 
 진입함수 (dispatcher 자동 등록):
   - build(state, ctx=None) -> dict   {charts, tables, text_blocks}  ★ base.py _call_extras 가 우선 호출
-  - assets(state, ctx=None) -> dict  build 호환 래퍼 (구 인터페이스 유지)
+  - assets(state, ctx=None) -> dict  build 호환 래퍼 (구 인터페이스 유지 + NY/jh 표준 함수명)
 
 DoD: charts 에 forecast_chart + decomposition 둘 다 포함 (OUT-04 임베드).
+
+v3 보완 사항 (cs-day9 디벨롭):
+  CG-1  text_blocks list[str] 표준화 — NY/jh 와 동일, ppt.py carrier 호환
+  CH-1  신뢰도 한계 배지 — eval_result 의 증상/누수/fold 안정성을 1줄로 (text_blocks[0])
+  CH-2  forecast_chart 메타 풍부화 — 차트 제목·표 제목에 horizon/forecast_kind 명시
+  CH-3  fold_diagnostics 표 — eval_result.fold_diagnostics.available 시 tables 추가
+  CH-4  forecast_chart 신뢰도 오버레이 — 증상 C/D/E 시 PI 색·라벨 + 주의 텍스트
 
 5 단 forecast (B) + 3 단 decomposition (C):
   B-1 PI 확인 / B-2 y 재로드 / B-3 모델별 PI 재추출 / B-4 matplotlib / B-5 MinIO
@@ -38,6 +45,9 @@ FREQ_UNIT_KO = {"D": "일", "W": "주", "M": "개월", "MS": "개월", "H": "시
 MAX_FORECAST_ROWS = 20  # E-1 표 최대 행
 SEASONAL_FALLBACK = 7  # C-2b default period
 
+# CH-4 — 신뢰도 제한 트리거 증상 (헌장 7단계 증상 코드)
+LOW_TRUST_SYMPTOMS = {"C", "D", "E"}
+
 
 # ════════════════════════════════════════════════════════════════
 # 모델별 PI 재추출 (cs-day6 §F-Extension F-ext-2.2 와 일관)
@@ -60,6 +70,46 @@ def _extract_pi_from_model(model: Any, n_steps: int, alpha: float = 0.05):
         pi_df = model.predict_intervals(level=[95])
         return pi_df["lower_95"].values[:n_steps], pi_df["upper_95"].values[:n_steps]
     raise ValueError("PI 추출 불가 모델")
+
+
+# ════════════════════════════════════════════════════════════════
+# §D-0. 신뢰도 한계 배지 (CH-1 ★ 인수인계 9번 핵심)
+# ════════════════════════════════════════════════════════════════
+def _build_reliability_badge(eval_result: dict) -> str | None:
+    """evaluator 의 증상/누수/fold 진단을 1 줄 배지로.
+
+    헌장 누수 1-6 사후 진단 + 롤백 원칙 5 (fold 분산) 의 사용자 노출 표면.
+    증상 normal 이고 누수 신호 없고 fold 안정이면 배지 미생성 (None).
+    """
+    if not isinstance(eval_result, dict) or not eval_result:
+        return None
+
+    parts: list[str] = []
+
+    # (1) 증상 분류
+    symptom_obj = eval_result.get("symptom_classification") or {}
+    symptom = symptom_obj.get("symptom")
+    label = symptom_obj.get("label")
+    if symptom and symptom not in ("normal", None):
+        parts.append(f"증상 {symptom} ({label})")
+
+    # (2) 누수 의심 신호 개수
+    leakage = eval_result.get("leakage_suspect_signals") or []
+    if leakage:
+        kinds = [s.get("kind", "?") for s in leakage if isinstance(s, dict)]
+        parts.append(f"누수 신호 {len(leakage)}건 ({', '.join(kinds[:3])})")
+
+    # (3) fold 안정성
+    fold_diag = eval_result.get("fold_diagnostics") or {}
+    if fold_diag.get("available"):
+        stability = fold_diag.get("stability")
+        if stability in ("unstable", "very_unstable"):
+            parts.append(f"fold {stability} (cv={fold_diag.get('cv')})")
+
+    if not parts:
+        return None
+
+    return "⚠ 신뢰도 한계 — " + " · ".join(parts) + ". 보고서 해석 시 주의 권장."
 
 
 # ════════════════════════════════════════════════════════════════
@@ -95,6 +145,12 @@ def _eda_dict(state: Any) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _ts_extras(state: Any) -> dict:
+    """state.category_extras['timeseries'] 안전 추출."""
+    ce = getattr(state, "category_extras", None) or {}
+    return ce.get("timeseries", {}) or {}
+
+
 # ════════════════════════════════════════════════════════════════
 # §A~§F. build — 메인 진입점
 # ════════════════════════════════════════════════════════════════
@@ -113,12 +169,25 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     figsize = ctx.get("figsize", (12, 5))
     dpi = ctx.get("dpi", 100)
     metrics = bm.get("metrics") or {}
-    freq = (getattr(state, "category_extras", None) or {}).get("timeseries", {}).get("freq", "D")
+    ts_ext = _ts_extras(state)
+    freq = ts_ext.get("freq", "D")
+    forecast_kind = ts_ext.get("forecast_kind")  # CH-2: point / interval / quantile
+    variate = ts_ext.get("variate")  # CH-2: univariate / multivariate
+    horizon_hint = ts_ext.get("horizon_hint")
     model_name = bm.get("model_name", "Unknown")
+
+    # ── A-4 : eval_result 추출 (CH-1·CH-3·CH-4) ──
+    eval_result = getattr(state, "eval_result", None) or {}
+    if not isinstance(eval_result, dict):
+        eval_result = {}
+    symptom_obj = eval_result.get("symptom_classification") or {}
+    symptom_code = symptom_obj.get("symptom")
+    leakage_signals = eval_result.get("leakage_suspect_signals") or []
+    low_trust = bool(leakage_signals) or symptom_code in LOW_TRUST_SYMPTOMS
 
     charts: list[str] = []
     tables: list[dict] = []
-    text_blocks: list[dict] = []
+    text_blocks: list[str] = []  # CG-1 — list[str] 표준화 (NY/jh 호환)
 
     import numpy as np  # noqa: WPS433
 
@@ -187,12 +256,37 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
             ax.plot(idx_val, y_val_arr[: len(idx_val)], color="blue", label="실제 (val)", linewidth=1.5)
             ax.plot(idx_val[: len(y_pred_arr)], y_pred_arr, color="orange", label="예측", linewidth=1.5)
 
-            # 95% PI 음영 (B-1a or B-3a 활용)
+            # CH-4 — 95% PI 음영 (저신뢰 시 색·라벨 변경)
             if lower is not None and upper is not None:
                 L = min(len(lower), len(upper), len(idx_val))
-                ax.fill_between(idx_val[:L], lower[:L], upper[:L], alpha=0.2, color="orange", label="95% PI")
+                pi_color = "red" if low_trust else "orange"
+                pi_label = "95% PI (신뢰도 제한)" if low_trust else "95% PI"
+                ax.fill_between(idx_val[:L], lower[:L], upper[:L], alpha=0.2, color=pi_color, label=pi_label)
 
-            ax.set_title(f"Forecast — {model_name}")
+            # CH-2 — 제목에 forecast_kind / horizon 명시
+            horizon_n = horizon_hint or len(y_pred_arr)
+            kind_label = forecast_kind or "point"
+            variate_label = variate or "univariate"
+            title = f"Forecast ({kind_label}, {variate_label}) — {model_name} (h={horizon_n})"
+            ax.set_title(title)
+
+            # CH-4 — 저신뢰 주의 오버레이
+            if low_trust:
+                try:
+                    ax.text(
+                        0.99,
+                        0.97,
+                        "⚠ 누수/증상 검토 권장",
+                        transform=ax.transAxes,
+                        ha="right",
+                        va="top",
+                        fontsize=10,
+                        color="darkred",
+                        bbox={"boxstyle": "round,pad=0.3", "facecolor": "mistyrose", "alpha": 0.8},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass  # 텍스트 실패해도 차트 자체는 살림
+
             ax.set_xlabel("time")
             ax.set_ylabel(getattr(state, "target_column", None) or "y")
             ax.legend()
@@ -250,27 +344,35 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
         charts.append(decomp_path)
 
     # ════════════════════════════════════════════════════════════
-    # §D. text_blocks
+    # §D. text_blocks (CG-1 — list[str] 표준화)
     # ════════════════════════════════════════════════════════════
+    # ── D-0 : 신뢰도 한계 배지 (CH-1, 맨 앞 우선순위 1) ──
+    badge = _build_reliability_badge(eval_result)
+    if badge:
+        text_blocks.append(badge)
+
     # ── D-1 : insights 재사용 (cs-day8) ──
     insights = getattr(state, "insights", None)
     if insights and isinstance(insights, str) and insights.strip():
-        text_blocks.append({"type": "insight", "title": "분석 인사이트", "body": insights.strip()})
+        text_blocks.append(f"분석 인사이트\n{insights.strip()}")
 
     # ── D-2 : 행동권고 카드 ──
     recommendations = _build_recommendations(metrics, freq, eda)
     if recommendations:
-        text_blocks.append({"type": "action", "title": "권장 액션", "body": recommendations})
+        text_blocks.append(f"권장 액션\n{recommendations}")
 
     # ════════════════════════════════════════════════════════════
     # §E. tables
     # ════════════════════════════════════════════════════════════
-    # ── E-1 : forecast 값 표 ──
+    # ── E-1 : forecast 값 표 (CH-2 — forecast_kind 명시) ──
     if y_pred is not None:
         y_pred_arr = np.asarray(y_pred).flatten()
         if len(y_pred_arr) > 0:
             unit_ko = FREQ_UNIT_KO.get(freq, "주기")
             horizon = len(y_pred_arr)
+            kind_ko = {"point": "점예측", "interval": "구간예측", "quantile": "분위예측"}.get(
+                forecast_kind or "point", "예측"
+            )
             rows = []
             for i, pred in enumerate(y_pred_arr[: min(MAX_FORECAST_ROWS, horizon)]):
                 row = [f"t+{i + 1}", f"{float(pred):.2f}"]
@@ -281,7 +383,7 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
                 rows.append(row)
             tables.append(
                 {
-                    "title": f"다음 {horizon}{unit_ko} 예측",
+                    "title": f"다음 {horizon}{unit_ko} {kind_ko}",
                     "columns": ["시점", "예측값", "하한 (95%)", "상한 (95%)"],
                     "rows": rows,
                 }
@@ -307,6 +409,36 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     if perf_rows:
         tables.append({"title": "모델 성능 요약", "columns": ["메트릭", "값"], "rows": perf_rows})
 
+    # ── E-3 : fold_diagnostics 표 (CH-3, 가용 시) ──
+    fold_diag = eval_result.get("fold_diagnostics") or {}
+    if fold_diag.get("available"):
+        fold_rows = []
+        for label, key in [
+            ("Fold 수", "n_folds"),
+            ("평균", "mean"),
+            ("표준편차", "std"),
+            ("변동계수 (cv)", "cv"),
+            ("범위 비율", "range_ratio"),
+            ("안정성", "stability"),
+        ]:
+            v = fold_diag.get(key)
+            if v is not None:
+                fold_rows.append([label, str(v)])
+        best_f = fold_diag.get("best_fold") or {}
+        worst_f = fold_diag.get("worst_fold") or {}
+        if best_f:
+            fold_rows.append(["최고 fold", f"#{best_f.get('idx')} (score={best_f.get('score')})"])
+        if worst_f:
+            fold_rows.append(["최악 fold", f"#{worst_f.get('idx')} (score={worst_f.get('score')})"])
+        if fold_rows:
+            tables.append(
+                {
+                    "title": "Fold 안정성 진단 (walk-forward)",
+                    "columns": ["지표", "값"],
+                    "rows": fold_rows,
+                }
+            )
+
     # ════════════════════════════════════════════════════════════
     # §F. 반환 (OUTPUT_EXTRAS_KEYS 3 키)
     # ════════════════════════════════════════════════════════════
@@ -318,7 +450,7 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 # ════════════════════════════════════════════════════════════════
-# assets — build 호환 래퍼 (구 인터페이스 유지)
+# assets — build 호환 래퍼 (구 인터페이스 유지 + NY/jh 표준 함수명)
 # ════════════════════════════════════════════════════════════════
 def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """carrier 가 수신하는 추가 자산 — build 위임 (base.py 는 build 우선 호출)."""
