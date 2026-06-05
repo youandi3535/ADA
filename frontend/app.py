@@ -365,7 +365,10 @@ async function poll(){
   // 백엔드가 G2 게이트 도달 시점에 analyzing()=false 가 되어 기존 조건만으론 폴링이 멈추고,
   // 그 결과 _shownPct 가 99 에 도달해도 cur 전환을 못 한 채 화면이 stuck 된다(2026-06-04 발견).
   const g0Pending = (cur===0 && jobId && _shownPct < 100);
-  const keepPolling=(analyzing() || !!lastSubmittedGate || g0Pending) && !paused;
+  // 게이트 코드는 잡혔는데 proposals 이 아직 비어있는 상태 — analyzing()=false 이지만 폴링 유지 필요
+  // (예: G6 gate 도달 후 eval/insight 완료 전에 gate_data 가 먼저 저장된 경우)
+  const gateWaitProposals = !!curGate() && !(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+  const keepPolling=(analyzing() || !!lastSubmittedGate || g0Pending || gateWaitProposals) && !paused;
   if(keepPolling){ pollTimer=setTimeout(poll, 2500); }
   else { polling=false; }
 }
