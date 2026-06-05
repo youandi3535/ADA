@@ -593,7 +593,9 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         from ada.core.state import PipelineState as _PS_r  # noqa: WPS433
 
         _ps_r_fields = getattr(_PS_r, "model_fields", None) or _PS_r.__fields__
-        _fresh = _PS_r(**{k: update_payload[k] for k in _ps_r_fields if k in update_payload})
+        # None 값은 제외해서 Pydantic 기본값(예: task="auto")이 적용되도록 한다.
+        # update_payload 에 task=None 이 들어오면 str 필드 검증 실패 → ValidationError.
+        _fresh = _PS_r(**{k: v for k, v in update_payload.items() if k in _ps_r_fields and v is not None})
         final = await fresh_graph.ainvoke(_fresh, config=config)
         final_dict = _final_to_dict(final)
 

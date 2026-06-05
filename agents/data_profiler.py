@@ -25,36 +25,40 @@ from agents.handlers.common.shared import (
 )
 
 _PII_SYSTEM_PROMPT = (
-    "You are a data privacy expert. "
-    "Identify which columns likely contain PII (names, emails, phone numbers, "
-    "addresses, ID numbers, SSNs, etc.). "
-    "Return ONLY a JSON array of column name strings. "
-    'Example: ["full_name", "email"] -- return [] if none.'
+    "당신은 데이터 프라이버시 전문가입니다. "
+    "PII(개인식별정보) 가능성이 높은 컬럼을 식별하세요. "
+    "이름·이메일·전화번호·주소·주민번호·여권번호 등.\n\n"
+    "응답은 컬럼명 문자열의 JSON 배열만 반환. "
+    '예: ["full_name", "email"]. 해당 없으면 [].'
 )
 
 _CATEGORY_SYSTEM_PROMPT = (
-    "You are a data science expert. Classify this dataset into exactly one of:\n"
-    '- "tabular_ml"        : structured tabular data for ML classification or regression\n'
-    '- "tabular_dl"        : structured tabular data requiring deep learning\n'
-    '- "timeseries"        : data with a time/date dimension for forecasting\n'
-    '- "anomaly_detection" : data for detecting outliers or anomalies\n\n'
-    "Also identify the most likely target column to predict. "
-    "For anomaly_detection set target_column to null.\n\n"
-    "Return ONLY JSON (no markdown):\n"
-    '{"category": "tabular_ml", "target_column": "price", "reason": "brief"}'
+    "당신은 데이터 사이언스 전문가입니다. 다음 데이터셋을 정확히 한 가지 카테고리로 분류하세요:\n"
+    '- "tabular_ml"        : 분류·회귀를 위한 정형 데이터\n'
+    '- "tabular_dl"        : 딥러닝이 필요한 정형 데이터\n'
+    '- "timeseries"        : 시간/날짜 차원이 있는 예측용 데이터\n'
+    '- "anomaly_detection" : 이상치·이탈 탐지용 데이터\n\n'
+    "예측 대상이 될 가능성이 가장 높은 컬럼도 함께 식별. "
+    "anomaly_detection 인 경우 target_column 은 null.\n\n"
+    "한자(汉字)·중국어 절대 금지. reason 은 한국어 1문장.\n\n"
+    "JSON 만 반환 (마크다운 금지):\n"
+    '{"category": "tabular_ml", "target_column": "price", "reason": "한국어 1문장"}'
 )
 
 _DOMAIN_SYSTEM_PROMPT = (
-    "You are an expert data analyst. "
-    "Given column names, data types, and sample rows from a dataset, analyze:\n"
-    "1. Which domain/industry this dataset belongs to (e.g. e-commerce, healthcare, finance, logistics, etc.)\n"
-    "2. What each column means in plain language\n"
-    "3. A 1-2 sentence Korean summary of what this dataset is about\n"
-    "4. Whether a clear prediction target exists, and why\n\n"
-    "Return ONLY JSON (no markdown), all text values in Korean:\n"
-    '{"domain": "e-commerce", '
+    "당신은 데이터 분석 전문가입니다. "
+    "컬럼명·데이터 타입·샘플 행을 보고 다음 4가지를 분석하세요:\n"
+    "1. 데이터셋이 속한 도메인·산업 (예: 이커머스, 의료, 금융, 물류 등)\n"
+    "2. 각 컬럼의 의미를 평범한 한국어로 설명\n"
+    "3. 이 데이터셋이 무엇을 다루는지 한국어 1-2문장 요약\n"
+    "4. 명확한 예측 타겟이 존재하는지, 그 근거\n\n"
+    "[필수 규칙]\n"
+    "- 모든 텍스트 값(domain · dataset_summary · column_meanings · target_insight)은 한국어.\n"
+    "- 한자(漢字·汉字)·중국어 문장 절대 금지. 영문 컬럼명은 키로 그대로 유지.\n\n"
+    "JSON 만 반환 (마크다운·코드블록 금지):\n"
+    '{"domain": "이커머스", '
     '"dataset_summary": "이 데이터셋은 ...", '
-    '"column_meanings": {"col_name": "의미 설명", ...}, '
+    '"column_meanings": {"price": "상품 가격 (원)", ...}, '
     '"target_insight": "Survived 컬럼은 이진 분류의 타겟으로 적합합니다."}'
 )
 
@@ -147,7 +151,7 @@ class DataProfilerAgent(BaseAgent):
                 )
             except Exception as e:  # noqa: BLE001
                 self.logger.warning("data_card_build_failed", error=str(e))
-            return state.with_update(
+            new_state = state.with_update(
                 category=category,
                 target_column=target_column,
                 data_profile=profile,
@@ -155,6 +159,15 @@ class DataProfilerAgent(BaseAgent):
                 category_extras=merged_extras,
                 next_agent="schema_validator",
             )
+            # Phase 1.4 — ReportContext ① dataset + ② domain 적립.
+            # data_card 가 있으면 그쪽이 진실원, 없으면 profile 에서 추출.
+            try:
+                new_state = _contribute_dataset_and_domain(
+                    self, new_state, df, data_card, profile, pii_extras or {}, domain_analysis or {}
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("contribute_dataset_failed", error=str(e))
+            return new_state
 
     # ------------------------------------------------------------------
     # LLM helpers
@@ -319,6 +332,104 @@ def _anonymize_uploaded_df(df: Any, state: Any) -> tuple[Any, dict[str, Any]]:
         return masked_df, {"mapping": mapping, "columns": pii_cols}
     except Exception:  # noqa: BLE001
         return df, {}
+
+
+def _contribute_dataset_and_domain(
+    agent: Any,
+    state: Any,
+    df: Any,
+    data_card: dict[str, Any] | None,
+    profile: dict[str, Any],
+    pii_extras: dict[str, Any],
+    domain_analysis: dict[str, Any],
+) -> Any:
+    """ReportContext ① dataset + ② domain 적립 (Phase 1.4).
+
+    data_card 가 있으면 정규화된 형태에서 추출, 없으면 profile 에서 추출.
+    카테고리 4종 모두 동일 스키마 — outputs.context.schema.DatasetProfile.
+    """
+    # 컬럼·dtype·shape — data_card.schema 우선
+    schema_card = (data_card or {}).get("schema") or {}
+    dtypes = dict(schema_card.get("dtypes") or profile.get("dtypes") or {})
+    try:
+        n_rows, n_cols = int(df.shape[0]), int(df.shape[1])
+    except Exception:
+        identity = (data_card or {}).get("identity") or {}
+        n_rows = int(identity.get("row_count", 0))
+        n_cols = int(identity.get("col_count", 0))
+
+    # 통계 — data_card.dictionary 에서 추출
+    dictionary = (data_card or {}).get("dictionary") or {}
+    missing_rate: dict[str, float] = {}
+    cardinality: dict[str, int] = {}
+    numeric_stats: dict[str, dict[str, float]] = {}
+    for col, info in dictionary.items():
+        if not isinstance(info, dict):
+            continue
+        mp = info.get("missing_pct")
+        if isinstance(mp, (int, float)):
+            missing_rate[col] = round(float(mp) / 100.0, 4)
+        nu = info.get("nunique")
+        if isinstance(nu, int):
+            cardinality[col] = nu
+        # 숫자형 통계 — min/max/mean 만 있을 때
+        if {"min", "max", "mean"} & set(info.keys()):
+            numeric_stats[col] = {
+                "min": float(info["min"]) if isinstance(info.get("min"), (int, float)) else 0.0,
+                "max": float(info["max"]) if isinstance(info.get("max"), (int, float)) else 0.0,
+                "mean": float(info["mean"]) if isinstance(info.get("mean"), (int, float)) else 0.0,
+            }
+
+    # 샘플 헤드 (PII 마스킹본 우선)
+    sample_head: list[dict[str, Any]] = []
+    try:
+        sample_head = df.head(5).fillna("").astype(str).to_dict(orient="records")
+    except Exception:
+        pass
+
+    # 시간 컬럼 — data_card.temporal_drift 활용
+    temporal = (data_card or {}).get("temporal_drift") or {}
+    time_cols = list(temporal.get("time_columns") or [])
+    detected_time_col = time_cols[0] if time_cols else None
+
+    # PK 후보 = ID 컬럼 후보
+    granularity = (data_card or {}).get("granularity") or {}
+    detected_id_cols = list(granularity.get("pk_candidates") or [])
+
+    file_meta: dict[str, Any] = {
+        "size_mb": round(int(schema_card.get("memory_bytes") or 0) / (1024 * 1024), 3),
+        "encoding": "utf-8",
+        "source": (data_card or {}).get("identity", {}).get("source_hint", "user_upload"),
+    }
+
+    dataset_payload: dict[str, Any] = {
+        "dataset_name": getattr(state, "file_id", "") or "",
+        "dataset_hash": str((data_card or {}).get("reproducibility", {}).get("data_hash_sample", "")),
+        "shape": {"rows": n_rows, "cols": n_cols},
+        "dtypes": dtypes,
+        "missing_rate": missing_rate,
+        "cardinality": cardinality,
+        "sample_head": sample_head[:5],
+        "numeric_stats": numeric_stats,
+        "categorical_top": {},  # data_card 에 없음 — categorical_top 은 EDA 단계 보강
+        "detected_target": getattr(state, "target_column", None),
+        "detected_time_col": detected_time_col,
+        "detected_id_cols": detected_id_cols[:5],
+        "file_meta": file_meta,
+    }
+    new_state = agent.contribute_to_context(state, "dataset", dataset_payload)
+
+    # ② domain — 가능한 정보만 (web 인용은 DomainEnricher 가 나중에 보강)
+    column_meanings = (domain_analysis or {}).get("column_meanings") or {}
+    glossary = {k: str(v) for k, v in column_meanings.items() if isinstance(v, str)}
+    domain_payload: dict[str, Any] = {
+        "inferred_industry": (domain_analysis or {}).get("domain") or None,
+        "inferred_use_case": (domain_analysis or {}).get("dataset_summary") or None,
+        "glossary": glossary,
+        # audience_inference 는 AudienceAdapter (Phase 2) 가 보강 — 여기서는 기본값 유지.
+    }
+    new_state = agent.contribute_to_context(new_state, "domain", domain_payload)
+    return new_state
 
 
 def _merge_pii_extras(current_extras: dict[str, Any] | None, new_pii: dict[str, Any]) -> dict[str, Any]:
@@ -731,13 +842,6 @@ def _category_specific_checks(
                     checks["contamination_pct"] = round((minor / n) * 100, 3)
                 else:
                     checks["labeled"] = False
-            else:
-                checks["labeled"] = False
-                checks["contamination_pct"] = None
-            checks["dataset_size"] = n_rows
-            checks["anomaly_type_hint"] = "point_or_contextual"  # 도메인 입력 필요
-            num_cols = [c for c in columns if dtypes.get(c, "").startswith(("int", "float"))]
-            checks["numeric_feature_count"] = len(num_cols)
-    except Exception as e:  # noqa: BLE001
-        checks["error"] = str(e)
+    except Exception:
+        pass
     return checks

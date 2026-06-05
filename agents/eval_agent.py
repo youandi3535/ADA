@@ -72,12 +72,90 @@ class EvalAgent(BaseAgent):
 
             # 3) 분기
             if eval_result["passed"]:
-                return state.with_update(eval_result=eval_result, next_agent="explainability")
-            new_re_loop = state.re_loop_count + 1
-            if new_re_loop <= state.max_re_loop:
-                return state.with_update(
-                    eval_result=eval_result, re_loop_count=new_re_loop, next_agent="training_executor"
-                )
-            return state.with_update(
-                eval_result=eval_result, error="평가 임계치 미달 + 재루프 한도 도달", next_agent="error_recovery"
-            )
+                new_state = state.with_update(eval_result=eval_result, next_agent="explainability")
+            else:
+                new_re_loop = state.re_loop_count + 1
+                if new_re_loop <= state.max_re_loop:
+                    new_state = state.with_update(
+                        eval_result=eval_result,
+                        re_loop_count=new_re_loop,
+                        next_agent="training_executor",
+                    )
+                else:
+                    new_state = state.with_update(
+                        eval_result=eval_result,
+                        error="평가 임계치 미달 + 재루프 한도 도달",
+                        next_agent="error_recovery",
+                    )
+
+            # Phase 1.4 — ReportContext ⑧ evaluation + ⑩ limitations 적립.
+            try:
+                new_state = _contribute_evaluation_and_limitations(self, new_state, eval_result)
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("contribute_eval_failed", error=str(e))
+            return new_state
+
+
+# ==============================================================
+# Phase 1.4 — ReportContext 적립 헬퍼 (module-level)
+# ==============================================================
+
+
+def _contribute_evaluation_and_limitations(agent: Any, state: Any, eval_result: dict[str, Any]) -> Any:
+    """eval_result + best_model.metrics → evaluation + limitations 적립.
+
+    primary_metric 은 best_model.metrics 의 첫 항목 또는 카테고리 기본 후보로 추정.
+    BusinessImpactQuantifier (Phase 2) 가 business_kpi 를 나중에 보강.
+    """
+    bm = getattr(state, "best_model", None) or {}
+    metrics_raw = bm.get("metrics") or {}
+
+    metrics_normalized: dict[str, dict[str, Any]] = {}
+    for name, value in metrics_raw.items():
+        if isinstance(value, (int, float)):
+            metrics_normalized[str(name)] = {"value": float(value)}
+        elif isinstance(value, dict):
+            metrics_normalized[str(name)] = {**value}
+        else:
+            metrics_normalized[str(name)] = {"value": value}
+
+    # primary_metric — 카테고리 친화 후보 우선
+    category = getattr(state, "category", "") or ""
+    preferred = {
+        "tabular_ml": ["auc", "roc_auc", "f1", "accuracy", "rmse", "mae"],
+        "tabular_dl": ["auc", "f1", "accuracy", "rmse"],
+        "timeseries": ["smape", "mape", "rmse", "mae"],
+        "anomaly_detection": ["pr_auc", "f1", "precision", "recall"],
+    }.get(category, [])
+    primary_name = next((p for p in preferred if p in metrics_normalized), None)
+    if not primary_name and metrics_normalized:
+        primary_name = next(iter(metrics_normalized))
+
+    primary_payload: dict[str, Any] = {}
+    if primary_name:
+        primary_payload = {
+            "name": primary_name,
+            "value": metrics_normalized[primary_name].get("value"),
+            "direction": "lower_better"
+            if any(t in primary_name.lower() for t in ("rmse", "mae", "mape", "smape", "loss"))
+            else "higher_better",
+        }
+
+    evaluation_payload: dict[str, Any] = {
+        "primary_metric": primary_payload,
+        "metrics": metrics_normalized,
+        "gate_passed": bool(eval_result.get("passed", False)),
+        "gate_rationale": str(eval_result.get("rationale", "")),
+    }
+    new_state = agent.contribute_to_context(state, "evaluation", evaluation_payload)
+
+    # ⑩ limitations — threshold_violations 를 model_caveats 로 매핑.
+    violations = eval_result.get("threshold_violations") or []
+    if violations:
+        caveats = [str(v) for v in violations if v]
+        new_state = agent.contribute_to_context(
+            new_state,
+            "limitations",
+            {"model_caveats": caveats},
+        )
+    return new_state

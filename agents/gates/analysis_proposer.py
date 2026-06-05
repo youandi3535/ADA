@@ -14,32 +14,39 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ada.core.lang_guard import looks_non_korean, with_korean_guard
 from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
 
-SYSTEM_PROMPT = (
-    "You are a data strategy consultant. "
-    "Given the user intent and data profile, propose exactly TWO distinct analysis DIRECTIONS. "
-    "Each direction must be a concrete ML/DL analysis approach — for example: "
-    "binary classification, multi-class classification, regression, time-series forecasting, "
-    "anomaly detection, clustering, ranking, survival analysis, etc. "
-    "The two options must be genuinely different in their analytical goal or methodology. "
-    "Do NOT propose EDA, data exploration, or visualization as a direction — "
-    "those are steps within an analysis, not a direction itself. "
-    "For Option 1 pick the highest-confidence direction; "
-    "for Option 2 pick the second-best direction that offers a meaningfully different angle. "
-    "Both titles and rationales must be in Korean (1-2 sentences). "
-    "For EACH option, also determine:\n"
-    "  - category: one of tabular_ml | tabular_dl | timeseries | anomaly_detection\n"
-    "    (use anomaly_detection for clustering / unsupervised approaches)\n"
+SYSTEM_PROMPT = with_korean_guard(
+    "당신은 데이터 전략 컨설턴트입니다. "
+    "사용자 의도와 데이터 프로파일을 보고 서로 다른 분석 방향 2개를 한국어로 제안합니다.\n\n"
+    "각 방향은 구체적인 ML/DL 분석 접근법이어야 합니다. 예시: "
+    "이진 분류, 다중 분류, 회귀, 시계열 예측, 이상치 탐지, 클러스터링, 랭킹, 생존 분석 등.\n"
+    "두 옵션은 분석 목표 또는 방법론에서 실질적으로 달라야 합니다.\n\n"
+    "주의:\n"
+    "- EDA·데이터 탐색·시각화 자체는 분석 '방향' 이 아닙니다. 제안 금지.\n"
+    "- Option 1 은 가장 확신 높은 방향, Option 2 는 의미 있게 다른 각도의 차선책.\n"
+    "- title 과 rationale 은 반드시 한국어로 작성. 한자(汉字)·중국어 절대 금지.\n"
+    "- 영문 컬럼명이 입력에 있어도 설명은 모두 한국어로 풀어 씁니다.\n\n"
+    "각 옵션에 다음 메타도 함께 결정:\n"
+    "  - category: tabular_ml | tabular_dl | timeseries | anomaly_detection 중 하나\n"
+    "    (클러스터링·비지도 접근은 anomaly_detection 으로)\n"
     "  - approach: supervised_classification | supervised_regression | unsupervised_clustering"
     " | anomaly_detection | time_series_forecasting | supervised_other\n"
-    "  - target_column: supervised target column name, or null for unsupervised\n"
-    "Reply with a JSON array of exactly 2 objects, no markdown:\n"
-    '[{"id": 1, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0, '
-    '"category": "tabular_ml", "approach": "supervised_classification", "target_column": "col"}, '
-    '{"id": 2, "title": "...", "rationale": "한국어 1-2문장", "score": 0.0-1.0, '
+    "  - target_column: 지도학습의 타겟 컬럼명, 비지도면 null\n\n"
+    "정확히 2개 객체의 JSON 배열만 반환 (마크다운·코드블록 금지):\n"
+    '[{"id": 1, "title": "한국어 제목", "rationale": "한국어 1-2문장 설명", "score": 0.0-1.0, '
+    '"category": "tabular_ml", "approach": "supervised_classification", "target_column": "컬럼명"}, '
+    '{"id": 2, "title": "한국어 제목", "rationale": "한국어 1-2문장 설명", "score": 0.0-1.0, '
     '"category": "anomaly_detection", "approach": "unsupervised_clustering", "target_column": null}]'
+)
+
+# Retry 시 더 강한 한국어 지시
+KOREAN_RETRY_HINT = (
+    "이전 응답에 한자(中文)가 포함되어 거부됩니다. "
+    "반드시 한국어로만 다시 작성하세요. "
+    "한자(漢字·汉字)·중국어·영어 문장 금지."
 )
 
 _UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
@@ -135,15 +142,40 @@ class AnalysisProposerAgent(BaseGate):
             "data_profile": state.data_profile,
             "category": state.category,
         }
+        user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
-                user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
+                user_prompt=user_payload,
                 max_tokens=600,
                 temperature=0.3,
                 json_mode=True,
             )
             arr = self._safe_parse_json_array(raw)
+
+            # 한자 감지 → 강한 한국어 지시로 1회 retry
+            if arr and self._has_non_korean(arr):
+                self.logger.warning("g2_cjk_detected_retry")
+                retry_user = KOREAN_RETRY_HINT + "\n\n다시 작성할 데이터:\n" + user_payload
+                try:
+                    raw2 = await self._call_llm(
+                        system_prompt=SYSTEM_PROMPT,
+                        user_prompt=retry_user,
+                        max_tokens=600,
+                        temperature=0.2,
+                        json_mode=True,
+                    )
+                    arr2 = self._safe_parse_json_array(raw2)
+                    if arr2 and not self._has_non_korean(arr2):
+                        arr = arr2
+                    elif arr2:
+                        # 둘 다 한자 → 폴백 사용 (아래로 fall-through)
+                        self.logger.warning("g2_cjk_persist_after_retry")
+                        arr = []
+                except Exception as e:
+                    self.logger.warning("g2_retry_failed", error=str(e))
+                    arr = []
+
             if arr:
                 llm_opts = arr[: self.n_proposals]
                 for i, opt in enumerate(llm_opts, start=1):
@@ -157,6 +189,18 @@ class AnalysisProposerAgent(BaseGate):
             [{"id": 1, "title": "기본 분석", "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
         )
         return list(base) + [_CUSTOM_OPTION]
+
+    @staticmethod
+    def _has_non_korean(options: list[dict[str, Any]]) -> bool:
+        """옵션의 title/rationale 중 한자가 포함된 항목이 있으면 True."""
+        for opt in options:
+            if not isinstance(opt, dict):
+                continue
+            for key in ("title", "rationale"):
+                v = opt.get(key)
+                if isinstance(v, str) and looks_non_korean(v):
+                    return True
+        return False
 
     def _apply_choice(
         self,

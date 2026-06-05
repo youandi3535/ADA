@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ada.core.breaker import get_breaker
 from ada.core.config import settings
 from ada.core.logger import bind_context, get_logger, log_agent_run
-from ada.core.state import PipelineState
+from ada.core.state import REPORT_CONTEXT_STAGES, PipelineState
 from agents.personas import get_persona
 
 
@@ -49,6 +49,99 @@ class BaseAgent(abc.ABC):
         """ClassName → snake_case key for AGENT_PROGRESS_MAP."""
         name = class_name.removesuffix("Agent")
         return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+    # ==============================================================
+    # Phase 1.2 — ReportContext 적립 표준 진입점
+    # --------------------------------------------------------------
+    # 모든 에이전트는 자기 stage 에 contribute_to_context() 로 적립.
+    # 13묶음 stage 키는 ada.core.state.REPORT_CONTEXT_STAGES 가 진실원.
+    # ==============================================================
+
+    def contribute_to_context(
+        self,
+        state: PipelineState,
+        stage: str,
+        payload: dict[str, Any],
+        *,
+        merge: bool = True,
+    ) -> PipelineState:
+        """``state.report_context[stage]`` 에 payload 적립.
+
+        Args:
+            state: 현재 파이프라인 상태.
+            stage: ``REPORT_CONTEXT_STAGES`` 중 하나.
+            payload: stage 에 저장할 dict. ``None``/비-dict 면 무시 (warning 만).
+            merge: ``True`` 면 기존 stage dict 와 shallow merge (기본),
+                   ``False`` 면 통째 교체.
+
+        Returns:
+            새 ``PipelineState`` (R-005 준수). 입력 state 는 변경하지 않음.
+
+        Notes:
+            - stage 가 잘못된 경우 warning 만 남기고 원본 state 반환 (silent-safe).
+            - 본 hook 은 의무가 아니라 권장 — 호출 안 해도 carrier 는 동작.
+            - ``builder.py`` 가 state 의 기존 필드(best_model 등)와 동기화하므로
+              중복 적립도 안전.
+        """
+        if stage not in REPORT_CONTEXT_STAGES:
+            try:
+                self.logger.warning(
+                    "contribute_invalid_stage",
+                    stage=stage,
+                    valid=REPORT_CONTEXT_STAGES,
+                )
+            except Exception:
+                pass
+            return state
+        if not isinstance(payload, dict):
+            try:
+                self.logger.warning(
+                    "contribute_payload_not_dict",
+                    stage=stage,
+                    type=type(payload).__name__,
+                )
+            except Exception:
+                pass
+            return state
+
+        ctx = dict(state.report_context or {})
+        current = ctx.get(stage)
+        if merge and isinstance(current, dict):
+            ctx[stage] = {**current, **payload}
+        else:
+            ctx[stage] = dict(payload)
+        return state.with_update(report_context=ctx)
+
+    def append_to_context_list(
+        self,
+        state: PipelineState,
+        stage: str,
+        sub_key: str,
+        items: list[Any],
+    ) -> PipelineState:
+        """``state.report_context[stage][sub_key]`` 리스트에 ``items`` extend.
+
+        ``stage`` 가 dict 가 아니거나 ``sub_key`` 가 list 가 아니면 자동 초기화.
+        """
+        if stage not in REPORT_CONTEXT_STAGES:
+            try:
+                self.logger.warning("append_invalid_stage", stage=stage)
+            except Exception:
+                pass
+            return state
+        if not isinstance(items, list):
+            items = [items]
+
+        ctx = dict(state.report_context or {})
+        bucket = ctx.get(stage)
+        if not isinstance(bucket, dict):
+            bucket = {}
+        existing = bucket.get(sub_key)
+        if not isinstance(existing, list):
+            existing = []
+        bucket[sub_key] = [*existing, *items]
+        ctx[stage] = bucket
+        return state.with_update(report_context=ctx)
 
     @asynccontextmanager
     async def log_agent_run(self, state: PipelineState) -> AsyncIterator[None]:
@@ -169,6 +262,13 @@ class BaseAgent(abc.ABC):
     ) -> str:
         prefix = f"{self.persona}\n\n" if self.persona else ""
         full_system = prefix + system_prompt
+        # 한국어 가드 자동 부착 — qwen2.5:7b 중국어 응답 차단 (전 에이전트 일괄 적용).
+        try:
+            from ada.core.lang_guard import with_korean_guard
+
+            full_system = with_korean_guard(full_system)
+        except Exception:
+            pass
 
         # LLM 호출 시작 시점 phase='llm_start' 발행 + 호출 중 매초 보간 task 가동.
         # 호출 시간이 데이터·모델에 따라 가변이므로, llm_start→llm_end 사이를 elapsed/예측 시간
@@ -178,8 +278,27 @@ class BaseAgent(abc.ABC):
         job_id = getattr(self, "_current_job_id", None)
         if agent_key and job_id:
             interp_task = await self._start_llm_progress_interp(agent_key, job_id)
+        # Routing 결정:
+        #   1. InsightAgent 는 use_anthropic_for_insight=True 면 Anthropic 우선
+        #   2. use_ollama_for_analysis=True 면 Ollama (qwen2.5:7b 기본 — 서버 성능 한계)
+        #   3. anthropic_api_key 있으면 Anthropic API
+        #   4. fallback: Claude CLI
+        agent_cls = self.__class__.__name__
+        force_anthropic = (
+            agent_cls == "InsightAgent"
+            and getattr(settings, "use_anthropic_for_insight", False)
+            and bool(settings.anthropic_api_key)
+        )
+        use_ollama = getattr(settings, "use_ollama_for_analysis", False) and not force_anthropic
         try:
-            if settings.anthropic_api_key:
+            if use_ollama:
+                text = await self._call_llm_ollama(
+                    system_prompt=full_system,
+                    user_prompt=user_prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            elif settings.anthropic_api_key:
                 text = await self._call_llm_api(
                     system_prompt=full_system,
                     user_prompt=user_prompt,
@@ -334,6 +453,99 @@ class BaseAgent(abc.ABC):
                 text += blk.text
         return text
 
+    async def _call_llm_ollama(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> str:
+        """Ollama /api/chat 호출 (asyncio.to_thread + urllib).
+
+        분석 파이프라인 전 과정에서 사용. settings.ollama_model_analysis 기본 = qwen2.5:7b
+        (서버·로컬 PC 성능 한계로 14b 미사용).
+        Anthropic API 와 동일한 (system, user) → text 시그니처 유지.
+        """
+        import json as _json
+        import urllib.error as _ue
+        import urllib.request as _ur
+
+        base_url = settings.ollama_base_url.rstrip("/")
+        model = settings.ollama_model_analysis
+
+        payload = _json.dumps(
+            {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "stream": False,
+                "options": {
+                    "num_predict": max_tokens,
+                    "temperature": temperature,
+                    "top_p": 0.9,
+                    "num_gpu": getattr(settings, "ollama_num_gpu", 0),
+                    "num_thread": getattr(settings, "ollama_num_thread", 8),
+                },
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+        from ada.core.langfuse_client import track_llm
+
+        def _do_call() -> str:
+            req = _ur.Request(
+                f"{base_url}/api/chat",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with _ur.urlopen(req, timeout=180) as resp:
+                    data = _json.loads(resp.read())
+                return data.get("message", {}).get("content", "") or ""
+            except (_ue.URLError, TimeoutError, OSError, ValueError) as e:
+                self.logger.error("ollama_call_failed", error=str(e), model=model)
+                raise
+
+        with track_llm(
+            name=self.__class__.__name__,
+            model=model,
+            job_id=getattr(self, "_current_job_id", None),
+            agent=self.__class__.__name__,
+        ) as span:
+            try:
+                text = await asyncio.to_thread(_do_call)
+            except Exception as e:
+                if span is not None and hasattr(span, "update"):
+                    try:
+                        span.update(level="ERROR", status_message=str(e)[:200])
+                    except Exception:
+                        pass
+                raise
+            self._last_input_tokens = (len(system_prompt) + len(user_prompt)) // 4
+            self._last_output_tokens = len(text) // 4
+            if span is not None and hasattr(span, "update"):
+                try:
+                    span.update(
+                        metadata={
+                            "input_tokens_est": self._last_input_tokens,
+                            "output_tokens_est": self._last_output_tokens,
+                            "backend": "ollama",
+                        }
+                    )
+                except Exception:
+                    pass
+            try:
+                from ada.observability.metrics import record_llm_tokens
+
+                record_llm_tokens(model, self._last_input_tokens, self._last_output_tokens)
+            except Exception:
+                pass
+        return text
+
     async def _call_llm_cli(
         self,
         *,
@@ -341,7 +553,6 @@ class BaseAgent(abc.ABC):
         user_prompt: str,
         max_tokens: int,
     ) -> str:
-        import asyncio
         import json as _json
         import shutil
         import subprocess
@@ -350,7 +561,6 @@ class BaseAgent(abc.ABC):
             raise RuntimeError(
                 "Claude CLI missing. `npm install -g @anthropic-ai/claude-code` or set ANTHROPIC_API_KEY."
             )
-
         prompt = f"[SYSTEM]\n{system_prompt}\n\n[USER]\n{user_prompt}"
 
         def _run() -> str:
@@ -363,13 +573,11 @@ class BaseAgent(abc.ABC):
             return proc.stdout
 
         breaker = get_breaker("claude_cli", fail_max=3, reset_timeout=60)
-
         try:
             raw = await asyncio.to_thread(breaker.call, _run)
         except Exception as e:
             self.logger.error("llm_cli_call_failed", error=str(e))
             raise
-
         try:
             data = _json.loads(raw)
             return data.get("result") or data.get("content") or raw
@@ -384,6 +592,5 @@ class BaseAgent(abc.ABC):
         text = self._strip_md_fence(text)
         try:
             return json.loads(text)
-        except json.JSONDecodeError as e:
-            self.logger.error("json_parse_failed", error=str(e), text_head=text[:200])
-            raise
+        except Exception:
+            return None

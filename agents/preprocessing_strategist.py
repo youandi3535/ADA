@@ -65,4 +65,29 @@ class PreprocessingStrategistAgent(BaseAgent):
                     except Exception as e:
                         self.logger.warning("preprocess_handler_failed", category=state.category, error=str(e))
 
-            return state.with_update(preprocessing_plan=plan, next_agent="feature_engineer")
+            new_state = state.with_update(preprocessing_plan=plan, next_agent="feature_engineer")
+
+            # Phase 1.4 — ReportContext ③ preprocessing 적립.
+            # plan 의 각 step 을 PreprocessingStep dict 로 변환. before/after_stats 는
+            # feature_engineer 가 실제 적용 시 보강 가능 (현재는 placeholder).
+            try:
+                applied_steps = [
+                    {
+                        "op": str(s.get("name") or s.get("op") or ""),
+                        "scope": list(s.get("columns") or s.get("scope") or []),
+                        "params": {k: v for k, v in s.items() if k not in ("name", "op", "columns", "scope")},
+                        "rationale": str(s.get("rationale") or s.get("needs_review", "")),
+                        "before_stats": {},
+                        "after_stats": {},
+                    }
+                    for s in plan
+                    if isinstance(s, dict)
+                ]
+                new_state = self.contribute_to_context(
+                    new_state,
+                    "preprocessing",
+                    {"applied_steps": applied_steps},
+                )
+            except Exception as e:
+                self.logger.warning("contribute_preprocessing_failed", error=str(e))
+            return new_state
