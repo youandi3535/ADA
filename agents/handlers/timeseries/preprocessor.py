@@ -319,11 +319,13 @@ def plan(state: Any) -> list[dict[str, Any]]:
     )
 
     # Phase 8: 항상 마지막
+    # 누수 1-4 차단: 다단계 예측(horizon>1)이면 train 마지막과 test 첫 행 사이에
+    # horizon-1 만큼 embargo gap 을 둔다. horizon=1(단기)이면 gap=0 (기존 동작).
     steps.append(
         {
             "name": "time_order_split",
             "test_ratio": 0.2,
-            "gap": 0,  # look-ahead bias 방지: gap=예측horizon
+            "gap": max(0, horizon - 1),  # look-ahead bias 방지 (방법론 4-1·누수 1-4)
             "leakage_safe": True,
             "needs_review": False,
         }
@@ -934,6 +936,12 @@ def _apply_time_order_split(
     n = len(out)
     split_idx = max(1, int(n * (1.0 - test_ratio)))
     gap_end = min(n, split_idx + gap)
+
+    out["_split"] = "train"
+    if gap > 0 and gap_end > split_idx:
+        out.iloc[split_idx:gap_end, out.columns.get_loc("_split")] = "gap"
+    out.iloc[gap_end:, out.columns.get_loc("_split")] = "test"
+    return out
 
     out["_split"] = "train"
     if gap > 0 and gap_end > split_idx:
