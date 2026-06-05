@@ -24,7 +24,7 @@ class FeatureEngineerAgent(BaseAgent):
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
             try:
-                df = load_dataframe_from_state(state)
+                df = load_dataframe_from_state(state, prefer_processed=False)
             except Exception as e:
                 return state.with_update(error=f"데이터 로딩 실패: {e}", next_agent="error_recovery")
 

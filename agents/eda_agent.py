@@ -30,7 +30,7 @@ class EDAAgent(BaseAgent):
         async with self.log_agent_run(state):
             charts: list[str] = []
             try:
-                df = load_dataframe_from_state(state)
+                df = load_dataframe_from_state(state, prefer_processed=False)
             except Exception as e:
                 self.logger.warning("eda_load_failed", error=str(e))
                 return state.with_update(next_agent="gate_methodology")

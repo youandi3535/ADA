@@ -258,4 +258,48 @@ class MethodologyProposerAgent(BaseGate):
         if updates.get("category") in _UNSUPERVISED_CATEGORIES and state.target_column:
             updates["target_column"] = None
 
+        # 5) HJ-7 (2026-06-05) — chosen_recipe 정식 필드 채움
+        # CS evaluator/insight/selector 가 state.chosen_recipe.meta.* 우선 활용.
+        # G3 에서 채택한 방법론 정보를 recipe dict 로 직렬화. meta 4 키는 G4(model_strategy)
+        # 또는 카테고리별 proposer.g1 에서 보강할 수 있도록 기본 None 채움.
+        recipe: dict[str, Any] = {}
+        if isinstance(custom, str) and custom.strip():
+            recipe = {
+                "id": 0,
+                "title": custom.strip(),
+                "methodology": custom.strip(),
+                "is_custom": True,
+                "meta": {
+                    "variate": None,
+                    "forecast_kind": None,
+                    "task_kind": None,
+                    "horizon_hint": None,
+                },
+            }
+        else:
+            rank2 = (user_choice or {}).get("adopted_rank") if isinstance(user_choice, dict) else None
+            chosen2 = next(
+                (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank2),
+                None,
+            )
+            if chosen2:
+                recipe = {
+                    "id": chosen2.get("id"),
+                    "title": chosen2.get("title"),
+                    "methodology": chosen2.get("title"),
+                    "rationale": chosen2.get("rationale", ""),
+                    "is_custom": False,
+                    "meta": chosen2.get("meta")
+                    if isinstance(chosen2.get("meta"), dict)
+                    else {
+                        "variate": None,
+                        "forecast_kind": None,
+                        "task_kind": None,
+                        "horizon_hint": None,
+                    },
+                }
+        if recipe:
+            updates["chosen_recipe"] = recipe
+            self.logger.info("g3_chosen_recipe_set", recipe_title=recipe.get("title"))
+
         return state.with_update(**updates) if updates else state
