@@ -64,6 +64,10 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "score": 0.7,
         },
     ],
+    # HJ-3 (2026-06-05) — timeseries 만 4개 옵션 (다른 카테고리는 2개).
+    # LLM 성공 시 n_proposals=2 로 잘리지만, LLM 실패 fallback 시엔 4개 전부 노출되어
+    # 사용자가 SARIMAX 외생변수 회귀 / ETS 계절성 / seasonal_naive 베이스라인 / ARIMA 단일
+    # 등을 모두 선택 가능. pipeline.SUPPORTED_MODELS 9 종과 정합성 확보 목적.
     "timeseries": [
         {
             "id": 1,
@@ -78,6 +82,26 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "models": ["TFT", "PatchTST", "Informer"],
             "rationale": "Transformer 계열로 긴 시계열 의존성을 학습해 장기 예측에서 높은 정확도를 기대할 수 있습니다.",
             "score": 0.7,
+        },
+        {
+            "id": 3,
+            "title": "외생변수 회귀 + 베이스라인 검증",
+            "models": ["SARIMAX", "ETS", "seasonal_naive"],
+            "rationale": (
+                "외생변수(공휴일·프로모션 등)를 직접 회귀에 반영하고 ETS 계절성 모델과 "
+                "seasonal_naive 베이스라인을 함께 비교해 모델 우위를 객관적으로 검증합니다."
+            ),
+            "score": 0.80,
+        },
+        {
+            "id": 4,
+            "title": "고전 통계 단일 (해석성 우선)",
+            "models": ["ARIMA", "SARIMA", "ETS"],
+            "rationale": (
+                "해석 가능성과 빠른 학습이 중요한 환경에서 차분/계절 차분/지수평활 3종을 "
+                "비교해 가장 안정적인 통계 모델을 선택합니다."
+            ),
+            "score": 0.75,
         },
     ],
     "anomaly_detection": [
@@ -117,7 +141,7 @@ class ModelStrategyProposerAgent(BaseGate):
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
-                user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
+                user_prompt=json.dumps(payload, ensure_ascii=False, default=str)[:4000],
                 max_tokens=700,
                 temperature=0.2,
                 json_mode=True,
