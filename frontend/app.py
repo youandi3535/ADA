@@ -235,7 +235,8 @@ function resetAll(){
   render();
 }
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
-  G2:'분석 방향 제안 완료',G3:'방법론 제안 완료',G4:'모델 전략 제안 완료',G5:'최적 모델 선정 완료',G6:'산출물 선택 완료'};
+  G2:'분석 방향 제안 완료',G3:'방법론 제안 완료',G4:'모델 전략 제안 완료',G5:'최적 모델 선정 완료',G6:'산출물 선택 완료',
+  error_recovery:'오류 복구 중',self_learning_dispatch:'학습 결과 저장 중'};
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
@@ -670,8 +671,8 @@ function render(){
   document.getElementById('content').innerHTML=
     (errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur)+progressBar();
   document.getElementById('curName').textContent=steps[cur].label;
-  // 상단 헤더 진행률 — progressBar 와 동일한 _stageProgress() 사용 → 카드 안 진행바와 항상 일치.
-  document.getElementById('curPct').textContent=_stageProgress()+'%';
+  // 상단 헤더 진행률 — 단계 전체(7개) 기준 달성도. 카드 안 로딩바(_stageProgress)와 다른 지표.
+  document.getElementById('curPct').textContent=Math.round(frontier/(N-1)*100)+'%';
   document.getElementById('curIdx').textContent=cur+1;
   document.getElementById('curTot').textContent=N;
   const stt=document.getElementById('status');
