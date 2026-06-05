@@ -721,7 +721,7 @@ document.getElementById('prevBtn').onclick=function(){
     const goTo=cur-1;
     // G2~G5 구간에서 되돌아갈 때 이후 작업 무효화 경고
     if(goTo>=1 && goTo<=4 && maxReached>goTo){
-      if(!window.confirm(steps[goTo].label+' 단계로 돌아가면 이후 분석 결과가 초기화됩니다.\n다른 옵션으로 재분석하려면 확인을 누르세요.')) return;
+      if(!window.confirm(steps[goTo].label+' 단계로 돌아가면 이후 분석 결과가 초기화됩니다.\\n다른 옵션으로 재분석하려면 확인을 누르세요.')) return;
       Object.keys(gateCache).forEach(function(k){ if(parseInt(k.slice(1),10)>goTo+1) delete gateCache[k]; });
       maxReached=goTo; frontier=goTo;
     }
