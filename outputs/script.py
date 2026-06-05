@@ -1,4 +1,8 @@
-"""outputs.script — OUT-03 발표 대본 (.txt). ADR-008 L2 reattach 통합."""
+"""outputs.script — OUT-03 발표 대본 (.txt). ADR-008 L2 reattach 통합.
+
+HJ-4 (2026-06-05) — `_call_extras` 통합. 카테고리 핸들러의 text_blocks (신뢰도 배지·권장 액션 등)
+을 발표 대본 마지막에 "추가 권고" 섹션으로 자연스럽게 임베드.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +32,14 @@ class ScriptGenerator(OutputGenerator):
 
         bm = best_model or {}
         ev = eval_result or {}
+
+        # HJ-4 — 카테고리 extras (text_blocks 만 발표 대본에 활용. 차트·표는 시각 매체 의존)
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        extras_blocks = [reattach_pii(state, str(b)) for b in extras.get("text_blocks", [])[:3]]
+        extras_section = (
+            "\n\n추가로 다음 사항을 함께 말씀드리겠습니다.\n\n" + "\n\n".join(extras_blocks) if extras_blocks else ""
+        )
+
         body = f"""[ADA 발표 대본]
 
 여러분 안녕하세요. 오늘은 '{user_intent or "자동 분석"}' 주제로
@@ -41,7 +53,8 @@ class ScriptGenerator(OutputGenerator):
 
 {insights}
 
-평가 결과는 {"통과" if ev.get("passed") else "보완 필요"} 입니다.
+평가 결과는 {"통과" if ev.get("passed") else "보완 필요"} 입니다.{extras_section}
+
 이상으로 발표를 마치겠습니다. 감사합니다.
 """
         local = self._tmp()

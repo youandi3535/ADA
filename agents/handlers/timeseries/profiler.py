@@ -829,6 +829,73 @@ def _phase10_changepoints(series: Any, stl_result: dict[str, Any], period: int) 
 # ─────────────────────────────────────────────────────────────────
 
 
+# ════════════════════════════════════════════════════════════════
+# X1 (2026-06-05) — 타겟 자동 추천 (target_column 누락 시 graceful)
+# ════════════════════════════════════════════════════════════════
+def _suggest_target_candidates(df: Any, date_col: Optional[str] = None, top_k: int = 3) -> list[dict[str, Any]]:
+    """수치형 컬럼 중 시계열 타겟으로 적합한 top_k 자동 추천.
+
+    적합도 점수:
+      + 분산 > 0 (상수 제외)
+      + 결측 비율 < 50%
+      + autocorr(lag=1) > 0.3 (시계열성)
+      + 추세/계절성 신호 (간단 std/mean 비)
+    반환: [{column, score, reason, autocorr, std, missing_ratio}, ...]
+
+    사용자가 target_column 안 줬을 때 profile["target_candidates"] 에 노출.
+    """
+    import numpy as _np
+    import pandas as _pd
+
+    if not isinstance(df, _pd.DataFrame) or len(df) < 10:
+        return []
+    candidates: list[dict[str, Any]] = []
+    exclude = {date_col} if date_col else set()
+    for col in df.columns:
+        if col in exclude:
+            continue
+        try:
+            series = _pd.to_numeric(df[col], errors="coerce")
+        except Exception:
+            continue
+        # 수치형 변환 후 NaN 비율 점검
+        missing_ratio = float(series.isna().mean())
+        if missing_ratio >= 0.5:
+            continue
+        valid = series.dropna()
+        if len(valid) < 10 or float(valid.var()) <= 0:
+            continue
+        try:
+            ac1 = float(valid.autocorr(lag=1)) if len(valid) > 1 else 0.0
+        except Exception:
+            ac1 = 0.0
+        if _np.isnan(ac1):
+            ac1 = 0.0
+        # 점수 — autocorr 60% + (1-missing_ratio) 30% + 분산 정규화 10%
+        std_norm = min(1.0, float(valid.std()) / (abs(float(valid.mean())) + 1e-9))
+        score = 0.6 * max(0.0, ac1) + 0.3 * (1.0 - missing_ratio) + 0.1 * std_norm
+        reasons = []
+        if ac1 > 0.5:
+            reasons.append(f"autocorr={ac1:.2f}")
+        elif ac1 > 0.3:
+            reasons.append(f"weak_autocorr={ac1:.2f}")
+        if missing_ratio < 0.05:
+            reasons.append("low_missing")
+        candidates.append(
+            {
+                "column": str(col),
+                "score": round(score, 3),
+                "autocorr_lag1": round(ac1, 3),
+                "missing_ratio": round(missing_ratio, 3),
+                "std": round(float(valid.std()), 3),
+                "reason": ", ".join(reasons) if reasons else "수치형 + 분산>0",
+            }
+        )
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return candidates[: max(1, top_k)]
+
+
+# ════════════════════════════════════════════════════════════════
 def _phase11_target_kind(series: Any, trend: dict[str, Any]) -> dict[str, Any]:
     """
     diff 의 비감소 비율 + Hurst(Phase 6 재활용) 로 누적(cumulative) 여부 판정.
@@ -1279,6 +1346,12 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
 
     if not target_col or target_col not in df.columns:
         extra["timeseries_warning"] = "target_column 누락 — 시계열 분석 일부 생략"
+        # X1 (2026-06-05) — 타겟 자동 추천 (사용자가 target 안 줬을 때 graceful)
+        try:
+            extra["target_candidates"] = _suggest_target_candidates(df, date_col=date_col, top_k=3)
+        except Exception as _e:
+            logger.warning("target_candidate_suggest_failed: %s", _e)
+            extra["target_candidates"] = []
         for key in _NONE_ON_NO_TARGET:
             extra[key] = None
         return extra
@@ -1286,6 +1359,11 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
     try:
         if date_col:
             df = df.sort_values(date_col).reset_index(drop=True)
+        # X5 (2026-06-05) — target 의 결측 비율 노출 (preprocessor 단기 강등 권고 입력)
+        try:
+            extra["missing_ratio"] = float(df[target_col].isna().mean())
+        except Exception:
+            extra["missing_ratio"] = None
         series = df[target_col].dropna().reset_index(drop=True).astype(float)
 
     except Exception as e:

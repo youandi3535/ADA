@@ -60,7 +60,16 @@ class PipelineState(BaseModel):
 
     # EDA
     eda_charts: list[str] = Field(default_factory=list)
-    eda_summary: Optional[str] = None
+    # HJ-2 (2026-06-05) — 하위 호환 union. HJ EdaAgent 는 str (f-string 요약),
+    # CS handlers/timeseries 는 dict (구조화된 키-값 분석 결과) 로 사용.
+    # 소비측은 isinstance(eda_summary, dict) 가드 후 분기 처리 권장.
+    eda_summary: Optional[dict[str, Any] | str] = None
+
+    # G2 방법론 후보 채택 — chosen_recipe 정식 필드 (HJ-5, 2026-06-05).
+    # methodology_proposer/supervisor 가 채움. CS·NY·jh 9 에이전트에서
+    # getattr(state, "chosen_recipe", None) 패턴으로 안전 접근 중이었으나
+    # 본 필드 추가로 타입체커·IDE 지원 확보.
+    chosen_recipe: Optional[dict[str, Any]] = None
 
     # 모델링
     model_candidates: list[str] = Field(default_factory=list)

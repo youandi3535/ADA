@@ -1,10 +1,33 @@
-"""outputs.markdown_insight — OUT-07 인사이트 정리 (.md). ADR-008 L2 reattach 통합."""
+"""outputs.markdown_insight — OUT-07 인사이트 정리 (.md). ADR-008 L2 reattach 통합.
+
+HJ-4 (2026-06-05) — `_call_extras` 통합. 카테고리 핸들러의 text_blocks (신뢰도 배지·권장 액션 등)
+와 tables (예측표·성능표·fold 진단표) 를 markdown 으로 임베드.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from outputs.base import OutputGenerator, reattach_pii
+
+
+def _render_extras_md_table(tbl: dict) -> str:
+    """카테고리 extras table → GitHub-flavored Markdown."""
+    title = str(tbl.get("title", ""))
+    cols = list(tbl.get("columns") or [])
+    rows = tbl.get("rows") or []
+    if not cols or not rows:
+        return ""
+    head = "| " + " | ".join(str(c) for c in cols) + " |"
+    sep = "| " + " | ".join("---" for _ in cols) + " |"
+    body_lines = []
+    for r in rows[:10]:
+        if isinstance(r, dict):
+            cells = [str(r.get(c, "")) for c in cols]
+        else:
+            cells = [str(v) for v in r]
+        body_lines.append("| " + " | ".join(cells) + " |")
+    return f"\n### {title}\n\n{head}\n{sep}\n" + "\n".join(body_lines) + "\n"
 
 
 class InsightSummaryGenerator(OutputGenerator):
@@ -35,6 +58,19 @@ class InsightSummaryGenerator(OutputGenerator):
             for k, v in metrics.items()
         )
 
+        # HJ-4 — 카테고리 extras
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        extras_text_md = (
+            "\n\n".join(reattach_pii(state, str(b)) for b in extras.get("text_blocks", [])[:3])
+            or "_(카테고리 추가 분석 없음)_"
+        )
+        extras_tables_md = "".join(_render_extras_md_table(t) for t in extras.get("tables", [])[:3])
+        extras_charts_md = (
+            "\n".join(f"- {c}" for c in extras.get("charts", [])[:4])
+            if extras.get("charts")
+            else "_(카테고리 차트 없음)_"
+        )
+
         md = f"""# ADA 분석 인사이트 — {self.job_id}
 
 > 카테고리: **{category}** · 사용자 의도: {user_intent or "미지정"}
@@ -52,6 +88,14 @@ class InsightSummaryGenerator(OutputGenerator):
 ## 평가
 - passed: **{(eval_result or {}).get("passed", "-")}**
 - 근거: {(eval_result or {}).get("rationale", "-")}
+
+## 카테고리 분석 ({category})
+
+{extras_text_md}
+{extras_tables_md}
+
+### 카테고리 차트 (MinIO 경로)
+{extras_charts_md}
 
 ## EDA Charts (MinIO 경로)
 {chr(10).join(f"- {c}" for c in eda_charts) if eda_charts else "_(차트 없음)_"}

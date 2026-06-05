@@ -128,14 +128,15 @@ class OutputGenerator(abc.ABC):
         except Exception:
             return {}
 
-        fn = get_handler(state.category, "build") or get_handler(state.category, "assets")
+        cat = getattr(state, "category", None)
+        fn = get_handler(cat, "build") or get_handler(cat, "assets")
         if fn is None:
             # 카테고리에 build/assets 핸들러가 없는 것 자체는 정상(선택적 훅).
             # 하지만 디버깅 시 어떤 carrier 가 무엇을 못 받는지 추적할 수 있도록 debug 로 남김.
             try:
                 from ada.core.logger import get_logger as _gl
 
-                _gl("output_extras").debug("no_extras_handler", category=state.category, carrier=type(self).__name__)
+                _gl("output_extras").debug("no_extras_handler", category=cat, carrier=type(self).__name__)
             except Exception:  # noqa: BLE001
                 pass
             return {}
@@ -151,7 +152,7 @@ class OutputGenerator(abc.ABC):
 
                 _gl("output_extras").warning(
                     "extras_handler_failed",
-                    category=state.category,
+                    category=cat,
                     carrier=type(self).__name__,
                     error=str(e),
                 )

@@ -18,7 +18,6 @@ ENV/
 .env
 .env.local
 .env.*.local
-.env.vps
 *.key
 *.pem
 secrets.json
@@ -72,3 +71,4 @@ catboost_info/
 # Claude Code 내부 probe 파일
 _bashprobe_*.py
 _probe_*
+.env.vps

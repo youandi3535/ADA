@@ -1,12 +1,22 @@
-"""outputs.html_dashboard — OUT-04 정적 단일 파일 대시보드. ADR-008 L2 reattach 통합."""
+"""outputs.html_dashboard — OUT-04 정적 단일 파일 대시보드. ADR-008 L2 reattach 통합.
+
+HJ-4 (2026-06-05) — `_call_extras` 통합. 카테고리 핸들러의 build/assets 결과
+(charts·tables·text_blocks) 를 base64 inline 이미지·HTML 표·텍스트 블록으로 임베드.
+"""
 
 from __future__ import annotations
 
 import base64
+import html as html_lib
 import json
 from typing import Any
 
 from outputs.base import OutputGenerator, reattach_pii
+
+
+def _esc(s: Any) -> str:
+    """HTML 본문 escape (스크립트/태그 주입 방어)."""
+    return html_lib.escape("" if s is None else str(s))
 
 
 class DashboardArtifactGenerator(OutputGenerator):
@@ -47,6 +57,50 @@ class DashboardArtifactGenerator(OutputGenerator):
         except Exception:
             pass
 
+        # HJ-4 — 카테고리 핸들러 extras (charts/tables/text_blocks)
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        extras_chart_imgs: list[str] = []
+        try:
+            from tools.minio_tool import get_minio_client as _mc_get
+
+            mc = _mc_get()
+            for c in extras.get("charts", [])[:4]:
+                key = c.replace(f"s3://{mc.bucket}/", "") if isinstance(c, str) and c.startswith("s3://") else c
+                try:
+                    body = mc.download_bytes(key)
+                    extras_chart_imgs.append(base64.b64encode(body).decode("ascii"))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        extras_charts_html = "".join(
+            f"<div class='chart'><img src='data:image/png;base64,{b64}' /></div>" for b64 in extras_chart_imgs
+        )
+
+        def _render_extras_table(tbl: dict) -> str:
+            title = _esc(tbl.get("title", ""))
+            cols = tbl.get("columns") or []
+            rows = tbl.get("rows") or []
+            head = "".join(f"<th>{_esc(c)}</th>" for c in cols)
+            body_rows = []
+            for r in rows[:10]:
+                if isinstance(r, dict):
+                    cells = "".join(f"<td>{_esc(r.get(c, ''))}</td>" for c in cols)
+                else:
+                    cells = "".join(f"<td>{_esc(v)}</td>" for v in r)
+                body_rows.append(f"<tr>{cells}</tr>")
+            return (
+                f"<div class='extras-table'><h3>{title}</h3>"
+                f"<table><thead><tr>{head}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>"
+            )
+
+        extras_tables_html = "".join(_render_extras_table(t) for t in extras.get("tables", [])[:3])
+        extras_text_html = "".join(
+            f"<p class='extras-text'>{_esc(reattach_pii(state, str(b))).replace(chr(10), '<br>')}</p>"
+            for b in extras.get("text_blocks", [])[:3]
+        )
+
         bm = best_model or {}
         ev = eval_result or {}
         metrics = bm.get("metrics") or {}
@@ -76,6 +130,9 @@ class DashboardArtifactGenerator(OutputGenerator):
   section {{ margin: 24px 0; }}
   .pill {{ display:inline-block; padding:4px 10px; border-radius:999px; background:{accent};
            color:#fff; font-size:12px; }}
+  .extras-text {{ padding: 10px 14px; margin: 8px 0; background: #f9fafb;
+                  border-left: 4px solid {accent}; white-space: pre-wrap; }}
+  .extras-table h3 {{ margin: 12px 0 6px; font-size: 14px; color: #374151; }}
 </style>
 </head><body>
 <header>
@@ -97,6 +154,13 @@ class DashboardArtifactGenerator(OutputGenerator):
 <section>
   <h2>EDA Charts</h2>
   {charts_html}
+</section>
+
+<section>
+  <h2>카테고리 분석 ({_esc(category)})</h2>
+  {extras_text_html}
+  {extras_charts_html}
+  {extras_tables_html}
 </section>
 
 <section>

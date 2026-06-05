@@ -69,7 +69,7 @@ class DataProfilerAgent(BaseAgent):
         async with self.log_agent_run(state):
             # ① File loading -- library
             try:
-                df = load_dataframe_from_state(state)
+                df = load_dataframe_from_state(state, prefer_processed=False)
             except Exception as e:
                 return state.with_update(
                     error=f"file load failed: {e}",

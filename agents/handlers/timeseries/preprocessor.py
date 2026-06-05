@@ -199,6 +199,12 @@ def plan(state: Any) -> list[dict[str, Any]]:
     # Phase 0
     steps.append({"name": "sort_by_time", "leakage_safe": True, "needs_review": False})
 
+    # Phase 0b (D1, 2026-06-05) : 균일 시간 그리드 reindex (방법론 1단계)
+    # 누락된 시점 행 자체를 생성 → 결측 명시화. SARIMA/ETS/Prophet 같은
+    # "균일 빈도 전제" 모델 작동 보장. profiler 가 duplicate_ts_count/missing_timestamp_count
+    # 을 산출했을 때만 활성 (그렇지 않으면 skip — 시간 컬럼 없으면 자동 no-op).
+    steps.append({"name": "regular_grid", "leakage_safe": True, "needs_review": False})
+
     # Phase 1
     steps.append(
         {
@@ -319,15 +325,45 @@ def plan(state: Any) -> list[dict[str, Any]]:
     )
 
     # Phase 8: 항상 마지막
+    # 누수 1-4 차단: 다단계 예측(horizon>1)이면 train 마지막과 test 첫 행 사이에
+    # horizon-1 만큼 embargo gap 을 둔다. horizon=1(단기)이면 gap=0 (기존 동작).
     steps.append(
         {
             "name": "time_order_split",
             "test_ratio": 0.2,
-            "gap": 0,  # look-ahead bias 방지: gap=예측horizon
+            "gap": max(0, horizon - 1),  # look-ahead bias 방지 (방법론 4-1·누수 1-4)
             "leakage_safe": True,
             "needs_review": False,
         }
     )
+
+    # X5 (2026-06-05) — 결측 비율 과다 시 단기 강등 권고 메타 (cs-day10 단계 2 ❌)
+    # apply() dispatcher 는 알 수 없는 name 무시 (기본 silent) — 메타만 노출.
+    profile_x5 = getattr(state, "data_profile", None) or {}
+    mr = profile_x5.get("missing_ratio")
+    if isinstance(mr, (int, float)) and mr >= 0.30:
+        steps.append(
+            {
+                "name": "_meta_short_horizon_hint",
+                "missing_ratio": float(mr),
+                "recommendation": "장기 예측 신뢰도 낮음 — 단기 (≤7일) 강등 권고",
+                "leakage_safe": True,
+                "needs_review": True,
+            }
+        )
+
+    # D2 (2026-06-05) — 누적값 타깃 자동 변환 권고 메타 (cs-day10 롤백 4·target 재설계)
+    # profiler 가 target_kind="cumulative" 감지 시 사용자에게 차분 타깃 변환 권고.
+    # 자동 변환은 inverse_transform 동반 필요해 보류 — 메타만 노출 (insight·output_extras 활용).
+    if (getattr(state, "data_profile", None) or {}).get("target_kind") == "cumulative":
+        steps.append(
+            {
+                "name": "_meta_target_diff_recommend",
+                "recommendation": "누적값 타깃 감지 — 1차 차분 타깃 변환 검토 (부스팅 외삽 불가 방지)",
+                "leakage_safe": True,
+                "needs_review": True,
+            }
+        )
 
     return steps
 
@@ -356,6 +392,9 @@ def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
         try:
             if name == "sort_by_time":
                 out = _apply_sort_by_time(out, state)
+
+            elif name == "regular_grid":
+                out = _apply_regular_grid(out, state)
 
             elif name == "fill_missing":
                 out = _apply_fill_missing(
@@ -763,6 +802,69 @@ def _apply_exog(
 
 
 # ════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+# Phase 0b — regular_grid (D1, 2026-06-05, 방법론 1단계)
+# ════════════════════════════════════════════════════════════════
+def _apply_regular_grid(df: Any, state: Any) -> Any:
+    """균일 시간 그리드 reindex — 누락 시점 행 생성, 결측 명시화.
+
+    방법론 1단계 "균일 빈도 전제 모델 위해 완전한 시간 그리드로 reindex".
+    SARIMA/ETS/Prophet 의 작동 보장.
+
+    동작:
+      - state.category_extras["timeseries"]["freq"] 가 있고 날짜 컬럼 식별 가능 → reindex.
+      - freq 미상 또는 날짜 컬럼 없음 → no-op (인라인 안전).
+      - 신규 행은 NaN 으로 — 후속 fill_missing 이 ffill 처리.
+
+    leakage_safe : True (새 행 = NaN, 미래 정보 주입 없음)
+    """
+    try:
+        import pandas as pd  # noqa: WPS433
+
+        # freq 추출 — category_extras 우선
+        ce = (getattr(state, "category_extras", None) or {}).get("timeseries", {}) or {}
+        freq = ce.get("freq") or (getattr(state, "data_profile", None) or {}).get("freq")
+        if not freq:
+            return df
+
+        # 날짜 컬럼 식별
+        date_cols = [c for c in df.columns if str(c).lower() in ("ds", "date", "datetime", "time", "timestamp")]
+        if not date_cols:
+            # 인덱스가 DatetimeIndex 면 그대로 사용
+            if isinstance(df.index, pd.DatetimeIndex):
+                full_idx = pd.date_range(df.index.min(), df.index.max(), freq=freq)
+                # 이미 동일 길이면 skip (성능)
+                if len(full_idx) == len(df.index):
+                    return df
+                return df.reindex(full_idx)
+            return df
+
+        # 날짜 컬럼 기반 reindex — 임시 인덱스 → reindex → 컬럼 복귀
+        dc = date_cols[0]
+        try:
+            dt_series = pd.to_datetime(df[dc], errors="coerce")
+        except Exception:
+            return df
+        if dt_series.isna().all():
+            return df
+
+        out = df.copy()
+        out.index = dt_series
+        full_idx = pd.date_range(dt_series.min(), dt_series.max(), freq=freq)
+        # 이미 완전한 그리드면 skip
+        if len(full_idx) == len(out):
+            out = out.reset_index(drop=True)
+            return out
+        out = out.reindex(full_idx)
+        # 날짜 컬럼 복원
+        out[dc] = out.index
+        out = out.reset_index(drop=True)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("regular_grid 실패: %s — skip", exc)
+        return df
+
+
 # Phase 6b — calendar (달력 피처, 방법론 3-2)
 # ════════════════════════════════════════════════════════
 
