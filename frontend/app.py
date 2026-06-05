@@ -377,6 +377,8 @@ setInterval(function(){
   if(cur===0 && jobId && curGate()==='G2' && _shownPct >= 99){
     cur=1; follow=true; _progressKey='G2'; _shownPct=100;
     saveState();
+    render();  // 전환 직후 명시적 렌더 — 조건 변경으로 setInterval 자동 렌더가 빠지는 버그 방지
+    if(!polling) startPolling();
   }
   // jobId 없는 업로드 대기 화면에서는 타이머 렌더 생략 — textarea 포커스 보호
   if(!jobId && cur===0) return;
