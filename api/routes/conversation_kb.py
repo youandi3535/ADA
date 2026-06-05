@@ -438,7 +438,6 @@ async def get_unprocessed(
 
 
 @router.patch("/{conv_id}/done")
-@router.patch("/{conv_id}/done")
 async def mark_processed(
     conv_id: str,
     body: ProcessedIn,
@@ -635,7 +634,7 @@ async def list_failure_lessons(
     params: dict[str, Any] = {"limit": limit}
     if since:
         sql += " AND updated_at >= CAST(:since AS timestamptz) "
-        params["since"] = since
+        params["since"] = since.replace(" ", "+")
     sql += " ORDER BY updated_at DESC LIMIT :limit"
 
     rows = (await db.execute(text(sql).bindparams(**params))).mappings().all()
