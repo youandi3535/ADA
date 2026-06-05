@@ -185,6 +185,8 @@ def _eval_diagnostics(state: Any) -> dict:
         "symptom": er.get("symptom_classification") or {},
         "task_kind_hint": er.get("task_kind_hint"),
         "fit_quality": er.get("fit_quality") or {},
+        "residual_diag": er.get("residual_diagnostics") or {},  # G15
+        "dm_test": er.get("dm_test") or {},  # G13
     }
 
 
@@ -397,6 +399,16 @@ def _build_fallback(state: Any) -> str:
         hint = fit_q.get("hint") or ""
         if hint:
             sentences.append(hint)
+
+    # 문장 7-c (G15, 2026-06-05) — 잔차 자기상관 안내 (autocorrelated 일 때만)
+    rd = diag.get("residual_diag") or {}
+    if rd.get("kind") == "autocorrelated" and rd.get("hint"):
+        sentences.append(rd["hint"])
+
+    # 문장 7-d (G13, 2026-06-05) — DM 검정 (naive_wins 일 때만)
+    dmt = diag.get("dm_test") or {}
+    if dmt.get("verdict") == "naive_wins" and dmt.get("hint"):
+        sentences.append(dmt["hint"])
 
     # 문장 마지막 — 행동 권고
     if not leakage and (not sym_code or sym_code == "normal"):

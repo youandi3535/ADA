@@ -352,6 +352,19 @@ def plan(state: Any) -> list[dict[str, Any]]:
             }
         )
 
+    # D2 (2026-06-05) — 누적값 타깃 자동 변환 권고 메타 (cs-day10 롤백 4·target 재설계)
+    # profiler 가 target_kind="cumulative" 감지 시 사용자에게 차분 타깃 변환 권고.
+    # 자동 변환은 inverse_transform 동반 필요해 보류 — 메타만 노출 (insight·output_extras 활용).
+    if (getattr(state, "data_profile", None) or {}).get("target_kind") == "cumulative":
+        steps.append(
+            {
+                "name": "_meta_target_diff_recommend",
+                "recommendation": "누적값 타깃 감지 — 1차 차분 타깃 변환 검토 (부스팅 외삽 불가 방지)",
+                "leakage_safe": True,
+                "needs_review": True,
+            }
+        )
+
     return steps
 
 

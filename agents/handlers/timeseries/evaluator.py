@@ -167,6 +167,174 @@ def _diagnose_fit_quality(metrics: dict) -> dict[str, Any]:
 
 
 # ════════════════════════════════════════════════════════════════
+# §H5 (2026-06-05) — 학습 사후 잔차 진단 (G15)
+# ════════════════════════════════════════════════════════════════
+def _diagnose_residuals(metrics: dict) -> dict[str, Any]:
+    """잔차 자기상관·정규성·평균 검정 — 표준 시계열 분석 15단계.
+
+    pipeline.evaluate 가 metrics 에 y_pred_val·y_val_actual 을 저장하므로 검증 잔차로 진단.
+
+    반환:
+      kind     : "white_noise" | "autocorrelated" | "biased" | "unknown"
+      ljung_box_p : float | None
+      mean_pct  : 잔차 평균 / 타깃 평균 (편향 진단)
+      hint     : 한국어 권장 조치
+    """
+    if not isinstance(metrics, dict):
+        return {"kind": "unknown"}
+
+    y_pred = metrics.get("y_pred_val")
+    y_true = metrics.get("y_val_actual")
+    if not (isinstance(y_pred, list) and isinstance(y_true, list) and len(y_pred) >= 10):
+        return {"kind": "unknown", "reason": "insufficient_residuals"}
+
+    try:
+        import numpy as _np
+
+        y_pred_arr = _np.asarray(y_pred, dtype=float).flatten()
+        y_true_arr = _np.asarray(y_true, dtype=float).flatten()
+        L = min(len(y_pred_arr), len(y_true_arr))
+        residuals = y_true_arr[:L] - y_pred_arr[:L]
+        mask = ~_np.isnan(residuals)
+        residuals = residuals[mask]
+        if len(residuals) < 10:
+            return {"kind": "unknown", "reason": "too_few_after_nan"}
+
+        # (1) Ljung-Box 검정 — 잔차 자기상관 (p > 0.05 = white noise)
+        ljung_p: Any = None
+        try:
+            from statsmodels.stats.diagnostic import acorr_ljungbox  # noqa: WPS433
+
+            lb_lag = min(10, len(residuals) // 5)
+            lb = acorr_ljungbox(residuals, lags=[max(1, lb_lag)], return_df=True)
+            ljung_p = float(lb["lb_pvalue"].iloc[0])
+        except Exception:
+            pass
+
+        # (2) 평균 편향 — |mean(resid)| / mean(|y_true|)
+        y_abs_mean = float(_np.mean(_np.abs(y_true_arr[mask])))
+        mean_pct = float(abs(_np.mean(residuals)) / y_abs_mean) if y_abs_mean > 1e-9 else 0.0
+
+        # 판정
+        bias_warn = mean_pct > 0.10
+        if ljung_p is not None and ljung_p > 0.05 and not bias_warn:
+            return {
+                "kind": "white_noise",
+                "ljung_box_p": round(ljung_p, 4),
+                "mean_pct": round(mean_pct, 4),
+                "hint": "잔차가 백색잡음에 가까워 모델이 신호를 충분히 추출했습니다.",
+            }
+        if ljung_p is not None and ljung_p <= 0.05:
+            return {
+                "kind": "autocorrelated",
+                "ljung_box_p": round(ljung_p, 4),
+                "mean_pct": round(mean_pct, 4),
+                "hint": (
+                    f"잔차 자기상관 잔존 (Ljung-Box p={ljung_p:.3f} ≤ 0.05) — 모델이 잡지 못한 시간 의존성. "
+                    "lag 추가 / 차분 차수 증가 / 더 큰 ARIMA 차수 검토."
+                ),
+            }
+        if bias_warn:
+            return {
+                "kind": "biased",
+                "ljung_box_p": round(ljung_p, 4) if ljung_p is not None else None,
+                "mean_pct": round(mean_pct, 4),
+                "hint": f"잔차 평균 편향 +{mean_pct:.1%} — 추세 보정 / 상수항 추가 검토.",
+            }
+        return {"kind": "unknown", "ljung_box_p": ljung_p, "mean_pct": round(mean_pct, 4)}
+    except Exception as exc:  # noqa: BLE001
+        return {"kind": "unknown", "reason": f"diagnose_failed: {exc}"}
+
+
+# ════════════════════════════════════════════════════════════════
+# §H6 (2026-06-05) — Diebold-Mariano 검정 (G13)
+# ════════════════════════════════════════════════════════════════
+def _dm_test(metrics: dict) -> dict[str, Any]:
+    """Diebold-Mariano 검정 — top1 모델 vs naïve 예측력 통계 비교.
+
+    pipeline.evaluate 의 y_pred_val · y_val_actual + naive_kind/naive_s 활용해
+    naïve 예측 재구성 → 두 시리즈의 손실 차이 검정.
+
+    반환:
+      available  : bool
+      dm_stat    : float | None
+      p_value    : float | None
+      verdict    : "model_wins" | "naive_wins" | "tie"
+      hint       : 한국어 안내
+    """
+    if not isinstance(metrics, dict):
+        return {"available": False, "reason": "no_metrics"}
+
+    y_pred = metrics.get("y_pred_val")
+    y_true = metrics.get("y_val_actual")
+    y_train_tail = metrics.get("y_train_tail")
+    if not (isinstance(y_pred, list) and isinstance(y_true, list)):
+        return {"available": False, "reason": "no_pred_or_actual"}
+    if len(y_pred) < 5 or len(y_true) < 5:
+        return {"available": False, "reason": "too_few"}
+
+    try:
+        import numpy as _np
+
+        y_pred_arr = _np.asarray(y_pred, dtype=float).flatten()
+        y_true_arr = _np.asarray(y_true, dtype=float).flatten()
+        L = min(len(y_pred_arr), len(y_true_arr))
+        y_pred_arr = y_pred_arr[:L]
+        y_true_arr = y_true_arr[:L]
+
+        # naïve 예측 재구성 — y_train_tail 마지막 값 반복 (simple naïve)
+        if isinstance(y_train_tail, list) and len(y_train_tail) > 0:
+            naive_val = float(y_train_tail[-1])
+        else:
+            naive_val = float(y_true_arr[0])
+        y_naive = _np.full(L, naive_val)
+
+        # 손실 차이 (squared error)
+        d = (y_true_arr - y_pred_arr) ** 2 - (y_true_arr - y_naive) ** 2
+        d = d[~_np.isnan(d)]
+        if len(d) < 5:
+            return {"available": False, "reason": "nan_after_filter"}
+
+        d_mean = float(_np.mean(d))
+        d_var = float(_np.var(d, ddof=1))
+        if d_var <= 0:
+            return {"available": True, "dm_stat": 0.0, "p_value": 1.0, "verdict": "tie", "hint": "두 모델 차이 없음."}
+
+        dm_stat = d_mean / _np.sqrt(d_var / len(d))
+
+        # 양측 p-value (정규근사)
+        from scipy import stats as _st  # noqa: WPS433
+
+        p_value = float(2.0 * (1.0 - _st.norm.cdf(abs(dm_stat))))
+
+        if p_value < 0.05:
+            if d_mean < 0:
+                return {
+                    "available": True,
+                    "dm_stat": round(float(dm_stat), 3),
+                    "p_value": round(p_value, 4),
+                    "verdict": "model_wins",
+                    "hint": f"DM 검정 p={p_value:.3f} — 모델이 naïve 대비 통계적으로 우수.",
+                }
+            return {
+                "available": True,
+                "dm_stat": round(float(dm_stat), 3),
+                "p_value": round(p_value, 4),
+                "verdict": "naive_wins",
+                "hint": f"DM 검정 p={p_value:.3f} — 모델이 naïve 보다 통계적으로 못함. 모델 재검토.",
+            }
+        return {
+            "available": True,
+            "dm_stat": round(float(dm_stat), 3),
+            "p_value": round(p_value, 4),
+            "verdict": "tie",
+            "hint": f"DM 검정 p={p_value:.3f} — 모델과 naïve 간 통계적 차이 미확인.",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "reason": f"dm_failed: {exc}"}
+
+
+# ════════════════════════════════════════════════════════════════
 # §0. 헬퍼
 # ════════════════════════════════════════════════════════════════
 def _safe_mean(xs: list[float]) -> Optional[float]:
@@ -651,6 +819,8 @@ def evaluate(state: Any) -> dict[str, Any]:
         "leakage_suspect_signals": leakage_signals,
         "symptom_classification": symptom,
         "fit_quality": _diagnose_fit_quality(metrics),
+        "residual_diagnostics": _diagnose_residuals(metrics),  # G15
+        "dm_test": _dm_test(metrics),  # G13
         # L4 — task_kind 안내 (chosen_recipe 활용 시만)
         "task_kind_hint": classification_hint,
     }

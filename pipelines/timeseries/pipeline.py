@@ -163,6 +163,64 @@ class TimeSeriesPipeline(BasePipeline):
         return None
 
     # ════════════════════════════════════════════════════════════
+    # G16 (2026-06-05) — 미래 결정론적 외생변수 자동 생성
+    # ════════════════════════════════════════════════════════════
+    @staticmethod
+    def generate_future_exog(
+        last_date: Any,
+        n_steps: int,
+        freq: str = "D",
+        kinds: tuple[str, ...] = ("calendar", "fourier"),
+        fourier_period: int = 7,
+        fourier_n: int = 3,
+    ) -> Any:
+        """미래 horizon 동안의 결정론적 exog 자동 생성 — SARIMAX/Prophet forecast UX.
+
+        Parameters
+        ----------
+        last_date : str | pd.Timestamp
+            학습 데이터 마지막 날짜.
+        n_steps : int
+            예측 horizon.
+        freq : str
+            "D" (일) / "W" / "M" 등.
+        kinds : tuple[str, ...]
+            "calendar" — dayofweek/month/is_month_end/is_quarter_end 더미.
+            "fourier"  — sin/cos pairs (fourier_period/fourier_n).
+        fourier_period : int
+        fourier_n : int
+
+        Returns
+        -------
+        pd.DataFrame
+            shape=(n_steps, k). 미래 시점별 exog 값. ds 컬럼 포함.
+        """
+        import numpy as _np  # noqa: WPS433
+        import pandas as _pd  # noqa: WPS433
+
+        try:
+            last = _pd.to_datetime(last_date)
+        except Exception:
+            last = _pd.Timestamp.now()
+        future_idx = _pd.date_range(start=last, periods=int(n_steps) + 1, freq=freq)[1:]
+
+        out = _pd.DataFrame({"ds": future_idx})
+
+        if "calendar" in kinds:
+            out["cal_dayofweek"] = future_idx.dayofweek.astype("float")
+            out["cal_month"] = future_idx.month.astype("float")
+            out["cal_is_month_end"] = future_idx.is_month_end.astype("float")
+            out["cal_is_quarter_end"] = future_idx.is_quarter_end.astype("float")
+
+        if "fourier" in kinds and fourier_period and fourier_period >= 2:
+            t = _np.arange(n_steps)
+            for k in range(1, max(1, int(fourier_n)) + 1):
+                out[f"fourier_sin_{k}"] = _np.sin(2.0 * _np.pi * k * t / fourier_period)
+                out[f"fourier_cos_{k}"] = _np.cos(2.0 * _np.pi * k * t / fourier_period)
+
+        return out
+
+    # ════════════════════════════════════════════════════════════
     # train / _train_dispatch (확장 — SARIMAX/ETS/seasonal_naive 추가)
     # ════════════════════════════════════════════════════════════
     def train(self, X_train: Any, y_train: Any, model_name: str, params: dict[str, Any]) -> Any:

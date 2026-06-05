@@ -106,6 +106,17 @@ def _build_reliability_badge(eval_result: dict) -> str | None:
         if stability in ("unstable", "very_unstable"):
             parts.append(f"fold {stability} (cv={fold_diag.get('cv')})")
 
+    # (4) G15 잔차 자기상관 — 모델이 신호 못 잡음
+    residual_diag = eval_result.get("residual_diagnostics") or {}
+    if residual_diag.get("kind") == "autocorrelated":
+        lbp = residual_diag.get("ljung_box_p")
+        parts.append(f"잔차 자기상관 (Ljung-Box p={lbp})")
+
+    # (5) G13 DM 검정 — naïve 가 모델보다 통계적으로 우수
+    dm = eval_result.get("dm_test") or {}
+    if dm.get("verdict") == "naive_wins":
+        parts.append(f"DM 검정 naïve 우수 (p={dm.get('p_value')})")
+
     if not parts:
         return None
 
@@ -463,6 +474,25 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
                     "rows": fold_rows,
                 }
             )
+
+    # ── E-4 (G15+G13, 2026-06-05) : 잔차·DM 검정 표 ──
+    residual_diag2 = eval_result.get("residual_diagnostics") or {}
+    dm_test_obj = eval_result.get("dm_test") or {}
+    diag_rows = []
+    if residual_diag2.get("kind") and residual_diag2.get("kind") != "unknown":
+        diag_rows.append(["잔차 진단", str(residual_diag2.get("kind"))])
+        if residual_diag2.get("ljung_box_p") is not None:
+            diag_rows.append(["Ljung-Box p", f"{residual_diag2.get('ljung_box_p')}"])
+        if residual_diag2.get("mean_pct") is not None:
+            diag_rows.append(["잔차 평균 편향", f"{residual_diag2.get('mean_pct'):.1%}"])
+    if dm_test_obj.get("available"):
+        diag_rows.append(["DM 검정 결과", str(dm_test_obj.get("verdict"))])
+        if dm_test_obj.get("p_value") is not None:
+            diag_rows.append(["DM p-value", f"{dm_test_obj.get('p_value')}"])
+        if dm_test_obj.get("dm_stat") is not None:
+            diag_rows.append(["DM 통계량", f"{dm_test_obj.get('dm_stat')}"])
+    if diag_rows:
+        tables.append({"title": "잔차·통계 비교 검정", "columns": ["지표", "값"], "rows": diag_rows})
 
     # ════════════════════════════════════════════════════════════
     # §F. 반환 (OUTPUT_EXTRAS_KEYS 3 키)
