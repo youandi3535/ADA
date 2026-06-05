@@ -249,7 +249,7 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
             from agents.handlers.common.shared import load_dataframe_from_state
             from agents.training_executor import _split_xy
 
-            df = load_dataframe_from_state(state)
+            df = load_dataframe_from_state(state, prefer_processed=True)
             X, y = _split_xy(df, getattr(state, "target_column", None))
             split = int(len(y) * 0.8)
             y_train, y_val = y[:split], y[split:]
@@ -354,7 +354,7 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
 
             from agents.handlers.common.shared import load_dataframe_from_state, save_chart_to_minio
 
-            df = load_dataframe_from_state(state)
+            df = load_dataframe_from_state(state, prefer_processed=True)
             y = df[state.target_column].dropna()
             s = eda.get("seasonal_period") or SEASONAL_FALLBACK
 
