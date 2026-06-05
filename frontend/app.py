@@ -424,8 +424,9 @@ function _stageProgress(){
     const ag=curGate();
     const d=(ag===tg)?gateData:(gateCache[tg]||{});
     const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
-    if(ps.length){
-      _shownPct=100; return 100;  // proposals 도착 즉시 100%
+    // proposals 도착 즉시 100% — 단, 제출 직후 분석 대기(lastSubmittedGate=tg & ag=null) 상태는 제외
+    if(ps.length && !(lastSubmittedGate===tg && !ag)){
+      _shownPct=100; return 100;
     } else {
       // 단계별 독립 0~100% — 백엔드 전체 진행률(0~100)을 이 단계 구간으로 정규화.
       // cur=1(G2 로딩):14~18%, cur=2(G3):18~33%, cur=3(G4):33~50%, cur=4(G5):50~85%, cur=5(G6):85~98%
@@ -713,7 +714,9 @@ function render(){
   const _llmCount=function(d){ return (d.proposals||[]).filter(function(p){return !p.is_custom;}).length; };
   const atCurrentGate=(cur===frontier)&&!!curGate()&&_llmCount(gateData)>0;
   const atPastGate=(cur<frontier)&&cur>=1&&cur<=5&&_llmCount(_cd)>0;
-  const atGate=atCurrentGate||atPastGate;
+  // 실패 후 이전 단계로 돌아온 경우: curGate()=null 이어도 캐시 proposals 있으면 진행 허용
+  const atFailedRetry=isFailed()&&cur>=1&&cur<=5&&(_llmCount(_cd)>0||_llmCount(gateData)>0);
+  const atGate=atCurrentGate||atPastGate||atFailedRetry;
   const g5ok=curGate()!=='G6'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
   prim.innerHTML=primaryLabel();
   prim.classList.toggle('resume', paused);
