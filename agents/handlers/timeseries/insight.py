@@ -191,6 +191,176 @@ def _eval_diagnostics(state: Any) -> dict:
 
 
 # ════════════════════════════════════════════════════════════════
+# Phase 1-B (2026-06-08) — 재학습 비용 자동 추천 + 전문가 차원 인용
+# ════════════════════════════════════════════════════════════════
+_FREQ_DAY_MULTIPLIER = {"D": 1, "W": 7, "M": 30, "MS": 30, "Q": 90, "QS": 90, "H": 1 / 24}
+
+
+def _selector_meta(state: Any) -> dict:
+    """state.category_extras['timeseries']['selector_meta'] 안전 추출.
+
+    1순위: category_extras 에 저장된 값
+    2순위 (Phase 1-A 추가): selector.score(state) 재호출로 직접 산출
+                          (selector.score 는 순수 함수, 재호출 비용 적음)
+    """
+    extras = getattr(state, "category_extras", None) or {}
+    if isinstance(extras, dict):
+        cat = extras.get("timeseries") or {}
+        if isinstance(cat, dict):
+            meta = cat.get("selector_meta") or {}
+            if isinstance(meta, dict) and meta:
+                return meta
+    # 2순위 — 재호출
+    try:
+        from agents.handlers.timeseries.selector import score as _score
+
+        result = _score(state, recipes=None)
+        if isinstance(result, dict):
+            m = result.get("meta") or {}
+            return m if isinstance(m, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _horizon_from_state(state: Any) -> int:
+    """horizon 안전 추출. category_extras → eda → 기본 7."""
+    extras = getattr(state, "category_extras", None) or {}
+    if isinstance(extras, dict):
+        ts = extras.get("timeseries") or {}
+        if isinstance(ts, dict):
+            h = ts.get("horizon") or ts.get("horizon_hint")
+            if isinstance(h, int) and h >= 1:
+                return h
+    eda = _eda_dict(state)
+    h = eda.get("horizon") or eda.get("horizon_hint")
+    if isinstance(h, int) and h >= 1:
+        return h
+    return 7
+
+
+def _recommend_retrain_schedule(state: Any) -> dict:
+    """changepoint 빈도·horizon·seasonal_period·fold variance 기반 재학습 주기 추천.
+
+    반환:
+        interval_days: int (7~365)
+        urgency: "high" / "medium" / "low"
+        urgency_ko: str
+        expert_voice: str (한국어 1문장)
+        triggers: list[str]
+    """
+    profile = getattr(state, "data_profile", None) or {}
+    if not isinstance(profile, dict):
+        profile = {}
+    eda = _eda_dict(state)
+    eval_diag = _eval_diagnostics(state)
+    fold_diag = eval_diag.get("fold_diag") or {}
+
+    try:
+        n_rows = int(profile.get("rows") or profile.get("n_rows") or 0)
+    except (TypeError, ValueError):
+        n_rows = 0
+    try:
+        changepoints = int(eda.get("changepoints") or 0)
+    except (TypeError, ValueError):
+        changepoints = 0
+    horizon = _horizon_from_state(state)
+    freq = (profile.get("freq") or eda.get("freq") or "D") or "D"
+    try:
+        seasonal_period = int(eda.get("seasonal_period") or 7)
+    except (TypeError, ValueError):
+        seasonal_period = 7
+    fold_stability = (fold_diag.get("stability") or "stable").lower()
+
+    cp_frequency = changepoints / max(n_rows, 1)
+    freq_mult = _FREQ_DAY_MULTIPLIER.get(freq, 1)
+    base_days = max(1, int(seasonal_period * 4 * freq_mult))
+
+    triggers: list[str] = []
+    urgency = "low"
+
+    # 1. changepoint 빈도 → 주기 단축
+    if cp_frequency >= 0.05:
+        base_days = min(base_days, int(seasonal_period * 2 * freq_mult))
+        triggers.append(f"changepoint 빈도 {cp_frequency:.1%} (≥5%)")
+        urgency = "high"
+    elif cp_frequency >= 0.02:
+        base_days = min(base_days, int(seasonal_period * 3 * freq_mult))
+        triggers.append(f"changepoint 빈도 {cp_frequency:.1%}")
+        urgency = "medium"
+
+    # 2. fold 안정성 낮으면 주기 단축
+    if fold_stability == "very_unstable":
+        base_days = max(7, int(base_days * 0.5))
+        triggers.append("fold 안정성 매우 낮음")
+        urgency = "high"
+    elif fold_stability == "unstable":
+        base_days = max(7, int(base_days * 0.75))
+        triggers.append("fold 안정성 낮음")
+        if urgency == "low":
+            urgency = "medium"
+
+    # 3. 장기 예측 → horizon/2 주기
+    if horizon >= 30:
+        base_days = min(base_days, max(7, horizon // 2))
+        triggers.append(f"장기 예측 horizon={horizon}")
+
+    # 4. 짧은 계열 → 데이터 누적 우선
+    if 0 < n_rows < 100:
+        base_days = max(base_days, int(seasonal_period * 6 * freq_mult))
+        triggers.append(f"짧은 계열 (n={n_rows}) — 데이터 누적 우선")
+        urgency = "low"
+
+    interval_days = max(7, min(int(base_days), 365))
+
+    if urgency == "high":
+        urgency_ko = "긴급"
+        voice = f"구조 변화 또는 모델 불안정 신호가 감지되어 {interval_days}일 주기 재학습을 긴급 권장합니다."
+    elif urgency == "medium":
+        urgency_ko = "주의"
+        voice = f"안정 운영을 위해 {interval_days}일 주기 재학습을 권장합니다."
+    else:
+        urgency_ko = "표준"
+        voice = f"표준 주기 {interval_days}일 재학습으로 안정 운영이 가능합니다."
+
+    return {
+        "interval_days": interval_days,
+        "urgency": urgency,
+        "urgency_ko": urgency_ko,
+        "expert_voice": voice,
+        "triggers": triggers,
+    }
+
+
+def _expert_dimension_clause(state: Any) -> str | None:
+    """전문가 4 차원 최우선 차원 + 채택 모델 점수 1문장 자연어 (P10 5문장 제한 안에서)."""
+    meta = _selector_meta(state)
+    if not meta:
+        return None
+    priorities = meta.get("expert_priorities") or {}
+    expert_scores = meta.get("expert_scores") or {}
+    top_dim = meta.get("expert_top_dimension")
+    bm = getattr(state, "best_model", None) or {}
+    model_name = bm.get("model_name") if isinstance(bm, dict) else None
+    if not top_dim or not model_name or not priorities or not expert_scores:
+        return None
+    dim_ko = {
+        "interpretability": "해석 가능성",
+        "robustness": "외부 충격 강건성",
+        "uncertainty_quality": "예측 불확실성 표현",
+        "retraining_cost": "재학습 효율",
+    }.get(top_dim, top_dim)
+    model_score = expert_scores.get(model_name)
+    weight = priorities.get(top_dim, 0.0)
+    if model_score is None:
+        return None
+    return (
+        f"본 분석은 {dim_ko}을 최우선 ({weight:.0%}) 으로 가중하여 "
+        f"{model_name} 모델을 채택했습니다 (해당 차원 점수 {model_score:.2f})."
+    )
+
+
+# ════════════════════════════════════════════════════════════════
 # §B. prompt_payload — horizon 추론 + 0단계 메타 + 진단 (시그니처 호환)
 # ════════════════════════════════════════════════════════════════
 def prompt_payload(state: Any) -> dict[str, Any]:
@@ -410,9 +580,24 @@ def _build_fallback(state: Any) -> str:
     if dmt.get("verdict") == "naive_wins" and dmt.get("hint"):
         sentences.append(dmt["hint"])
 
-    # 문장 마지막 — 행동 권고
+    # 문장 마지막 — 행동 권고 (Phase 1-B: retrain schedule 동적 결정)
     if not leakage and (not sym_code or sym_code == "normal"):
-        sentences.append("운영팀은 주간 단위로 모델 결과를 모니터링할 것을 권장합니다.")
+        try:
+            retrain = _recommend_retrain_schedule(state)
+            if retrain and retrain.get("expert_voice"):
+                sentences.append(retrain["expert_voice"])
+            else:
+                sentences.append("운영팀은 주간 단위로 모델 결과를 모니터링할 것을 권장합니다.")
+        except Exception:
+            sentences.append("운영팀은 주간 단위로 모델 결과를 모니터링할 것을 권장합니다.")
+
+    # Phase 1-A 전문가 차원 인용 (P10 5문장 안 — 우선순위 낮음, drop 대상)
+    try:
+        expert_clause = _expert_dimension_clause(state)
+        if expert_clause:
+            sentences.append(expert_clause)
+    except Exception:
+        pass
 
     # 수치 0 최악 케이스 보강
     if not has_seas and improvement is None and slope_pct is None and mase is None:
@@ -422,6 +607,9 @@ def _build_fallback(state: Any) -> str:
     # P10: 5문장 하드 제한
     if len(sentences) > 5:
         drop_patterns = [
+            # Phase 1-A/B 우선 drop (전문가 차원·재학습 권고는 5문장 초과 시 가장 먼저 제거)
+            lambda s: "최우선" in s and "가중하여" in s,
+            lambda s: "주기 재학습" in s,
             lambda s: s.startswith("walk-forward"),
             lambda s: "주기 계절성" in s,
             lambda s: "운영팀은" in s and "모니터링" in s,

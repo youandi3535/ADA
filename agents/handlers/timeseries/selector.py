@@ -102,6 +102,145 @@ TOPIC_BONUS: dict[str, dict[str, float]] = {
 
 
 # ════════════════════════════════════════════════════════════════
+# 전문가 4 차원 점수표 (2026-06-08, Phase 1-A)
+# ════════════════════════════════════════════════════════════════
+# 인간 전문가가 모델을 평가하는 4 차원 정량 점수.
+# 점수 범위 0.0~1.0. 학술적 근거 + CS 운영 경험 기반 기본값.
+EXPERT_DIMENSIONS: dict[str, dict[str, float]] = {
+    "interpretability": {
+        "ARIMA": 0.95,
+        "SARIMA": 0.85,
+        "SARIMAX": 0.80,
+        "ETS": 0.75,
+        "Prophet": 0.70,
+        "seasonal_naive": 1.00,
+    },
+    "robustness": {
+        "ARIMA": 0.30,
+        "SARIMA": 0.30,
+        "SARIMAX": 0.30,
+        "ETS": 0.40,
+        "Prophet": 0.90,
+        "seasonal_naive": 1.00,
+    },
+    "uncertainty_quality": {
+        "ARIMA": 0.80,
+        "SARIMA": 0.85,
+        "SARIMAX": 0.85,
+        "ETS": 0.70,
+        "Prophet": 0.90,
+        "seasonal_naive": 0.20,
+    },
+    "retraining_cost": {
+        "ARIMA": 0.95,
+        "SARIMA": 0.85,
+        "SARIMAX": 0.80,
+        "ETS": 0.90,
+        "Prophet": 0.70,
+        "seasonal_naive": 1.00,
+    },
+}
+
+EXPERT_PRIORITY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "interpretability": ("해석", "설명", "투명", "interpret", "explain", "transparent", "explainable"),
+    "robustness": ("안정", "강건", "충격", "robust", "stable", "변동", "shock", "resilient"),
+    "uncertainty_quality": (
+        "불확실",
+        "신뢰구간",
+        "구간",
+        "uncertainty",
+        "interval",
+        "pi",
+        "prediction interval",
+        "quantile",
+    ),
+    "retraining_cost": ("빠른", "실시간", "재학습", "효율", "fast", "real-time", "efficient", "retrain"),
+}
+
+EXPERT_WEIGHT_SCALE = 0.15
+
+
+def _resolve_expert_priorities(state, signals, n_rows):
+    """user_intent + 데이터 신호 → 4 차원 우선순위 가중치 (합=1.0).
+
+    결정 우선순위:
+      1순위 — user_intent 명시 키워드 (최우선 차원 0.40 가중)
+      2순위 — 데이터 신호 (changepoints·heteroscedastic·짧은 계열)
+      3순위 — 기본 균형 (0.25 × 4)
+    """
+    _ = signals  # 미래 확장 보존
+    priorities = {
+        "interpretability": 0.25,
+        "robustness": 0.25,
+        "uncertainty_quality": 0.25,
+        "retraining_cost": 0.25,
+    }
+
+    intent = (getattr(state, "user_intent", None) or "").lower()
+    eda = _eda_dict(state)
+
+    matched_dim = None
+    for dim, kws in EXPERT_PRIORITY_KEYWORDS.items():
+        if any(kw.lower() in intent for kw in kws):
+            matched_dim = dim
+            break
+
+    if matched_dim:
+        priorities[matched_dim] = 0.40
+        remaining = (1.0 - 0.40) / 3
+        for k in priorities:
+            if k != matched_dim:
+                priorities[k] = remaining
+    else:
+        try:
+            cp = int(eda.get("changepoints") or 0)
+        except (TypeError, ValueError):
+            cp = 0
+        hetero = bool(eda.get("heteroscedastic"))
+
+        if cp >= 3:
+            priorities["robustness"] = 0.35
+            priorities["interpretability"] = 0.25
+            priorities["uncertainty_quality"] = 0.25
+            priorities["retraining_cost"] = 0.15
+        elif hetero:
+            priorities["uncertainty_quality"] = 0.35
+            priorities["interpretability"] = 0.25
+            priorities["robustness"] = 0.25
+            priorities["retraining_cost"] = 0.15
+        elif 0 < n_rows < 100:
+            priorities["interpretability"] = 0.35
+            priorities["robustness"] = 0.30
+            priorities["uncertainty_quality"] = 0.20
+            priorities["retraining_cost"] = 0.15
+
+    total = sum(priorities.values())
+    if total <= 0:
+        return {k: 0.25 for k in priorities}
+    return {k: round(v / total, 4) for k, v in priorities.items()}
+
+
+def _compute_expert_scores(candidates, priorities):
+    """모델별 weighted expert score 계산 (0.0~1.0)."""
+    scores = {}
+    for model in candidates:
+        score = 0.0
+        for dim, weight in priorities.items():
+            dim_table = EXPERT_DIMENSIONS.get(dim) or {}
+            model_score = dim_table.get(model, 0.5)
+            score += weight * model_score
+        scores[model] = round(score, 4)
+    return scores
+
+
+def _apply_expert_bonus(adj, expert_scores):
+    """expert_score 를 adj 에 가산 (EXPERT_WEIGHT_SCALE 곱). in-place."""
+    for model, score in expert_scores.items():
+        if model in adj:
+            adj[model] += EXPERT_WEIGHT_SCALE * score
+
+
+# ════════════════════════════════════════════════════════════════
 # §0. 헬퍼
 # ════════════════════════════════════════════════════════════════
 def _clip(x: float) -> float:
@@ -379,6 +518,13 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
     topic_signals = _topic_signals(state, chosen_meta or {}, horizon, n_rows)
     intent_match = _apply_topic_bonus(adj, topic_signals)
 
+    # ── §F+++ (2026-06-08, Phase 1-A) : 전문가 4 차원 점수 적용 ──
+    # 인간 전문가의 추가 고려 사항 (해석성·강건성·불확실성·재학습 효율) 정량화.
+    # 7축·9토픽 위에 추가 신호로 가산. user_intent 또는 데이터 신호로 우선순위 자동 결정.
+    expert_priorities = _resolve_expert_priorities(state, topic_signals, n_rows)
+    expert_scores = _compute_expert_scores(list(candidates), expert_priorities)
+    _apply_expert_bonus(adj, expert_scores)
+
     # ── §G : 점수 매트릭스 + top3 정렬 ──
     scores = {m: _clip(base[m] + adj[m]) for m in candidates}
     sorted_models = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
@@ -416,6 +562,13 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
         # 주제 적합도 신호 (2026-06-05) — insight·output_extras 에서 활용
         "topic_signals": {k: v for k, v in topic_signals.items() if v},
         "intent_match": {m: lst for m, lst in intent_match.items() if lst},
+        # 전문가 4 차원 (2026-06-08, Phase 1-A) — insight·output_extras 에서 trace·인용
+        "expert_priorities": expert_priorities,
+        "expert_scores": expert_scores,
+        "expert_top_dimension": (
+            max(expert_priorities, key=lambda k: expert_priorities[k]) if expert_priorities else None
+        ),
+        "expert_dimensions_used": list(EXPERT_DIMENSIONS.keys()),
     }
 
     rationale_parts = [
@@ -439,6 +592,12 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
     active_topics = [t for t, v in topic_signals.items() if v]
     if active_topics:
         rationale_parts.append(f"topics={active_topics}")
+    top_dim = meta.get("expert_top_dimension")
+    if top_dim and top3:
+        top_model = top3[0]
+        top_score = expert_scores.get(top_model)
+        if top_score is not None:
+            rationale_parts.append(f"expert={top_dim}({top_score:.2f}@{top_model})")
     rationale = ", ".join(rationale_parts)
 
     return {"top3": top3, "rationale": rationale, "citations": citations, "meta": meta}
