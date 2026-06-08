@@ -142,5 +142,146 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
     except Exception as e:
         extra["tabular_warning"] = str(e)
 
+    # Day 11 (jh) — EDA 보강: id-like / target leakage / mutual_info
+    try:
+        extra.update(_detect_id_like_and_leakage(df, target))
+    except Exception as e:
+        extra["eda_detection_warning"] = str(e)
+
+    try:
+        extra["mutual_info_top"] = _compute_mutual_info_top(df, target)
+    except Exception as e:
+        extra["mutual_info_warning"] = str(e)
+
     extra["preprocessing_thresholds_suggested"] = compute_preprocessing_thresholds_suggested(df, extra)
     return extra
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Day 11 (jh) — EDA 보강 헬퍼
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def _detect_id_like_and_leakage(df: Any, target: str | None) -> dict[str, Any]:
+    """id-like 컬럼 + target leakage 의심 컬럼 검출.
+
+    id-like : unique_ratio ≥ 0.99 → PK 추정. 학습 피처로 부적절.
+    target leakage : target 과 |corr| ≥ 0.95 numeric 컬럼 → 누수 의심.
+                     (예: target=label, feature=label_encoded_id 같은 거)
+    """
+    import numpy as np
+
+    n_rows = int(len(df))
+    if n_rows == 0:
+        return {"id_like_columns": [], "target_leakage_suspects": []}
+
+    id_like: list[str] = []
+    for col in df.columns:
+        if col == target:
+            continue
+        try:
+            uniq = int(df[col].nunique(dropna=True))
+            if n_rows > 0 and (uniq / n_rows) >= 0.99:
+                id_like.append(str(col))
+        except Exception:
+            continue
+
+    leakage: list[dict[str, Any]] = []
+    if target and target in df.columns:
+        try:
+            # numeric 컬럼만 — 상관계수 계산 가능
+            num_df = df.select_dtypes(include=[np.number])
+            if target in num_df.columns and num_df.shape[1] >= 2:
+                # target 이 numeric 이면 직접 corr
+                corrs = num_df.corr()[target].drop(labels=[target], errors="ignore")
+                for col, c in corrs.items():
+                    if not np.isfinite(c):
+                        continue
+                    if abs(float(c)) >= 0.95 and str(col) != target:
+                        leakage.append({"column": str(col), "correlation": round(float(c), 4)})
+            elif target in df.columns:
+                # target 이 categorical — class encoding 후 numeric 피처들과 corr 추정
+                # (간이: target 을 factorize 한 코드와의 상관)
+                try:
+                    import pandas as pd  # noqa: WPS433
+
+                    y_code, _ = pd.factorize(df[target].astype(str))
+                    for col in num_df.columns:
+                        if col == target:
+                            continue
+                        x = df[col].fillna(df[col].median()).values
+                        if x.std() == 0:
+                            continue
+                        c = float(np.corrcoef(x, y_code)[0, 1])
+                        if not np.isfinite(c):
+                            continue
+                        if abs(c) >= 0.95:
+                            leakage.append({"column": str(col), "correlation": round(c, 4)})
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return {"id_like_columns": id_like, "target_leakage_suspects": leakage}
+
+
+def _compute_mutual_info_top(df: Any, target: str | None, top_k: int = 10) -> dict[str, float]:
+    """피처 ↔ target mutual information score top K.
+
+    sklearn.feature_selection.mutual_info_classif / mutual_info_regression 활용.
+    n_rows > 50000 시 무거우니 50000 행 샘플링 가드.
+    target categorical(분류) vs numeric(회귀) 자동 분기.
+    """
+    import pandas as pd
+
+    if not target or target not in df.columns:
+        return {}
+    n_rows = int(len(df))
+    if n_rows < 30:  # 너무 작으면 MI 신뢰 불가
+        return {}
+
+    # 샘플링 가드 — 대용량에선 5만 행 무작위 샘플
+    sample_df = df
+    if n_rows > 50_000:
+        sample_df = df.sample(n=50_000, random_state=42)
+
+    # 분류/회귀 결정
+    y = sample_df[target]
+    n_unique = int(y.nunique(dropna=True))
+    is_classification = n_unique <= 50
+
+    # numeric 피처만 (categorical 은 mutual_info 가 자동 처리 가능하나 일관성 위해 단순화)
+    feature_cols = [c for c in sample_df.columns if c != target]
+    X = sample_df[feature_cols].copy()
+
+    # 결측 처리 — numeric median, object frequency 인코딩
+    for c in X.columns:
+        if pd.api.types.is_numeric_dtype(X[c]):
+            X[c] = X[c].fillna(X[c].median() if X[c].notna().any() else 0.0)
+        else:
+            # frequency encoding (간이) — 결측 빈도 0 으로
+            freq = X[c].value_counts(normalize=True, dropna=False)
+            X[c] = X[c].map(freq).fillna(0.0)
+
+    X_arr = X.to_numpy(dtype=float)
+    y_arr = y.fillna(y.mode().iloc[0] if y.mode().size > 0 else 0).to_numpy()
+
+    try:
+        if is_classification:
+            from sklearn.feature_selection import mutual_info_classif
+
+            mi = mutual_info_classif(X_arr, y_arr, random_state=42)
+        else:
+            from sklearn.feature_selection import mutual_info_regression
+
+            mi = mutual_info_regression(X_arr, y_arr, random_state=42)
+    except Exception:
+        return {}
+
+    # top_k 정렬
+    pairs = sorted(
+        zip(feature_cols, mi.tolist()),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )[:top_k]
+    return {str(c): round(float(v), 4) for c, v in pairs}

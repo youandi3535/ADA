@@ -63,6 +63,7 @@ def _auto_register_from_module(category: str, module: Any) -> None:
         "profile",
         "plan",
         "apply",
+        "apply_split",  # Day 11 (jh) — leakage-safe entry (split-first → train fit → val transform)
         "charts",
         "score",
         "evaluate",

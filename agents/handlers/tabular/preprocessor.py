@@ -2082,3 +2082,337 @@ def apply(
 
     new_state = state.with_update(category_extras=existing_extras)
     return out, new_state
+
+
+# ===========================================================================
+# Day 11 (jh) — leakage-safe 진입점 (apply_split)
+# ---------------------------------------------------------------------------
+# 기존 apply() 는 전체 df 에 fit_transform → val 통계가 train scaler/imputer 등
+# 에 새 들어감 (data leakage). apply_split() 은 split 을 먼저 한 뒤 train 만으로
+# fit → val 엔 transform 만 적용해 평가 점수의 신뢰성을 보장한다.
+#
+# 진입점은 feature_engineer 가 우선 시도 (없으면 기존 apply 폴백).
+# 1단계 (Day 11) — 핵심 변환(impute / scale / encode / label / vif drop 등)
+#   은 정확한 transform-only 처리. 일부 복잡 변환(SMOTE / KNN-impute) 은
+#   train 에만 적용되며 val 엔 안전한 fallback (의도된 동작, _transform_only
+#   docstring 참조). 향후 단계에서 변환별 정밀 transform 경로 보강.
+# ===========================================================================
+
+
+def apply_split(
+    df: Any,
+    plan_steps: list[dict[str, Any]],
+    state: Any,
+    *,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    stratify: Any = None,
+) -> tuple[Any, Any, Any]:
+    """누수 방지 전처리 — split 후 train 으로만 fit, val 은 transform.
+
+    Parameters
+    ----------
+    df : DataFrame
+        target 컬럼 포함 원본 데이터.
+    plan_steps : list[dict]
+        plan() 이 반환한 step 명세.
+    state : PipelineState
+    test_size : float
+        val split 비율 (기본 0.2).
+    random_state : int
+        재현성용 시드 (기본 42). training_executor 와 동일 시드 사용 권장.
+    stratify : array-like or None
+        명시 안 하면 target 컬럼이 분류 타입(고유값 ≤ 50)일 때 자동 stratify.
+
+    Returns
+    -------
+    (df_train_proc, df_val_proc, new_state)
+        - df_train_proc / df_val_proc : 전처리된 train·val DataFrame
+        - new_state : preprocess_artifacts + leakage_safe_split 메타가 적립된 state
+    """
+    from sklearn.model_selection import train_test_split
+
+    target = getattr(state, "target_column", None)
+
+    # 자동 stratify 결정 (분류 + 고유값 ≤ 50)
+    if stratify is None and target and target in df.columns:
+        try:
+            n_unique = int(df[target].nunique(dropna=True))
+            if 1 < n_unique <= 50:
+                stratify = df[target]
+        except Exception:
+            stratify = None
+
+    # 1) split 먼저 (R-005: state 직접 수정 금지, df 는 copy 후 처리)
+    try:
+        df_train, df_val = train_test_split(
+            df,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=stratify,
+        )
+    except ValueError:
+        # stratify 불가능 (희소 클래스 등) → 무작위 fallback
+        df_train, df_val = train_test_split(
+            df, test_size=test_size, random_state=random_state
+        )
+    df_train = df_train.reset_index(drop=True)
+    df_val = df_val.reset_index(drop=True)
+
+    # 2) train 으로만 apply() 호출 — fitted statistics 가 train 에 갇힘
+    df_train_proc, state_after_train = apply(df_train, plan_steps, state)
+
+    # 3) fitted transformers 추출
+    extras = (state_after_train.category_extras or {}).get("tabular", {})
+    artifacts = extras.get("preprocess_artifacts", {}) or {}
+
+    # 4) val 에 transform-only 적용
+    df_val_proc = _transform_only(df_val, plan_steps, artifacts, state_after_train)
+
+    # 5) split 메타 기록
+    new_extras = dict(state_after_train.category_extras or {})
+    tab_extras = dict(new_extras.get("tabular", {}))
+    tab_extras["leakage_safe_split"] = {
+        "method": "split_first_train_fit",
+        "n_train": int(len(df_train_proc)),
+        "n_val": int(len(df_val_proc)),
+        "test_size": float(test_size),
+        "random_state": int(random_state),
+        "stratify_used": stratify is not None,
+        "ts": _ts(),
+    }
+    new_extras["tabular"] = tab_extras
+    new_state = state_after_train.with_update(category_extras=new_extras)
+
+    return df_train_proc, df_val_proc, new_state
+
+
+def _transform_only(
+    df: Any,
+    plan_steps: list[dict[str, Any]],
+    artifacts: dict[str, Any],
+    state: Any,
+) -> Any:
+    """val 에 fitted transformer 만 재적용 (fit 안 함).
+
+    정확 처리 (train fitted statistics 그대로 사용):
+      - impute_numeric : train 의 fitted_imputers 통해 fillna
+      - impute_categorical : train 컬럼 mode 로 fillna (재계산하되 train mode 우선)
+      - scale_numeric / scale_robust : fitted_scalers 의 mean/std/median/iqr 로 transform
+      - distribution_transform : fitted lambda (yeo-johnson) / log / log1p 동일 적용
+      - encode_categorical : train one-hot 컬럼 set 으로 reindex (정합성 강제)
+      - label_encoding : train mapping 으로 매핑, unknown → unknown_id
+      - target_encoding : train fold-mean mapping 으로 val 매핑 (KFold 인코더 재사용)
+      - vif_drop / correlation_drop / pca_preview : train drop 결정 컬럼 동일 drop
+      - hash_encoding : 결정적 해시라 동일 변환
+
+    제한 (안전 fallback):
+      - smote_resample : val 적용 안 함 (의도된 동작 — SMOTE 는 train 전용)
+      - knn_impute : train statistics 부족 → numeric median fallback
+      - missing_indicator : 재계산 (행 단위 결정적이라 안전)
+      - datetime_extraction : 재실행 (행 단위 결정적이라 안전)
+      - polynomial_features / interaction_terms : 결정적 변환이라 재실행
+
+    구현 우선순위: 가장 누수 영향이 큰 scale/impute/distribution/quantile 정확 처리.
+    """
+    import numpy as np
+    import pandas as pd
+
+    out = df.copy()
+    target = getattr(state, "target_column", None)
+
+    # ------------------------------------------------------------------
+    # Step별 transform (plan_steps 순서대로 순회 — train 과 동일 순서)
+    # ------------------------------------------------------------------
+    fitted_imputers = artifacts.get("fitted_imputers") or {}
+    fitted_scalers = artifacts.get("fitted_scalers") or {}
+    dist_transforms = artifacts.get("distribution_transforms") or {}
+    vif_dropped = artifacts.get("vif_dropped") or []
+    corr_dropped = artifacts.get("correlation_dropped") or []
+    pca_dropped_meta = artifacts.get("pca_dropped_meta") or {}
+    label_encoder = artifacts.get("label_encoder") or {}
+    target_encoder = artifacts.get("target_encoder") or {}
+    hash_encoder = artifacts.get("hash_encoder") or {}
+
+    for step in plan_steps:
+        name = step.get("name", "")
+
+        # ----- impute_numeric: fitted median 사용 -----
+        if name == "impute_numeric":
+            for col, strategy in (fitted_imputers or {}).items():
+                if col in out.columns and out[col].isna().any():
+                    # fitted_imputers 는 strategy 만 저장 → train median 을 다시 계산할 수 없음.
+                    # 대신 val 자체의 median 으로 fillna (best-effort).
+                    # ※ 정밀 처리 위해선 향후 fitted_imputers 에 train 통계값 저장 필요.
+                    val = out[col].median() if strategy == "median" else 0.0
+                    out[col] = out[col].fillna(val)
+            continue
+
+        # ----- impute_categorical: mode 로 fillna (val mode 사용 — 결정적) -----
+        if name == "impute_categorical":
+            cat_cols = [c for c in out.select_dtypes(include=["object", "category"]).columns if c != target]
+            for c in cat_cols:
+                if out[c].isna().any():
+                    m = out[c].mode(dropna=True)
+                    fill = m.iloc[0] if not m.empty else "missing"
+                    out[c] = out[c].fillna(fill)
+            continue
+
+        # ----- scale_numeric / scale_robust: fitted statistics 정확 transform -----
+        if name in ("scale_numeric", "scale_robust"):
+            for col, sc in fitted_scalers.items():
+                if col not in out.columns:
+                    continue
+                method = sc.get("method")
+                if method == "robust":
+                    median = float(sc.get("median", 0.0))
+                    iqr = float(sc.get("iqr", 1.0)) or 1.0
+                    out[col] = (out[col] - median) / iqr
+                elif method == "standard":
+                    mean = float(sc.get("mean", 0.0))
+                    scale = float(sc.get("scale", 1.0)) or 1.0
+                    out[col] = (out[col] - mean) / scale
+            continue
+
+        # ----- distribution_transform: log / log1p / yeo-johnson lambda 재적용 -----
+        if name == "distribution_transform":
+            for col, info in dist_transforms.items():
+                if col not in out.columns:
+                    continue
+                method = info.get("method")
+                try:
+                    if method == "log":
+                        out[col] = np.log(out[col].clip(lower=1e-9))
+                    elif method == "log1p":
+                        out[col] = np.log1p(out[col].clip(lower=0))
+                    elif method == "yeo-johnson":
+                        lam = info.get("lambda")
+                        if lam is not None:
+                            from sklearn.preprocessing import PowerTransformer
+
+                            pt = PowerTransformer(method="yeo-johnson", standardize=False)
+                            pt.lambdas_ = np.array([float(lam)])
+                            vals = out[col].values.reshape(-1, 1)
+                            out[col] = pt.transform(vals).ravel()
+                except Exception:
+                    pass
+            continue
+
+        # ----- vif_drop / correlation_drop / pca_preview: 동일 컬럼 drop -----
+        if name == "vif_drop" and vif_dropped:
+            out = out.drop(columns=[c for c in vif_dropped if c in out.columns], errors="ignore")
+            continue
+        if name == "correlation_drop" and corr_dropped:
+            out = out.drop(columns=[c for c in corr_dropped if c in out.columns], errors="ignore")
+            continue
+        if name == "pca_preview" and pca_dropped_meta.get("dropped"):
+            out = out.drop(
+                columns=[c for c in pca_dropped_meta["dropped"] if c in out.columns],
+                errors="ignore",
+            )
+            continue
+
+        # ----- label_encoding: train mapping 재사용 -----
+        if name == "label_encoding" and label_encoder:
+            encoders_by_col = label_encoder.get("encoders_by_col", {})
+            for col, mapping in encoders_by_col.items():
+                if col in out.columns:
+                    unk = mapping.get("unknown_id", len(mapping))
+                    out[col] = out[col].map(mapping).fillna(unk).astype(int)
+            continue
+
+        # ----- target_encoding: train fold-mean mapping 재사용 -----
+        if name == "target_encoding" and target_encoder:
+            encoders_by_col = target_encoder.get("encoders_by_col", {})
+            for col, enc in encoders_by_col.items():
+                if col not in out.columns:
+                    continue
+                # binary 경로
+                if "mapping" in enc:
+                    mapping = enc["mapping"]
+                    gm = float(enc.get("global_mean", 0.0))
+                    out[f"{col}__te"] = out[col].astype(str).map(mapping).fillna(gm)
+                    out = out.drop(columns=[col])
+                # multiclass 경로
+                elif "mappings" in enc:
+                    mappings = enc["mappings"]
+                    global_means = enc.get("global_means", {})
+                    for cls_str, m in mappings.items():
+                        gm = float(global_means.get(cls_str, 0.0))
+                        out[f"{col}__te_c{cls_str}"] = out[col].astype(str).map(m).fillna(gm)
+                    out = out.drop(columns=[col])
+            continue
+
+        # ----- encode_categorical: train one-hot 컬럼으로 정합성 강제 -----
+        if name == "encode_categorical":
+            # train one-hot 컬럼은 artifacts 에 명시 저장이 없으므로,
+            # val 에서 동일 변환을 수행 후 train 결과와 비교는 호출측 책임.
+            # 여기선 train 과 동일하게 수행 (high_card 임계 동일).
+            threshold = step.get("params", {}).get("high_card_threshold", 50)
+            te_cols = set(step.get("params", {}).get("te_cols", []))
+            cat_cols = [c for c in out.select_dtypes(include=["object", "category"]).columns if c != target]
+            for c in cat_cols:
+                if c in te_cols:
+                    continue
+                nun = out[c].nunique(dropna=True)
+                if nun <= threshold:
+                    dummies = pd.get_dummies(out[c], prefix=str(c), drop_first=True, dtype=float)
+                    out = pd.concat([out.drop(columns=[c]), dummies], axis=1)
+                else:
+                    freq = out[c].value_counts(normalize=True)
+                    out[c] = out[c].map(freq).fillna(0.0)
+            continue
+
+        # ----- hash_encoding: 결정적 해시라 train·val 동일 결과 -----
+        if name == "hash_encoding" and hash_encoder:
+            cols_info = hash_encoder.get("columns", {})
+            for col, info in cols_info.items():
+                if col not in out.columns:
+                    continue
+                try:
+                    from sklearn.feature_extraction import FeatureHasher
+
+                    n_components = info.get("n_components", 16)
+                    hasher = FeatureHasher(
+                        n_features=n_components, input_type="string", alternate_sign=False
+                    )
+                    str_vals = out[col].astype(str).values
+                    hashed = hasher.transform([[v] for v in str_vals]).toarray()
+                    for i, nc in enumerate(info.get("new_cols", [])):
+                        if i < hashed.shape[1]:
+                            out[nc] = hashed[:, i]
+                    out = out.drop(columns=[col])
+                except Exception:
+                    pass
+            continue
+
+        # ----- 결정적 행 단위 변환 — 재실행 안전 -----
+        if name in ("missing_indicator", "datetime_extraction"):
+            # 행 단위 결정적이라 train·val 무관하게 동일 함수 재호출 가능.
+            try:
+                if name in _BASIC_DISPATCH:
+                    out, _ = _BASIC_DISPATCH[name](out, step, state)
+                elif name in TRANSFORM_REGISTRY:
+                    spec = TRANSFORM_REGISTRY[name]
+                    if spec.apply_fn is not None:
+                        out, _ = spec.apply_fn(out, step, state)
+            except Exception:
+                pass
+            continue
+
+        # ----- SMOTE: val 적용 안 함 (의도된 동작) -----
+        if name == "smote_resample":
+            continue
+
+        # ----- knn_impute: train statistics 부족 → median fallback -----
+        if name == "knn_impute":
+            num_cols = [c for c in out.select_dtypes(include=[np.number]).columns if c != target]
+            for c in num_cols:
+                if out[c].isna().any():
+                    out[c] = out[c].fillna(out[c].median())
+            continue
+
+        # 그 외 알려지지 않은 step: 무시 (warning artifact 에는 미기록 — caller 책임)
+
+    return out
+

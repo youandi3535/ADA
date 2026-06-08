@@ -28,8 +28,51 @@ class FeatureEngineerAgent(BaseAgent):
             except Exception as e:
                 return state.with_update(error=f"데이터 로딩 실패: {e}", next_agent="error_recovery")
 
+            # Day 11 (jh) — leakage-safe 진입점 우선 시도.
+            # apply_split 이 등록돼 있으면 split-first → train fit → val transform
+            # 흐름으로 fitted statistics 가 train 에만 갇히도록 강제.
+            # 미등록이면 기존 apply 폴백 (회귀 방지).
+            split_handler = get_handler(state.category, "apply_split")
             handler = get_handler(state.category, "apply")
-            if handler is not None:
+            used_leakage_safe = False
+            if split_handler is not None:
+                try:
+                    result = split_handler(df, state.preprocessing_plan or [], state)
+                    if isinstance(result, tuple) and len(result) == 3:
+                        # (df_train_proc, df_val_proc, new_state) 시그니처
+                        import pandas as _pd  # noqa: WPS433
+
+                        df_tr, df_val, state = result
+                        n_tr = int(len(df_tr))
+                        df = _pd.concat([df_tr, df_val], axis=0, ignore_index=True)
+                        # train 인덱스를 state extras 에 기록 → training_executor 가 동일 split 재현
+                        try:
+                            extras = dict(state.category_extras or {})
+                            cat_key = "tabular" if state.category.startswith("tabular") else state.category
+                            cat_extras = dict(extras.get(cat_key, {}))
+                            split_meta = dict(cat_extras.get("leakage_safe_split") or {})
+                            split_meta["train_row_count_for_reorder"] = n_tr
+                            cat_extras["leakage_safe_split"] = split_meta
+                            extras[cat_key] = cat_extras
+                            state = state.with_update(category_extras=extras)
+                        except Exception:
+                            pass
+                        used_leakage_safe = True
+                    elif isinstance(result, tuple) and len(result) == 2:
+                        df, state = result
+                        used_leakage_safe = True
+                    else:
+                        df = result
+                        used_leakage_safe = True
+                except Exception as e:
+                    self.logger.warning(
+                        "feature_engineer_apply_split_failed_fallback_apply",
+                        category=state.category,
+                        error=str(e),
+                    )
+                    used_leakage_safe = False
+
+            if not used_leakage_safe and handler is not None:
                 try:
                     result = handler(df, state.preprocessing_plan or [], state)
                     if isinstance(result, tuple) and len(result) == 2:
