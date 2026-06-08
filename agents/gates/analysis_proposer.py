@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ada.core.lang_guard import looks_non_korean, with_korean_guard
 from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
 
@@ -63,6 +64,13 @@ SYSTEM_PROMPT = (
     '{"id": 2, "title": "한국어 제목", '
     '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ...", '
     '"score": 0.0-1.0, "category": "anomaly_detection", "approach": "unsupervised_clustering", "target_column": null}]'
+)
+
+# Retry 시 더 강한 한국어 지시
+KOREAN_RETRY_HINT = (
+    "이전 응답에 한자(中文)가 포함되어 거부됩니다. "
+    "반드시 한국어로만 다시 작성하세요. "
+    "한자(漢字·汉字)·중국어·영어 문장 금지."
 )
 
 _UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
@@ -190,15 +198,40 @@ class AnalysisProposerAgent(BaseGate):
             "data_profile": state.data_profile,
             "category": state.category,
         }
+        user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
-                user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
+                user_prompt=user_payload,
                 max_tokens=1500,
                 temperature=0.3,
                 json_mode=True,
             )
             arr = self._safe_parse_json_array(raw)
+
+            # 한자 감지 → 강한 한국어 지시로 1회 retry
+            if arr and self._has_non_korean(arr):
+                self.logger.warning("g2_cjk_detected_retry")
+                retry_user = KOREAN_RETRY_HINT + "\n\n다시 작성할 데이터:\n" + user_payload
+                try:
+                    raw2 = await self._call_llm(
+                        system_prompt=SYSTEM_PROMPT,
+                        user_prompt=retry_user,
+                        max_tokens=600,
+                        temperature=0.2,
+                        json_mode=True,
+                    )
+                    arr2 = self._safe_parse_json_array(raw2)
+                    if arr2 and not self._has_non_korean(arr2):
+                        arr = arr2
+                    elif arr2:
+                        # 둘 다 한자 → 폴백 사용 (아래로 fall-through)
+                        self.logger.warning("g2_cjk_persist_after_retry")
+                        arr = []
+                except Exception as e:
+                    self.logger.warning("g2_retry_failed", error=str(e))
+                    arr = []
+
             if arr:
                 llm_opts = arr[: self.n_proposals]
                 for i, opt in enumerate(llm_opts, start=1):
@@ -212,6 +245,18 @@ class AnalysisProposerAgent(BaseGate):
             [{"id": 1, "title": "기본 분석", "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
         )
         return list(base) + [_CUSTOM_OPTION]
+
+    @staticmethod
+    def _has_non_korean(options: list[dict[str, Any]]) -> bool:
+        """옵션의 title/rationale 중 한자가 포함된 항목이 있으면 True."""
+        for opt in options:
+            if not isinstance(opt, dict):
+                continue
+            for key in ("title", "rationale"):
+                v = opt.get(key)
+                if isinstance(v, str) and looks_non_korean(v):
+                    return True
+        return False
 
     def _apply_choice(
         self,

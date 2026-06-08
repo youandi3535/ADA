@@ -367,6 +367,14 @@ async function poll(){
     errMsg='이전 분석 세션이 만료됐습니다. 새 파일을 업로드해 주세요.';
     render(); return;
   }
+  // job이 failed 상태이고 업로드 화면(cur=0)에 머물고 있으면 자동 초기화.
+  // 사용자가 F12 → localStorage 직접 지울 필요 없이 다음 폴링 시 자동 리셋.
+  if(isFailed() && cur===0){
+    clearState();
+    jobId=null; cur=0; frontier=0; maxReached=0; polling=false;
+    errMsg='이전 분석이 실패했습니다. 새 파일을 업로드해 주세요.';
+    render(); return;
+  }
   computeFrontier();
   // 백엔드 frontier 가 maxReached 보다 낮으면 이전 세션 stale 가능성 → 클램프.
   // (정상 뒤로가기: frontier=현재게이트 ≥ maxReached 이므로 클램프 안 됨)
@@ -415,8 +423,9 @@ setInterval(function(){
     // _progressKey/_shownPct 를 여기서 세팅하지 않음 — _stageProgress() 가 key 불일치 감지 후
     // 자연스럽게 _shownPct=0 으로 리셋. G2 로딩 중에 100% 고정되는 버그 방지.
     saveState();
-    render();
+    render(); // 전환 직후 즉시 G2 화면 갱신 — 없으면 다음 poll(2.5s)까지 G1 stuck
     if(!polling) startPolling();
+    return;
   }
   // jobId 없는 업로드 대기 화면에서는 타이머 렌더 생략 — textarea 포커스 보호
   if(!jobId && cur===0) return;

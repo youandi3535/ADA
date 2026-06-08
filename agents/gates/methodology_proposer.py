@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ada.core.lang_guard import looks_non_korean, with_korean_guard
+from ada.core.lang_guard import looks_non_korean
 from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
 
@@ -54,6 +56,18 @@ def _category_feasible(category: str, data_profile: dict | None) -> bool:
     return True
 
 
+def _has_non_korean_options(options: list[dict[str, Any]]) -> bool:
+    """옵션 중 title/rationale 에 한자가 포함된 항목이 있으면 True."""
+    for opt in options:
+        if not isinstance(opt, dict):
+            continue
+        for key in ("title", "rationale"):
+            v = opt.get(key)
+            if isinstance(v, str) and looks_non_korean(v):
+                return True
+    return False
+
+
 SYSTEM_PROMPT = (
     "You are an AutoML methodology specialist.\n\n"
     "The user has already chosen an analysis direction in the previous gate (G2). "
@@ -98,6 +112,10 @@ SYSTEM_PROMPT = (
     ' {"id":2, "title":"한국어 제목 (대조 계열)", '
     '"category":"<locked_category 그대로>", '
     '"rationale":"• 방식: ...\\n• 이유: ...\\n• 결과: ...", "score":0.65}]'
+)
+
+KOREAN_RETRY_HINT = (
+    "이전 응답에 한자(中文)가 포함되어 거부됩니다. 반드시 한국어로만 다시 작성하세요. 한자(漢字·汉字)·중국어 문장 금지."
 )
 
 _CUSTOM_OPTION: dict[str, Any] = {
@@ -223,15 +241,38 @@ class MethodologyProposerAgent(BaseGate):
             "data_profile": state.data_profile,
             "user_intent": state.user_intent,
         }
+        user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
-                user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
+                user_prompt=user_payload,
                 max_tokens=1500,
                 temperature=0.2,
                 json_mode=True,
             )
             arr = self._safe_parse_json_array(raw)
+
+            if arr and _has_non_korean_options(arr):
+                self.logger.warning("g3_cjk_detected_retry")
+                retry_user = KOREAN_RETRY_HINT + "\n\n다시 작성할 데이터:\n" + user_payload
+                try:
+                    raw2 = await self._call_llm(
+                        system_prompt=SYSTEM_PROMPT,
+                        user_prompt=retry_user,
+                        max_tokens=700,
+                        temperature=0.2,
+                        json_mode=True,
+                    )
+                    arr2 = self._safe_parse_json_array(raw2)
+                    if arr2 and not _has_non_korean_options(arr2):
+                        arr = arr2
+                    else:
+                        self.logger.warning("g3_cjk_persist_after_retry")
+                        arr = []
+                except Exception as e:
+                    self.logger.warning("g3_retry_failed", error=str(e))
+                    arr = []
+
             if arr:
                 llm_opts = arr[: self.n_proposals]
                 for i, opt in enumerate(llm_opts, start=1):
@@ -272,79 +313,60 @@ class MethodologyProposerAgent(BaseGate):
         if isinstance(explicit_cat, str) and explicit_cat in CATEGORIES and explicit_cat != state.category:
             updates["category"] = explicit_cat
 
-        # 2) 사용자 선택 추출 — custom_intent 우선, 없으면 adopted_rank 로 proposals 에서 검색.
-        # chosen 변수는 nullable 이며 아래 HJ-7 블록 (chosen_recipe 채움) 에서도 재사용.
+        # 2) custom_intent — 사용자가 직접 입력
         custom = uc.get("custom_intent")
-        is_custom_choice = isinstance(custom, str) and custom.strip() != ""
-        chosen: dict[str, Any] | None = None
-        rank: Any = None
-        if not is_custom_choice:
-            rank = uc.get("adopted_rank")
-            chosen = next(
-                (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
-                None,
-            )
-
-        # 3) user_intent / category 채움
-        if is_custom_choice:
+        _DEFAULT_META = {"variate": None, "forecast_kind": None, "task_kind": None, "horizon_hint": None}
+        if isinstance(custom, str) and custom.strip():
             updates["user_intent"] = f"{(state.user_intent or '').strip()} (방법론: {custom.strip()})".strip()
             if "category" not in updates:
                 inferred = _infer_category_from_text(custom, state.category)
                 if inferred != state.category and _category_feasible(inferred, state.data_profile):
                     updates["category"] = inferred
-            self.logger.info("g3_custom_intent_applied", intent=custom.strip()[:120])
-        elif chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
-            method = chosen["title"].strip()
-            base = (state.user_intent or "").strip()
-            updates["user_intent"] = f"{base} (방법론: {method})" if base else f"방법론: {method}"
-            # proposal 에 category 가 들어 있으면 우선 사용
-            if "category" not in updates:
-                new_cat = chosen.get("category")
-                if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
-                    updates["category"] = new_cat
-            # 그래도 없으면 title/rationale 텍스트로 추론
-            if "category" not in updates:
-                blob = method + " " + (chosen.get("rationale") or "")
-                inferred = _infer_category_from_text(blob, state.category)
-                if inferred != state.category:
-                    updates["category"] = inferred
-            self.logger.info(
-                "g3_proposal_adopted",
-                rank=rank,
-                title=method,
-                category=updates.get("category"),
-            )
-
-        # 4) 비지도로 카테고리 바뀐 경우 target_column 무효화
-        if updates.get("category") in _UNSUPERVISED_CATEGORIES and state.target_column:
-            updates["target_column"] = None
-
-        # 5) HJ-7 (2026-06-05) — chosen_recipe 정식 필드 채움 (위 2)·3) 결과 재사용)
-        # CS evaluator/insight/selector 가 state.chosen_recipe.meta.* 우선 활용.
-        # meta 4 키는 G4(model_strategy) 또는 카테고리별 proposer.g1 에서 보강할 수 있도록
-        # proposal 의 meta 가 있으면 그대로, 없으면 기본 None 채움.
-        _DEFAULT_META = {"variate": None, "forecast_kind": None, "task_kind": None, "horizon_hint": None}
-        recipe: dict[str, Any] = {}
-        if is_custom_choice:
-            recipe = {
+            updates["chosen_recipe"] = {
                 "id": 0,
                 "title": custom.strip(),
                 "methodology": custom.strip(),
                 "is_custom": True,
                 "meta": dict(_DEFAULT_META),
             }
-        elif chosen:
-            chosen_meta = chosen.get("meta")
-            recipe = {
-                "id": chosen.get("id"),
-                "title": chosen.get("title"),
-                "methodology": chosen.get("title"),
-                "rationale": chosen.get("rationale", ""),
-                "is_custom": False,
-                "meta": chosen_meta if isinstance(chosen_meta, dict) else dict(_DEFAULT_META),
-            }
-        if recipe:
-            updates["chosen_recipe"] = recipe
-            self.logger.info("g3_chosen_recipe_set", recipe_title=recipe.get("title"))
+            self.logger.info("g3_custom_intent_applied", intent=custom.strip()[:120])
+        else:
+            # 3) adopted_rank — proposals 에서 선택한 항목
+            rank = uc.get("adopted_rank")
+            chosen = next(
+                (p for p in (proposals or []) if isinstance(p, dict) and p.get("id") == rank),
+                None,
+            )
+            if chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
+                method = chosen["title"].strip()
+                base = (state.user_intent or "").strip()
+                updates["user_intent"] = f"{base} (방법론: {method})" if base else f"방법론: {method}"
+                # proposal 에 category 가 들어 있으면 우선 사용
+                if "category" not in updates:
+                    new_cat = chosen.get("category")
+                    if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
+                        updates["category"] = new_cat
+                # 키워드 폴백
+                if "category" not in updates:
+                    inferred = _infer_category_from_text(method, state.category)
+                    if inferred != state.category:
+                        updates["category"] = inferred
+                # 비지도 카테고리면 target_column 무효화
+                if updates.get("category", state.category) in _UNSUPERVISED_CATEGORIES:
+                    updates["target_column"] = None
+                chosen_meta = chosen.get("meta")
+                updates["chosen_recipe"] = {
+                    "id": chosen.get("id"),
+                    "title": method,
+                    "methodology": method,
+                    "is_custom": False,
+                    "meta": dict(chosen_meta) if isinstance(chosen_meta, dict) else dict(_DEFAULT_META),
+                }
+                self.logger.info(
+                    "g3_proposal_adopted",
+                    rank=rank,
+                    title=method,
+                    category=updates.get("category"),
+                )
 
         return state.with_update(**updates) if updates else state
