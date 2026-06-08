@@ -3,8 +3,17 @@ from __future__ import annotations
 
 from typing import Any
 
+# Day 11 (jh) — 베이스라인 모델은 HPO 탐색 의미 없음 (Dummy 는 학습 무관,
+# LR/Ridge 는 기본값이 합리적 baseline 역할). HyperparameterTunerAgent 가
+# 빈 dict 받으면 trial 생략하고 기본 파라미터로 학습.
+_BASELINE_MODELS_NO_HPO = ("Dummy", "LogisticRegression", "Ridge")
+
 
 def get_search_space(model_name: str, trial: Any) -> dict[str, Any]:
+    if model_name in _BASELINE_MODELS_NO_HPO:
+        # 빈 dict — HPO 생략 시그널. 호출측이 빈 dict 받으면 _build_model 기본값 사용.
+        return {}
+
     if model_name == "RandomForest":
         return {
             "n_estimators": trial.suggest_int("n_estimators", 100, 500),

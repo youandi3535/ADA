@@ -25,6 +25,30 @@ def _is_classification(y: Any) -> bool:
 
 
 def _build_model(model_name: str, task: str, params: dict[str, Any]) -> Any:
+    # Day 11 (jh) — 베이스라인 3종: Dummy / LogisticRegression / Ridge.
+    # "강모델이 더미보다 얼마나 나은가" 격차가 모델 가치를 정의.
+    if model_name == "Dummy":
+        if task == "classification":
+            from sklearn.dummy import DummyClassifier
+
+            # stratified: 클래스 비율대로 랜덤 — 진짜 "찍기" baseline.
+            return DummyClassifier(strategy="stratified", random_state=params.get("random_state", 42))
+        from sklearn.dummy import DummyRegressor
+
+        return DummyRegressor(strategy="mean")
+    if model_name == "LogisticRegression":
+        from sklearn.linear_model import LogisticRegression
+
+        defaults = {"max_iter": 1000, "n_jobs": -1, "random_state": 42}
+        defaults.update(params or {})
+        return LogisticRegression(**defaults)
+    if model_name == "Ridge":
+        from sklearn.linear_model import Ridge
+
+        defaults = {"random_state": 42}
+        defaults.update(params or {})
+        return Ridge(**defaults)
+
     if model_name == "RandomForest":
         if task == "classification":
             from sklearn.ensemble import RandomForestClassifier
@@ -49,10 +73,28 @@ def _build_model(model_name: str, task: str, params: dict[str, Any]) -> Any:
     raise ValueError(f"Unknown model: {model_name}")
 
 
+# Day 11 (jh) — 베이스라인 식별 헬퍼. evaluator / insight 가 격차 계산 시 사용.
+BASELINE_MODELS: frozenset[str] = frozenset({"Dummy", "LogisticRegression", "Ridge"})
+
+
+def is_baseline_model(model_name: str) -> bool:
+    """주어진 모델명이 베이스라인 카테고리인지."""
+    return str(model_name) in BASELINE_MODELS
+
+
 class TabularMLPipeline(BasePipeline):
     experiment_name = "ada-tabular-ml"
 
-    SUPPORTED_MODELS = ("RandomForest", "XGBoost", "LightGBM", "CatBoost")
+    # Day 11 (jh) — 베이스라인 3종 추가. 학습 비용 거의 0, 비교 가치 큼.
+    SUPPORTED_MODELS = (
+        "Dummy",
+        "LogisticRegression",
+        "Ridge",
+        "RandomForest",
+        "XGBoost",
+        "LightGBM",
+        "CatBoost",
+    )
 
     def train(self, X_train: Any, y_train: Any, model_name: str, params: dict[str, Any]) -> Any:
         task = "classification" if _is_classification(y_train) else "regression"
