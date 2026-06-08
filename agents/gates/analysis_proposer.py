@@ -14,32 +14,56 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ada.core.lang_guard import looks_non_korean, with_korean_guard
+from ada.core.lang_guard import looks_non_korean
 from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
 
-SYSTEM_PROMPT = with_korean_guard(
-    "당신은 데이터 전략 컨설턴트입니다. "
-    "사용자 의도와 데이터 프로파일을 보고 서로 다른 분석 방향 2개를 한국어로 제안합니다.\n\n"
-    "각 방향은 구체적인 ML/DL 분석 접근법이어야 합니다. 예시: "
-    "이진 분류, 다중 분류, 회귀, 시계열 예측, 이상치 탐지, 클러스터링, 랭킹, 생존 분석 등.\n"
-    "두 옵션은 분석 목표 또는 방법론에서 실질적으로 달라야 합니다.\n\n"
-    "주의:\n"
-    "- EDA·데이터 탐색·시각화 자체는 분석 '방향' 이 아닙니다. 제안 금지.\n"
-    "- Option 1 은 가장 확신 높은 방향, Option 2 는 의미 있게 다른 각도의 차선책.\n"
-    "- title 과 rationale 은 반드시 한국어로 작성. 한자(汉字)·중국어 절대 금지.\n"
-    "- 영문 컬럼명이 입력에 있어도 설명은 모두 한국어로 풀어 씁니다.\n\n"
-    "각 옵션에 다음 메타도 함께 결정:\n"
-    "  - category: tabular_ml | tabular_dl | timeseries | anomaly_detection 중 하나\n"
-    "    (클러스터링·비지도 접근은 anomaly_detection 으로)\n"
+SYSTEM_PROMPT = (
+    "You are a data strategy consultant. "
+    "Given the user intent and data profile, propose exactly TWO distinct analysis DIRECTIONS. "
+    "Each direction must be a concrete ML/DL analysis approach — for example: "
+    "binary classification, multi-class classification, regression, time-series forecasting, "
+    "anomaly detection, clustering, ranking, survival analysis, etc. "
+    "The two options must be genuinely different in their analytical goal or methodology. "
+    "Do NOT propose EDA, data exploration, or visualization as a direction — "
+    "those are steps within an analysis, not a direction itself. "
+    "For Option 1 pick the highest-confidence direction; "
+    "for Option 2 pick the second-best direction that offers a meaningfully different angle. "
+    "Titles must be in Korean (concise, 10-20 chars). "
+    "Each rationale MUST follow this exact 3-line Korean format (use \\n to separate lines in JSON):\n"
+    "• 방식: <핵심 분석 접근법·알고리즘 포함, 15~30자>\n"
+    "• 이유: <이 데이터·맥락에 적합한 이유, 15~30자>\n"
+    "• 결과: <사용자가 얻을 인사이트·지표·산출물, 15~30자>\n"
+    "Rationale rules: each line = one sentence, noun-ending preferred. "
+    "All 3 lines combined under 100 chars. "
+    "FORBIDDEN in rationale: 전형적인·다양한·체계적으로·최적화되어 있어·~에 적합합니다 류 수식어, "
+    "row/column count re-mention, two sentences per line. "
+    "For EACH option, also determine:\n"
+    "  - category: one of tabular_ml | tabular_dl | timeseries | anomaly_detection\n"
+    "    (use anomaly_detection for clustering / unsupervised approaches)\n"
     "  - approach: supervised_classification | supervised_regression | unsupervised_clustering"
     " | anomaly_detection | time_series_forecasting | supervised_other\n"
-    "  - target_column: 지도학습의 타겟 컬럼명, 비지도면 null\n\n"
-    "정확히 2개 객체의 JSON 배열만 반환 (마크다운·코드블록 금지):\n"
-    '[{"id": 1, "title": "한국어 제목", "rationale": "한국어 1-2문장 설명", "score": 0.0-1.0, '
-    '"category": "tabular_ml", "approach": "supervised_classification", "target_column": "컬럼명"}, '
-    '{"id": 2, "title": "한국어 제목", "rationale": "한국어 1-2문장 설명", "score": 0.0-1.0, '
-    '"category": "anomaly_detection", "approach": "unsupervised_clustering", "target_column": null}]'
+    "  - target_column: supervised target column name, or null for unsupervised\n"
+    "\n## 절대 강제 사항 (반드시 지킬 것)\n"
+    "각 옵션 객체에는 다음 키를 한 글자도 빠뜨리지 말 것:\n"
+    "  - \"category\": tabular_ml | tabular_dl | timeseries | anomaly_detection 중 하나\n"
+    "  - \"approach\": supervised_classification | supervised_regression\n"
+    "                | unsupervised_clustering | anomaly_detection\n"
+    "                | time_series_forecasting | supervised_other 중 하나\n"
+    "  - \"target_column\": 지도학습이면 컬럼명 문자열, 아니면 null\n\n"
+    "Option 1 과 Option 2 는 반드시 서로 다른 \"category\" 를 가져야 한다.\n"
+    "(같은 category 안의 세부 차이는 G2 단계에서 제시하지 말 것 — G3 에서 다룬다.)\n\n"
+    "이 두 옵션은 사용자가 G3 의 후보군을 결정하는 분기점이다.\n"
+    "사용자가 Option 1 (예: tabular_ml) 을 고르면 다음 게이트(G3) 에서는\n"
+    "오직 tabular_ml 안의 세부 방법론만 보게 된다. category 를 의도와 다르게 채우면\n"
+    "사용자 경험이 깨진다.\n"
+    "Reply with a JSON array of exactly 2 objects, no markdown:\n"
+    '[{"id": 1, "title": "한국어 제목", '
+    '"rationale": "• 방식: 지도학습 이진 분류 (XGBoost)\\n• 이유: 0/1 명확 타겟 + 구조화 피처\\n• 결과: 생존 예측 + 핵심 영향 변수 식별", '
+    '"score": 0.0-1.0, "category": "tabular_ml", "approach": "supervised_classification", "target_column": "col"}, '
+    '{"id": 2, "title": "한국어 제목", '
+    '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ...", '
+    '"score": 0.0-1.0, "category": "anomaly_detection", "approach": "unsupervised_clustering", "target_column": null}]'
 )
 
 # Retry 시 더 강한 한국어 지시
@@ -79,6 +103,38 @@ def _infer_category_from_text(text: str, fallback: str) -> str:
         if any(k in t for k in kws):
             return cat
     return fallback
+
+
+# 카테고리별 최소 행 수 — schema_validator.CATEGORY_RULES 와 동기화.
+# 직접 import 하면 순환 의존 가능성이 있으므로 여기서 독립 선언.
+_CATEGORY_MIN_ROWS: dict[str, int] = {
+    "tabular_ml": 100,
+    "tabular_dl": 1000,
+    "timeseries": 50,
+    "anomaly_detection": 500,
+}
+
+
+def _category_feasible(category: str, data_profile: dict | None) -> bool:
+    """데이터셋이 category 의 최소 요건(행 수·필수 컬럼)을 충족하는지 확인.
+
+    data_profile 이 없거나 rows 정보가 없으면 True 반환(보수적 허용).
+    """
+    if not data_profile:
+        return True
+    rows = int(data_profile.get("rows", 0) or 0)
+    if rows == 0:
+        return True
+    # 최소 행 수 검사
+    if rows < _CATEGORY_MIN_ROWS.get(category, 0):
+        return False
+    # timeseries: datetime 컬럼이 없으면 불가
+    if category == "timeseries":
+        dtypes = data_profile.get("dtypes") or {}
+        has_datetime = any("datetime" in str(v).lower() for v in dtypes.values())
+        if not has_datetime:
+            return False
+    return True
 
 
 _CUSTOM_OPTION: dict[str, Any] = {
@@ -147,7 +203,7 @@ class AnalysisProposerAgent(BaseGate):
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                max_tokens=600,
+                max_tokens=1500,
                 temperature=0.3,
                 json_mode=True,
             )
@@ -230,10 +286,10 @@ class AnalysisProposerAgent(BaseGate):
         custom = uc.get("custom_intent")
         if isinstance(custom, str) and custom.strip():
             updates["user_intent"] = custom.strip()
-            # Method B: 키워드 휴리스틱으로 category 추론
+            # Method B: 키워드 휴리스틱으로 category 추론 (데이터셋 요건 충족 시만)
             if "category" not in updates:
                 inferred = _infer_category_from_text(custom.strip(), state.category)
-                if inferred != state.category:
+                if inferred != state.category and _category_feasible(inferred, state.data_profile):
                     updates["category"] = inferred
             if updates.get("category") in _UNSUPERVISED_CATEGORIES and "target_column" not in updates:
                 updates["target_column"] = None
@@ -256,13 +312,21 @@ class AnalysisProposerAgent(BaseGate):
                 if "category" not in updates:
                     new_cat = chosen.get("category")
                     if isinstance(new_cat, str) and new_cat in CATEGORIES and new_cat != state.category:
-                        updates["category"] = new_cat
-                        self.logger.info("g2_category_changed", old=state.category, new=new_cat)
+                        if _category_feasible(new_cat, state.data_profile):
+                            updates["category"] = new_cat
+                            self.logger.info("g2_category_changed", old=state.category, new=new_cat)
+                        else:
+                            self.logger.info(
+                                "g2_category_change_blocked",
+                                reason="min_rows_not_met",
+                                blocked_cat=new_cat,
+                                kept_cat=state.category,
+                            )
 
                 # Method B: LLM 이 category 를 안 채웠을 때 키워드 fallback
                 if "category" not in updates:
                     inferred = _infer_category_from_text(direction, state.category)
-                    if inferred != state.category:
+                    if inferred != state.category and _category_feasible(inferred, state.data_profile):
                         updates["category"] = inferred
                         self.logger.info("g2_category_inferred", direction=direction, category=inferred)
 
@@ -283,4 +347,10 @@ class AnalysisProposerAgent(BaseGate):
                     target_column=updates.get("target_column"),
                 )
 
+        self.logger.info(
+            "g2_apply_done",
+            old_category=state.category,
+            new_category=updates.get("category", state.category),
+            chosen_has_category=bool(chosen.get("category")) if chosen else False,
+        )
         return state.with_update(**updates) if updates else state

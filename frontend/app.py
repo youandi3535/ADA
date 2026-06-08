@@ -169,6 +169,26 @@ _FLOW_HTML = """
   .btn-new:hover{background:rgba(255,255,255,.20);}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
+  <!-- 랜딩 오버레이 — G1 이전 단계 클릭 시 표시. 원본 Python 랜딩과 동일한 스타일 -->
+  <div id="landingOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+    z-index:9999;background:#dbe7f6;flex-direction:column;align-items:center;justify-content:center;
+    overflow-y:auto;padding:40px 20px;font-family:'Pretendard','Inter',-apple-system,sans-serif;">
+    <!-- 히어로 카드 (원본 ada_hero.png 대체 — Python fallback 과 동일한 스타일) -->
+    <div style="max-width:960px;width:100%;border-radius:34px;padding:80px 64px;
+      background:linear-gradient(160deg,#2b4a6b 0%,#3f5d7e 100%);color:#e6eef8;text-align:center;
+      box-shadow:0 32px 80px rgba(31,62,92,.34);margin-bottom:44px;">
+      <div style="font-size:18px;letter-spacing:.30em;opacity:.85;font-weight:600">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</div>
+      <div style="font-size:160px;line-height:1.0;margin:24px 0 4px">🌐</div>
+    </div>
+    <!-- 텍스트 + 버튼 -->
+    <div style="text-align:center;">
+      <div style="font-size:72px;font-weight:800;color:#19395a;margin:0 0 18px">ADA Studio</div>
+      <div style="font-size:24px;color:#52647d;margin:0 0 40px">다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로!</div>
+      <button onclick="startFromLanding()" style="font-family:inherit;font-size:20px;font-weight:600;
+        border:none;border-radius:999px;cursor:pointer;background:#1f3e5c;color:#fff;
+        padding:.7rem 2.4rem;box-shadow:0 10px 24px rgba(31,62,92,.28)">✦&nbsp;&nbsp;시작</button>
+    </div>
+  </div>
   <div class="shell">
     <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><button class="btn-new" id="newBtn" style="display:none" onclick="resetAll()">＋ 새 분석</button><span class="status" id="status">대기</span></div>
     <div class="steps" id="steps"></div>
@@ -195,6 +215,7 @@ let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, ani
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
 let gateCache={};  // {G2: gateData, G3: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
+let _sawAnalyzingAfterSubmit=false;  // resume 후 analyzing() 상태를 거쳤는지 — stale gate 차단
 
 // ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
 // 1순위: URL 해시(#ada=…) — window.parent.history.replaceState 로 기록.
@@ -212,7 +233,7 @@ function _stateRead(){
 }
 function saveState(){
   if(!jobId) return;
-  if(isCompleted() || isFailed()){ clearState(); return; }
+  if(isFailed()){ clearState(); return; }  // 완료 시엔 유지 — F5 새로고침 후 결과 화면 복원
   var d=JSON.stringify({jobId:jobId,fileId:fileId,cur:cur,maxReached:maxReached});
   try{
     var u=window.parent.location;
@@ -224,6 +245,11 @@ function clearState(){
   try{ window.parent.history.replaceState({}, '', window.parent.location.pathname); }catch(e){}
   try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
 }
+function startFromLanding(){
+  var ov=document.getElementById('landingOverlay');
+  if(ov){ ov.style.display='none'; }
+  resetAll();
+}
 function resetAll(){
   clearState();
   jobId=null; fileId=null; cur=0; frontier=0; maxReached=0;
@@ -231,10 +257,14 @@ function resetAll(){
   if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
+  gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={};
+  _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false;
   var nb=document.getElementById('newBtn'); if(nb) nb.style.display='none';
   render();
 }
-const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성'};
+const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
+  G2:'분석 방향 제안 완료',G3:'방법론 제안 완료',G4:'모델 전략 제안 완료',G5:'최적 모델 선정 완료',G6:'산출물 선택 완료',
+  error_recovery:'오류 복구 중',self_learning_dispatch:'학습 결과 저장 중'};
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
@@ -310,15 +340,14 @@ async function doResume(){
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
     lastSubmittedGate=gate;
-    // 이전 단계 재진행: 이후 게이트 캐시와 frontier 초기화
-    if(cur < maxReached){
-      Object.keys(gateCache).forEach(function(k){
-        if(parseInt(k.slice(1),10)>cur+1) delete gateCache[k];  // 새 컨벤션: 캐시 키 G2~G6, cur=1→G2 가 현재이므로 G3+ 삭제
-      });
-      frontier=cur; maxReached=cur;
-    }
-    // selId 를 초기화하지 않음 — 제출 직후 poll 이 돌아와도 선택이 옵션1로 리셋되지 않도록
+    // 제출 게이트 이후 캐시 삭제 — 현재 게이트(tg) 캐시는 유지(뒤로가기 복원용)
+    var _tgNum=parseInt(tg[1],10);
+    Object.keys(gateCache).forEach(function(k){
+      if(parseInt(k.slice(1),10)>_tgNum) delete gateCache[k];
+    });
+    cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
+    _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false;  // gate 제출 직후 리셋
     saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
@@ -366,12 +395,19 @@ async function poll(){
   // resume 직후 Celery가 아직 task를 못 받아 Redis에 이전 게이트가 남아있을 수 있음 →
   // lastSubmittedGate 와 현재 게이트가 같으면 계속 폴링.
   // 분석 중(curGate=null)에는 유지 — 새 게이트 등장 시에만 클리어.
-  if(lastSubmittedGate && curGate() && curGate()!==lastSubmittedGate) lastSubmittedGate=null;
+  // 실패·완료 시 stale 가드 즉시 해제 — 이전 단계 캐시 proposals 복원 가능하게
+  if(isFailed()||isCompleted()){ lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; }
+  // resume 후 analyzing() 통과 확인 — stale gate_data 로 lastSubmittedGate 조기 클리어 방지
+  if(lastSubmittedGate && analyzing()) _sawAnalyzingAfterSubmit=true;
+  if(lastSubmittedGate && _sawAnalyzingAfterSubmit && curGate() && curGate()!==lastSubmittedGate) lastSubmittedGate=null;
   // G1→G2 자동 전환 대기 중에는 polling 을 유지해야 한다.
   // 백엔드가 G2 게이트 도달 시점에 analyzing()=false 가 되어 기존 조건만으론 폴링이 멈추고,
   // 그 결과 _shownPct 가 99 에 도달해도 cur 전환을 못 한 채 화면이 stuck 된다(2026-06-04 발견).
   const g0Pending = (cur===0 && jobId && _shownPct < 100);
-  const keepPolling=(analyzing() || !!lastSubmittedGate || g0Pending) && !paused;
+  // 게이트 코드는 잡혔는데 proposals 이 아직 비어있는 상태 — analyzing()=false 이지만 폴링 유지 필요
+  // (예: G6 gate 도달 후 eval/insight 완료 전에 gate_data 가 먼저 저장된 경우)
+  const gateWaitProposals = !!curGate() && !(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+  const keepPolling=(analyzing() || !!lastSubmittedGate || g0Pending || gateWaitProposals) && !paused;
   if(keepPolling){ pollTimer=setTimeout(poll, 2500); }
   else { polling=false; }
 }
@@ -383,12 +419,16 @@ setInterval(function(){
   // G1→G2 자동 전환: polling 이 멈춘 케이스에 대비해 매 500ms 도 조건 재확인.
   // proposals 조건 제거(2026-06-04) — G2 게이트 도달 신호만으로 전환.
   if(cur===0 && jobId && curGate()==='G2' && _shownPct >= 99){
-    cur=1; follow=true; _progressKey='G2'; _shownPct=100;
+    cur=1; follow=true;
+    // _progressKey/_shownPct 를 여기서 세팅하지 않음 — _stageProgress() 가 key 불일치 감지 후
+    // 자연스럽게 _shownPct=0 으로 리셋. G2 로딩 중에 100% 고정되는 버그 방지.
     saveState();
     render(); // 전환 직후 즉시 G2 화면 갱신 — 없으면 다음 poll(2.5s)까지 G1 stuck
-    startPolling(); // G2 proposals 수신 후 폴링 재개
+    if(!polling) startPolling();
     return;
   }
+  // jobId 없는 업로드 대기 화면에서는 타이머 렌더 생략 — textarea 포커스 보호
+  if(!jobId && cur===0) return;
   if(analyzing() || _shownPct < 100 || (cur===0 && jobId)) render();
 }, 500);
 
@@ -426,12 +466,21 @@ function _stageProgress(){
     // 게이트 단계(G2~G6): proposals 도착 = 즉시 100% 스냅(애니메이션 지연 없음).
     const tg='G'+(cur+1);  // cur 1~5 → 백엔드 G2~G6
     const ag=curGate();
-    const d=(ag===tg)?gateData:(gateCache[tg]||{});
+    // stale: resume 직후 analyzing() 미확인 구간은 이전 gate_data 무시
+    const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+    const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
     const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
-    if(ps.length){
-      _shownPct=100; return 100;  // proposals 도착 즉시 100%
+    // proposals 도착 즉시 100% — 단, 제출 직후 분석 대기(lastSubmittedGate=tg & ag=null) 상태는 제외
+    if(ps.length && !(lastSubmittedGate===tg && !ag)){
+      _shownPct=100; return 100;
     } else {
-      target=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
+      // 단계별 독립 0~100% — 백엔드 전체 진행률(0~100)을 이 단계 구간으로 정규화.
+      // cur=1(G2 로딩):14~18%, cur=2(G3):18~33%, cur=3(G4):33~50%, cur=4(G5):50~85%, cur=5(G6):85~98%
+      const STAGE_LO={1:14,2:18,3:33,4:50,5:85};
+      const STAGE_HI={1:18,2:33,3:50,4:85,5:98};
+      const lo=STAGE_LO[cur]||0, hi=STAGE_HI[cur]||100;
+      const raw=(gateData.progress_pct!=null)?gateData.progress_pct:lo;
+      target=Math.max(0, Math.min(99, Math.round((raw-lo)/(hi-lo)*100)));
     }
   }
   // 점프 보간 — 매 호출(500ms) 최대 step. 작은 차이는 즉시, 큰 점프(예: 30→100)는 약 2초간 부드럽게.
@@ -459,7 +508,8 @@ function loadingBlock(){
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
   const realP=(gateData.progress_pct!=null)?gateData.progress_pct:null;
   let agentLine='';
-  if(gateData.current_agent){
+  // stale 구간(resume 직후 analyzing 미확인)에는 이전 에이전트 라벨 숨김
+  if(gateData.current_agent && !(lastSubmittedGate&&!_sawAnalyzingAfterSubmit)){
     agentLine='<div class="lagent">현재 작업: <b>'+esc(AGENT_KO[gateData.current_agent]||gateData.current_agent)+'</b></div>';
   }
   let diag='';
@@ -473,10 +523,23 @@ function loadingBlock(){
   }
   return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine+diag+'</div>';
 }
-// 공통 진행바 — 1~7 모든 단계에서 카드 하단에 동일하게 표시.
-// 진행률은 _stageProgress() 가 단계 완료(proposals 도착·isCompleted)면 100% 강제 점프.
+// 현재 게이트 화면이 로딩 중인지 여부 (proposals 없는 상태)
+function isGateLoading(){
+  if(cur<1 || cur>5) return false;
+  const tg='G'+(cur+1);
+  const ag=curGate();
+  if(lastSubmittedGate===tg && !ag) return true;
+  const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+  const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
+  const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
+  return !llmProps.length;
+}
+// 공통 진행바 — 분析 대기 로딩 중에만 표시. 옵션 선택·완료 화면에서는 숨김.
 function progressBar(){
   if(isFailed()) return '';
+  if(cur===LAST) return '';  // G7 완료 페이지
+  if(cur===0 && !jobId) return '';  // 업로드 전 초기 화면 → 진행바 숨김
+  if(cur>=1 && cur<=5 && !isGateLoading()) return '';  // proposals 표시 중 → 숨김
   const p=_stageProgress();
   const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
   let etaStr='';
@@ -514,7 +577,8 @@ function propCard(p, idx, recId){
   else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(function(k){return esc(k)+' '+esc(p.metrics[k]);}).join(' · ')+'</div>'; }
   else if(p.outputs && p.outputs.length){ var OL={'OUT-01':'PPT','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'}; extra='<div class="hint">📦 '+p.outputs.map(function(o){return esc(OL[o]||o);}).join(' · ')+'</div>'; }
   const score=(p.score!=null)?('<div class="time">⭐ 추천도 '+Math.round(p.score*100)+'%</div>'):'';
-  return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><p>'+esc(p.rationale||'')+'</p>'+extra+score+'</div>';
+  const rat=esc(p.rationale||'').replace(/\\n/g,'<br><br>');
+  return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><p>'+rat+'</p>'+extra+score+'</div>';
 }
 function customCard(n){
   const sel=(selId==='custom')?' sel':'';
@@ -559,8 +623,10 @@ function contentGate(){
   const ag=curGate();             // 백엔드 현재 게이트
   // 방금 제출한 게이트이고 다음 게이트 미도착(분석 중) → 캐시 proposals 재표시 방지
   if(lastSubmittedGate===tg && !ag){ return gateHeader(tg)+loadingBlock(); }
-  // 사용자 위치와 백엔드 위치가 같으면 실시간 gateData, 다르면 캐시 사용
-  const d=(ag===tg)?gateData:(gateCache[tg]||{});
+  // 실시간: ag===tg면 gateData, 뒤로가기 등 이전 단계: 캐시 사용
+  // stale: resume 직후 analyzing() 미확인 구간은 이전 gate_data 무시
+  const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+  const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
   const g=tg;
   const props=(d.proposals)||[];
   if(!props.length){ return gateHeader(g)+loadingBlock(); }
@@ -631,9 +697,9 @@ function content(i){
     const t=has?('선택됨: '+esc(selectedFile.name)):'파일을 끌어다 놓거나 선택';
     return '<div class="ahdr"><h2>데이터 업로드</h2></div><p class="desc">파일을 올리면 ADA가 데이터를 분석해 방향을 제안합니다.</p>'
       +'<div class="dz'+(has?' has':'')+'" id="dz"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 8.5a3.5 3.5 0 0 1 .5 6.96"/><path d="M12 19v-7"/><path d="m9 14 3-3 3 3"/></svg>'
-      +'<div style="flex:1"><div class="t" id="dzt">'+t+'</div><div class="s">CSV · XLSX · PARQUET · JSON · PDF · ZIP · TXT (최대 100MB)</div></div>'
+      +'<div style="flex:1"><div class="t" id="dzt">'+t+'</div><div class="s">CSV · XLSX · JSON (최대 100MB)</div></div>'
       +'<button class="browse" id="browseBtn">찾아보기</button></div>'
-      +'<input type="file" id="fileInput" style="display:none" accept=".csv,.parquet,.xlsx,.zip,.json,.pdf,.txt,.html">'
+      +'<input type="file" id="fileInput" style="display:none" accept=".csv,.xlsx,.json">'
       +'<textarea class="intent" id="intentInput" placeholder="💬 분석 의도 — 예) 타이타닉 승객의 생존 여부를 예측하고 싶어요"></textarea>';
   }
   if(i>=1 && i<=5) return contentGate();
@@ -666,8 +732,8 @@ function render(){
   document.getElementById('content').innerHTML=
     (errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur)+progressBar();
   document.getElementById('curName').textContent=steps[cur].label;
-  // 상단 헤더 진행률 — progressBar 와 동일한 _stageProgress() 사용 → 카드 안 진행바와 항상 일치.
-  document.getElementById('curPct').textContent=_stageProgress()+'%';
+  // 상단 헤더 진행률 — 단계 전체(7개) 기준 달성도. 카드 안 로딩바(_stageProgress)와 다른 지표.
+  document.getElementById('curPct').textContent=Math.round(frontier/(N-1)*100)+'%';
   document.getElementById('curIdx').textContent=cur+1;
   document.getElementById('curTot').textContent=N;
   const stt=document.getElementById('status');
@@ -702,7 +768,8 @@ function render(){
 
   const prev=document.getElementById('prevBtn'), next=document.getElementById('nextBtn'),
         stop=document.getElementById('stopBtn'), prim=document.getElementById('primaryBtn');
-  prev.disabled=(cur===0);
+  prev.disabled=false;  // cur=0 에서도 활성 — 클릭 시 시작 화면으로
+  prev.innerHTML=(cur===0)?'← 시작 화면':'← 이전 단계';
   next.disabled=(cur>=maxReached);
   stop.style.display=(!paused && analyzing())?'inline-flex':'none';
   const _tg='G'+(cur+1);  // 새 컨벤션: cur 인덱스 → 백엔드 게이트 코드
@@ -710,7 +777,9 @@ function render(){
   const _llmCount=function(d){ return (d.proposals||[]).filter(function(p){return !p.is_custom;}).length; };
   const atCurrentGate=(cur===frontier)&&!!curGate()&&_llmCount(gateData)>0;
   const atPastGate=(cur<frontier)&&cur>=1&&cur<=5&&_llmCount(_cd)>0;
-  const atGate=atCurrentGate||atPastGate;
+  // 실패 후 이전 단계로 돌아온 경우: curGate()=null 이어도 캐시 proposals 있으면 진행 허용
+  const atFailedRetry=isFailed()&&cur>=1&&cur<=5&&(_llmCount(_cd)>0||_llmCount(gateData)>0);
+  const atGate=atCurrentGate||atPastGate||atFailedRetry;
   const g5ok=curGate()!=='G6'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
   prim.innerHTML=primaryLabel();
   prim.classList.toggle('resume', paused);
@@ -720,7 +789,26 @@ function render(){
   else if(cur===LAST) prim.disabled=true;
   else prim.disabled=!atGate||!g5ok;
 }
-document.getElementById('prevBtn').onclick=function(){ if(cur>0){ cur--; follow=false; render(); } };
+document.getElementById('prevBtn').onclick=function(){
+  if(cur===0){
+    // G1 에서 이전 = 랜딩 오버레이 표시 (iframe sandbox 로 부모 navigate 불가 → 자체 오버레이)
+    clearState();
+    var ov=document.getElementById('landingOverlay');
+    if(ov){ ov.style.display='flex'; }
+    return;
+  }
+  if(cur>0){
+    const goTo=cur-1;
+    // G2~G5 구간에서 되돌아갈 때 이후 작업 무효화 경고
+    if(goTo>=1 && goTo<=4 && maxReached>goTo){
+      // 실패 상태에서는 confirm 없이 즉시 — 이미 분析이 실패했으므로 경고 불필요
+      if(!isFailed() && !window.confirm(steps[goTo].label+' 단계로 돌아가면 이후 분석 결과가 초기화됩니다.\\n다른 옵션으로 재분석하려면 확인을 누르세요.')) return;
+      Object.keys(gateCache).forEach(function(k){ if(parseInt(k.slice(1),10)>goTo+1) delete gateCache[k]; });
+      maxReached=goTo; frontier=goTo;
+    }
+    cur=goTo; follow=false; render();
+  }
+};
 document.getElementById('nextBtn').onclick=function(){ if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
 document.getElementById('stopBtn').onclick=function(){ paused=true; if(pollTimer) clearTimeout(pollTimer); polling=false; render(); };
 document.getElementById('primaryBtn').onclick=function(){
@@ -744,6 +832,7 @@ document.getElementById('primaryBtn').onclick=function(){
     if(s && s.jobId){
       jobId=s.jobId; fileId=s.fileId||null;
       cur=s.cur||1; maxReached=s.maxReached||cur; frontier=cur;
+      render();  // 폴링 완료 전에 로딩 상태 즉시 렌더링
       startPolling(); return;
     }
   }catch(e){}
@@ -758,12 +847,13 @@ def _flow_screen() -> None:
     st.markdown(
         """
         <style>
-        [data-testid="stAppViewContainer"] { background: #1c3450; }
+        /* 외부 배경을 랜딩 오버레이 색과 통일 — 97vh 틈새 어두운 띠 방지 */
+        [data-testid="stAppViewContainer"] { background: #dbe7f6; }
         [data-testid="stHeader"] { display: none; }
-        .block-container { max-width: 100% !important; padding: 0 !important; }
-        [data-testid="stMain"] .block-container { padding: 0 !important; }
+        .block-container { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
+        [data-testid="stMain"] .block-container { padding: 0 !important; margin: 0 !important; }
         [data-testid="stIFrame"] iframe, .block-container iframe {
-            width: 100% !important; height: 97vh !important; border: 0; display: block;
+            width: 100% !important; height: 100vh !important; border: 0; display: block;
         }
         </style>
         """,

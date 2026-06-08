@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ada.core.lang_guard import looks_non_korean, with_korean_guard
+from ada.core.lang_guard import looks_non_korean
 from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
 
@@ -14,8 +14,8 @@ _UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
 # 방법론 제목/근거 텍스트에서 카테고리를 키워드로 추론하기 위한 사전.
 # 우선순위 높음 → 낮음 순서 (anomaly_detection 먼저 검사하지 않으면 timeseries 가 흡수).
 _CATEGORY_KEYWORDS_KO: list[tuple[str, list[str]]] = [
-    ("anomaly_detection", ["이상탐지", "anomaly", "outlier", "이상치", "이상", "OneClass", "Isolation"]),
-    ("timeseries", ["시계열", "예측", "forecast", "time series", "temporal", "SARIMA", "Prophet", "LSTM"]),
+    ("anomaly_detection", ["이상탐지", "anomaly", "outlier", "이상치", "OneClass", "Isolation"]),  # "이상" 제거 — "0.85 이상의" 등 일반 용어와 충돌
+    ("timeseries", ["시계열", "forecast", "time series", "temporal", "SARIMA", "Prophet", "LSTM"]),  # "예측" 제거 — 분류 타이틀에도 흔히 등장
     ("tabular_dl", ["딥러닝", "deep learning", "transformer", "FTTransformer", "TabTransformer"]),
     ("tabular_ml", ["정형 ML", "XGBoost", "LightGBM", "RandomForest", "tree", "boosting"]),
 ]
@@ -30,6 +30,31 @@ def _infer_category_from_text(text: str, fallback: str) -> str:
     return fallback
 
 
+_CATEGORY_MIN_ROWS: dict[str, int] = {
+    "tabular_ml": 100,
+    "tabular_dl": 1000,
+    "timeseries": 50,
+    "anomaly_detection": 500,
+}
+
+
+def _category_feasible(category: str, data_profile: dict | None) -> bool:
+    """데이터셋이 category 의 최소 요건(행 수·필수 컬럼)을 충족하는지 확인."""
+    if not data_profile:
+        return True
+    rows = int(data_profile.get("rows", 0) or 0)
+    if rows == 0:
+        return True
+    if rows < _CATEGORY_MIN_ROWS.get(category, 0):
+        return False
+    if category == "timeseries":
+        dtypes = data_profile.get("dtypes") or {}
+        has_datetime = any("datetime" in str(v).lower() for v in dtypes.values())
+        if not has_datetime:
+            return False
+    return True
+
+
 def _has_non_korean_options(options: list[dict[str, Any]]) -> bool:
     """옵션 중 title/rationale 에 한자가 포함된 항목이 있으면 True."""
     for opt in options:
@@ -42,19 +67,50 @@ def _has_non_korean_options(options: list[dict[str, Any]]) -> bool:
     return False
 
 
-SYSTEM_PROMPT = with_korean_guard(
-    "당신은 AutoML 전략 컨설턴트입니다. "
-    "데이터 프로파일과 G2 에서 사용자가 선택한 분석 방향을 보고, "
-    "tabular_ml · tabular_dl · timeseries · anomaly_detection 중 서로 다른 방법론 2개를 한국어로 제안합니다.\n\n"
-    "Option 1: 가장 적합. Option 2: 의미 있게 다른 각도의 차선책.\n\n"
-    "각 옵션의 rationale 은 한국어 2-3문장으로 다음을 모두 설명:\n"
-    "  (1) 이 방법론이 데이터 특성에 적합한 이유\n"
-    "  (2) 사용할 구체적 알고리즘·모델 패밀리\n"
-    "  (3) 사용자가 기대할 수 있는 결과·인사이트\n\n"
-    "title 은 간결한 한국어. 한자(汉字)·중국어 절대 금지. 영문 알고리즘명만 허용 (XGBoost 등).\n\n"
-    "정확히 2개 객체의 JSON 배열만 반환 (마크다운 금지):\n"
-    '[{"id": 1, "title": "한국어 제목", "rationale": "한국어 2-3문장", "score": 0.0-1.0}, '
-    ' {"id": 2, "title": "한국어 제목", "rationale": "한국어 2-3문장", "score": 0.0-1.0}]'
+SYSTEM_PROMPT = (
+    "You are an AutoML methodology specialist.\n\n"
+    "The user has already chosen an analysis direction in the previous gate (G2). "
+    "That choice fixes the analytical CATEGORY for this run. "
+    "Your job is NOT to re-decide the category — your job is to offer two concrete "
+    "methodology options WITHIN that fixed category.\n\n"
+    "Input JSON keys you will receive:\n"
+    "  - locked_category: tabular_ml | tabular_dl | timeseries | anomaly_detection "
+    "(the user's G2 decision; treat as immutable)\n"
+    "  - g2_title: the G2 option title the user picked (Korean)\n"
+    "  - data_profile: rows, cols, dtypes, target info\n"
+    "  - user_intent: original user goal (Korean free text)\n\n"
+    "## 절대 강제 사항\n"
+    "1. 두 옵션 모두 locked_category 안에 머무를 것. 카테고리 점프 금지.\n"
+    "   locked_category=tabular_ml 이면 anomaly_detection / timeseries / tabular_dl 안을 절대 제안하지 말 것.\n\n"
+    "2. 같은 카테고리 안에서 알고리즘 계열이 명확히 다른 두 안을 낼 것. 카테고리별 허용 분기 축:\n"
+    "   - tabular_ml:\n"
+    "       Option 1 = 트리 앙상블 (XGBoost / LightGBM / CatBoost / RandomForest 스태킹)\n"
+    "       Option 2 = 선형·커널 (Logistic Regression / SVM / Elastic Net) — 해석성 강조\n"
+    "   - tabular_dl:\n"
+    "       Option 1 = Transformer (TabTransformer / FT-Transformer)\n"
+    "       Option 2 = 경량 MLP / TabPFN — 학습 시간·소형 데이터 강점\n"
+    "   - timeseries:\n"
+    "       Option 1 = 통계 모델 (SARIMA / Prophet) — 해석성·계절성\n"
+    "       Option 2 = 딥러닝 (TFT / PatchTST / Informer) — 장기 의존성\n"
+    "   - anomaly_detection:\n"
+    "       Option 1 = 고전 앙상블 (IsolationForest / LOF / OneClassSVM)\n"
+    "       Option 2 = 딥러닝 재구성 (AutoEncoder / TranAD / AnomalyTransformer)\n\n"
+    "3. 위 분기 축 외 조합 금지 (예: tabular_ml 인데 한쪽에 이상탐지 끼우기).\n"
+    "4. Option 1 score 는 0.80~0.95, Option 2 는 0.60~0.78.\n\n"
+    "## rationale 작성 규칙 (3줄 글머리)\n"
+    "한국어. 정확히 3줄. 각 줄 '• ' 로 시작.\n"
+    "  • 방식: 구체 알고리즘 1~3개 명시 (15~30자)\n"
+    "  • 이유: data_profile + g2_title 에서 가져온 근거 (15~30자)\n"
+    "  • 결과: 사용자가 얻을 인사이트·지표 (15~30자)\n"
+    "줄 사이는 반드시 '\\n' 개행. JSON 안에서 "
+    '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ..."\n\n'
+    "## 출력 (마크다운 금지, JSON array of 2 objects)\n"
+    '[{"id":1, "title":"한국어 제목 (계열명 포함)", '
+    '"category":"<locked_category 그대로>", '
+    '"rationale":"• 방식: ...\\n• 이유: ...\\n• 결과: ...", "score":0.80},\n'
+    ' {"id":2, "title":"한국어 제목 (대조 계열)", '
+    '"category":"<locked_category 그대로>", '
+    '"rationale":"• 방식: ...\\n• 이유: ...\\n• 결과: ...", "score":0.65}]'
 )
 
 KOREAN_RETRY_HINT = (
@@ -179,9 +235,9 @@ class MethodologyProposerAgent(BaseGate):
             None,
         )
         payload = {
-            "category": state.category,
+            "locked_category": state.category,
+            "g2_title": g1_chosen.get("title") if g1_chosen else "",
             "data_profile": state.data_profile,
-            "g1_direction": g1_chosen.get("title") if g1_chosen else (state.user_intent or ""),
             "user_intent": state.user_intent,
         }
         user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
@@ -189,7 +245,7 @@ class MethodologyProposerAgent(BaseGate):
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                max_tokens=700,
+                max_tokens=1500,
                 temperature=0.2,
                 json_mode=True,
             )
@@ -263,7 +319,7 @@ class MethodologyProposerAgent(BaseGate):
             updates["user_intent"] = f"{(state.user_intent or '').strip()} (방법론: {custom.strip()})".strip()
             if "category" not in updates:
                 inferred = _infer_category_from_text(custom, state.category)
-                if inferred != state.category:
+                if inferred != state.category and _category_feasible(inferred, state.data_profile):
                     updates["category"] = inferred
             updates["chosen_recipe"] = {
                 "id": 0,

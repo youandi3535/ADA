@@ -5,21 +5,30 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ada.core.lang_guard import looks_non_korean, with_korean_guard
+from ada.core.lang_guard import looks_non_korean
 from ada.core.state import PipelineState
 from agents.gates._base_gate import BaseGate
 
-SYSTEM_PROMPT = with_korean_guard(
-    "당신은 모델링 아키텍트입니다. "
-    "데이터 프로파일·EDA 요약·G3 방법론을 보고 서로 다른 모델 전략 2개를 한국어로 제안합니다.\n\n"
-    "각 옵션의 rationale 은 한국어 1-2문장: "
-    "이 전략이 데이터에 적합한 이유 + 사용자가 기대할 결과.\n"
-    "title 은 간결한 한국어. 한자(汉字)·중국어 절대 금지. 모델명(XGBoost 등)만 영문 허용.\n\n"
-    "정확히 2개 객체의 JSON 배열만 반환 (마크다운 금지):\n"
+SYSTEM_PROMPT = (
+    "You are a modeling architect. "
+    "Given the data profile, EDA summary, and the G3 methodology chosen by the user, "
+    "propose exactly TWO distinct model strategy options. "
+    "Titles must be in Korean (concise, 10-20 chars). "
+    "Each rationale MUST follow this exact 3-line Korean format (use \\n to separate lines in JSON):\n"
+    "• 방식: <핵심 모델명·전략 포함, 15~30자>\n"
+    "• 이유: <이 데이터·맥락에 적합한 이유, 15~30자>\n"
+    "• 결과: <사용자가 얻을 인사이트·지표·산출물, 15~30자>\n"
+    "Rationale rules: each line = one sentence, noun-ending preferred. "
+    "All 3 lines combined under 100 chars. "
+    "FORBIDDEN in rationale: 전형적인·다양한·체계적으로·최적화되어 있어·~에 적합합니다 류 수식어, "
+    "row/column count re-mention, two sentences per line. "
+    "Reply with a JSON array of exactly 2 objects, no markdown:\n"
     '[{"id": 1, "title": "한국어 제목", "models": ["Model1", "Model2"], '
-    '"rationale": "한국어 1-2문장", "score": 0.0-1.0}, '
-    ' {"id": 2, "title": "한국어 제목", "models": ["Model1", "Model2"], '
-    '"rationale": "한국어 1-2문장", "score": 0.0-1.0}]'
+    '"rationale": "• 방식: XGBoost + LightGBM 앙상블\\n• 이유: 정형 분류에 부스팅 계열 강점\\n• 결과: 최고 정확도 모델 자동 선정", '
+    '"score": 0.0-1.0}, '
+    '{"id": 2, "title": "한국어 제목", "models": ["Model1", "Model2"], '
+    '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ...", '
+    '"score": 0.0-1.0}]'
 )
 
 KOREAN_RETRY_HINT = (
@@ -130,12 +139,12 @@ class ModelStrategyProposerAgent(BaseGate):
             "g2_choice": (state.gate_responses or {}).get("G3", {}).get("user_choice"),
             "eda_summary": state.eda_summary,
         }
-        user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
+        user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                max_tokens=700,
+                max_tokens=1500,
                 temperature=0.2,
                 json_mode=True,
             )
