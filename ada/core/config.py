@@ -90,9 +90,6 @@ class Settings(BaseSettings):
     # 에러 핸들러 (auto_error_handler / error_recovery) 의 3순위 Ollama 는
     # 별도 로직이므로 이 토글과 무관하게 유지.
     use_ollama_for_analysis: bool = Field(default=True, validation_alias="USE_OLLAMA_FOR_ANALYSIS")
-    # InsightAgent 만 옵션 유지 — True 면 인사이트 생성은 Anthropic 사용.
-    # use_ollama_for_analysis=True 여도 이 토글이 우선.
-    use_anthropic_for_insight: bool = Field(default=True, validation_alias="USE_ANTHROPIC_FOR_INSIGHT")
     # 분석용 Ollama 모델 (Sonnet/Opus 대체) — qwen2.5:7b 고정 (서버·로컬 PC 성능 한계)
     # 14b 는 GTX 1060 3GB + Ryzen 7 환경에서 미지원. 변경 금지.
     ollama_model_analysis: str = Field(default="qwen2.5:7b", validation_alias="OLLAMA_MODEL_ANALYSIS")

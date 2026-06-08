@@ -129,6 +129,7 @@ class ModelStrategyProposerAgent(BaseGate):
 
     gate_code = "G4"
     model_name = "claude-opus-4-6"
+    use_anthropic_api = True
     n_proposals = 2
 
     async def _propose(self, state: PipelineState) -> list[dict[str, Any]]:

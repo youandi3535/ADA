@@ -30,6 +30,9 @@ class BaseAgent(abc.ABC):
 
     model_name: str = "claude-sonnet-4-6"
     uses_llm: bool = True
+    # True 로 설정한 에이전트는 use_ollama_for_analysis 설정과 무관하게
+    # Anthropic API 를 우선 사용한다 (G4 모델 전략 이후 단계).
+    use_anthropic_api: bool = False
 
     def __init__(self, session: Optional[AsyncSession] = None) -> None:
         self.session = session
@@ -279,16 +282,11 @@ class BaseAgent(abc.ABC):
         if agent_key and job_id:
             interp_task = await self._start_llm_progress_interp(agent_key, job_id)
         # Routing 결정:
-        #   1. InsightAgent 는 use_anthropic_for_insight=True 면 Anthropic 우선
+        #   1. use_anthropic_api=True 에이전트 (G4 모델 전략 이후) → Anthropic API 우선
         #   2. use_ollama_for_analysis=True 면 Ollama (qwen2.5:7b 기본 — 서버 성능 한계)
         #   3. anthropic_api_key 있으면 Anthropic API
         #   4. fallback: Claude CLI
-        agent_cls = self.__class__.__name__
-        force_anthropic = (
-            agent_cls == "InsightAgent"
-            and getattr(settings, "use_anthropic_for_insight", False)
-            and bool(settings.anthropic_api_key)
-        )
+        force_anthropic = self.use_anthropic_api and bool(settings.anthropic_api_key)
         use_ollama = getattr(settings, "use_ollama_for_analysis", False) and not force_anthropic
         try:
             if use_ollama:
