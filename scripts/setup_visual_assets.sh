@@ -52,6 +52,26 @@ else
 fi
 
 echo ""
+echo "=== unDraw 일러스트 — 더미 placeholder 자동 검출·삭제 ==="
+# 과거에 dummy placeholder (단순 원/사각형, ~580 bytes) 가 commit 된 적 있어
+# checkout 시마다 부활. 진짜 unDraw SVG 는 보통 5KB+ 이며 'undraw' 문자열 포함.
+# 가드: 1KB 미만 또는 'undraw' 시그니처 부재 SVG → 자동 삭제.
+DUMMY_COUNT=0
+for f in "$ASSETS/illustrations/undraw/"*.svg; do
+  [ -f "$f" ] || continue
+  size=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo 0)
+  if [ "$size" -lt 1024 ] || ! grep -qi "undraw" "$f" 2>/dev/null; then
+    rm -f "$f"
+    DUMMY_COUNT=$((DUMMY_COUNT + 1))
+  fi
+done
+if [ "$DUMMY_COUNT" -gt 0 ]; then
+  echo "  ⚠️  더미 placeholder ${DUMMY_COUNT} 개 자동 삭제 — 진짜 unDraw SVG 로 교체 필요"
+else
+  echo "  ✓ 더미 placeholder 없음"
+fi
+
+echo ""
 echo "=== unDraw 일러스트 (MIT, ~5MB 큐레이션 30개) ==="
 # unDraw 공식 일러스트 URL — 큐레이션 리스트만 다운로드
 UNDRAW_BASE="https://undraw.co/api/illustrations"

@@ -45,7 +45,12 @@ AGENT_META: list[tuple[str, str, str, str]] = [
     ("ExplainabilityAgent", "eval", "SHAP / 시계열 분해 (Captum 백로그)", "none"),
     ("InsightAgent", "eval", "비즈니스 인사이트 (한국어 스토리텔링)", "claude-opus-4-7"),
     # F 산출물 오케스트레이터 (2) — HJ 2026-06-08: ReportArchitectAgent 추가
-    ("ReportArchitectAgent", "output", "동적 목차 설계 (SCQA/PSI/Pyramid 등 1종 + ReportPlan)", "claude-opus-4-6"),
+    (
+        "ReportArchitectAgent",
+        "output",
+        "카테고리별 Skeleton (ML/DL/TS/Anomaly) 동적 목차 + 도메인 적응",
+        "claude-opus-4-6",
+    ),
     ("ReportComposerAgent", "output", "5종 산출물 fan-out + audit", "none"),
     # G 메타 (3)
     ("SelfLearningAgent", "meta", "3-Stack KB 증류 (Postgres+MinIO+pgvector)", "none"),

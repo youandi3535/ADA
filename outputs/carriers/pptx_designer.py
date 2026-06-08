@@ -192,8 +192,14 @@ def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: 
             )
             # 좌측 강조 색 band
             add_color_band(slide, 0, 0, SLIDE_W * 0.02, SLIDE_H, accent)
-        except Exception:
-            cover_photo = None  # 폴백
+        except Exception as _e:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("pptx_designer").warning(
+                "cover_stock_photo_failed",
+                extra={"error": f"{type(_e).__name__}: {_e}"},
+            )
+            cover_photo = None  # 그라데이션 폴백
 
     if not cover_photo:
         # 폴백: 기존 그라데이션 디자인
@@ -571,14 +577,27 @@ def _draw_header(slide, sl: SlideSpec, primary: str, ink: str, muted: str):
     icon_offset = 0.0
     if _VISUAL_TOOLS_AVAILABLE:
         try:
-            icon_png = svg_to_png_recolored(_icon_name_for_sl(sl), color=primary, size_pt=64)
+            icon_name = _icon_name_for_sl(sl)
+            icon_png = svg_to_png_recolored(icon_name, color=primary, size_px=128)
             if icon_png and icon_png.exists():
                 from pptx.util import Cm
 
                 slide.shapes.add_picture(str(icon_png), Cm(1.4), Cm(0.85), width=Cm(1.0), height=Cm(1.0))
                 icon_offset = 1.2  # 아이콘 너비만큼 텍스트 우측 이동
-        except Exception:
-            pass
+        except FileNotFoundError as _e:
+            # 캐시 PNG 가 권한 문제로 안 보임 (sandbox 한정) — 운영에선 거의 없음
+            import logging
+
+            logging.getLogger("pptx_designer").warning(
+                "icon_add_picture_filenotfound", extra={"slide_id": sl.id, "icon": _icon_name_for_sl(sl)}
+            )
+        except Exception as _e:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("pptx_designer").warning(
+                "icon_add_picture_failed",
+                extra={"slide_id": sl.id, "error": f"{type(_e).__name__}: {_e}"},
+            )
 
     # Title (아이콘이 있으면 그 옆에)
     add_text_box(
