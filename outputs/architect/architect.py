@@ -12,8 +12,8 @@
     7. CitationManager 색인 빌드 + ref_id 적용.
     8. Completeness 게이트 — block 사유 있으면 RuntimeError.
 
-HJ 2026-06-08 — 6종 Skeleton 삭제, ML Pitch 만 사용. 카테고리별 Skeleton
-사용자 직접 추가 예정 (timeseries/anomaly/tabular_dl).
+HJ 2026-06-08 — Skeleton 2종 (ML Pitch · DL Pitch). 카테고리별 Skeleton 사용자
+직접 추가 예정 (timeseries · anomaly_detection).
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def build_plan(
     skeleton_name = skeleton_override or ctx.meta.skeleton_override or pick_skeleton(ctx, profile)
     build_fn = SKELETON_REGISTRY.get(skeleton_name)
     if build_fn is None:
-        # 미등록 Skeleton — DEFAULT_SKELETON 폴백 (현재 ML Pitch).
+        # 미등록 Skeleton — DEFAULT_SKELETON 폴백.
         skeleton_name = DEFAULT_SKELETON
         build_fn = SKELETON_REGISTRY[skeleton_name]
 
@@ -132,24 +132,27 @@ def build_plan(
 def pick_skeleton(ctx: ReportContext, profile: dict[str, Any]) -> str:
     """ReportContext + 청중 profile 로부터 적합 Skeleton 1개 선정.
 
-    HJ 2026-06-08 — 6종 Skeleton 삭제, ML Pitch 만 사용. 카테고리별 Skeleton
-    사용자 추가 시 여기에 분기 추가.
+    카테고리 우선 라우팅:
+        tabular_ml         → ML Pitch
+        tabular_dl         → DL Pitch
+        timeseries         → (미등록 — DEFAULT_SKELETON 폴백)
+        anomaly_detection  → (미등록 — DEFAULT_SKELETON 폴백)
 
-    추가 예정 분기 (사용자가 Skeleton 파일 만든 후 SKELETON_REGISTRY 등록 + 여기 분기):
-        if ctx.meta.category == "timeseries":
-            return "Timeseries Pitch"
-        if ctx.meta.category == "anomaly_detection":
-            return "Anomaly Pitch"
-        if ctx.meta.category == "tabular_dl":
-            return "Tabular DL Pitch"
+    사용자가 새 Skeleton 추가 시 SKELETON_REGISTRY 등록 + 여기 분기 추가.
     """
-    # 카테고리별 라우팅 (사용자가 추가할 영역) ─────────────────────
-    # if ctx.meta.category == "timeseries":
-    #     return "Timeseries Pitch"
-    # if ctx.meta.category == "anomaly_detection":
-    #     return "Anomaly Pitch"
-    # if ctx.meta.category == "tabular_dl":
-    #     return "Tabular DL Pitch"
+    cat = ctx.meta.category
 
-    # tabular_ml + 기타 모든 카테고리 → ML Pitch (현재 유일 등록)
+    # 카테고리별 라우팅
+    if cat == "tabular_dl":
+        return "DL Pitch"
+    if cat == "tabular_ml":
+        return "ML Pitch"
+
+    # 미등록 카테고리 (timeseries / anomaly_detection) → 폴백
+    # 사용자가 추가 시:
+    # if cat == "timeseries":
+    #     return "Timeseries Pitch"
+    # if cat == "anomaly_detection":
+    #     return "Anomaly Pitch"
+
     return DEFAULT_SKELETON

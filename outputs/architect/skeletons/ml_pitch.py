@@ -9,7 +9,7 @@ ML (tabular_ml / tabular_dl) 카테고리 전용 컨설팅·세일즈 피치 dec
     3.  Agenda                              agenda
     4.  분석 가설                            hypothesis             → t_hyp_evidence_insight
     5.  시장·맥락                            p1_market              → t_numbered_rows
-    6.  페인 포인트                          p2_pain                → t_linked_circles
+    6.  현행 방식의 한계                     p2_pain                → t_linked_circles
     7.  기존 솔루션 한계                      p3_alt_limits          → t_chevron_5
     8.  솔루션 개요                          method_model           → t_gear
     9.  기술 아키텍처 + 데이터 lineage         tech_architecture      → t_vertical_arrow  (보강 F)
@@ -290,7 +290,7 @@ def build(
 
     # Agenda 삽입 (front_matter 마지막 자리)
     sections_titles = [
-        "Section 1 — 문제 정의 (가설·시장·페인)",
+        "Section 1 — 문제 정의 (가설·시장·한계)",
         "Section 2 — 기존 한계",
         "Section 3 — 솔루션 (아키텍처·스택·차별화)",
         "Section 4 — 분석 결과 (KPI·EDA·Error·인사이트)",
@@ -416,7 +416,7 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_pain_points(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 6 — 페인 포인트 (linked_circles)."""
+    """슬라이드 6 — 현행 방식의 한계 (linked_circles)."""
     issues = ctx.eda.data_quality_issues or []
     pain_lines = [
         f"01 · {it.get('issue', '데이터 품질 이슈')} (영향: {it.get('severity', 'medium')})" for it in issues[:3]
@@ -432,8 +432,8 @@ def _build_pain_points(ctx: ReportContext) -> SlideSpec:
         section_id="problem",
         layout="kpi_cards_4",
         role="caveat",
-        so_what="현재 방식의 핵심 페인포인트 3가지를 식별 — 정량적 비용 손실 발생 중",
-        title_ko="페인 포인트",
+        so_what="현행 방식의 핵심 한계 3가지를 식별 — 정량적 비용 손실 발생 중",
+        title_ko="현행 방식의 한계",
         body_outline=pain_lines,
         thread_part="conflict",
         parent_message_id="problem_root",
@@ -783,7 +783,7 @@ def _build_as_is_to_be(ctx: ReportContext) -> SlideSpec:
         title_ko="AS-IS vs TO-BE",
         body_outline=body,
         parent_message_id="impact_root",
-        speaker_notes_hint="좌 AS-IS 4 페인 + 우 TO-BE 4 개선. 1:1 대응으로 정량 비교.",
+        speaker_notes_hint="좌 AS-IS 4 한계 + 우 TO-BE 4 개선. 1:1 대응으로 정량 비교.",
     )
 
 
