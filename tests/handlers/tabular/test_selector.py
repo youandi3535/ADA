@@ -16,7 +16,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # selector.score() — baselines 키
 # ---------------------------------------------------------------------------
@@ -249,7 +248,6 @@ class TestEvaluatorImprovementOverBaseline:
     def test_no_baseline_recorded_returns_empty_improvement(self):
         """baseline_model_names 가 없으면 improvement_over_baseline 빈 dict."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.evaluator import evaluate
 
         state = PipelineState(
@@ -266,7 +264,6 @@ class TestEvaluatorImprovementOverBaseline:
     def test_picks_strongest_baseline_when_multiple(self):
         """Dummy 와 LR 둘 다 있으면 더 강한 LR 을 baseline 으로 선택 (보수적)."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.evaluator import evaluate
 
         state = PipelineState(
@@ -297,7 +294,6 @@ class TestEvaluatorImprovementOverBaseline:
 class TestInsightBaselineCitation:
     def test_fallback_includes_baseline_lift_sentence(self):
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.insight import fallback
 
         state = PipelineState(
@@ -321,7 +317,6 @@ class TestInsightBaselineCitation:
     def test_fallback_works_without_baseline(self):
         """baseline 정보 없어도 fallback 정상 동작 (회귀 방지)."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.insight import fallback
 
         state = PipelineState(
@@ -456,7 +451,6 @@ class TestCvStats:
     def test_evaluator_should_run_cv_guards(self):
         """CV 가드 — 대용량/DL/non-tabular/단발테스트 는 skip."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.evaluator import _should_run_cv
 
         # 대용량 → skip
@@ -493,7 +487,6 @@ class TestCvStats:
     def test_insight_fallback_includes_cv_band(self):
         """fallback 이 'F1 0.83 ± 0.04' 형식으로 신뢰구간 인용하는지."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.insight import fallback
 
         state = PipelineState(
@@ -516,7 +509,6 @@ class TestCvStats:
     def test_insight_fallback_marks_significant_lift(self):
         """significant=True 면 '통계적으로 유의' 문구 포함."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.insight import fallback
 
         state = PipelineState(
@@ -539,7 +531,6 @@ class TestCvStats:
     def test_insight_fallback_marks_noise_lift(self):
         """significant=False 면 '노이즈 범위 내' 문구."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.insight import fallback
 
         state = PipelineState(
@@ -609,7 +600,6 @@ class TestLearningCurve:
     def test_skips_when_no_best_model(self):
         """best_model 없으면 skip."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.output_extras import _build_learning_curve_chart
 
         state = PipelineState(
@@ -890,7 +880,6 @@ class TestExtendedMetrics:
     def test_evaluator_fails_when_val_r2_below_threshold(self):
         """회귀 게이트 — val_r2 가 0.30 미만이면 passed=False."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.evaluator import evaluate
 
         state = PipelineState(
@@ -907,7 +896,6 @@ class TestExtendedMetrics:
     def test_evaluator_passes_when_val_r2_above_threshold(self):
         """회귀 게이트 — val_r2 >= 0.30 면 passed=True."""
         from ada.core.state import PipelineState
-
         from agents.handlers.tabular.evaluator import evaluate
 
         state = PipelineState(

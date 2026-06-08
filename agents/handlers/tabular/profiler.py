@@ -232,7 +232,6 @@ def _compute_mutual_info_top(df: Any, target: str | None, top_k: int = 10) -> di
     n_rows > 50000 시 무거우니 50000 행 샘플링 가드.
     target categorical(분류) vs numeric(회귀) 자동 분기.
     """
-    import numpy as np
     import pandas as pd
 
     if not target or target not in df.columns:

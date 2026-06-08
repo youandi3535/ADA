@@ -2227,7 +2227,6 @@ def _transform_only(
     fitted_imputers = artifacts.get("fitted_imputers") or {}
     fitted_scalers = artifacts.get("fitted_scalers") or {}
     dist_transforms = artifacts.get("distribution_transforms") or {}
-    qt_info = artifacts.get("quantile_transforms") or {}
     vif_dropped = artifacts.get("vif_dropped") or []
     corr_dropped = artifacts.get("correlation_dropped") or []
     pca_dropped_meta = artifacts.get("pca_dropped_meta") or {}
