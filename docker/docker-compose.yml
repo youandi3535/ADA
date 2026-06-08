@@ -195,6 +195,8 @@ services:
       - ../pipelines:/app/pipelines
       - ../tools:/app/tools
       - ../outputs:/app/outputs
+      - ../assets:/app/assets
+      - ../scripts:/app/scripts
     deploy:
       resources:
         limits:
@@ -262,6 +264,7 @@ services:
       - ../pipelines:/app/pipelines
       - ../tools:/app/tools
       - ../outputs:/app/outputs
+      - ../assets:/app/assets
     deploy:
       resources:
         limits:
@@ -293,6 +296,7 @@ services:
       - ../pipelines:/app/pipelines
       - ../tools:/app/tools
       - ../outputs:/app/outputs
+      - ../assets:/app/assets
     deploy:
       resources:
         limits:
@@ -353,6 +357,7 @@ services:
       - ../pipelines:/app/pipelines
       - ../tools:/app/tools
       - ../outputs:/app/outputs
+      - ../assets:/app/assets
     deploy:
       resources:
         limits:
@@ -386,6 +391,7 @@ services:
       - ../pipelines:/app/pipelines
       - ../tools:/app/tools
       - ../outputs:/app/outputs
+      - ../assets:/app/assets
     deploy:
       resources:
         limits:

@@ -47,8 +47,9 @@ repos:
         args: [--maxkb=1024]
       - id: check-merge-conflict
       - id: detect-private-key
-      - id: mixed-line-ending
-        args: [--fix=lf]
+      # mixed-line-ending 훅 제거 — Windows core.autocrlf=true 환경에서
+      # Python 캐시 실행파일이 AppControl에 차단됨 (WinError 4551).
+      # LF 강제 적용은 .gitattributes eol=lf + CI (Linux) 에서 보장.
 
   # ─────────────────────────────────────────────────────────
   # 3) 본인 영역 외 수정 차단 (ADA 특화)
