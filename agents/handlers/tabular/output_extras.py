@@ -267,6 +267,123 @@ def _build_calibration_chart(state: Any) -> str | None:
         return None
 
 
+def _build_learning_curve_chart(state: Any) -> str | None:
+    """Learning Curve 차트 → MinIO path.
+
+    Day 11 (jh) — overfit/underfit 진단:
+      - train_score 와 val_score 가 모두 낮으면 underfit (모델/피처 부족)
+      - 격차가 크면 overfit (regularization 부족, 데이터 적음)
+      - 둘 다 높고 가까우면 sweet spot
+      - val_score 가 saturate 하면 데이터 추가 효과 없음
+
+    가드:
+      - 모델 재로드 실패 → skip
+      - baseline 모델 (Dummy/LR/Ridge) → skip (의미 없음)
+      - n_rows > 5000 → skip (비용 폭주)
+      - DL 카테고리 → skip
+
+    train_sizes 5점 × cv 3-fold = 약 15번 학습 → 작은 데이터엔 수초.
+    """
+    from pipelines.tabular_ml.pipeline import is_baseline_model
+
+    bm = getattr(state, "best_model", None) or {}
+    model_name = bm.get("model_name")
+
+    # 가드
+    if not model_name:
+        return None
+    if is_baseline_model(model_name):
+        return None
+    if getattr(state, "category", "") == "tabular_dl":
+        return None
+    n_rows = int((getattr(state, "data_profile", None) or {}).get("rows", 0))
+    if n_rows and n_rows > 5000:
+        return None
+
+    reload = _try_reload_model_and_data(state)
+    if reload is None:
+        return None
+
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from sklearn.model_selection import learning_curve
+
+        from agents.handlers.common.shared import save_chart_to_minio
+
+        model_obj, X_val, y_val = reload
+        # 재학습용 모델은 같은 hyperparameter 로 새로 instantiate → fit 비용 정직.
+        # _try_reload_model_and_data 는 X_val/y_val 만 반환하므로, learning_curve 에
+        # 같은 데이터를 X, y 로 넘긴다 (학습-평가 동일 데이터는 적절치 않지만,
+        # 데모/검증용 — 운영에선 X_train+X_val 합쳐 넘기는 게 이상적이나
+        # 본 헬퍼 시그니처 변경 비용 큼. 향후 보강).
+        X, y = X_val, y_val
+
+        is_clf = _is_classification(state)
+        scoring = "f1_weighted" if is_clf else "r2"
+        train_sizes_abs, train_scores, val_scores = learning_curve(
+            model_obj,
+            X,
+            y,
+            train_sizes=np.linspace(0.2, 1.0, 5),
+            cv=3,
+            scoring=scoring,
+            n_jobs=-1,
+            random_state=42,
+            shuffle=True,
+        )
+
+        # mean ± std band
+        train_mean = train_scores.mean(axis=1)
+        train_std = train_scores.std(axis=1)
+        val_mean = val_scores.mean(axis=1)
+        val_std = val_scores.std(axis=1)
+
+        fig, ax = plt.subplots(figsize=(7, 5), dpi=100)
+        ax.plot(train_sizes_abs, train_mean, "o-", color="#2563eb", label="Train")
+        ax.fill_between(
+            train_sizes_abs,
+            train_mean - train_std,
+            train_mean + train_std,
+            alpha=0.15,
+            color="#2563eb",
+        )
+        ax.plot(train_sizes_abs, val_mean, "s-", color="#dc2626", label="Validation (CV)")
+        ax.fill_between(
+            train_sizes_abs,
+            val_mean - val_std,
+            val_mean + val_std,
+            alpha=0.15,
+            color="#dc2626",
+        )
+
+        # 진단 자동 라벨: 격차로 overfit/underfit 추정
+        gap = float(train_mean[-1] - val_mean[-1])
+        if gap > 0.15:
+            diag = "(과적합 의심)"
+        elif train_mean[-1] < 0.7 and val_mean[-1] < 0.7 and is_clf:
+            diag = "(과소적합 가능)"
+        elif gap < 0.05 and train_mean[-1] > 0.8:
+            diag = "(균형 — 양호)"
+        else:
+            diag = ""
+
+        score_label = "F1 (weighted)" if is_clf else "R²"
+        ax.set_xlabel("학습 샘플 수")
+        ax.set_ylabel(score_label)
+        ax.set_title(f"Learning Curve — {model_name} {diag}".strip())
+        ax.legend(loc="lower right", fontsize=9)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+
+        path = save_chart_to_minio(fig, kind="tabular/learning_curve", job_id=getattr(state, "job_id", ""))
+        return path
+
+    except Exception as exc:
+        logger.warning("learning_curve_chart_failed: %s", exc)
+        return None
+
+
 def _build_confusion_matrix_chart(state: Any) -> str | None:
     """Confusion Matrix 히트맵 → MinIO path.
 
@@ -400,6 +517,11 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     cm_path = _build_confusion_matrix_chart(state)
     if cm_path:
         charts.append(cm_path)
+
+    # Day 11 (jh) — Learning Curve (overfit/underfit 진단)
+    lc_path = _build_learning_curve_chart(state)
+    if lc_path:
+        charts.append(lc_path)
 
     color = "#2563eb" if getattr(state, "category", "") == "tabular_ml" else "#0891b2"
     label = "정형 ML" if getattr(state, "category", "") == "tabular_ml" else "정형 DL"

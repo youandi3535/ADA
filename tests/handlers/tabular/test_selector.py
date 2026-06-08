@@ -558,3 +558,82 @@ class TestCvStats:
         )
         text = fallback(state)
         assert "노이즈" in text
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — Learning Curve (overfit/underfit 진단)
+# ---------------------------------------------------------------------------
+
+
+class TestLearningCurve:
+    """output_extras._build_learning_curve_chart 검증.
+
+    실제 MinIO/모델 재로드는 운영 환경 필수. 단위 테스트는 가드 로직과
+    skip 조건만 검증 — 차트 자체는 helper 가 None 반환하는지로 간접 확인.
+    """
+
+    def _state(self, *, category="tabular_ml", n_rows=200, model_name="RandomForest"):
+        from ada.core.state import PipelineState
+
+        return PipelineState(
+            job_id="t",
+            file_id="m",
+            category=category,
+            target_column="y",
+            data_profile={"rows": n_rows, "class_distribution": {"0": 0.5, "1": 0.5}},
+            best_model={"model_name": model_name, "metrics": {"val_f1": 0.83}},
+        )
+
+    def test_skips_when_baseline_model(self):
+        """baseline 모델이면 learning_curve 의미 없음 → skip."""
+        from agents.handlers.tabular.output_extras import _build_learning_curve_chart
+
+        for name in ("Dummy", "LogisticRegression", "Ridge"):
+            state = self._state(model_name=name)
+            assert _build_learning_curve_chart(state) is None, f"{name} 은 skip 해야 함"
+
+    def test_skips_when_dl_category(self):
+        """tabular_dl 카테고리 → skip (DL 비용)."""
+        from agents.handlers.tabular.output_extras import _build_learning_curve_chart
+
+        state = self._state(category="tabular_dl", model_name="FTTransformer")
+        assert _build_learning_curve_chart(state) is None
+
+    def test_skips_when_large_data(self):
+        """n_rows > 5000 → skip (비용 폭주)."""
+        from agents.handlers.tabular.output_extras import _build_learning_curve_chart
+
+        state = self._state(n_rows=100000)
+        assert _build_learning_curve_chart(state) is None
+
+    def test_skips_when_no_best_model(self):
+        """best_model 없으면 skip."""
+        from ada.core.state import PipelineState
+
+        from agents.handlers.tabular.output_extras import _build_learning_curve_chart
+
+        state = PipelineState(
+            job_id="t", file_id="m", category="tabular_ml", target_column="y",
+            data_profile={"rows": 200},
+        )
+        assert _build_learning_curve_chart(state) is None
+
+    def test_skips_gracefully_when_model_reload_fails(self):
+        """MinIO 없는 환경에서 모델 재로드 실패 → None 반환 (예외 없음)."""
+        from agents.handlers.tabular.output_extras import _build_learning_curve_chart
+
+        # 실 데이터 없는 단위 테스트 환경 → _try_reload_model_and_data 가 실패 → None
+        state = self._state(model_name="RandomForest")
+        result = _build_learning_curve_chart(state)
+        # 예외 없이 None 반환만 보장 (운영 환경에선 차트 생성됨)
+        assert result is None
+
+    def test_assets_includes_learning_curve_in_returned_keys(self):
+        """assets() 가 charts 리스트에 learning_curve 추가 시도 (graceful skip 포함)."""
+        from agents.handlers.tabular.output_extras import assets
+
+        state = self._state()
+        result = assets(state)
+        # charts 키 존재 + 리스트 타입 (재로드 실패해도 다른 차트 시도)
+        assert "charts" in result
+        assert isinstance(result["charts"], list)
