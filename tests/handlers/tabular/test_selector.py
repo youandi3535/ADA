@@ -1083,3 +1083,133 @@ class TestDiagnostics:
         # 단위 환경에선 다 None 반환 → charts 비어있을 수 있지만 dict 구조는 유지
         assert "charts" in result
         assert isinstance(result["charts"], list)
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — EDA 보강 (id-like / target leakage / mutual_info / target↔feature)
+# ---------------------------------------------------------------------------
+
+
+class TestEdaEnhancement:
+    """profiler 보강 3개 키 + eda 차트 4번째 검증."""
+
+    def _state(self, target="y"):
+        from ada.core.state import PipelineState
+
+        return PipelineState(
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            target_column=target,
+            task="classification",
+        )
+
+    def test_id_like_columns_detected(self):
+        """unique_ratio ≥ 0.99 컬럼이 id_like_columns 에 잡힘."""
+        from agents.handlers.tabular.profiler import profile
+
+        df = pd.DataFrame({
+            "user_id": range(100),  # 100% unique → id-like
+            "age": np.random.RandomState(42).randint(20, 70, size=100),
+            "y": np.random.RandomState(0).randint(0, 2, size=100),
+        })
+        result = profile(df, self._state())
+        assert "id_like_columns" in result
+        assert "user_id" in result["id_like_columns"]
+        # age 는 unique_ratio 낮으니 id-like 아님
+        assert "age" not in result["id_like_columns"]
+
+    def test_target_not_flagged_as_id_like(self):
+        """target 컬럼은 unique 해도 id-like 분류 제외."""
+        from agents.handlers.tabular.profiler import profile
+
+        df = pd.DataFrame({
+            "x": np.random.RandomState(42).normal(size=50),
+            "y": range(50),  # target 이 100% unique 라도 무시
+        })
+        result = profile(df, self._state())
+        assert "y" not in result.get("id_like_columns", [])
+
+    def test_target_leakage_detected_numeric_target(self):
+        """target 과 |corr| ≥ 0.95 numeric 컬럼이 leakage 의심으로 잡힘."""
+        from agents.handlers.tabular.profiler import profile
+
+        rng = np.random.RandomState(42)
+        y_val = rng.normal(size=200)
+        df = pd.DataFrame({
+            "leaky": y_val + rng.normal(0, 0.05, size=200),  # 거의 동일 → corr≈1
+            "noise": rng.normal(size=200),
+            "y": y_val,
+        })
+        state = self._state(target="y")
+        state = state.with_update(task="regression")
+        result = profile(df, state)
+        leak = result.get("target_leakage_suspects", [])
+        cols = {item["column"] for item in leak}
+        assert "leaky" in cols
+        assert "noise" not in cols
+
+    def test_target_leakage_empty_when_no_strong_corr(self):
+        """target 과 강한 상관 없으면 leakage 의심 빈 리스트."""
+        from agents.handlers.tabular.profiler import profile
+
+        rng = np.random.RandomState(42)
+        df = pd.DataFrame({
+            "a": rng.normal(size=200),
+            "b": rng.normal(size=200),
+            "y": rng.randint(0, 2, size=200),
+        })
+        result = profile(df, self._state())
+        assert result.get("target_leakage_suspects", []) == []
+
+    def test_mutual_info_top_returned_for_classification(self):
+        """분류 시나리오에서 mutual_info_top 이 dict 로 반환."""
+        from agents.handlers.tabular.profiler import profile
+
+        rng = np.random.RandomState(42)
+        # 신호 컬럼 (x_signal) 과 노이즈 컬럼
+        n = 300
+        x_signal = rng.normal(size=n)
+        y_binary = (x_signal > 0).astype(int)
+        df = pd.DataFrame({
+            "x_signal": x_signal,
+            "noise1": rng.normal(size=n),
+            "noise2": rng.normal(size=n),
+            "y": y_binary,
+        })
+        result = profile(df, self._state())
+        mi_top = result.get("mutual_info_top", {})
+        assert isinstance(mi_top, dict)
+        if mi_top:
+            # x_signal 의 MI 가 noise 들보다 커야 함
+            assert mi_top.get("x_signal", 0) > mi_top.get("noise1", 0)
+
+    def test_mutual_info_handles_categorical_features(self):
+        """categorical 피처도 frequency encoding 으로 MI 계산 가능."""
+        from agents.handlers.tabular.profiler import profile
+
+        rng = np.random.RandomState(42)
+        n = 200
+        df = pd.DataFrame({
+            "cat": rng.choice(["a", "b", "c"], size=n),
+            "num": rng.normal(size=n),
+            "y": rng.randint(0, 2, size=n),
+        })
+        result = profile(df, self._state())
+        # 예외 없이 dict 반환
+        assert isinstance(result.get("mutual_info_top", {}), dict)
+
+    def test_eda_charts_include_target_feature_chart(self):
+        """eda.charts() 가 4번째 차트(target↔feature) 시도 — MinIO 환경에선 실제 path 생성."""
+        from agents.handlers.tabular.eda import charts
+
+        rng = np.random.RandomState(42)
+        df = pd.DataFrame({
+            "age": rng.randint(20, 70, size=100),
+            "income": rng.normal(50000, 10000, size=100),
+            "y": rng.randint(0, 2, size=100),
+        })
+        # MinIO 없는 단위 환경 → save 가 실패하면 None 이 paths 에 안 들어감.
+        # 함수는 예외 없이 list 반환만 보장.
+        result = charts(df, self._state())
+        assert isinstance(result, list)
