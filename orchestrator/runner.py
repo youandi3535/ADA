@@ -486,7 +486,15 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
 
         # 재개 시 이전 실행의 stale progress·agent 를 덮어씀.
         # (예: G3 응답 후 재개 시 이전 97%·하이퍼파라미터 튜닝이 G4 로딩 화면에 잔존하는 버그 방지)
-        publish_progress(job_id, "supervisor", "파이프라인 재개", progress=GATE_WAIT_PROGRESS.get(gate_code, 0))
+        _NEXT_AGENT_AFTER_GATE: dict[str, str] = {
+            "G2": "eda_agent",
+            "G3": "preprocessing_strategist",
+            "G4": "model_selection",
+            "G5": "eval_agent",
+            "G6": "report_composer",
+        }
+        _next_agent = _NEXT_AGENT_AFTER_GATE.get(gate_code, "supervisor")
+        publish_progress(job_id, _next_agent, "파이프라인 재개", progress=GATE_WAIT_PROGRESS.get(gate_code, 0))
 
         # full_state 를 Redis 에서 먼저 로드 (aupdate_state partial 누락 방지)
         full_state_dict: dict = {}

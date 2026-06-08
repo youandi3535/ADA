@@ -97,6 +97,19 @@ def basic_dataframe_profile(df: Any, *, target_column: Optional[str]) -> dict[st
         for c, stats in desc.items():
             numeric_stats[c] = {k: float(v) for k, v in stats.items() if v is not None and not pd.isna(v)}
 
+    # date_col: datetime dtype 우선, 없으면 컬럼명 휴리스틱
+    _time_kws = ("date", "time", "ts", "timestamp", "일자", "시각", "날짜")
+    date_col: str | None = None
+    for _c in df.columns:
+        if df[_c].dtype.kind == "M":
+            date_col = str(_c)
+            break
+    if date_col is None:
+        for _c in df.columns:
+            if any(tok in str(_c).lower() for tok in _time_kws):
+                date_col = str(_c)
+                break
+
     has_target = bool(target_column and target_column in df.columns)
     target_dtype = str(df[target_column].dtype) if has_target else ""
     class_distribution: dict[Any, float] = {}
@@ -129,4 +142,5 @@ def basic_dataframe_profile(df: Any, *, target_column: Optional[str]) -> dict[st
         "has_target": has_target,
         "target_dtype": target_dtype,
         "class_distribution": class_distribution,
+        "date_col": date_col,
     }
