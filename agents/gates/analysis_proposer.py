@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ada.core.lang_guard import looks_non_korean, with_korean_guard
+from ada.core.lang_guard import looks_non_korean
 from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
 
