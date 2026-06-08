@@ -334,3 +334,227 @@ class TestInsightBaselineCitation:
         # 베이스라인 문장이 없어도 기본 인사이트는 생성
         assert "XGBoost" in text
         assert len(text) > 50
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — CV stats + 통계적 유의성
+# ---------------------------------------------------------------------------
+
+
+class TestCvStats:
+    """pipeline.evaluate_with_cv + evaluator 가 cv_stats 를 노출하는지 검증.
+
+    실데이터 로딩 없는 단위 테스트만. 운영 경로(evaluator.evaluate 의
+    _compute_cv_stats)는 load_dataframe_from_state 가 MinIO 의존이라
+    별도 통합 테스트로 (E2E 에서 자연스럽게 검증됨).
+    """
+
+    @pytest.fixture
+    def clf_data(self):
+        rng = np.random.RandomState(42)
+        X = rng.normal(size=(200, 4))
+        y = (X[:, 0] + X[:, 1] > 0).astype(int)
+        return X, y
+
+    @pytest.fixture
+    def reg_data(self):
+        rng = np.random.RandomState(42)
+        X = rng.normal(size=(200, 4))
+        y = X[:, 0] * 2 + X[:, 1] + rng.normal(0, 0.1, size=200)
+        return X, y
+
+    def test_evaluate_with_cv_returns_fold_stats(self, clf_data):
+        from pipelines.tabular_ml.pipeline import TabularMLPipeline
+
+        X, y = clf_data
+        pipe = TabularMLPipeline()
+        result = pipe.evaluate_with_cv(
+            X, y, model_name="RandomForest", params={"n_estimators": 30, "random_state": 42},
+            n_splits=3, task="classification",
+        )
+        assert result["n_splits"] == 3
+        assert len(result["fold_metrics"]) == 3
+        assert result["primary_metric"] == "val_f1"
+        assert "val_f1" in result["mean"]
+        assert "val_f1" in result["std"]
+        assert result["primary_std"] >= 0  # std 는 음수 불가
+
+    def test_evaluate_with_cv_regression_uses_r2(self, reg_data):
+        from pipelines.tabular_ml.pipeline import TabularMLPipeline
+
+        X, y = reg_data
+        pipe = TabularMLPipeline()
+        result = pipe.evaluate_with_cv(
+            X, y, model_name="Ridge", params={}, n_splits=3, task="regression",
+        )
+        assert result["primary_metric"] == "val_r2"
+        # Ridge 가 진짜 선형 신호 학습 → R² > 0 평균
+        assert result["primary_mean"] > 0.5
+
+    def test_evaluate_with_cv_dummy_has_low_score(self, clf_data):
+        """Dummy 의 fold 평균이 강모델보다 명확히 낮아야 baseline 의미 살아남."""
+        from pipelines.tabular_ml.pipeline import TabularMLPipeline
+
+        X, y = clf_data
+        pipe = TabularMLPipeline()
+        dummy = pipe.evaluate_with_cv(
+            X, y, model_name="Dummy", params={}, n_splits=3, task="classification",
+        )
+        rf = pipe.evaluate_with_cv(
+            X, y, model_name="RandomForest",
+            params={"n_estimators": 30, "random_state": 42},
+            n_splits=3, task="classification",
+        )
+        # RF 가 Dummy 보다 분명히 높아야 함 — 그렇지 않으면 baseline 비교 의미 없음
+        assert rf["primary_mean"] > dummy["primary_mean"] + 0.1
+
+    def test_evaluate_with_cv_returns_empty_on_failure(self):
+        """이상한 입력엔 빈 dict 반환 (graceful)."""
+        from pipelines.tabular_ml.pipeline import TabularMLPipeline
+
+        pipe = TabularMLPipeline()
+        # n=0 X, y → 실패
+        import numpy as _np
+
+        result = pipe.evaluate_with_cv(
+            _np.array([]).reshape(0, 4),
+            _np.array([]),
+            model_name="RandomForest",
+            params={},
+            n_splits=3,
+            task="classification",
+        )
+        assert result == {}
+
+    def test_evaluator_significance_with_baseline_std(self):
+        """baseline_cv_std 가 작으면 +0.1 lift 는 significant=True."""
+        from agents.handlers.tabular.evaluator import _add_significance
+
+        # baseline std = 0.02, lift = +0.1 → 5σ → significant
+        imp = {"primary_metric": "val_f1", "primary_lift": 0.10}
+        out = _add_significance(imp, baseline_cv_std=0.02)
+        assert out["lift_significant"] is True
+        assert out["baseline_cv_std"] == 0.02
+
+    def test_evaluator_significance_with_large_baseline_std(self):
+        """baseline_cv_std 가 크면 +0.05 lift 는 노이즈 → significant=False."""
+        from agents.handlers.tabular.evaluator import _add_significance
+
+        imp = {"primary_metric": "val_f1", "primary_lift": 0.05}
+        out = _add_significance(imp, baseline_cv_std=0.10)
+        # 0.05 < 2 * 0.10 = 0.2 → significant False
+        assert out["lift_significant"] is False
+
+    def test_evaluator_significance_unknown_when_no_baseline_std(self):
+        """baseline_cv_std 없으면 lift_significant=None (판단 불가)."""
+        from agents.handlers.tabular.evaluator import _add_significance
+
+        imp = {"primary_metric": "val_f1", "primary_lift": 0.05}
+        out = _add_significance(imp, baseline_cv_std=None)
+        assert out["lift_significant"] is None
+
+    def test_evaluator_should_run_cv_guards(self):
+        """CV 가드 — 대용량/DL/non-tabular/단발테스트 는 skip."""
+        from ada.core.state import PipelineState
+
+        from agents.handlers.tabular.evaluator import _should_run_cv
+
+        # 대용량 → skip
+        state_big = PipelineState(
+            job_id="t", file_id="m", category="tabular_ml",
+            data_profile={"rows": 100000},
+            trained_models=[{"model_name": "RandomForest", "metrics": {"val_f1": 0.8}}],
+        )
+        assert _should_run_cv(state_big) is False
+
+        # DL → skip
+        state_dl = PipelineState(
+            job_id="t", file_id="m", category="tabular_dl",
+            data_profile={"rows": 1000},
+            trained_models=[{"model_name": "FTTransformer", "metrics": {"val_f1": 0.8}}],
+        )
+        assert _should_run_cv(state_dl) is False
+
+        # trained_models 비어있음 (단발 테스트 시나리오) → skip
+        state_no_trained = PipelineState(
+            job_id="t", file_id="m", category="tabular_ml",
+            data_profile={"rows": 500},
+        )
+        assert _should_run_cv(state_no_trained) is False
+
+        # 작은 tabular_ml + trained_models 있음 (운영) → run
+        state_ok = PipelineState(
+            job_id="t", file_id="m", category="tabular_ml",
+            data_profile={"rows": 500},
+            trained_models=[{"model_name": "RandomForest", "metrics": {"val_f1": 0.8}}],
+        )
+        assert _should_run_cv(state_ok) is True
+
+    def test_insight_fallback_includes_cv_band(self):
+        """fallback 이 'F1 0.83 ± 0.04' 형식으로 신뢰구간 인용하는지."""
+        from ada.core.state import PipelineState
+
+        from agents.handlers.tabular.insight import fallback
+
+        state = PipelineState(
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            best_model={"model_name": "XGBoost", "metrics": {"val_f1": 0.83}},
+            eval_result={
+                "cv_stats": {
+                    "primary_metric": "val_f1",
+                    "primary_mean": 0.83,
+                    "primary_std": 0.04,
+                },
+            },
+        )
+        text = fallback(state)
+        assert "0.83" in text and "0.04" in text
+        assert "±" in text or "5-fold" in text
+
+    def test_insight_fallback_marks_significant_lift(self):
+        """significant=True 면 '통계적으로 유의' 문구 포함."""
+        from ada.core.state import PipelineState
+
+        from agents.handlers.tabular.insight import fallback
+
+        state = PipelineState(
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            best_model={"model_name": "XGBoost", "metrics": {"val_f1": 0.83}},
+            eval_result={
+                "improvement_over_baseline": {
+                    "primary_metric": "val_f1",
+                    "primary_lift": 0.32,
+                    "lift_significant": True,
+                },
+                "baseline_used": {"name": "Dummy"},
+            },
+        )
+        text = fallback(state)
+        assert "통계적으로 유의" in text
+
+    def test_insight_fallback_marks_noise_lift(self):
+        """significant=False 면 '노이즈 범위 내' 문구."""
+        from ada.core.state import PipelineState
+
+        from agents.handlers.tabular.insight import fallback
+
+        state = PipelineState(
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            best_model={"model_name": "XGBoost", "metrics": {"val_f1": 0.51}},
+            eval_result={
+                "improvement_over_baseline": {
+                    "primary_metric": "val_f1",
+                    "primary_lift": 0.01,
+                    "lift_significant": False,
+                },
+                "baseline_used": {"name": "Dummy"},
+            },
+        )
+        text = fallback(state)
+        assert "노이즈" in text

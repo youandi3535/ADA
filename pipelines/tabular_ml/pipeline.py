@@ -205,3 +205,84 @@ class TabularMLPipeline(BasePipeline):
             key = "val_f1" if task == "classification" else "val_r2"
             scores.append(float(m.get(key, 0.0)))
         return {"fold_scores": scores, "mean": float(np.mean(scores)), "std": float(np.std(scores))}
+
+    # Day 11 (jh) — fold 별 모든 metric + mean + std 반환.
+    # train_with_cv 는 단일 primary metric mean 만 (Optuna HPO 용). evaluate_with_cv 는
+    # evaluator 가 best_model 의 신뢰구간을 보고하기 위해 모든 metric 의 fold 통계 노출.
+    def evaluate_with_cv(
+        self,
+        X: Any,
+        y: Any,
+        model_name: str,
+        params: dict[str, Any],
+        *,
+        n_splits: int = 5,
+        task: str = "classification",
+    ) -> dict[str, Any]:
+        """fold 별 모든 metric + mean + std 반환.
+
+        Returns
+        -------
+        dict
+            {
+                "n_splits": int,
+                "fold_metrics": list[dict],  # 각 fold 의 metric dict
+                "mean": dict,                # metric → fold 평균
+                "std": dict,                 # metric → fold 표준편차
+                "primary_metric": str,       # "val_f1" / "val_r2"
+                "primary_mean": float,
+                "primary_std": float,
+            }
+
+        실패/예외 시 빈 dict 반환 (graceful).
+        """
+        from sklearn.model_selection import KFold, StratifiedKFold
+
+        try:
+            splitter = (
+                StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+                if task == "classification"
+                else KFold(n_splits=n_splits, shuffle=True, random_state=42)
+            )
+        except Exception:
+            return {}
+
+        fold_metrics: list[dict[str, float]] = []
+        all_keys: set[str] = set()
+        try:
+            for tr, val in splitter.split(X, y):
+                X_tr, X_val = X[tr], X[val]
+                y_tr, y_val = y[tr], y[val]
+                # stratify 가능 여부 안전 check (희소 fold 대비)
+                model = _build_model(model_name, task, params)
+                model.fit(X_tr, y_tr)
+                m = self.evaluate(model, X_val, y_val, task)
+                fold_metrics.append({k: float(v) for k, v in m.items() if v is not None})
+                all_keys.update(fold_metrics[-1].keys())
+        except Exception as exc:
+            self.logger.warning("evaluate_with_cv_failed", model=model_name, error=str(exc))
+            return {}
+
+        if not fold_metrics:
+            return {}
+
+        # metric 별 mean / std
+        mean_dict: dict[str, float] = {}
+        std_dict: dict[str, float] = {}
+        for k in all_keys:
+            vals = [fm[k] for fm in fold_metrics if k in fm]
+            if not vals:
+                continue
+            mean_dict[k] = float(np.mean(vals))
+            std_dict[k] = float(np.std(vals))
+
+        primary_metric = "val_f1" if task == "classification" else "val_r2"
+        return {
+            "n_splits": int(n_splits),
+            "fold_metrics": fold_metrics,
+            "mean": mean_dict,
+            "std": std_dict,
+            "primary_metric": primary_metric,
+            "primary_mean": float(mean_dict.get(primary_metric, 0.0)),
+            "primary_std": float(std_dict.get(primary_metric, 0.0)),
+        }
