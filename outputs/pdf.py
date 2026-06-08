@@ -85,10 +85,18 @@ class PDFReportGenerator(OutputGenerator):
             txt = f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
             flow.append(Paragraph(txt, styles["BodyText"]))
 
+        # HJ — Method B: eda_charts + extras['charts'] 를 한 번에 병렬 다운로드.
+        # reportlab flow append 는 순차 (Story 빌더가 stateful).
+        eda_paths = list(eda_charts[:6])
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        extras_paths = list(extras.get("charts", [])[:4])
+        local_paths = self._download_charts_parallel(eda_paths + extras_paths)
+        eda_local = local_paths[: len(eda_paths)]
+        extras_local = local_paths[len(eda_paths) :]
+
         flow.append(PageBreak())
         flow.append(Paragraph("EDA Charts", h2_style))
-        for chart in eda_charts[:6]:
-            tmp = self._download_chart(chart)
+        for tmp in eda_local:
             if tmp:
                 try:
                     flow.append(Image(tmp, width=15 * cm, height=8 * cm))
@@ -96,13 +104,11 @@ class PDFReportGenerator(OutputGenerator):
                 except Exception:
                     continue
 
-        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
         if any(extras.get(k) for k in ("charts", "tables", "text_blocks")):
             flow.append(PageBreak())
             flow.append(Paragraph(f"[{label_ko}] Category Analysis", h2_style))
 
-            for chart in extras.get("charts", [])[:4]:
-                tmp = self._download_chart(chart)
+            for tmp in extras_local:
                 if tmp:
                     try:
                         flow.append(Image(tmp, width=15 * cm, height=8 * cm))

@@ -102,11 +102,15 @@ class TrainingMonitorAgent(BaseAgent):
                         warnings.append(f"{mn} 의 {target_key} 가 3 epoch 연속 하락 — 발산 의심")
                         div_count += 1
 
-            # (3) 학습 시간 초과 — state.started_at 기준 (개략)
+            # (3) 학습 시간 초과 — training_started_at 기준.
+            # HJ 2026-06-08 수정: 기존엔 state.started_at (파이프라인 시작) 기준이라
+            # 한 번 timeout 초과한 job 은 retry 마다 elapsed 가 누적돼 즉시 다시 실패하는
+            # 무한루프가 있었음. training_started_at (TrainingExecutor 가 매 호출마다 세팅)
+            # 으로 전환해 retry 마다 새 clock 으로 시작. None 이면 started_at 으로 폴백.
             try:
                 from datetime import datetime, timezone
 
-                started = state.started_at
+                started = state.training_started_at or state.started_at
                 if started.tzinfo is None:
                     elapsed = (datetime.utcnow() - started).total_seconds() / 60.0
                 else:

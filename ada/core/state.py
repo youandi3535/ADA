@@ -153,6 +153,12 @@ class PipelineState(BaseModel):
     # 옵저버빌리티
     trace_id: Optional[str] = None
     started_at: datetime = Field(default_factory=datetime.utcnow)
+    # 학습 시작 시각 — TrainingMonitor 의 timeout 기준.
+    # state.started_at (파이프라인 시작) 을 그대로 쓰면 retry 마다 elapsed 가 누적돼
+    # 한 번 timeout 초과한 job 은 이후 모든 retry 가 즉시 실패하는 문제가 있었음.
+    # TrainingExecutorAgent 가 학습 루프 진입 직전에 datetime.utcnow() 로 세팅.
+    # None 이면 started_at 으로 폴백 (구 동작 호환).
+    training_started_at: Optional[datetime] = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump(mode="json")

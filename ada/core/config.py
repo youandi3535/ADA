@@ -56,7 +56,12 @@ class Settings(BaseSettings):
     # ----- App -----
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     max_upload_size_mb: int = Field(default=100, validation_alias="MAX_UPLOAD_SIZE_MB")
-    pipeline_timeout_min: int = Field(default=30, validation_alias="PIPELINE_TIMEOUT_MIN")
+    # HJ 2026-06-08: 30 → 60 상향.
+    # 30 분은 GTX 1060 3GB + qwen2.5:7b 환경에서 카테고리 4종 모두 빈번히 초과.
+    # training_started_at 도입 (state.py, training_executor, training_monitor) 으로
+    # retry 별 clock 분리는 됐지만, 1회차 실행에서도 안전 마진 추가.
+    # .env 의 PIPELINE_TIMEOUT_MIN 으로 override 가능.
+    pipeline_timeout_min: int = Field(default=60, validation_alias="PIPELINE_TIMEOUT_MIN")
     # Heavy 모델(GPU 카테고리)을 학원 worker-training 에 위임할 때 sync wait 타임아웃.
     # 타임아웃 시 TrainingExecutorAgent 가 CPU 인라인 폴백.
     training_task_timeout_sec: int = Field(default=900, validation_alias="TRAINING_TASK_TIMEOUT_SEC")

@@ -441,21 +441,26 @@ async def _run_fallbacks(
         answer = await _claude_opus_fallback(question)
         return answer, "claude-opus-4-7", "claude_opus"
 
-    # 모든 폴백 비활성화 → FailureLog 에 기록
-    err_msg = "kb_search_all_fallbacks_disabled"
-    _log.error(err_msg, question_len=len(question))
-    try:
-        import traceback as _tb
+    # 모든 폴백 비활성화 — KB-only 모드(훅)이면 정상, 그 외엔 에러
+    if use_ollama or use_claude:
+        # 최소 하나는 켜져 있었는데 모두 실패한 경우 → 진짜 장애
+        err_msg = "kb_search_all_fallbacks_failed"
+        _log.error(err_msg, question_len=len(question))
+        try:
+            import traceback as _tb
 
-        from ada.error_handler.auto_handler import capture_and_handle
+            from ada.error_handler.auto_handler import capture_and_handle
 
-        await capture_and_handle(
-            error_message=err_msg,
-            stack_trace=_tb.format_stack()[-1],
-            source="api_kb_search",
-        )
-    except Exception:  # noqa: BLE001
-        pass
+            await capture_and_handle(
+                error_message=err_msg,
+                stack_trace=_tb.format_stack()[-1],
+                source="api_kb_search",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        # use_ollama=False, use_claude=False → KB-only 의도 모드 (훅 패스스루)
+        _log.debug("kb_search_kb_only_miss", question_len=len(question))
     return "(모든 폴백 비활성화됨)", None, "error"
 
 
