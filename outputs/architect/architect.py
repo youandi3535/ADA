@@ -12,8 +12,9 @@
     7. CitationManager 색인 빌드 + ref_id 적용.
     8. Completeness 게이트 — block 사유 있으면 RuntimeError.
 
-HJ 2026-06-08 — Skeleton 2종 (ML Pitch · DL Pitch). 카테고리별 Skeleton 사용자
-직접 추가 예정 (timeseries · anomaly_detection).
+HJ 2026-06-08 — Skeleton 4종 완성 (ML Pitch · DL Pitch · Timeseries Pitch · Anomaly Pitch).
+4 카테고리 모두 자체 skeleton 보유. Anomaly Pitch 는 6 도메인 (fraud · industrial_iot ·
+system_logs · security · quality_control · medical) 자동 적응.
 """
 
 from __future__ import annotations
@@ -132,13 +133,11 @@ def build_plan(
 def pick_skeleton(ctx: ReportContext, profile: dict[str, Any]) -> str:
     """ReportContext + 청중 profile 로부터 적합 Skeleton 1개 선정.
 
-    카테고리 우선 라우팅:
+    카테고리 우선 라우팅 (4 카테고리 모두 등록 완료):
         tabular_ml         → ML Pitch
         tabular_dl         → DL Pitch
-        timeseries         → (미등록 — DEFAULT_SKELETON 폴백)
-        anomaly_detection  → (미등록 — DEFAULT_SKELETON 폴백)
-
-    사용자가 새 Skeleton 추가 시 SKELETON_REGISTRY 등록 + 여기 분기 추가.
+        timeseries         → Timeseries Pitch
+        anomaly_detection  → Anomaly Pitch (6 도메인 자동 적응)
     """
     cat = ctx.meta.category
 
@@ -147,12 +146,9 @@ def pick_skeleton(ctx: ReportContext, profile: dict[str, Any]) -> str:
         return "DL Pitch"
     if cat == "tabular_ml":
         return "ML Pitch"
-
-    # 미등록 카테고리 (timeseries / anomaly_detection) → 폴백
-    # 사용자가 추가 시:
-    # if cat == "timeseries":
-    #     return "Timeseries Pitch"
-    # if cat == "anomaly_detection":
-    #     return "Anomaly Pitch"
+    if cat == "timeseries":
+        return "Timeseries Pitch"
+    if cat == "anomaly_detection":
+        return "Anomaly Pitch"
 
     return DEFAULT_SKELETON

@@ -16,8 +16,9 @@ G6 진입 전 호출돼 `state.report_plan` 을 채운다.
       report_plan=None 이면 carrier 가 legacy 폴백 (V2 → V1) 작동.
     - 단일 Skeleton 시 LLM 호출 스킵 — 비용 절감 + 응답 시간 단축.
 
-HJ 2026-06-08 — Skeleton 2종 (ML Pitch · DL Pitch) 등록. 사용자가 카테고리별 추가 시
-ALLOWED_SKELETONS + SKELETON_REGISTRY + pick_skeleton 동시 확장.
+HJ 2026-06-08 — Skeleton 4종 완성 (ML · DL · Timeseries · Anomaly Pitch). 4 카테고리
+모두 자체 skeleton. Anomaly Pitch 는 6 도메인 (fraud/industrial_iot/system_logs/
+security/quality_control/medical) 자동 적응.
 HJ 단독 영역 (시스템 노드).
 """
 
@@ -30,7 +31,7 @@ from ada.core.state import PipelineState
 from agents.base import BaseAgent
 
 # 허용 Skeleton — outputs/architect/skeletons/__init__.py 의 SKELETON_REGISTRY 키와 동기.
-ALLOWED_SKELETONS: tuple[str, ...] = ("ML Pitch", "DL Pitch")
+ALLOWED_SKELETONS: tuple[str, ...] = ("ML Pitch", "DL Pitch", "Timeseries Pitch", "Anomaly Pitch")
 
 SYSTEM_PROMPT = """당신은 컨설팅 보고서 설계자입니다.
 주어진 분석 컨텍스트(카테고리·청중·의도·데이터·모델 결과)를 보고
@@ -46,9 +47,22 @@ Skeleton 가이드:
             DL 특화 (Why DL · Architecture Deep · Training Dynamics · Calibration
             · Inference Cost · MLOps Stack) 표준.
 
+- Timeseries Pitch: timeseries 카테고리 전용 (20장 고정).
+            Cover · Agenda · ExecSummary + 본문 16장 + Closing.
+            시계열 특화 (Why 시계열 · Forecast Plot · STL Decomposition · PI Coverage
+            · Long-horizon Decay · Forecast Refresh) 표준.
+
+- Anomaly Pitch: anomaly_detection 카테고리 전용 (20장 + 6 도메인 자동 적응).
+            Cover · Agenda · ExecSummary + 본문 16장 + Closing.
+            이상탐지 특화 (Why Anomaly · Score Distribution · PR-AUC · Threshold Tuning
+            · FAR · Root Cause · Drift) 표준. 도메인 (fraud/industrial_iot/system_logs/
+            security/quality_control/medical) 자동 텍스트 적응.
+
 선택 룰:
 - ctx.meta.category == "tabular_ml" 이면 ML Pitch 우선
 - ctx.meta.category == "tabular_dl" 이면 DL Pitch 우선
+- ctx.meta.category == "timeseries" 이면 Timeseries Pitch 우선
+- ctx.meta.category == "anomaly_detection" 이면 Anomaly Pitch 우선
 - 그 외 카테고리는 heuristic_recommendation 따름
 
 응답은 반드시 JSON 한 개:
