@@ -70,61 +70,21 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     #   →  본문 (시장·문제·솔루션·기술·데이터·모델·성능...)
     #   →  성능 평가 직후: 가설 입증 인사이트
     #   →  임팩트·로드맵·리스크  →  마무리
-    # ExecSummary 는 정보 중복이므로 제외.
+    # ExecSummary 는 본문에 포함 (컨설팅 BLUF — 임원이 1장만 봐도 결론 명확).
     cover_sl = next((s for s in raw_slides if s.layout == "cover"), None)
     agenda_sl = next((s for s in raw_slides if s.layout == "agenda"), None)
     exec_sl = next((s for s in raw_slides if s.id == "exec_summary"), None)
 
-    try:
-        from outputs.architect.skeletons._common import (
-            build_hypothesis_slide,
-            build_insight_slide,
-        )
+    # ml_pitch (및 향후 카테고리별 skeleton) 가 hypothesis/insights_derived 슬라이드를
+    # 자기 plan 안에 포함. 디자이너가 추가 주입하지 않음 (중복 방지).
 
-        hyp_sl = build_hypothesis_slide(ctx)
-        insight_sl = build_insight_slide(ctx)
-    except Exception:
-        hyp_sl = None
-        insight_sl = None
-
-    # Build body list (excluding cover, agenda, exec_summary)
+    # Build body list (excluding cover, exec_summary, agenda — 본문 흐름만)
     body = [s for s in raw_slides if s not in (cover_sl, agenda_sl, exec_sl)]
 
-    # Find the post-evidence anchor: slide right AFTER which we want to drop insight_sl.
-    # Anchors are slides that conclude the analysis evidence — performance/comparison/interpretation.
-    POST_EVIDENCE_IDS = (
-        "e5_interpretation",
-        "e4_performance",  # SCQA
-        "i1_kpi",  # PSI
-        "result_interp",
-        "result_primary",  # Analysis Standard
-        "deep_2",
-        "deep_1",
-        "score_matrix",  # Comparative
-        "evidence_h2",
-        "evidence_h1",  # Diagnostic
-        "reason_trust",
-        "reason_perf",  # Pyramid
-    )
-    insert_idx = None
-    for anchor in POST_EVIDENCE_IDS:
-        for k, b in enumerate(body):
-            if b.id == anchor:
-                insert_idx = k + 1
-                break
-        if insert_idx is not None:
-            break
-    # Fallback: insert at 2/3 point of body
-    if insert_idx is None:
-        insert_idx = max(1, len(body) * 2 // 3)
-
-    body_with_insight = body[:insert_idx]
-    if insight_sl is not None:
-        body_with_insight.append(insight_sl)
-    body_with_insight.extend(body[insert_idx:])
-
-    # Final flat order: cover, agenda, hypothesis, body (with insight injected mid), closing(last)
-    slides_flat = [s for s in (cover_sl, agenda_sl, hyp_sl) if s is not None] + body_with_insight
+    # Final flat order: cover, exec_summary, agenda, body (skeleton-defined order), closing(last)
+    # ml_pitch 의 20장 구조: 1.cover / 2.exec / 3.agenda / 4~19.body / 20.closing
+    # 향후 카테고리별 skeleton 도 자기 plan 안에 hypothesis/insights 포함하므로 추가 주입 없음.
+    slides_flat = [s for s in (cover_sl, exec_sl, agenda_sl) if s is not None] + body
     # Force-rebuild Agenda's body_outline = exact list of body slide titles
     # (everything after Agenda except the very last closing slide).
     if agenda_sl is not None:
@@ -152,7 +112,7 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
 
     # Section dividers removed - they showed empty pages with only a chapter number.
     # Section transitions are signaled by the body slide header (left accent + title).
-    # Iterate REORDERED slides_flat (cover, agenda, exec, rest; no backup)
+    # Iterate REORDERED slides_flat (cover, exec, agenda, rest; no backup)
     total = len(slides_flat)
     page_num = 0
     for sl in slides_flat:

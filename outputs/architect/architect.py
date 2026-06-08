@@ -11,6 +11,9 @@
     6. Pyramid 검증 + MECE 검증 — 경고 누적.
     7. CitationManager 색인 빌드 + ref_id 적용.
     8. Completeness 게이트 — block 사유 있으면 RuntimeError.
+
+HJ 2026-06-08 — 6종 Skeleton 삭제, ML Pitch 만 사용. 카테고리별 Skeleton
+사용자 직접 추가 예정 (timeseries/anomaly/tabular_dl).
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from outputs.architect.length_adjuster import adjust_length
 from outputs.architect.mece_validator import validate_mece
 from outputs.architect.message_tree import validate_pyramid
 from outputs.architect.plan import ReportPlan
-from outputs.architect.skeletons import SKELETON_REGISTRY
+from outputs.architect.skeletons import DEFAULT_SKELETON, SKELETON_REGISTRY
 from outputs.context.citation_manager import apply_ref_ids, build_citation_index, verify_citations
 from outputs.context.completeness import assert_can_proceed, check_completeness
 from outputs.context.schema import ReportContext
@@ -60,37 +63,30 @@ def build_plan(
     Raises:
         RuntimeError: completeness 차단 사유 발견 시 (enforce_completeness=True).
     """
-    # 1) 도메인 보강 (옵션)
     if kb_results or web_results or benchmarks:
         ctx = enrich_domain(ctx, kb_results=kb_results, web_results=web_results, benchmarks=benchmarks)
 
-    # 2) 비즈니스 임팩트 추정 (이미 있으면 보존)
     ctx = quantify_business_impact(ctx)
 
-    # 3) 청중 추정
     audience = adapt_audience(ctx)
     ctx.domain.audience_inference = audience
     ctx.meta.audience = audience.level
     profile = audience_profile(audience.level)
 
-    # 4) Skeleton 선정
     skeleton_name = skeleton_override or ctx.meta.skeleton_override or pick_skeleton(ctx, profile)
     build_fn = SKELETON_REGISTRY.get(skeleton_name)
     if build_fn is None:
-        # 알 수 없는 Skeleton — SCQA fallback
-        skeleton_name = "SCQA"
+        # 미등록 Skeleton — DEFAULT_SKELETON 폴백 (현재 ML Pitch).
+        skeleton_name = DEFAULT_SKELETON
         build_fn = SKELETON_REGISTRY[skeleton_name]
 
-    # 5) Skeleton build — 길이 목표는 청중 프로필
     length_range = profile.get("slide_count_range", [12, 18])
     length_target = int((length_range[0] + length_range[1]) / 2)
     plan = build_fn(ctx, profile, length_target=length_target)
     plan.output_form = output_form
 
-    # 6) 길이 조정 (10~20 hard limit)
     plan = adjust_length(plan, hard_min=10, hard_max=20)
 
-    # 7) Pyramid + MECE 검증 — 경고 누적
     pyramid_report = validate_pyramid(plan)
     if not pyramid_report.passed:
         plan.warnings.append(
@@ -101,7 +97,6 @@ def build_plan(
     if mece_report.total_issues() > 0:
         plan.warnings.append(f"mece_issues: {mece_report.total_issues()}")
 
-    # 8) ref_id 색인·검증
     citation_idx = build_citation_index(ctx)
     ctx = apply_ref_ids(ctx, citation_idx)
     used_refs = plan.used_ref_ids()
@@ -110,15 +105,12 @@ def build_plan(
         plan.warnings.append(f"unresolved_refs: {len(citation_verdict.unresolved)}")
     plan.citation_index = {ref_id: ctx.citations.index.get(ref_id, {}).get("source_path", "") for ref_id in used_refs}
 
-    # 9) Completeness 게이트
     completeness = check_completeness(ctx, used_ref_ids=used_refs, skeleton=skeleton_name)
     if enforce_completeness and not completeness.can_proceed:
         assert_can_proceed(completeness)
-    # 경고는 plan 에 흡수
     for w in completeness.warnings:
         plan.warnings.append(f"completeness_warn: {w.code}")
 
-    # 메타 마무리
     plan.meta.update(
         {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -140,50 +132,24 @@ def build_plan(
 def pick_skeleton(ctx: ReportContext, profile: dict[str, Any]) -> str:
     """ReportContext + 청중 profile 로부터 적합 Skeleton 1개 선정.
 
-    우선순위:
-        1. 사용자 의도 키워드 (제안/비교/원인 등)
-        2. 청중 레벨 (c_level → Pyramid 우선)
-        3. 데이터 풍부도
-        4. 카테고리 (anomaly_detection → Diagnostic 후보)
-        5. 기본 SCQA
+    HJ 2026-06-08 — 6종 Skeleton 삭제, ML Pitch 만 사용. 카테고리별 Skeleton
+    사용자 추가 시 여기에 분기 추가.
+
+    추가 예정 분기 (사용자가 Skeleton 파일 만든 후 SKELETON_REGISTRY 등록 + 여기 분기):
+        if ctx.meta.category == "timeseries":
+            return "Timeseries Pitch"
+        if ctx.meta.category == "anomaly_detection":
+            return "Anomaly Pitch"
+        if ctx.meta.category == "tabular_dl":
+            return "Tabular DL Pitch"
     """
-    intent = (ctx.meta.user_intent or "").lower()
-    biz = (ctx.meta.business_context or "").lower()
-    audience_level = profile.get("level", "analyst") if isinstance(profile.get("level"), str) else "analyst"
-    # profile 인자는 audience_profile() dict — level 키가 따로 있지 않으므로 ctx.meta.audience 사용
-    audience_level = ctx.meta.audience or "analyst"
+    # 카테고리별 라우팅 (사용자가 추가할 영역) ─────────────────────
+    # if ctx.meta.category == "timeseries":
+    #     return "Timeseries Pitch"
+    # if ctx.meta.category == "anomaly_detection":
+    #     return "Anomaly Pitch"
+    # if ctx.meta.category == "tabular_dl":
+    #     return "Tabular DL Pitch"
 
-    # 1) 명시 의도 키워드
-    intent_text = intent + " " + biz
-    if any(kw in intent_text for kw in ("제안", "도입", "pitch", "투자", "솔루션")):
-        return "PSI"
-    if any(kw in intent_text for kw in ("비교", "vs", "선택", "평가", "후보")):
-        return "Comparative"
-    if any(kw in intent_text for kw in ("원인", "why", "장애", "이상 분석", "진단")):
-        return "Diagnostic"
-    if any(kw in intent_text for kw in ("규제", "감사", "논문", "학술", "compliance")):
-        return "Analysis Standard"
-
-    # 2) 청중 c_level → Pyramid (시간 제약)
-    if audience_level == "c_level":
-        return "Pyramid"
-
-    # 3) 카테고리
-    if ctx.meta.category == "anomaly_detection":
-        return "Diagnostic"
-    if ctx.meta.category in ("tabular_ml", "tabular_dl"):
-        if len(ctx.model_selection.candidates) >= 3:
-            # 후보 많고 비교 의도 있을 때
-            if "최적" in intent_text or "선택" in intent_text:
-                return "Comparative"
-
-    # 4) 규제 힌트
-    if ctx.domain.regulatory_hints:
-        return "Analysis Standard"
-
-    # 5) 청중 external_client → PSI 우선 (가치 어필)
-    if audience_level == "external_client":
-        return "PSI"
-
-    # 기본
-    return "SCQA"
+    # tabular_ml + 기타 모든 카테고리 → ML Pitch (현재 유일 등록)
+    return DEFAULT_SKELETON
