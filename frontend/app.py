@@ -558,36 +558,22 @@ function _stageProgress(){
   return Math.round(_shownPct);
 }
 
-// 단계 단위 ETA — baseline(eta_sec, DB 실측 평균/폴백)과 실측 역산(_shownPct 기반)을
-// 모두 계산해 더 작은 값(=빨리 끝나는 쪽)을 사용한다. baseline이 과대추정되어 거의
-// 만료(<=3초)됐는데도 작업이 안 끝났으면 더 이상 baseline을 신뢰하지 않고 실측만 사용
-// — "1:56 뜨다가 갑자기 완료" 같은 baseline 과대추정 경험을 방지한다.
+// 단계 단위 ETA — 게이지 바(_barFlowPct)에서 직접 역산한다.
+// _barFlowPct 는 시간 기반 creep 와 실측 _shownPct 의 max 라 이미 종합 추정치이며,
+// 이를 ETA의 단일 진실의 소스로 삼으면 바와 ETA가 같은 모델에서 파생되어
+// "게이지 100% 도달 = ETA 0" 이 항상 보장된다 (baseline 과 실측이 따로 노는 불일치 제거).
 function _stageEta(p){
   if(_stageStart==null) return null;
   const stageEl = (Date.now() - _stageStart)/1000;
 
-  // 1. 백엔드 baseline (DB 실측 평균 또는 폴백 추정)
-  const beSec = (gateData.eta_sec!=null && Number.isFinite(Number(gateData.eta_sec)))
-                  ? Number(gateData.eta_sec) : null;
-  const baselineRemain = beSec!=null ? Math.max(0, beSec - stageEl) : null;
-
-  // 2. 이번 단계 실측 역산 — 지금 속도가 끝까지 유지된다면
-  let projectedRemain = null;
-  const MIN_PCT=8, MIN_EL=8;
-  if(p!=null && p>=MIN_PCT && stageEl>=MIN_EL){
-    const projectedTotal = stageEl * (100/p);
-    projectedRemain = Math.max(0, projectedTotal - stageEl);
+  // 게이지 바 진행률을 ETA의 단일 진실의 소스로 사용.
+  // _barFlowPct 는 시간 기반 creep + 실측 _shownPct 의 max 라 이미 종합 추정치이며,
+  // 여기서 역산하면 게이지 바와 ETA가 같은 모델에서 파생되어 100% 도달 = ETA 0 보장.
+  if(_barFlowPct >= 5 && stageEl >= 3){
+    const projectedTotal = stageEl * (100 / _barFlowPct);
+    return Math.max(0, projectedTotal - stageEl);
   }
-
-  // 3. 둘 다 있으면: baseline이 충분히 남았으면 작은 값(=빨리 끝나는 쪽) 사용,
-  //    baseline이 거의 0이 됐는데 작업이 안 끝났으면 실측만 사용 (baseline 잘못 잡힌 경우)
-  if(baselineRemain!=null && projectedRemain!=null){
-    if(baselineRemain > 3) return Math.min(baselineRemain, projectedRemain);
-    return projectedRemain;
-  }
-  // 4. 하나만 있으면 그것
-  if(baselineRemain!=null) return baselineRemain;
-  if(projectedRemain!=null) return projectedRemain;
+  // 초반(게이지 5% 미만 또는 3초 미만)에는 추정 들쭉날쭉 방지로 null → "추정 중…"
   return null;
 }
 
