@@ -1213,3 +1213,197 @@ class TestEdaEnhancement:
         # 함수는 예외 없이 list 반환만 보장.
         result = charts(df, self._state())
         assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — insight 풀 보강 (모든 신규 메타데이터 노출 + fallback 인용)
+# ---------------------------------------------------------------------------
+
+
+class TestInsightFullPayload:
+    """우리가 만든 모든 메타데이터가 prompt_payload 에 노출되고
+    fallback 이 핵심 메타데이터를 인용하는지 검증.
+    """
+
+    def _state(self, **overrides):
+        from ada.core.state import PipelineState
+
+        defaults = dict(
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            target_column="y",
+            best_model={"model_name": "XGBoost", "metrics": {"val_f1": 0.83}},
+        )
+        defaults.update(overrides)
+        return PipelineState(**defaults)
+
+    # ───── prompt_payload — 모든 키 노출 ─────
+
+    def test_payload_includes_all_day11_keys(self):
+        """우리가 추가한 모든 메타데이터 키가 payload에 노출."""
+        from agents.handlers.tabular.insight import prompt_payload
+
+        state = self._state()
+        payload = prompt_payload(state)
+        expected_keys = {
+            "category", "user_intent", "best_model", "shap_top",
+            "eval_result", "metrics_full",
+            "improvement_over_baseline", "baseline_used",
+            "cv_stats", "baseline_cv_stats",
+            "model_scores",
+            "id_like_columns", "target_leakage_suspects", "mutual_info_top",
+            "optimal_threshold", "f1_at_optimal_threshold",
+            "class_imbalance_ratio", "n_rows",
+            "leakage_safe_split_used",
+        }
+        missing = expected_keys - set(payload.keys())
+        assert not missing, f"payload 누락 키: {missing}"
+
+    def test_payload_exposes_leakage_suspects(self):
+        from agents.handlers.tabular.insight import prompt_payload
+
+        state = self._state(
+            data_profile={
+                "target_leakage_suspects": [{"column": "leaky", "correlation": 0.97}],
+                "id_like_columns": ["user_id"],
+            },
+        )
+        payload = prompt_payload(state)
+        assert payload["target_leakage_suspects"] == [{"column": "leaky", "correlation": 0.97}]
+        assert payload["id_like_columns"] == ["user_id"]
+
+    def test_payload_exposes_optimal_threshold_from_metrics(self):
+        from agents.handlers.tabular.insight import prompt_payload
+
+        state = self._state(
+            best_model={
+                "model_name": "XGBoost",
+                "metrics": {
+                    "val_f1": 0.83,
+                    "val_optimal_threshold": 0.37,
+                    "val_f1_at_optimal_threshold": 0.86,
+                },
+            },
+        )
+        payload = prompt_payload(state)
+        assert payload["optimal_threshold"] == 0.37
+        assert payload["f1_at_optimal_threshold"] == 0.86
+
+    def test_payload_leakage_safe_split_flag(self):
+        """category_extras 의 leakage_safe_split 메타 → 불린 flag 노출."""
+        from agents.handlers.tabular.insight import prompt_payload
+
+        state = self._state(
+            category_extras={
+                "tabular": {"leakage_safe_split": {"method": "split_first_train_fit"}}
+            },
+        )
+        payload = prompt_payload(state)
+        assert payload["leakage_safe_split_used"] is True
+
+        state2 = self._state(category_extras={"tabular": {}})
+        payload2 = prompt_payload(state2)
+        assert payload2["leakage_safe_split_used"] is False
+
+    # ───── fallback — 신규 메타데이터 인용 ─────
+
+    def test_fallback_cites_target_leakage_warning(self):
+        from agents.handlers.tabular.insight import fallback
+
+        state = self._state(
+            data_profile={
+                "target_leakage_suspects": [{"column": "leaky_col", "correlation": 0.97}],
+            },
+        )
+        text = fallback(state)
+        assert "leaky_col" in text
+        assert "누수" in text
+
+    def test_fallback_cites_id_like_warning(self):
+        from agents.handlers.tabular.insight import fallback
+
+        state = self._state(
+            data_profile={"id_like_columns": ["user_id", "transaction_id"]},
+        )
+        text = fallback(state)
+        assert "user_id" in text
+        assert "식별자" in text
+
+    def test_fallback_cites_optimal_threshold(self):
+        from agents.handlers.tabular.insight import fallback
+
+        state = self._state(
+            best_model={
+                "model_name": "XGBoost",
+                "metrics": {
+                    "val_f1": 0.83,
+                    "val_optimal_threshold": 0.37,
+                    "val_f1_at_optimal_threshold": 0.86,
+                },
+            },
+        )
+        text = fallback(state)
+        assert "0.37" in text
+        assert "임계값" in text
+
+    def test_fallback_cites_weak_class_for_multiclass(self):
+        from agents.handlers.tabular.insight import fallback
+
+        state = self._state(
+            best_model={
+                "model_name": "RandomForest",
+                "metrics": {
+                    "val_f1": 0.75,
+                    "val_f1_per_class": {"0": 0.85, "1": 0.80, "2": 0.45},
+                },
+            },
+        )
+        text = fallback(state)
+        # 가장 약한 클래스 '2' 가 0.45 로 언급
+        assert "2" in text
+        assert "0.45" in text
+
+    def test_fallback_cites_residual_bias_for_regression(self):
+        from agents.handlers.tabular.insight import fallback
+
+        state = self._state(
+            best_model={
+                "model_name": "Ridge",
+                "metrics": {
+                    "val_r2": 0.55,
+                    "val_residual_mean": 0.35,  # |0.1| 초과 → 편향 의심
+                },
+            },
+        )
+        text = fallback(state)
+        assert "편향" in text
+        assert "0.35" in text
+
+    def test_fallback_no_warnings_when_clean_data(self):
+        """누수/식별자 없으면 경고 문구 없음 — 깨끗한 데이터엔 깔끔한 인사이트."""
+        from agents.handlers.tabular.insight import fallback
+
+        state = self._state()  # data_profile 없음
+        text = fallback(state)
+        assert "누수" not in text
+        assert "식별자" not in text
+
+    def test_fallback_combines_baseline_lift_with_significance(self):
+        """베이스라인 격차 + 유의성을 한 문장에 표현."""
+        from agents.handlers.tabular.insight import fallback
+
+        state = self._state(
+            eval_result={
+                "improvement_over_baseline": {
+                    "primary_metric": "val_f1",
+                    "primary_lift": 0.32,
+                    "lift_significant": True,
+                },
+                "baseline_used": {"name": "Dummy"},
+            },
+        )
+        text = fallback(state)
+        assert "Dummy" in text
+        assert "0.32" in text
+        assert "통계적으로 유의" in text
