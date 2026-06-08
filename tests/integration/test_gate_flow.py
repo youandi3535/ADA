@@ -282,11 +282,11 @@ def test_gate_detail_returns_full_fields():
 
 
 @pytest.mark.integration
-def test_27_agents_registered():
+def test_28_agents_registered():
     from agents.stubs import AGENT_NAME_TO_CLASS, ALL_AGENT_CLASSES
 
-    assert len(ALL_AGENT_CLASSES) == 27
-    assert len(AGENT_NAME_TO_CLASS) == 27
+    assert len(ALL_AGENT_CLASSES) == 28
+    assert len(AGENT_NAME_TO_CLASS) == 28
 
 
 @pytest.mark.integration

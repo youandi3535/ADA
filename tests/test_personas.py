@@ -1,11 +1,11 @@
-"""페르소나 27종 자가 검증."""
+"""페르소나 28종 자가 검증."""
 from __future__ import annotations
 
 
 def test_personas_count():
     from agents.personas import PERSONAS
 
-    assert len(PERSONAS) == 27
+    assert len(PERSONAS) == 28
 
 
 def test_personas_prefix():

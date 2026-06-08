@@ -14,7 +14,7 @@ def test_smoke_imports():
     from outputs import GENERATORS
     from pipelines.factory import PipelineFactory
 
-    assert len(ALL_AGENT_CLASSES) == 27
+    assert len(ALL_AGENT_CLASSES) == 28
     assert PipelineFactory.supported_categories() == [
         "tabular_ml",
         "tabular_dl",
