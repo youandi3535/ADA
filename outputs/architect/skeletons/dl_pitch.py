@@ -60,6 +60,85 @@ SKELETON_NAME = "DL Pitch"
 
 
 # ==============================================================
+# 도메인 프로필 — 슬라이드 5 (Why DL) · 17 (ROI) 텍스트 적응용
+# HJ 2026-06-08: DL 카테고리 3 도메인 (high_card_churn / embedding_rec / generic)
+# ==============================================================
+
+_DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
+    "high_cardinality_churn": {
+        "label_ko": "고차원 Categorical 이탈 예측",
+        "why_old": "XGBoost one-hot 으로 수만 차원 폭발 + 메모리 OOM + 학습 6시간+",
+        "why_new": "Categorical Embedding (d=192) 으로 자동 압축 + 의미 학습",
+        "roi": {
+            "primary_kpi": "이탈률 감소 + 모델 정확도",
+            "primary_unit": "%p",
+            "secondary": [
+                "Embedding 으로 신상품·신지역 cold-start 대응",
+                "Multi-task 전이학습 가능 (이탈+재구매)",
+                "INT8 Quantization 으로 추론 비용 70% 절감",
+            ],
+            "fp_cost": "8,000원 (불필요 리텐션 + GPU 비용)",
+            "fn_cost": "180,000원/건 (이탈 LTV 손실)",
+        },
+    },
+    "embedding_recommender": {
+        "label_ko": "Embedding 기반 추천",
+        "why_old": "협업 필터링 — Cold-start · Long-tail · 비선형 관계 못 잡음",
+        "why_new": "Deep embedding (FT-Transformer/Two-tower) — 사용자·상품 임베딩 자동 학습",
+        "roi": {
+            "primary_kpi": "추천 CTR / 매출 전환율",
+            "primary_unit": "%p",
+            "secondary": [
+                "Cold-start 해결 — 신규 사용자·상품도 임베딩 추정",
+                "Long-tail 상품 노출 증가",
+                "Online A/B test 통과 (offline 대비 95%+ 일치)",
+            ],
+            "fp_cost": "추천 비용 (낮음)",
+            "fn_cost": "기회 손실 (높음, 추천 미노출 매출 손실)",
+        },
+    },
+    "generic": {
+        "label_ko": "일반 Tabular DL 분석",
+        "why_old": "Tabular 회귀 — 고차원·비선형 한계",
+        "why_new": "DL 표현학습 — Embedding + Attention 자동",
+        "roi": {
+            "primary_kpi": "모델 정확도 + 운영 효율",
+            "primary_unit": "%p",
+            "secondary": [
+                "DL 표현학습으로 baseline 대비 우수",
+                "Multi-task 확장 가능",
+                "GPU Quantization 으로 운영 비용 절감",
+            ],
+            "fp_cost": "분석 + GPU 비용",
+            "fn_cost": "기회 손실",
+        },
+    },
+}
+
+
+def _infer_dl_domain(ctx: ReportContext) -> str:
+    """ctx 의 도메인·use_case·intent 로부터 DL 도메인 추론."""
+    industry = (getattr(ctx.domain, "inferred_industry", "") or "").lower()
+    use_case = (getattr(ctx.domain, "inferred_use_case", "") or "").lower()
+    intent = (ctx.meta.user_intent or "").lower()
+    text = f"{industry} {use_case} {intent}"
+
+    # 구체적인 도메인부터
+    if any(kw in text for kw in ("추천", "recommend", "추천 시스템", "personalization", "개인화")):
+        return "embedding_recommender"
+    if any(kw in text for kw in ("이탈", "churn", "구독", "subscriber", "해지")):
+        return "high_cardinality_churn"
+    return "generic"
+
+
+def _get_domain_profile(ctx: ReportContext) -> dict[str, Any]:
+    """현재 ctx 의 도메인 프로필."""
+    domain = _infer_dl_domain(ctx)
+    return _DOMAIN_PROFILES.get(domain, _DOMAIN_PROFILES["generic"])
+
+
+
+# ==============================================================
 # 내부 헬퍼 — 자체완결 (ml_pitch 와 동일 패턴)
 # ==============================================================
 
@@ -366,13 +445,15 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_why_dl(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 5 — Why Tabular DL? (DL 정당성, deck 전체의 기둥). ★ DL 핵심."""
+    """슬라이드 5 — Why Tabular DL? (DL 정당성, 도메인 적응). ★ DL 핵심."""
+    profile = _get_domain_profile(ctx)
     rows = ctx.dataset.shape.get("rows", 0)
     cols = ctx.dataset.shape.get("cols", 0)
     body = [
-        f"좌 · XGBoost 한계 · 고차원 categorical (one-hot 메모리 폭발) + {rows:,} 행 학습 6시간+",
-        "우 · DL 우위 · Categorical Embedding (자동 처리) + Attention (변수 상호작용) + SSL Pretraining",
-        f"조건 · 데이터 ≥ 1M rows + 고차원 categorical ({cols}개) + 멀티태스크 가능성",
+        f"맥락 · {profile['label_ko']}",
+        f"좌 · 현행 한계 · {profile['why_old']}",
+        f"우 · DL 우위 · {profile['why_new']}",
+        f"조건 · 데이터 {rows:,} 행 × {cols} 열 + 고차원 categorical + 멀티태스크 가능성",
         "결론 · 본 분석 조건 충족 — DL 도입 정당화 ✓",
     ]
     return SlideSpec(
@@ -380,21 +461,27 @@ def _build_why_dl(ctx: ReportContext) -> SlideSpec:
         section_id="problem",
         layout="comparison_before_after",
         role="claim",
-        so_what="Tabular 에서 DL 정당성 — XGBoost 한계 + DL 표현학습 우위 + 본 데이터 조건 충족",
+        so_what=(
+            f"{profile['label_ko']} 에서 DL 정당성 — 현행 한계 + DL 표현학습 우위 + 본 데이터 조건"
+        ),
         title_ko="Why Tabular DL?",
         body_outline=body,
         thread_part="conflict",
         parent_message_id="problem_root",
         visual_spec=VisualSpec(
             type="custom",
-            title="XGBoost vs Tabular DL",
-            caption="좌 한계 / 우 우위 비교 + 본 분석 조건 매칭",
-            spec={"layout": "split_compare", "axes": ["ML 한계", "DL 우위"]},
+            title=f"XGBoost vs Tabular DL — {profile['label_ko']}",
+            caption=f"도메인: {profile['label_ko']}. 좌 한계 / 우 우위 + 조건 매칭",
+            spec={
+                "layout": "split_compare",
+                "axes": ["ML 한계", "DL 우위"],
+                "domain": _infer_dl_domain(ctx),
+            },
             severity="critical",
         ),
         speaker_notes_hint=(
-            "★ deck 전체의 기둥 — '왜 굳이 DL?' 답이 안 나오면 임원 즉시 reject. "
-            "XGBoost 정량 한계 + DL 표현학습 + 본 데이터 조건 매칭 3박스."
+            f"★ deck 의 기둥. 도메인 = {profile['label_ko']}. "
+            "도메인 컨텍스트로 즉시 공감 유도."
         ),
     )
 
@@ -791,33 +878,43 @@ def _build_as_is_to_be(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_roi_inference_cost(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 17 — ROI + Inference Cost & GPU Bill. ★ DL 특화."""
+    """슬라이드 17 — ROI + Inference Cost & GPU Bill (도메인 적응). ★ DL 특화."""
+    profile = _get_domain_profile(ctx)
+    roi = profile["roi"]
     biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    kpi_value = f"{biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else "추정값 미입력"
-    kpi_name = biz_kpi.name if biz_kpi else "비즈니스 KPI"
+    kpi_value = (
+        f"{biz_kpi.estimated_value} {biz_kpi.unit}"
+        if biz_kpi
+        else f"{roi['primary_unit']} 단위 개선"
+    )
 
     body = [
-        f"01 · 비즈니스 효과 · {kpi_name} {kpi_value}",
-        "02 · Inference (ML CPU baseline) · 5ms · $0.001/요청",
-        "03 · Inference (DL FP32 GPU) · 28ms · $0.012/요청 (5× 비용)",
-        "04 · Inference (DL INT8 Quantized) · 9ms · $0.005/요청 (절감 60%)",
-        "05 · ROI 회수 기간 · 11개월 (Quantization 적용 시)",
+        f"01 · 핵심 KPI · {roi['primary_kpi']} · {kpi_value}",
+        f"02 · {roi['secondary'][0]}",
+        f"03 · {roi['secondary'][1]}",
+        f"04 · {roi['secondary'][2]}",
+        "05 · Inference Cost · ML CPU 5ms · DL FP32 28ms · DL INT8 9ms ($0.005/요청)",
+        f"06 · 비용 비대칭 · FP {roi['fp_cost']} / FN {roi['fn_cost']} · ROI 회수 11개월",
     ]
     return SlideSpec(
         id="i3_roi",
         section_id="impact",
         layout="kpi_cards_4",
         role="claim",
-        so_what=f"비즈니스 효과 {kpi_name} {kpi_value} + Quantization 으로 GPU 비용 60% 절감 → ROI 11개월",
+        so_what=(
+            f"{profile['label_ko']} 효과 — {roi['primary_kpi']} {kpi_value} + Quantization 으로 GPU 비용 60% 절감"
+        ),
         title_ko="ROI + Inference Cost & GPU Bill",
         body_outline=body,
         parent_message_id="impact_root",
         visual_spec=VisualSpec(
             type="custom",
-            title="ROI + Inference Cost 분석",
-            caption="비즈니스 효과 + 추론 비용 3 변형 (FP32/FP16/INT8)",
+            title=f"ROI ({profile['label_ko']}) + Inference Cost",
+            caption="도메인 KPI + 추론 비용 3 변형 (FP32/FP16/INT8)",
             spec={
                 "layout": "circular_progress",
+                "domain": _infer_dl_domain(ctx),
+                "primary_kpi": roi["primary_kpi"],
                 "inference_costs": {
                     "ml_cpu": {"latency_ms": 5, "cost_per_req": 0.001},
                     "dl_fp32": {"latency_ms": 28, "cost_per_req": 0.012},
@@ -827,8 +924,8 @@ def _build_roi_inference_cost(ctx: ReportContext) -> SlideSpec:
             },
         ),
         speaker_notes_hint=(
-            "★ DL 특화 — GPU 비용 vs ML CPU. Quantization 의 비용 절감 강조. "
-            "ROI 회수 기간이 GPU 비용 영향 받는다는 점 명시."
+            f"★ 도메인 = {profile['label_ko']}. "
+            "GPU 비용 vs ML CPU + Quantization 절감 강조."
         ),
     )
 

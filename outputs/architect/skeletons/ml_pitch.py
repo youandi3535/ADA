@@ -55,6 +55,117 @@ SKELETON_NAME = "ML Pitch"
 
 
 # ==============================================================
+# 도메인 프로필 — 슬라이드 5 (시장·맥락) · 17 (ROI) 텍스트 적응용
+# HJ 2026-06-08: ML 카테고리 5 도메인 (churn / credit / propensity / fraud / generic)
+# ==============================================================
+
+_DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
+    "churn": {
+        "label_ko": "고객 이탈 예측",
+        "market_context": "구독·통신·SaaS·금융 고객 행동 데이터 (사용·결제·VOC)",
+        "roi": {
+            "primary_kpi": "월간 이탈률 감소",
+            "primary_unit": "%p",
+            "secondary": [
+                "이탈 방지 캠페인 ROI — 정확 타겟팅으로 +24%",
+                "재가입 비용 절감 — 이탈 후 재유치 대비 1/5 비용",
+                "고객 LTV 연장 — 평균 잔존 +N 개월",
+            ],
+            "fp_cost": "5,000원 (불필요 리텐션 캠페인)",
+            "fn_cost": "180,000원/건 (이탈 고객 LTV 손실)",
+        },
+    },
+    "credit_scoring": {
+        "label_ko": "신용 평가·스코어링",
+        "market_context": "금융·핀테크 대출·여신 신용 데이터 (소득·자산·연체)",
+        "roi": {
+            "primary_kpi": "부도율 감소 + 승인율 향상",
+            "primary_unit": "%p",
+            "secondary": [
+                "부도 손실 절감 — 정확 예측으로 N%p 감소",
+                "승인 자동화 — 분석가 검토 부하 -65%",
+                "Compliance — 모델 설명 가능성 (SHAP) 으로 규제 대응",
+            ],
+            "fp_cost": "이자 수익 손실 (정상 고객 거절)",
+            "fn_cost": "부도 손실 (대출 원금 평균 N백만원)",
+        },
+    },
+    "propensity": {
+        "label_ko": "구매 성향·전환 예측",
+        "market_context": "리테일·이커머스 행동 데이터 (방문·장바구니·이전 구매)",
+        "roi": {
+            "primary_kpi": "캠페인 전환율 향상",
+            "primary_unit": "%p",
+            "secondary": [
+                "마케팅 ROAS 향상 — 고성향 고객 타겟팅",
+                "할인 쿠폰 비용 절감 — Uplift 모델로 증분 효과만 측정",
+                "재방문 유도 — Top 5% 우선 채널 노출",
+            ],
+            "fp_cost": "쿠폰 비용 (저성향 고객 노출)",
+            "fn_cost": "기회 손실 (고성향 고객 누락)",
+        },
+    },
+    "fraud_tabular": {
+        "label_ko": "거래 사기 (정형 데이터)",
+        "market_context": "금융·결제 거래 데이터 (시간·금액·지역·디바이스)",
+        "roi": {
+            "primary_kpi": "사기 손실 절감",
+            "primary_unit": "원/년",
+            "secondary": [
+                "False alarm 감소 — 정상 거래 차단 ↓, 고객 경험 ↑",
+                "분석가 검토 부하 감소 — SHAP Root Cause 자동",
+                "신규 사기 패턴 조기 감지 — 정기 재학습",
+            ],
+            "fp_cost": "2,000원 (불필요 차단·CS 응대)",
+            "fn_cost": "280,000원/건 (사기 평균 손실)",
+        },
+    },
+    "generic": {
+        "label_ko": "일반 정형 ML 분석",
+        "market_context": "정형 데이터 기반 분류·회귀 과제",
+        "roi": {
+            "primary_kpi": "비즈니스 KPI 개선",
+            "primary_unit": "%p",
+            "secondary": [
+                "운영 효율 향상",
+                "분석 자동화로 시간 절감",
+                "재현 가능한 의사결정 지원",
+            ],
+            "fp_cost": "분석 비용",
+            "fn_cost": "기회 손실",
+        },
+    },
+}
+
+
+def _infer_ml_domain(ctx: ReportContext) -> str:
+    """ctx 의 도메인·use_case·intent 로부터 ML 도메인 추론."""
+    industry = (getattr(ctx.domain, "inferred_industry", "") or "").lower()
+    use_case = (getattr(ctx.domain, "inferred_use_case", "") or "").lower()
+    intent = (ctx.meta.user_intent or "").lower()
+    text = f"{industry} {use_case} {intent}"
+
+    domain_keywords: list[tuple[str, tuple[str, ...]]] = [
+        # 구체적인 도메인부터 — 첫 매치가 이김
+        ("fraud_tabular", ("사기", "fraud", "이상거래", "money laundering")),
+        ("credit_scoring", ("신용", "credit", "여신", "대출", "부도", "스코어링", "scoring")),
+        ("churn", ("이탈", "churn", "해지", "retention", "구독", "subscriber")),
+        ("propensity", ("구매", "전환", "propensity", "uplift", "캠페인", "마케팅", "marketing")),
+    ]
+    for domain, keywords in domain_keywords:
+        if any(kw in text for kw in keywords):
+            return domain
+    return "generic"
+
+
+def _get_domain_profile(ctx: ReportContext) -> dict[str, Any]:
+    """현재 ctx 의 도메인 프로필."""
+    domain = _infer_ml_domain(ctx)
+    return _DOMAIN_PROFILES.get(domain, _DOMAIN_PROFILES["generic"])
+
+
+
+# ==============================================================
 # 내부 헬퍼 — 기존 _common.py 에서 ml_pitch 가 쓰던 5종을 인라인.
 # 사용자 결정: 카테고리별 skeleton 은 자기완결 (_common 의존성 없음).
 # 다른 skeleton 추가 시 이 헬퍼들을 그대로 복사·수정해 자기 카테고리 색에 맞게 변형.
@@ -393,25 +504,30 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_market_context(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 5 — 시장·맥락 (numbered_rows)."""
+    """슬라이드 5 — 시장·맥락 (numbered_rows). ★ 도메인 적응."""
+    profile = _get_domain_profile(ctx)
     industry = ctx.domain.inferred_industry or "타겟 산업"
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "대상 과제"
     body = [
         f"01 · 산업 영역 · {industry}",
-        f"02 · 과제 정의 · {use_case}",
-        f"03 · 데이터 규모 · {ctx.dataset.shape.get('rows', 0):,} 행 × {ctx.dataset.shape.get('cols', 0)} 열",
-        f"04 · 분석 범위 · {ctx.meta.category} 카테고리",
+        f"02 · 과제 정의 · {profile['label_ko']} — {use_case}",
+        f"03 · 도메인 컨텍스트 · {profile['market_context']}",
+        f"04 · 데이터 규모 · {ctx.dataset.shape.get('rows', 0):,} 행 × {ctx.dataset.shape.get('cols', 0)} 열",
+        f"05 · 분석 범위 · {ctx.meta.category} 카테고리",
     ]
     return SlideSpec(
         id="p1_market",
         section_id="problem",
         layout="one_message",
         role="evidence",
-        so_what=f"{industry} 의 {use_case} 가 중요한 이유 — 시장·과제·데이터 3축 정리",
+        so_what=f"{profile['label_ko']} 도메인 — {industry} 산업에서 본 과제의 중요성",
         title_ko="시장·맥락",
         body_outline=body,
         parent_message_id="problem_root",
-        speaker_notes_hint="청중에게 '왜 이 분석을 지금 하는가' 의 외부 맥락 제시.",
+        speaker_notes_hint=(
+            f"도메인 = {profile['label_ko']}. "
+            "청중에게 '왜 이 분석을 지금 하는가' 의 외부 맥락 제시."
+        ),
     )
 
 
@@ -788,33 +904,51 @@ def _build_as_is_to_be(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_roi(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 17 — ROI / 비즈니스 임팩트 (circular_progress)."""
+    """슬라이드 17 — ROI / 비즈니스 임팩트 (circular_progress). ★ 도메인 적응."""
+    profile = _get_domain_profile(ctx)
+    roi = profile["roi"]
     biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    kpi_value = f"{biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else "추정값 미입력"
-    kpi_name = biz_kpi.name if biz_kpi else "비즈니스 KPI"
+    kpi_value = (
+        f"{biz_kpi.estimated_value} {biz_kpi.unit}"
+        if biz_kpi
+        else f"{roi['primary_unit']} 단위 개선"
+    )
 
     body = [
-        f"01 · {kpi_name} · {kpi_value}",
-        "02 · 분석 시간 단축 · 주 3~5일 → 30분/건 (98%+ 절감)",
-        "03 · 재학습 비용 · 분기당 자동화 (인건비 80% 절감)",
-        "04 · 신뢰도 · MLflow + Langfuse 완전 추적",
+        f"01 · 핵심 KPI · {roi['primary_kpi']} · {kpi_value}",
+        f"02 · {roi['secondary'][0]}",
+        f"03 · {roi['secondary'][1]}",
+        f"04 · {roi['secondary'][2]}",
+        f"05 · 비용 비대칭 · FP {roi['fp_cost']} / FN {roi['fn_cost']}",
+        "06 · 운영 효율 · 분석 시간 주 3~5일 → 30분/건 (98% 절감)",
     ]
     return SlideSpec(
         id="i3_roi",
         section_id="impact",
         layout="kpi_cards_4",
         role="claim",
-        so_what=f"예상 비즈니스 효과 — {kpi_name} {kpi_value} + 운영 비용 절감",
+        so_what=(
+            f"{profile['label_ko']} 효과 — {roi['primary_kpi']} {kpi_value} + 비용 비대칭 기반 의사결정"
+        ),
         title_ko="ROI / 비즈니스 임팩트",
         body_outline=body,
         parent_message_id="impact_root",
         visual_spec=VisualSpec(
             type="custom",
-            title="ROI Dashboard",
-            caption="달성률 도넛 + 4 KPI 카드",
-            spec={"layout": "circular_progress"},
+            title=f"ROI ({profile['label_ko']})",
+            caption="달성률 도넛 + 도메인 KPI + FP/FN 비용",
+            spec={
+                "layout": "circular_progress",
+                "domain": _infer_ml_domain(ctx),
+                "primary_kpi": roi["primary_kpi"],
+                "fp_cost": roi["fp_cost"],
+                "fn_cost": roi["fn_cost"],
+            },
         ),
-        speaker_notes_hint="비즈니스 KPI + 운영 효율 + 신뢰성 3 축으로 ROI 분해.",
+        speaker_notes_hint=(
+            f"★ 도메인 적응 — {profile['label_ko']}. "
+            "비즈니스 KPI + FP/FN 비용 비대칭 기반 의사결정 강조."
+        ),
     )
 
 

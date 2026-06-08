@@ -17,9 +17,11 @@ from outputs.architect.plan import ReportPlan, SlideSpec
 from outputs.context.schema import ReportContext
 from outputs.style.visual_kit import (
     GLYPHS,
+    add_color_band,
     add_glyph,
     add_gradient_rect,
     add_horizontal_rule,
+    add_image_with_overlay,
     add_oval,
     add_rect,
     add_rounded_rect,
@@ -28,7 +30,42 @@ from outputs.style.visual_kit import (
     add_vertical_accent,
 )
 
-KO = "Malgun Gothic"
+# HJ 2026-06-08 — 시각 품질 도구 (graceful import, 자산 없어도 동작)
+try:
+    from tools.visual import (
+        get_cover_image,
+        get_font_name,
+        icon_for_slide,
+        illustration_for_slide,
+        recolor_undraw,
+        svg_to_png_recolored,
+    )
+
+    _VISUAL_TOOLS_AVAILABLE = True
+except ImportError:
+    _VISUAL_TOOLS_AVAILABLE = False
+
+    def get_cover_image(*args, **kwargs):
+        return None
+
+    def get_font_name(*args, **kwargs):
+        return "Malgun Gothic"
+
+    def icon_for_slide(*args, **kwargs):
+        return None
+
+    def illustration_for_slide(*args, **kwargs):
+        return None
+
+    def recolor_undraw(*args, **kwargs):
+        return None
+
+    def svg_to_png_recolored(*args, **kwargs):
+        return None
+
+
+# 한국어 폰트 — 자산 있으면 Pretendard, 없으면 Malgun Gothic
+KO = get_font_name()
 SLIDE_W = 33.867
 SLIDE_H = 19.05
 
@@ -136,10 +173,33 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
 
 
 def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: str, secondary: str):
-    # Left gradient block (primary -> secondary)
-    add_gradient_rect(slide, 0, 0, SLIDE_W * 0.55, SLIDE_H, primary, secondary, angle=135)
-    # Right white area
-    add_rect(slide, SLIDE_W * 0.55, 0, SLIDE_W * 0.45, SLIDE_H, "#FFFFFF")
+    # HJ 2026-06-08 — Stock photo background 시도 → 실패 시 기존 grad 디자인 폴백
+    user_intent = getattr(ctx.meta, "user_intent", "") or ""
+    cover_photo = get_cover_image("cover", user_intent) if _VISUAL_TOOLS_AVAILABLE else None
+
+    if cover_photo and cover_photo.exists():
+        # 풀블리드 사진 + 좌측 그라데이션 overlay (반투명 primary→secondary)
+        try:
+            add_image_with_overlay(
+                slide,
+                0,
+                0,
+                SLIDE_W,
+                SLIDE_H,
+                str(cover_photo),
+                overlay_color=primary,
+                overlay_alpha_pct=70,  # 70% 투명도로 텍스트 가독성
+            )
+            # 좌측 강조 색 band
+            add_color_band(slide, 0, 0, SLIDE_W * 0.02, SLIDE_H, accent)
+        except Exception:
+            cover_photo = None  # 폴백
+
+    if not cover_photo:
+        # 폴백: 기존 그라데이션 디자인
+        add_gradient_rect(slide, 0, 0, SLIDE_W * 0.55, SLIDE_H, primary, secondary, angle=135)
+        # Right white area
+        add_rect(slide, SLIDE_W * 0.55, 0, SLIDE_W * 0.45, SLIDE_H, "#FFFFFF")
     # Big decorative circles bottom-left for depth
     add_oval(slide, -4.0, SLIDE_H - 7.0, 10.0, 10.0, accent)
     # Smaller overlay circle
@@ -491,16 +551,41 @@ def _draw_slide(
 # ==============================================================
 
 
+def _icon_name_for_sl(sl: SlideSpec) -> str:
+    """SlideSpec 으로부터 Lucide 아이콘 이름 추출 (없으면 빈 문자열)."""
+    if not _VISUAL_TOOLS_AVAILABLE:
+        return ""
+    # icon_for_slide 는 Path 반환 — 이름만 뽑기
+    p = icon_for_slide(sl.id, getattr(sl, "role", "claim"))
+    if p is None:
+        return ""
+    return p.stem  # 파일명 (확장자 제외)
+
+
 def _draw_header(slide, sl: SlideSpec, primary: str, ink: str, muted: str):
-    """Top header band: left accent + title + so-what."""
+    """Top header band: left accent + Lucide icon (if available) + title + so-what."""
     # Left vertical accent bar
     add_vertical_accent(slide, 1.0, 1.0, 1.3, primary, w_cm=0.18)
-    # Title
+
+    # HJ 2026-06-08 — Lucide 아이콘 시도 (slide_id 기준), 실패 시 텍스트만
+    icon_offset = 0.0
+    if _VISUAL_TOOLS_AVAILABLE:
+        try:
+            icon_png = svg_to_png_recolored(_icon_name_for_sl(sl), color=primary, size_pt=64)
+            if icon_png and icon_png.exists():
+                from pptx.util import Cm
+
+                slide.shapes.add_picture(str(icon_png), Cm(1.4), Cm(0.85), width=Cm(1.0), height=Cm(1.0))
+                icon_offset = 1.2  # 아이콘 너비만큼 텍스트 우측 이동
+        except Exception:
+            pass
+
+    # Title (아이콘이 있으면 그 옆에)
     add_text_box(
         slide,
-        1.5,
+        1.5 + icon_offset,
         0.9,
-        SLIDE_W - 3.0,
+        SLIDE_W - 3.0 - icon_offset,
         1.0,
         sl.title_ko or sl.id,
         size_pt=24,

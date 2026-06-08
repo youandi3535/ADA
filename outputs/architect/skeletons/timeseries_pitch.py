@@ -60,6 +60,141 @@ SKELETON_NAME = "Timeseries Pitch"
 
 
 # ==============================================================
+# 도메인 프로필 — 슬라이드 5 (Why 시계열) · 17 (ROI) 텍스트 적응용
+# HJ 2026-06-08: TS 카테고리 5 도메인 (demand/energy/finance/traffic/generic)
+# ==============================================================
+
+_DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
+    "demand_forecast": {
+        "label_ko": "수요 예측 (리테일·제조)",
+        "context": "일별·주별 판매·재고·발주 시계열 데이터",
+        "why_old": "Excel 평균 + 분석가 휴리스틱 — 계절성·휴일 캡처 어려움, 결품·과잉재고",
+        "why_new": "Multi-horizon forecast + Holiday calendar + 외생 변수 (날씨·프로모션) 자동",
+        "roi": {
+            "primary_kpi": "재고 비용 절감 + 결품률 감소",
+            "primary_unit": "%p",
+            "horizon": {
+                "1d": "일일 발주·인력 배치",
+                "7d": "주간 캠페인·재고 회전",
+                "30d": "월간 구매·전략 (PI 활용)",
+            },
+            "secondary": [
+                "결품률 -32% — 매출 회복",
+                "과잉재고 -18% — 자본 비용 절감",
+                "판촉 ROI +24% — 정확 타겟팅",
+            ],
+        },
+    },
+    "energy_forecast": {
+        "label_ko": "에너지 수요 예측",
+        "context": "시간별·일별 전력·가스 수요 + 기상·산업 활동 데이터",
+        "why_old": "전년 동기 비교 + 보수적 마진 — 발전 과잉·연료 비용 손실",
+        "why_new": "기상 예보 통합 + Multi-horizon (15분·1시간·1일) — 발전 최적화",
+        "roi": {
+            "primary_kpi": "발전 효율 향상 + 연료 비용 절감",
+            "primary_unit": "%p",
+            "horizon": {
+                "15m": "실시간 발전 조정",
+                "1d": "일일 발전 계획",
+                "30d": "월간 연료 구매",
+            },
+            "secondary": [
+                "발전 과잉 -12% — 연료 비용 절감",
+                "탄소 배출 감소 — ESG 지표 개선",
+                "수요 응답 자동화 — 피크 분산",
+            ],
+        },
+    },
+    "finance_forecast": {
+        "label_ko": "재무·가격 예측",
+        "context": "매출·환율·주가·금리 시계열 + 거시 지표",
+        "why_old": "전년 비교 + 분석가 시나리오 — 변동성 큰 시장 대응 늦음",
+        "why_new": "Probabilistic forecast (PI80/95) + 외생 거시 변수 통합",
+        "roi": {
+            "primary_kpi": "예측 정확도 향상 + 의사결정 신속화",
+            "primary_unit": "%p",
+            "horizon": {
+                "1d": "일일 거래·운영",
+                "7d": "주간 자금 관리",
+                "30d": "월간 예산·헷지",
+            },
+            "secondary": [
+                "PI 기반 리스크 관리 — Value at Risk 정확 산출",
+                "헷지 비용 최적화 — 변동성 대응",
+                "분석가 시간 절감 — 자동 시나리오 생성",
+            ],
+        },
+    },
+    "traffic_forecast": {
+        "label_ko": "교통량·물류 예측",
+        "context": "시간별 교통량·배송량·물류 시계열 + 휴일·이벤트",
+        "why_old": "고정 스케줄 — 피크 시간 혼잡·자원 부족",
+        "why_new": "Multi-horizon + 휴일·이벤트 자동 통합 — 동적 자원 배치",
+        "roi": {
+            "primary_kpi": "배송 효율 향상 / 혼잡 비용 감소",
+            "primary_unit": "%p",
+            "horizon": {
+                "1h": "실시간 배차",
+                "1d": "일일 인력·차량",
+                "7d": "주간 노선 최적화",
+            },
+            "secondary": [
+                "배송 시간 단축 — 고객 만족도 ↑",
+                "유류·인건비 절감",
+                "Peak 분산 — 인프라 활용도 ↑",
+            ],
+        },
+    },
+    "generic": {
+        "label_ko": "일반 시계열 분석",
+        "context": "시간 인덱스 + 계절성 + 외생 변수 데이터",
+        "why_old": "Excel / 룰 — 계절성·외생 변수 수동 보정",
+        "why_new": "Multi-horizon + PI + 자동 휴일 통합",
+        "roi": {
+            "primary_kpi": "예측 정확도 향상",
+            "primary_unit": "%p",
+            "horizon": {
+                "1d": "단기 운영",
+                "7d": "중기 계획",
+                "30d": "장기 전략 (PI 활용)",
+            },
+            "secondary": [
+                "자동화로 분석 시간 절감",
+                "PI80/95 의사결정 지원",
+                "분기별 자동 재학습",
+            ],
+        },
+    },
+}
+
+
+def _infer_ts_domain(ctx: ReportContext) -> str:
+    """ctx 의 도메인·use_case·intent 로부터 TS 도메인 추론."""
+    industry = (getattr(ctx.domain, "inferred_industry", "") or "").lower()
+    use_case = (getattr(ctx.domain, "inferred_use_case", "") or "").lower()
+    intent = (ctx.meta.user_intent or "").lower()
+    text = f"{industry} {use_case} {intent}"
+
+    # 구체적인 도메인부터
+    if any(kw in text for kw in ("에너지", "energy", "전력", "발전", "가스", "electricity", "power")):
+        return "energy_forecast"
+    if any(kw in text for kw in ("재무", "finance", "환율", "주가", "금리", "매출", "revenue", "price")):
+        return "finance_forecast"
+    if any(kw in text for kw in ("교통", "traffic", "물류", "배송", "logistics", "delivery", "운송")):
+        return "traffic_forecast"
+    if any(kw in text for kw in ("수요", "demand", "판매", "재고", "발주", "리테일", "retail", "제조")):
+        return "demand_forecast"
+    return "generic"
+
+
+def _get_domain_profile(ctx: ReportContext) -> dict[str, Any]:
+    """현재 ctx 의 도메인 프로필."""
+    domain = _infer_ts_domain(ctx)
+    return _DOMAIN_PROFILES.get(domain, _DOMAIN_PROFILES["generic"])
+
+
+
+# ==============================================================
 # 내부 헬퍼 — 자체완결 (ml_pitch / dl_pitch 와 동일 패턴)
 # ==============================================================
 
@@ -358,10 +493,12 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_why_timeseries(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 5 — Why 시계열 모델? (정당성, deck 의 기둥). ★ 시계열 핵심."""
+    """슬라이드 5 — Why 시계열 모델? (도메인 적응). ★ 시계열 핵심."""
+    profile = _get_domain_profile(ctx)
     body = [
-        "좌 · Tabular 회귀 한계 · 시간 순서 무시 · Lag 수동 · 계절성 캡처 어려움 · 점 추정만",
-        "우 · 시계열 모델 우위 · 자기상관 자동 (ARIMA/AR) · STL 분해 · 외생변수 자연 통합 · PI80/95 자동",
+        f"맥락 · {profile['label_ko']} — {profile['context']}",
+        f"좌 · 현행 한계 · {profile['why_old']}",
+        f"우 · 시계열 모델 우위 · {profile['why_new']}",
         "조건 · 시간 인덱스 ✓ + 계절성 패턴 ✓ + 외생변수 활용 가능 ✓",
         "결론 · 본 분석 조건 충족 — 시계열 모델 정당화 ✓",
     ]
@@ -370,21 +507,27 @@ def _build_why_timeseries(ctx: ReportContext) -> SlideSpec:
         section_id="problem",
         layout="comparison_before_after",
         role="claim",
-        so_what="시계열 모델 정당성 — Tabular 회귀 한계 + 시계열 모델 자기상관·PI 우위 + 본 데이터 조건 충족",
+        so_what=(
+            f"{profile['label_ko']} 에서 시계열 모델 정당성 — 현행 한계 + PI·자기상관 우위 + 본 데이터 조건"
+        ),
         title_ko="Why 시계열 모델?",
         body_outline=body,
         thread_part="conflict",
         parent_message_id="problem_root",
         visual_spec=VisualSpec(
             type="custom",
-            title="Tabular 회귀 vs 시계열 모델",
-            caption="좌 한계 / 우 우위 비교 + 본 분석 조건 매칭",
-            spec={"layout": "split_compare", "axes": ["Tabular 한계", "시계열 우위"]},
+            title=f"Tabular 회귀 vs 시계열 모델 — {profile['label_ko']}",
+            caption=f"도메인: {profile['label_ko']}. 좌 한계 / 우 우위 + 조건 매칭",
+            spec={
+                "layout": "split_compare",
+                "axes": ["현행 한계", "시계열 우위"],
+                "domain": _infer_ts_domain(ctx),
+            },
             severity="critical",
         ),
         speaker_notes_hint=(
-            "★ deck 전체의 기둥 — 'XGBoost 회귀로 시계열 가능?' 반론 차단. "
-            "자기상관·계절성·PI 자동 제공 등 시계열 모델만의 우위 강조."
+            f"★ deck 의 기둥. 도메인 = {profile['label_ko']}. "
+            "도메인 컨텍스트로 즉시 공감 유도."
         ),
     )
 
@@ -785,42 +928,56 @@ def _build_as_is_to_be(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_roi_long_horizon(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 17 — ROI + Long-horizon Decay. ★ 시계열 특화."""
+    """슬라이드 17 — ROI + Long-horizon Decay (도메인 적응). ★ 시계열 특화."""
+    profile = _get_domain_profile(ctx)
+    roi = profile["roi"]
     biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    kpi_value = f"{biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else "추정값 미입력"
-    kpi_name = biz_kpi.name if biz_kpi else "비즈니스 KPI"
+    kpi_value = (
+        f"{biz_kpi.estimated_value} {biz_kpi.unit}"
+        if biz_kpi
+        else f"{roi['primary_unit']} 단위 개선"
+    )
+    horizon = roi["horizon"]
+    # horizon 키 첫 3개 가져오기
+    horizon_items = list(horizon.items())[:3]
 
     body = [
-        f"01 · {kpi_name} · {kpi_value}",
-        "02 · 재고 비용 절감 · 결품률 감소 + 과잉재고 -18%",
-        "03 · 1-day forecast (운영) · latency <1s · MAPE 5% 정확",
-        "04 · 7-day forecast (계획) · latency <3s · MAPE 9% 신뢰",
-        "05 · 30-day forecast (전략) · latency <5s · MAPE 14% — PI 활용 권장",
+        f"01 · 핵심 KPI · {roi['primary_kpi']} · {kpi_value}",
+        f"02 · {roi['secondary'][0]}",
+        f"03 · {roi['secondary'][1]}",
+        f"04 · {roi['secondary'][2]}",
     ]
+    # horizon 별 사용처 (도메인별 다름)
+    for h_key, h_usecase in horizon_items:
+        body.append(f"05 · Horizon {h_key} · {h_usecase}")
+    body = body[:7]  # 최대 7개
+
     return SlideSpec(
         id="i3_roi",
         section_id="impact",
         layout="kpi_cards_4",
         role="claim",
-        so_what=f"비즈니스 효과 {kpi_name} {kpi_value} + Horizon 별 의사결정 분리 (단기 정확 / 장기 PI)",
+        so_what=(
+            f"{profile['label_ko']} 효과 — {roi['primary_kpi']} {kpi_value} + "
+            f"Horizon 별 의사결정 분리 (단기 정확 / 장기 PI)"
+        ),
         title_ko="ROI + Long-horizon Decay",
         body_outline=body,
         parent_message_id="impact_root",
         visual_spec=VisualSpec(
             type="custom",
-            title="ROI + Long-horizon Strategy",
-            caption="비즈니스 효과 + Horizon 별 MAPE 곡선",
+            title=f"ROI ({profile['label_ko']}) + Long-horizon Strategy",
+            caption="도메인 KPI + Horizon 별 사용처",
             spec={
                 "layout": "circular_progress",
-                "horizon_strategy": {
-                    "1d": {"use_case": "운영 (재고·인력)", "mape": 5.2},
-                    "7d": {"use_case": "계획 (발주·캠페인)", "mape": 8.7},
-                    "30d": {"use_case": "전략 (참고·PI 활용)", "mape": 14.3},
-                },
+                "domain": _infer_ts_domain(ctx),
+                "primary_kpi": roi["primary_kpi"],
+                "horizon_strategy": horizon,
             },
         ),
         speaker_notes_hint=(
-            "★ 시계열 특화 — Horizon 별 의사결정 분리. 장기 (30일+) 는 점 추정 X, PI 만 활용 권고 명시."
+            f"★ 도메인 = {profile['label_ko']}. "
+            "Horizon 별 의사결정 분리 — 도메인마다 horizon 의 의미가 다름."
         ),
     )
 
