@@ -46,12 +46,12 @@ SYSTEM_PROMPT = (
     "  - target_column: supervised target column name, or null for unsupervised\n"
     "\n## 절대 강제 사항 (반드시 지킬 것)\n"
     "각 옵션 객체에는 다음 키를 한 글자도 빠뜨리지 말 것:\n"
-    "  - \"category\": tabular_ml | tabular_dl | timeseries | anomaly_detection 중 하나\n"
-    "  - \"approach\": supervised_classification | supervised_regression\n"
+    '  - "category": tabular_ml | tabular_dl | timeseries | anomaly_detection 중 하나\n'
+    '  - "approach": supervised_classification | supervised_regression\n'
     "                | unsupervised_clustering | anomaly_detection\n"
     "                | time_series_forecasting | supervised_other 중 하나\n"
-    "  - \"target_column\": 지도학습이면 컬럼명 문자열, 아니면 null\n\n"
-    "Option 1 과 Option 2 는 반드시 서로 다른 \"category\" 를 가져야 한다.\n"
+    '  - "target_column": 지도학습이면 컬럼명 문자열, 아니면 null\n\n'
+    'Option 1 과 Option 2 는 반드시 서로 다른 "category" 를 가져야 한다.\n'
     "(같은 category 안의 세부 차이는 G2 단계에서 제시하지 말 것 — G3 에서 다룬다.)\n\n"
     "이 두 옵션은 사용자가 G3 의 후보군을 결정하는 분기점이다.\n"
     "사용자가 Option 1 (예: tabular_ml) 을 고르면 다음 게이트(G3) 에서는\n"

@@ -65,19 +65,20 @@ UNDRAW_SLUGS=(
   "predictive_analytics" "data_trends" "scientist" "report"
 )
 
-# unDraw 는 API 가 비공식 + 자주 변경. 대안: GitHub mirror 사용
-UNDRAW_MIRROR="https://raw.githubusercontent.com/AlchemyCC/undraw/main/svg"
+# unDraw 는 자동 다운로드 미러가 모두 404 / 비공식 변경 잦음.
+# 권장: 사용자가 https://undraw.co/illustrations 에서 직접 다운로드
+# 또는 unDraw 의 illustrations.com (Storyset by Freepik) 사용
+echo "  ⚠️  unDraw 는 자동 다운로드 미러 불안정 — 수동 다운로드 권장"
+echo "      1. https://undraw.co/illustrations 방문"
+echo "      2. 카테고리 색상 선택 (#2563eb 파랑 권장)"
+echo "      3. 아래 30개 SVG 다운로드 → $ASSETS/illustrations/undraw/"
+echo "         (없어도 PPT 생성은 정상 — illustration 슬라이드만 비어보임)"
+echo ""
+echo "      필요한 SVG 목록 (총 ~30개):"
 for slug in "${UNDRAW_SLUGS[@]}"; do
-  target="$ASSETS/illustrations/undraw/${slug}.svg"
-  if [ -f "$target" ]; then
-    continue
-  fi
-  curl -sL "${UNDRAW_MIRROR}/${slug}.svg" -o "$target" 2>/dev/null || {
-    # 미러 실패 시 dummy 빈 SVG 생성 (illustration_tool 이 graceful fallback)
-    rm -f "$target"
-  }
-done
-echo "  ✓ unDraw $(ls "$ASSETS/illustrations/undraw/" 2>/dev/null | wc -l) 개 일러스트"
+  echo "        - ${slug}.svg"
+done | head -10
+echo "        - ..."
 
 echo ""
 echo "=== Python 의존성 ==="

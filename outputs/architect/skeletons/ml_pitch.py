@@ -164,7 +164,6 @@ def _get_domain_profile(ctx: ReportContext) -> dict[str, Any]:
     return _DOMAIN_PROFILES.get(domain, _DOMAIN_PROFILES["generic"])
 
 
-
 # ==============================================================
 # 내부 헬퍼 — 기존 _common.py 에서 ml_pitch 가 쓰던 5종을 인라인.
 # 사용자 결정: 카테고리별 skeleton 은 자기완결 (_common 의존성 없음).
@@ -524,10 +523,7 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
         title_ko="시장·맥락",
         body_outline=body,
         parent_message_id="problem_root",
-        speaker_notes_hint=(
-            f"도메인 = {profile['label_ko']}. "
-            "청중에게 '왜 이 분석을 지금 하는가' 의 외부 맥락 제시."
-        ),
+        speaker_notes_hint=(f"도메인 = {profile['label_ko']}. 청중에게 '왜 이 분석을 지금 하는가' 의 외부 맥락 제시."),
     )
 
 
@@ -908,11 +904,7 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
     profile = _get_domain_profile(ctx)
     roi = profile["roi"]
     biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    kpi_value = (
-        f"{biz_kpi.estimated_value} {biz_kpi.unit}"
-        if biz_kpi
-        else f"{roi['primary_unit']} 단위 개선"
-    )
+    kpi_value = f"{biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else f"{roi['primary_unit']} 단위 개선"
 
     body = [
         f"01 · 핵심 KPI · {roi['primary_kpi']} · {kpi_value}",
@@ -927,9 +919,7 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
         section_id="impact",
         layout="kpi_cards_4",
         role="claim",
-        so_what=(
-            f"{profile['label_ko']} 효과 — {roi['primary_kpi']} {kpi_value} + 비용 비대칭 기반 의사결정"
-        ),
+        so_what=(f"{profile['label_ko']} 효과 — {roi['primary_kpi']} {kpi_value} + 비용 비대칭 기반 의사결정"),
         title_ko="ROI / 비즈니스 임팩트",
         body_outline=body,
         parent_message_id="impact_root",
@@ -946,8 +936,7 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
             },
         ),
         speaker_notes_hint=(
-            f"★ 도메인 적응 — {profile['label_ko']}. "
-            "비즈니스 KPI + FP/FN 비용 비대칭 기반 의사결정 강조."
+            f"★ 도메인 적응 — {profile['label_ko']}. 비즈니스 KPI + FP/FN 비용 비대칭 기반 의사결정 강조."
         ),
     )
 

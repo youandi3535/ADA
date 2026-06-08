@@ -193,7 +193,6 @@ def _get_domain_profile(ctx: ReportContext) -> dict[str, Any]:
     return _DOMAIN_PROFILES.get(domain, _DOMAIN_PROFILES["generic"])
 
 
-
 # ==============================================================
 # 내부 헬퍼 — 자체완결 (ml_pitch / dl_pitch 와 동일 패턴)
 # ==============================================================
@@ -507,9 +506,7 @@ def _build_why_timeseries(ctx: ReportContext) -> SlideSpec:
         section_id="problem",
         layout="comparison_before_after",
         role="claim",
-        so_what=(
-            f"{profile['label_ko']} 에서 시계열 모델 정당성 — 현행 한계 + PI·자기상관 우위 + 본 데이터 조건"
-        ),
+        so_what=(f"{profile['label_ko']} 에서 시계열 모델 정당성 — 현행 한계 + PI·자기상관 우위 + 본 데이터 조건"),
         title_ko="Why 시계열 모델?",
         body_outline=body,
         thread_part="conflict",
@@ -525,10 +522,7 @@ def _build_why_timeseries(ctx: ReportContext) -> SlideSpec:
             },
             severity="critical",
         ),
-        speaker_notes_hint=(
-            f"★ deck 의 기둥. 도메인 = {profile['label_ko']}. "
-            "도메인 컨텍스트로 즉시 공감 유도."
-        ),
+        speaker_notes_hint=(f"★ deck 의 기둥. 도메인 = {profile['label_ko']}. 도메인 컨텍스트로 즉시 공감 유도."),
     )
 
 
@@ -932,11 +926,7 @@ def _build_roi_long_horizon(ctx: ReportContext) -> SlideSpec:
     profile = _get_domain_profile(ctx)
     roi = profile["roi"]
     biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    kpi_value = (
-        f"{biz_kpi.estimated_value} {biz_kpi.unit}"
-        if biz_kpi
-        else f"{roi['primary_unit']} 단위 개선"
-    )
+    kpi_value = f"{biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else f"{roi['primary_unit']} 단위 개선"
     horizon = roi["horizon"]
     # horizon 키 첫 3개 가져오기
     horizon_items = list(horizon.items())[:3]
@@ -976,8 +966,7 @@ def _build_roi_long_horizon(ctx: ReportContext) -> SlideSpec:
             },
         ),
         speaker_notes_hint=(
-            f"★ 도메인 = {profile['label_ko']}. "
-            "Horizon 별 의사결정 분리 — 도메인마다 horizon 의 의미가 다름."
+            f"★ 도메인 = {profile['label_ko']}. Horizon 별 의사결정 분리 — 도메인마다 horizon 의 의미가 다름."
         ),
     )
 

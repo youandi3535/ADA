@@ -137,7 +137,6 @@ def _get_domain_profile(ctx: ReportContext) -> dict[str, Any]:
     return _DOMAIN_PROFILES.get(domain, _DOMAIN_PROFILES["generic"])
 
 
-
 # ==============================================================
 # 내부 헬퍼 — 자체완결 (ml_pitch 와 동일 패턴)
 # ==============================================================
@@ -461,9 +460,7 @@ def _build_why_dl(ctx: ReportContext) -> SlideSpec:
         section_id="problem",
         layout="comparison_before_after",
         role="claim",
-        so_what=(
-            f"{profile['label_ko']} 에서 DL 정당성 — 현행 한계 + DL 표현학습 우위 + 본 데이터 조건"
-        ),
+        so_what=(f"{profile['label_ko']} 에서 DL 정당성 — 현행 한계 + DL 표현학습 우위 + 본 데이터 조건"),
         title_ko="Why Tabular DL?",
         body_outline=body,
         thread_part="conflict",
@@ -479,10 +476,7 @@ def _build_why_dl(ctx: ReportContext) -> SlideSpec:
             },
             severity="critical",
         ),
-        speaker_notes_hint=(
-            f"★ deck 의 기둥. 도메인 = {profile['label_ko']}. "
-            "도메인 컨텍스트로 즉시 공감 유도."
-        ),
+        speaker_notes_hint=(f"★ deck 의 기둥. 도메인 = {profile['label_ko']}. 도메인 컨텍스트로 즉시 공감 유도."),
     )
 
 
@@ -882,11 +876,7 @@ def _build_roi_inference_cost(ctx: ReportContext) -> SlideSpec:
     profile = _get_domain_profile(ctx)
     roi = profile["roi"]
     biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    kpi_value = (
-        f"{biz_kpi.estimated_value} {biz_kpi.unit}"
-        if biz_kpi
-        else f"{roi['primary_unit']} 단위 개선"
-    )
+    kpi_value = f"{biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else f"{roi['primary_unit']} 단위 개선"
 
     body = [
         f"01 · 핵심 KPI · {roi['primary_kpi']} · {kpi_value}",
@@ -923,10 +913,7 @@ def _build_roi_inference_cost(ctx: ReportContext) -> SlideSpec:
                 "roi_months": 11,
             },
         ),
-        speaker_notes_hint=(
-            f"★ 도메인 = {profile['label_ko']}. "
-            "GPU 비용 vs ML CPU + Quantization 절감 강조."
-        ),
+        speaker_notes_hint=(f"★ 도메인 = {profile['label_ko']}. GPU 비용 vs ML CPU + Quantization 절감 강조."),
     )
 
 
