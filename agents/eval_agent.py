@@ -26,6 +26,7 @@ SYSTEM_PROMPT = """당신은 QA 평가관입니다. best_model.metrics + eval_re
 class EvalAgent(BaseAgent):
     uses_llm = True
     model_name = "claude-opus-4-6"
+    use_anthropic_api = True
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):

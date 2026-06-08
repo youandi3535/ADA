@@ -63,6 +63,7 @@ def _metric_names(state: PipelineState) -> list[str]:
 class InsightAgent(BaseAgent):
     uses_llm = True
     model_name = "claude-opus-4-6"
+    use_anthropic_api = True
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
