@@ -76,6 +76,7 @@ class ModelSelectionAgent(BaseAgent):
             recipes = await self._fetch_recipes(state.category) if self.session else []
 
             top3: list[str] = []
+            baselines: list[str] = []
             rationale = ""
             citations: list[str] = []
             try:
@@ -99,16 +100,28 @@ class ModelSelectionAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning("model_selection_llm_fallback", error=str(e))
 
+            # Day 11 (jh 위임) — selector.score 결과의 baselines 키 추출.
+            # LLM 경로는 baselines 를 모르므로, fallback 경로 또는 LLM 성공 시에도
+            # 카테고리 핸들러 score() 를 호출해 baselines 만 별도 획득.
+            handler = get_handler(state.category, "score")
             if not top3:
-                handler = get_handler(state.category, "score")
                 if handler is not None:
                     try:
                         result = handler(state, recipes)
                         top3 = result.get("top3") or []
+                        baselines = result.get("baselines") or []
                         rationale = result.get("rationale", rationale)
                         citations = result.get("citations") or citations
                     except Exception as e:
                         self.logger.warning("selector_handler_failed", category=state.category, error=str(e))
+            else:
+                # LLM 경로 성공 → top3 는 LLM 결과 유지하고 baselines 만 핸들러에서 보조 획득.
+                if handler is not None and state.category in ("tabular_ml", "tabular_dl"):
+                    try:
+                        aux = handler(state, recipes) or {}
+                        baselines = aux.get("baselines") or []
+                    except Exception:
+                        baselines = []
 
             if not top3:
                 top3 = ["XGBoost"]
@@ -124,9 +137,25 @@ class ModelSelectionAgent(BaseAgent):
                 except Exception:
                     pass
 
+            # Day 11 (jh 위임) — baselines + top3 합쳐 model_candidates 에 저장.
+            # G4 UI 는 top3 만 노출하나 training_executor 는 5개 전부 학습 →
+            # evaluator/insight 가 "Dummy 대비 +N 향상" 격차 보고 가능.
+            # baseline 이름은 category_extras 메타로도 기록 (evaluator 조회용).
+            combined_candidates = (baselines or []) + top3
+
+            # 카테고리별 extras 키 결정 (tabular_ml/tabular_dl → "tabular")
+            cat_key = "tabular" if state.category.startswith("tabular") else state.category
+            new_extras = dict(state.category_extras or {})
+            cat_extras = dict(new_extras.get(cat_key, {}))
+            if baselines:
+                cat_extras["baseline_model_names"] = list(baselines)
+                cat_extras["g4_visible_top3"] = list(top3)  # G4 UI 가 보여줄 진짜 추천 모델
+            new_extras[cat_key] = cat_extras
+
             new_state = state.with_update(
-                model_candidates=top3,
+                model_candidates=combined_candidates,
                 kb_citations=list(set(state.kb_citations + citations)),
+                category_extras=new_extras,
                 next_agent="hyperparameter_tuner",
             )
 
