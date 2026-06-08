@@ -637,3 +637,149 @@ class TestLearningCurve:
         # charts 키 존재 + 리스트 타입 (재로드 실패해도 다른 차트 시도)
         assert "charts" in result
         assert isinstance(result["charts"], list)
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — selector 점수 매트릭스 (신호 기반 top3 자동 선정)
+# ---------------------------------------------------------------------------
+
+
+class TestSelectorScoreMatrix:
+    """단순 if-else 룰 → 신호 기반 점수 매트릭스 전환 검증.
+
+    신호 4개: n_rows, numeric_ratio, high_card_count, imbalance_ratio.
+    각 시나리오에서 top1 모델이 데이터 특성에 맞는지 검증.
+    """
+
+    def _state(self, *, n_rows=1000, imbalance=2.0, dtypes=None, cardinality_levels=None):
+        from ada.core.state import PipelineState
+
+        profile = {
+            "rows": n_rows,
+            "class_distribution": {"0": 0.6, "1": 0.4},
+            "class_imbalance_ratio": imbalance,
+        }
+        if dtypes is not None:
+            profile["dtypes"] = dtypes
+        if cardinality_levels is not None:
+            profile["cardinality_levels"] = cardinality_levels
+        return PipelineState(
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            target_column="y",
+            task="classification",
+            data_profile=profile,
+        )
+
+    def test_signals_extracted_correctly(self):
+        from agents.handlers.tabular.selector import _extract_signals
+
+        state = self._state(
+            n_rows=10000,
+            imbalance=15.0,
+            dtypes={"a": "int64", "b": "float64", "c": "object"},
+            cardinality_levels={"a": "low", "c": "high"},
+        )
+        signals = _extract_signals(state)
+        assert signals["n_rows"] == 10000
+        assert signals["imbalance_ratio"] == 15.0
+        assert signals["numeric_ratio"] == pytest.approx(2 / 3, abs=0.01)
+        assert signals["high_card_count"] == 1
+
+    def test_small_data_prefers_random_forest(self):
+        """소량 데이터(n_rows<500) → RandomForest 가 top1."""
+        from agents.handlers.tabular.selector import score
+
+        state = self._state(n_rows=200, imbalance=2.0)
+        result = score(state, recipes=[])
+        assert result["top3"][0] == "RandomForest"
+
+    def test_large_balanced_prefers_xgboost(self):
+        """대용량 균형 + numeric 위주 → XGBoost 가 top1."""
+        from agents.handlers.tabular.selector import score
+
+        state = self._state(
+            n_rows=10000,
+            imbalance=2.0,
+            dtypes={"a": "int64", "b": "float64", "c": "float64"},  # 100% numeric
+        )
+        result = score(state, recipes=[])
+        assert result["top3"][0] == "XGBoost"
+
+    def test_imbalanced_prefers_lightgbm(self):
+        """불균형(imb≥10) → LightGBM 가 top1 (class_weight 가산)."""
+        from agents.handlers.tabular.selector import score
+
+        state = self._state(n_rows=10000, imbalance=15.0)
+        result = score(state, recipes=[])
+        assert result["top3"][0] == "LightGBM"
+
+    def test_high_cardinality_prefers_catboost(self):
+        """고카디(hc≥2) → CatBoost 가 top1 (native categorical)."""
+        from agents.handlers.tabular.selector import score
+
+        state = self._state(
+            n_rows=2000,
+            imbalance=2.0,
+            cardinality_levels={"a": "high", "b": "high", "c": "low"},
+        )
+        result = score(state, recipes=[])
+        assert result["top3"][0] == "CatBoost"
+
+    def test_top3_length_always_three(self):
+        """어떤 시나리오에서도 top3 길이는 정확히 3."""
+        from agents.handlers.tabular.selector import score
+
+        scenarios = [
+            self._state(n_rows=100),
+            self._state(n_rows=10000, imbalance=2.0),
+            self._state(n_rows=10000, imbalance=20.0),
+            self._state(cardinality_levels={"a": "high", "b": "high"}),
+        ]
+        for state in scenarios:
+            result = score(state, recipes=[])
+            assert len(result["top3"]) == 3, f"top3 길이 {len(result['top3'])} != 3"
+            # top3 모델은 모두 ML 4종 중에
+            assert set(result["top3"]).issubset({"RandomForest", "XGBoost", "LightGBM", "CatBoost"})
+
+    def test_model_scores_exposed_for_debugging(self):
+        """model_scores 딕셔너리가 결과에 포함 (디버깅·관찰용)."""
+        from agents.handlers.tabular.selector import score
+
+        state = self._state()
+        result = score(state, recipes=[])
+        assert "model_scores" in result
+        ms = result["model_scores"]
+        assert set(ms.keys()) == {"RandomForest", "XGBoost", "LightGBM", "CatBoost"}
+        # 모든 점수가 0~1 사이
+        for name, sc in ms.items():
+            assert 0 <= sc <= 1.0, f"{name} 점수 {sc} 가 [0,1] 밖"
+
+    def test_dl_category_unchanged(self):
+        """tabular_dl 카테고리는 기존대로 트랜스포머 3종 (점수 매트릭스 무관)."""
+        from agents.handlers.tabular.selector import score
+
+        state = self._state()
+        state = state.with_update(category="tabular_dl")
+        result = score(state, recipes=[])
+        assert result["top3"] == ["FTTransformer", "TabTransformer", "TabPFN"]
+
+    def test_deterministic_with_same_signals(self):
+        """같은 signals → 같은 top3 (결정적)."""
+        from agents.handlers.tabular.selector import score
+
+        state = self._state(n_rows=2000, imbalance=3.0)
+        r1 = score(state, recipes=[])
+        r2 = score(state, recipes=[])
+        assert r1["top3"] == r2["top3"]
+
+    def test_rationale_mentions_data_characteristics(self):
+        """rationale 에 데이터 특성 키워드가 포함."""
+        from agents.handlers.tabular.selector import score
+
+        # 대용량 불균형
+        state = self._state(n_rows=10000, imbalance=15.0)
+        result = score(state, recipes=[])
+        rationale = result["rationale"]
+        assert "대용량" in rationale or "불균형" in rationale
