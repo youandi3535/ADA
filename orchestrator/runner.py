@@ -95,30 +95,37 @@ celery_app.conf.update(
 # (start, end) 폭은 그 agent 의 평균 작업 비중에 비례. 데이터 크기/방법에 따라 LLM 호출 시간이
 # 달라져도 phase 단위 4회 보고로 클라이언트가 시간 비례 화면을 그릴 수 있다.
 AGENT_PHASE_MAP: dict[str, tuple[int, int]] = {
-    "supervisor": (1, 3),
-    "intent_elicitor": (3, 5),
-    "data_profiler": (5, 12),
-    "schema_validator": (12, 14),
-    "gate_direction": (14, 18),
-    "eda_agent": (18, 28),
-    "gate_methodology": (28, 33),
-    "preprocessing_strategist": (33, 38),
-    "feature_engineer": (38, 43),
-    "preprocessing_choice": (43, 45),
-    "gate_model_strategy": (45, 50),
-    "model_selection": (50, 55),
-    "hyperparameter_tuner": (55, 65),
-    "training_executor": (65, 75),
-    "training_monitor": (75, 78),
-    "metrics_aggregator": (78, 82),
-    "gate_best_model": (82, 85),
-    "fine_tune_executor": (85, 88),
-    "eval_agent": (88, 92),
-    "explainability": (92, 95),
-    "insight": (95, 97),
-    "gate_outputs": (97, 98),
-    "report_composer": (98, 99),
-    "self_learning_dispatch": (99, 100),
+    # G1 (0~18, 폭 18) — gate_direction(AnalysisProposerAgent) 이 LLM 호출 무거워 압도적
+    "supervisor": (0, 1),  # ~1초
+    "intent_elicitor": (1, 2),  # ~5초
+    "data_profiler": (2, 6),  # ~30초
+    "schema_validator": (6, 7),  # ~5초
+    "gate_direction": (7, 18),  # ~90초 ← G1 시간의 절반 이상
+    # G2 (18~33, 폭 15)
+    "eda_agent": (18, 30),  # ~60초
+    "gate_methodology": (30, 33),  # ~15초
+    # G3 (33~50, 폭 17)
+    "preprocessing_strategist": (33, 40),  # ~30초
+    "feature_engineer": (40, 45),  # ~20초
+    "preprocessing_choice": (45, 46),  # ~5초
+    "gate_model_strategy": (46, 50),  # ~20초
+    # G4 (50~85, 폭 35) — 학습 단계, 가장 무거움
+    "model_selection": (50, 52),  # ~15초
+    "hyperparameter_tuner": (52, 64),  # ~120초
+    "training_executor": (64, 82),  # ~180초 ← G4 핵심
+    "training_monitor": (82, 83),  # ~10초
+    "metrics_aggregator": (83, 84),  # ~10초
+    "gate_best_model": (84, 85),  # ~15초
+    # G5 (85~98, 폭 13)
+    "fine_tune_executor": (85, 90),  # ~60초
+    "eval_agent": (90, 93),  # ~30초
+    "explainability": (93, 95),  # ~30초
+    "insight": (95, 97),  # ~20초
+    "gate_outputs": (97, 98),  # ~10초
+    # G6 (98~100, 폭 2)
+    "report_composer": (98, 99),  # ~30초
+    "self_learning_dispatch": (99, 100),  # ~5초
+    # 특수 — 변경 없음
     "error_recovery": (50, 50),
 }
 # 호환: 기존 호출자들이 참조하는 AGENT_PROGRESS_MAP — 각 agent 의 end 값으로 자동 생성.
