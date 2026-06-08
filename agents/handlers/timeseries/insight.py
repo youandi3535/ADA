@@ -356,7 +356,7 @@ def _expert_dimension_clause(state: Any) -> str | None:
         return None
     return (
         f"본 분석은 {dim_ko}을 최우선 ({weight:.0%}) 으로 가중하여 "
-        f"{model_name} 모델을 채택했습니다 (해당 차원 점수 {model_score:.2f})."
+        f"{model_name} 모델을 채택했습니다 (해당 차원 점수 {model_score:.0%})."
     )
 
 
@@ -448,7 +448,7 @@ def _build_fallback(state: Any) -> str:
     # ── F-3 (H1) : slope 변화율 (slope_per_obs 정식 키 사용) ──
     slope_pct = _trend_slope_compat(trend)
     if slope_pct is not None and abs(slope_pct) > 0.001:
-        slope_text = f" (평균 {slope_pct:+.1%})"
+        slope_text = f" (평균 {slope_pct:+.0%})"
     else:
         slope_text = ""
 
@@ -456,7 +456,7 @@ def _build_fallback(state: Any) -> str:
     improvement = metrics.get("rmse_improvement_vs_naive")
     mase = metrics.get("MASE")
     if improvement is not None:
-        perf_text = f"naïve 대비 {improvement:+.1%} 우수한 성능"
+        perf_text = f"naïve 대비 {improvement:+.0%} 우수한 성능"
     elif mase is not None:
         if mase < 1.0:
             perf_text = f"MASE {mase:.2f} 의 양호한 성능"
