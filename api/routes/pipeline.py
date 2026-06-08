@@ -296,6 +296,12 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             data["current_agent"] = pr.get("agent")
             data["progress_pct"] = pr.get("progress")
             data["progress_ts"] = pr.get("ts")
+            # 단계 baseline ETA — orchestrator.runner.publish_progress 가 단계 시작 시점에 publish.
+            # 프론트 _stageEta 가 이 값을 우선 사용하여 첫 1초부터 합리적 ETA 표시.
+            if pr.get("eta_sec") is not None:
+                data["eta_sec"] = pr.get("eta_sec")
+            if pr.get("eta_base_ts") is not None:
+                data["eta_base_ts"] = pr.get("eta_base_ts")
             if pr.get("status"):
                 data["pipeline_status"] = pr.get("status")
             if pr.get("error"):

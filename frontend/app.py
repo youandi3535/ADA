@@ -211,6 +211,18 @@ _FLOW_HTML = """
 const steps=[{label:'업로드',sub:'G1 · 데이터 파악'},{label:'분석 방향',sub:'G2 · EDA'},{label:'방법론',sub:'G3 · 전처리'},{label:'모델 전략',sub:'G4 · 피처링'},{label:'모델 선택',sub:'G5 · 학습·평가'},{label:'산출물',sub:'G6 · 리포트'},{label:'완료',sub:'G7 · 인사이트'}];
 const N=steps.length, LAST=N-1;
 const ANALYZE_EST=45;  // 분석 중 진행률 추정용(초)
+// 단계(cur 0~5)별 백엔드 글로벌 progress_pct 의 범위.
+// orchestrator/runner.py AGENT_PHASE_MAP 의 "해당 단계 마지막 agent 종료점" 기준.
+// 백엔드는 전체 파이프라인 0~100% 로 publish 하지만, 화면은 각 단계의 0~100% 로 보여줘야
+// 사용자가 "G1 안에서 14% 천장 찍고 점프" 같은 혼란을 안 겪는다.
+const STAGE_RANGE=[
+  [0, 18],   // G1: supervisor → schema_validator → gate_direction
+  [18, 33],  // G2: eda_agent → gate_methodology
+  [33, 50],  // G3: preprocessing → feature_engineer → gate_model_strategy
+  [50, 85],  // G4: model_selection → training → metrics → gate_best_model
+  [85, 98],  // G5: fine_tune → eval → explainability → insight → gate_outputs
+  [98, 100], // G6: report_composer → self_learning_dispatch
+];
 const GATE_TITLE={G2:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G3:['어떤 방법론으로 진행할까요?','Choose your methodology'],G4:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G5:['어떤 모델을 채택할까요?','Pick the best model'],G6:['어떤 산출물을 만들까요?','Choose your outputs']};
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
@@ -273,7 +285,7 @@ function resetAll(){
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
   gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={};
-  _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null;
+  _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;
   render();
 }
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
@@ -369,7 +381,7 @@ async function doResume(){
     });
     cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
-    _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null;  // gate 제출 직후 리셋
+    _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;  // gate 제출 직후 리셋
     saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
@@ -463,51 +475,120 @@ setInterval(function(){
 //   - cur=0 (업로드)  : jobId 없으면 0, 업로드 시작 후 백엔드 진행률 따름
 //   - cur=1~5 (게이트): proposals 도착 = 분석 끝 → 100% (단계 종료 신호)
 //   - cur=6 (완료)   : 항상 100%
-// 단계별 평균 소요시간(초) — 환경 따라 조정. raw 백엔드 추정값 기준
-const STAGE_EST = {0:15, 1:8, 2:25, 3:45, 4:120, 5:30};
 let _shownPct=0;
 let _progressKey=null;
 let _stageStart=null;  // 현재 단계 진입 시각(ms). _progressKey 변경 시 리셋
+// 게이지 "바" 전용 시각 흐름값 — 표시 수치(_shownPct, 백엔드 progress_pct 기반 정확값)와는
+// 별개로, 단계 시작부터 끝까지 절대 멈추지 않고 점근적으로 전진한다("자기 진행").
+// 실측치가 이를 앞지르면 즉시 따라잡아 거짓 진행을 보이지 않는다.
+let _barFlowPct=0;
+// 게이지 "바" 전용 — 표시 수치(_shownPct)와 별개로 절대 멈추지 않고 점근적으로 전진.
+// 시작(elapsed=0)엔 0, 시간이 지날수록 99%에 점근(asymptote)하며 계속 흐른다.
+// 실측치(_shownPct)가 이를 앞지르면 즉시 따라잡아 — 바가 진실보다 뒤처져 보이지 않게 한다.
+function _advanceBarFlow(ceilPct){
+  const stageEl = _stageStart ? (Date.now()-_stageStart)/1000 : 0;
+  // 폴백 creep — baseline 없을 때 45초 기준 지수 점근
+  let creep = ceilPct * (1 - Math.exp(-stageEl/45));
+  // baseline ETA (백엔드 publish, DB 실측 또는 폴백) 가 있으면 그 시간에 정확히 비례해 흐른다.
+  // 백엔드 progress_pct 신호가 끊겨도 게이지는 baseline 만큼 자기 진행으로 흐름 → 멈춤 없음.
+  const beSec = (gateData.eta_sec!=null && Number.isFinite(Number(gateData.eta_sec)))
+                  ? Number(gateData.eta_sec) : null;
+  if(beSec!=null && beSec > 0){
+    const timeProgress = Math.min(ceilPct, stageEl / beSec * 100);
+    creep = Math.max(creep, timeProgress);
+  }
+  _barFlowPct = Math.max(_barFlowPct, creep, _shownPct);
+  if(_barFlowPct > ceilPct) _barFlowPct = ceilPct;
+  return _barFlowPct;
+}
 function _stageProgress(){
   const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+(cur+1));
-  // 단계 전환 — 진행률·시작시각 모두 리셋 (각 단계 0% 부터 시작)
+  // 단계 전환 — 진행률·시작시각·바흐름값 리셋 (각 단계 0% 부터 시작)
   if(_progressKey!==key){
     _progressKey=key;
     _shownPct=0;
     _stageStart=Date.now();
+    _barFlowPct=0;
   }
-  if(isFailed()) return 0;
-  if(isCompleted()||cur===LAST){ _shownPct=100; return 100; }
-  if(cur===0 && !jobId){ _shownPct=0; _stageStart=null; return 0; }
+  if(isFailed()){ _barFlowPct=0; return 0; }
+  if(isCompleted()||cur===LAST){ _shownPct=100; _barFlowPct=100; return 100; }
+  if(cur===0 && !jobId){ _shownPct=0; _stageStart=null; _barFlowPct=0; return 0; }
 
   // 끝 신호 우선 — proposals 도착이면 즉시 100% 스냅 (기존 동작 유지)
   if(cur===0){
     const g1Reached = curGate()==='G2' && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
-    if(g1Reached){ _shownPct=100; return 100; }
+    if(g1Reached){ _shownPct=100; _barFlowPct=100; return 100; }
   } else {
     const tg='G'+(cur+1);
     const ag=curGate();
     const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
     const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
     const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
-    if(ps.length && !(lastSubmittedGate===tg && !ag)){ _shownPct=100; return 100; }
+    if(ps.length && !(lastSubmittedGate===tg && !ag)){ _shownPct=100; _barFlowPct=100; return 100; }
   }
 
-  // 시간 기반 target — 단계 진입 후 elapsed 시간 / 평균 예상시간 (사용자 의도: 0부터 점진 증가)
-  // 백엔드 raw progress_pct 는 결합하지 않음 — 단계 진입 시점 이미 LO+많이 진척돼 있어 사용자 의도와 어긋남.
-  // 백엔드 신호는 끝 신호(proposals 도착) → 100% 스냅으로만 사용 (위쪽 분기에서 이미 처리).
-  if(_stageStart==null) _stageStart=Date.now();
-  const elapsed=(Date.now()-_stageStart)/1000;
-  const est=STAGE_EST[cur]||30;
-  const target=Math.min(99, Math.round((elapsed/est)*100));
+  // 백엔드 progress_pct 가 진실의 소스 — 시간 기반 추정 금지.
+  // 백엔드 신호가 아직 없으면 표시 수치는 현재 값 유지(가짜 진행 표시 금지).
+  const rawP = gateData.progress_pct;
+  const backendP = (rawP!=null && Number.isFinite(Number(rawP)))
+                     ? Math.max(0, Math.min(100, Number(rawP)))
+                     : null;
+  // 단계 내 0~100% 정규화 — 백엔드 글로벌 % 를 현재 단계의 % 범위로 매핑.
+  // 예: G1 범위 [0,18] 에서 backend=14 면 단계 내 (14-0)/18 ≈ 77.8% 로 표시.
+  // 이렇게 해야 "G1 인데 14% 천장" 같은 혼란이 사라지고 각 단계가 0~100% 로 흐른다.
+  let stageTarget;
+  if(backendP==null){
+    stageTarget = _shownPct;
+  } else {
+    const rng = STAGE_RANGE[cur] || [0, 100];
+    const lo = rng[0], hi = rng[1];
+    const span = Math.max(1, hi - lo);
+    // backend 가 이 단계 범위 밖이면 0 또는 99 로 clamp (단계 진입 직전/직후 잡음 흡수)
+    stageTarget = Math.max(0, Math.min(99, Math.round((backendP - lo) * 100 / span)));
+  }
 
-  // 점프 보간 (기존 패턴 유지) — 거꾸로 가지 않음
-  if(target>_shownPct){
-    const diff=target-_shownPct;
+  // 점프 보간 (기존 패턴 유지) — 거꾸로 가지 않음. 표시 수치(_shownPct)는 정확성 우선.
+  if(stageTarget>_shownPct){
+    const diff=stageTarget-_shownPct;
     const step=Math.max(2, Math.ceil(diff/4));
-    _shownPct=Math.min(target, _shownPct+step);
+    _shownPct=Math.min(stageTarget, _shownPct+step);
   }
+  // 바 흐름값은 표시 수치와 별개로 — 실측 신호 정체 여부와 무관하게 항상 전진한다.
+  _advanceBarFlow(99);
   return Math.round(_shownPct);
+}
+
+// 단계 단위 ETA — baseline(eta_sec, DB 실측 평균/폴백)과 실측 역산(_shownPct 기반)을
+// 모두 계산해 더 작은 값(=빨리 끝나는 쪽)을 사용한다. baseline이 과대추정되어 거의
+// 만료(<=3초)됐는데도 작업이 안 끝났으면 더 이상 baseline을 신뢰하지 않고 실측만 사용
+// — "1:56 뜨다가 갑자기 완료" 같은 baseline 과대추정 경험을 방지한다.
+function _stageEta(p){
+  if(_stageStart==null) return null;
+  const stageEl = (Date.now() - _stageStart)/1000;
+
+  // 1. 백엔드 baseline (DB 실측 평균 또는 폴백 추정)
+  const beSec = (gateData.eta_sec!=null && Number.isFinite(Number(gateData.eta_sec)))
+                  ? Number(gateData.eta_sec) : null;
+  const baselineRemain = beSec!=null ? Math.max(0, beSec - stageEl) : null;
+
+  // 2. 이번 단계 실측 역산 — 지금 속도가 끝까지 유지된다면
+  let projectedRemain = null;
+  const MIN_PCT=8, MIN_EL=8;
+  if(p!=null && p>=MIN_PCT && stageEl>=MIN_EL){
+    const projectedTotal = stageEl * (100/p);
+    projectedRemain = Math.max(0, projectedTotal - stageEl);
+  }
+
+  // 3. 둘 다 있으면: baseline이 충분히 남았으면 작은 값(=빨리 끝나는 쪽) 사용,
+  //    baseline이 거의 0이 됐는데 작업이 안 끝났으면 실측만 사용 (baseline 잘못 잡힌 경우)
+  if(baselineRemain!=null && projectedRemain!=null){
+    if(baselineRemain > 3) return Math.min(baselineRemain, projectedRemain);
+    return projectedRemain;
+  }
+  // 4. 하나만 있으면 그것
+  if(baselineRemain!=null) return baselineRemain;
+  if(projectedRemain!=null) return projectedRemain;
+  return null;
 }
 
 function failureBlock(){
@@ -558,24 +639,35 @@ function progressBar(){
   if(cur===0 && !jobId) return '';  // 업로드 전 초기 화면 → 진행바 숨김
   if(cur>=1 && cur<=5 && !isGateLoading()) return '';  // proposals 표시 중 → 숨김
   const p=_stageProgress();
-  const el=analyzeStart?((Date.now()-analyzeStart)/1000):0;
+  // 게이지 "바"의 실제 채움 폭 — 정확한 표시 수치(p)와 별개로 _barFlowPct(자기 진행, 항상 전진)를 사용.
+  // 완료 시에는 표시 수치와 함께 100% 로 맞춘다.
+  const barP=(p>=100)?100:Math.round(_barFlowPct);
+  // 단계별 elapsed — _stageStart 부터의 시간. 분석 전체 elapsed(analyzeStart)가 아님.
+  // 사용자 요구: 각 단계를 독립 0~100% / 0~ETA 로 표시.
+  const stageEl = _stageStart ? ((Date.now()-_stageStart)/1000) : 0;
   let etaStr='';
   if(p>=100){ etaStr='완료'; }
   else if(analyzing()){
-    // ETA 는 elapsed × (남은%/현재%) 으로 외삽. 진행률이 너무 낮으면 표시 보류.
-    if(p>=5) etaStr='약 '+fmtTime(Math.max(0, el*(100-p)/p));
-    else etaStr='추정 중…';
+    const haveBackend = (gateData.progress_pct!=null && Number.isFinite(Number(gateData.progress_pct)));
+    if(!haveBackend) etaStr='추정 중…';        // 백엔드 신호 없음 — 가짜 ETA 금지
+    else if(p>=99) etaStr='마무리 중…';
+    else {
+      const eta = _stageEta(p);
+      if(eta==null) etaStr='추정 중…';
+      else if(eta<=3) etaStr='마무리 중…';
+      else etaStr='약 '+fmtTime(eta);
+    }
   }
   const showMeta=analyzing() || p>=100;
   let meta='';
   if(showMeta){
     meta='<div class="lmeta">진행 <b>'+p+'%</b>'
-      +(analyzing()?(' · 분석 시간 <b>'+fmtTime(el)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'):(p>=100?' · <b>'+etaStr+'</b>':''))
+      +(analyzing()?(' · 이 단계 시간 <b>'+fmtTime(stageEl)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'):(p>=100?' · <b>'+etaStr+'</b>':''))
       +'</div>';
   } else {
     meta='<div class="lmeta">진행 <b>'+p+'%</b></div>';
   }
-  return '<div class="progbox"><div class="lbar"><div class="lfill" style="width:'+p+'%"></div></div>'+meta+'</div>';
+  return '<div class="progbox"><div class="lbar"><div class="lfill" style="width:'+barP+'%"></div></div>'+meta+'</div>';
 }
 function gateHeader(g){
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
