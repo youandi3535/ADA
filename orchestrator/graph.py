@@ -1,7 +1,8 @@
-"""orchestrator.graph — LangGraph v2 (26 노드: 25 일반 + auto_error_handler).
+"""orchestrator.graph — LangGraph v2 (27 노드: 26 일반 + auto_error_handler).
 
 Day04 v2 §1~§4 + ADR-006 Phase 1.
 PostgresSaver checkpointer 로 영속화.
+HJ 2026-06-08: report_architect 노드 추가 (insight → report_architect → gate_outputs).
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from agents.stubs import (
     OutputTypeSelectorAgent,
     PreprocessingChoiceAgent,
     PreprocessingStrategistAgent,
+    ReportArchitectAgent,
     ReportComposerAgent,
     SchemaValidatorAgent,
     SelfLearningAgent,
@@ -89,20 +91,15 @@ def safe_node(agent_callable: Callable) -> Callable:
 
     @wraps(agent_callable)
     async def wrapped(state):
-        # resume 시 dict 로 복원된 state → PipelineState 로 보장
         state = _coerce_to_pipeline_state(state)
-        # 입력 state 에 이미 error 가 있으면 스킵 (cascade 방지)
-        # → 그래프가 다음 conditional_edges 에서 auto_error_handler 로 라우팅
         if getattr(state, "error", None):
             return state
         try:
             return await agent_callable(state)
         except Exception as e:
-            # BaseAgent 가 _ada_state 첨부했으면 그걸 사용
             attached = getattr(e, "_ada_state", None)
             if attached is not None:
                 return attached
-            # 그 외 (BaseAgent 밖에서 raise) 는 직접 구성
             return state.with_update(
                 error=f"{type(e).__name__}: {e}"[:2000],
                 error_traceback=traceback.format_exc()[:8000],
@@ -146,14 +143,12 @@ def safe_gate_node(agent_callable: Callable) -> Callable:
 # 라우팅 함수
 # ---------------------------------------------------------------------------
 def _is_attempt_exhausted(state: PipelineState) -> bool:
-    """ADR-006: 자동 수정 시도 한도 초과 여부."""
     return state.auto_fix_attempts >= state.max_auto_fix_attempts
 
 
 def route_after_supervisor(state: PipelineState) -> str:
     state = _coerce_to_pipeline_state(state)
     if state.error:
-        # ADR-006: 자동 수정 시도 한도 내면 auto_error_handler, 초과면 error_recovery
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
@@ -161,12 +156,6 @@ def route_after_supervisor(state: PipelineState) -> str:
 
 
 def route_after_auto_handler(state: PipelineState) -> str:
-    """auto_error_handler 가 처리 시도한 후 결정.
-
-    - state.error == None → 해결됨 → supervisor (재시도 시작)
-    - state.error 살아있음 + 한도 미달 → error_recovery (패치 큐 적재됐거나 미해결)
-    - 한도 초과 → error_recovery (사용자 안내)
-    """
     if state.error is None:
         return state.next_agent or "supervisor"
     return "error_recovery"
@@ -179,17 +168,11 @@ def route_after_validation(state: PipelineState) -> str:
             return "error_recovery"
         return "auto_error_handler"
     if state.validation and state.validation.get("is_valid"):
-        return "gate_direction"  # G2 게이트 — 분석 방향 선택
+        return "gate_direction"
     return "error_recovery"
 
 
 def route_after_feature_engineer(state: PipelineState) -> str:
-    """전처리 결정 신뢰도 낮으면 미니 게이트(PreprocessingChoice), 아니면 G4로.
-
-    feature_engineer 가 실패해도 safe_node 가 state.error 만 세팅하고 흘려보내므로,
-    여기서 error 를 잡지 않으면 G4 게이트로 빈 proposals 가 흘러가며 사용자 입장에서
-    무한 로딩으로 보인다.
-    """
     state = _coerce_to_pipeline_state(state)
     if state.error:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
@@ -197,11 +180,10 @@ def route_after_feature_engineer(state: PipelineState) -> str:
         return "auto_error_handler"
     if state.preprocessing_plan and any(s.get("needs_review") for s in state.preprocessing_plan):
         return "preprocessing_choice"
-    return "gate_model_strategy"  # G4 게이트 — 모델 전략 선택
+    return "gate_model_strategy"
 
 
 def route_after_metrics(state: PipelineState) -> str:
-    """metrics_aggregator 완료 후 라우팅. 에러 발생 시 error 핸들러로 우회."""
     state = _coerce_to_pipeline_state(state)
     if state.error:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
@@ -211,14 +193,6 @@ def route_after_metrics(state: PipelineState) -> str:
 
 
 def route_after_gate_best_model(state: PipelineState) -> str:
-    """gate_best_model (G5) 응답에 따라 finetune 갈지 평가로 갈지.
-
-    이전엔 state.error 를 보지 않아, 학습/메트릭 단계가 한도 내에서 실패해도
-    eval_agent 로 넘어가 cascade 가 길어졌다. error 라우팅 추가.
-
-    (구 함수명 route_after_g4 → route_after_gate_best_model. 의미는 G5 게이트 응답
-     라우팅이므로 노드명 기반으로 변경. 기존 호출자가 있다면 alias 유지.)
-    """
     state = _coerce_to_pipeline_state(state)
     if state.error:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
@@ -230,7 +204,6 @@ def route_after_gate_best_model(state: PipelineState) -> str:
     return "eval_agent"
 
 
-# 외부 임포트 호환을 위한 alias (기존 코드/테스트가 route_after_g4 를 참조할 수 있음)
 route_after_g4 = route_after_gate_best_model
 
 
@@ -240,13 +213,11 @@ def route_after_eval(state: PipelineState) -> str:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
-    # 재루프(re_loop) 제거 — LLM 평가 실패 시 재훈련보다 G6 진행을 우선
     return "explainability"
 
 
 def route_after_g5(state: PipelineState) -> str:
     state = _coerce_to_pipeline_state(state)
-    # ADR-006: 마지막 게이트도 에러 체크 (insight 노드까지의 cascade 잡기)
     if state.error:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
@@ -274,17 +245,10 @@ def route_after_self_learning(state: PipelineState) -> str:
 
 def route_after_error_recovery(state: PipelineState) -> str:
     state = _coerce_to_pipeline_state(state)
-    """ADR-006 — 회복 후 라우팅.
-
-    회복 노드의 조건부 엣지에는 'supervisor' / 'END' 두 키만 매핑돼 있다.
-    state.next_agent 가 임의 노드명을 담고 있어도 미등록 키로 라우팅해
-    LangGraph KeyError 가 나지 않도록 화이트리스트로 클램프한다.
-    """
     if state.retry_count >= state.max_retries:
         return "END"
     if state.next_agent == "END":
         return "END"
-    # supervisor / 빈값 / 그 외 임의 next_agent → supervisor 로 안전 복귀
     return "supervisor"
 
 
@@ -297,9 +261,6 @@ def build_graph(checkpointer: Any | None = None) -> Any:
 
     g = StateGraph(PipelineState)
 
-    # ---- 노드 등록 (26 = 25 + auto_error_handler) -----------------------
-    # ADR-006 Phase 1: safe_node 로 감싸서 예외 발생 시 state.error 자동 세팅.
-    # auto_error_handler 자체는 wrap 안 함 (자기 호출 방지).
     g.add_node("supervisor", safe_node(SupervisorAgent()))
     g.add_node("intent_elicitor", safe_node(IntentElicitorAgent()))
     g.add_node("data_profiler", safe_node(DataProfilerAgent()))
@@ -321,12 +282,14 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_node("eval_agent", safe_node(EvalAgent()))
     g.add_node("explainability", safe_node(ExplainabilityAgent()))
     g.add_node("insight", safe_node(InsightAgent()))
+    # HJ 2026-06-08 — Phase 2 통합: ReportArchitect 가 state.report_plan 채움.
+    # silent-safe (실패해도 state.error 안 세우고 gate_outputs 로 통과).
+    g.add_node("report_architect", safe_node(ReportArchitectAgent()))
     g.add_node("gate_outputs", safe_gate_node(GATE_NODES["gate_outputs"]()))
     g.add_node("report_composer", safe_node(ReportComposerAgent()))
     g.add_node("self_learning_dispatch", safe_node(SelfLearningAgent()))
-    g.add_node("error_recovery", ErrorRecoveryAgent())  # 마지막 안전망 — 감싸지 않음
-    g.add_node("auto_error_handler", AutoErrorHandlerAgent())  # 자기 호출 방지로 감싸지 않음
-    # (SecurityGuard 데몬은 그래프 외부에서 호출)
+    g.add_node("error_recovery", ErrorRecoveryAgent())
+    g.add_node("auto_error_handler", AutoErrorHandlerAgent())
 
     g.set_entry_point("supervisor")
 
@@ -345,11 +308,12 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     g.add_edge("training_monitor", "metrics_aggregator")
     g.add_edge("fine_tune_executor", "eval_agent")
     g.add_edge("explainability", "insight")
-    g.add_edge("insight", "gate_outputs")
-    # report_composer / self_learning_dispatch 도 에러 체크 (마지막 구간 구멍 차단)
+    # HJ 2026-06-08 — insight → report_architect → gate_outputs 로 분기.
+    # report_architect 는 silent-safe 로 state.error 안 세팅 → 단순 고정 엣지로 충분.
+    g.add_edge("insight", "report_architect")
+    g.add_edge("report_architect", "gate_outputs")
 
     # ---- 조건부 엣지 ---------------------------------------------------
-    # ADR-006 Phase 1: 모든 error-aware 라우팅에 auto_error_handler 목적지 추가.
     g.add_conditional_edges(
         "supervisor",
         route_after_supervisor,
@@ -416,15 +380,12 @@ def build_graph(checkpointer: Any | None = None) -> Any:
             "error_recovery": "error_recovery",
         },
     )
-    # ADR-006 Phase 1: auto_error_handler 의 다음 목적지.
-    # 해결됨 (error=None) → supervisor 재시도, 미해결 → error_recovery.
     g.add_conditional_edges(
         "auto_error_handler",
         route_after_auto_handler,
         {
             "supervisor": "supervisor",
             "error_recovery": "error_recovery",
-            # supervisor 가 보낼 수 있는 다른 노드들도 가능 (state.next_agent)
             "intent_elicitor": "intent_elicitor",
             "data_profiler": "data_profiler",
         },
