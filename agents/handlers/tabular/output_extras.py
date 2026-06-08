@@ -267,6 +267,81 @@ def _build_calibration_chart(state: Any) -> str | None:
         return None
 
 
+def _build_residual_chart(state: Any) -> str | None:
+    """Residual 분포 차트 (회귀 task 만) → MinIO path.
+
+    Day 11 (jh) — 잔차 진단:
+      - 잔차 분포가 0 중심 정규분포면 모델 양호
+      - 한쪽으로 치우치면 편향, 두꺼운 꼬리면 이상치
+      - 잔차 vs 예측값 scatter 로 패턴(이분산성) 확인 보조
+
+    가드:
+      - 회귀 task 만
+      - 모델 재로드 실패 → skip
+      - baseline 모델은 skip
+      - DL → skip
+    """
+    from pipelines.tabular_ml.pipeline import is_baseline_model
+
+    # 회귀만
+    if _is_classification(state):
+        return None
+
+    bm = getattr(state, "best_model", None) or {}
+    model_name = bm.get("model_name")
+    if not model_name or is_baseline_model(model_name):
+        return None
+    if getattr(state, "category", "") == "tabular_dl":
+        return None
+
+    reload = _try_reload_model_and_data(state)
+    if reload is None:
+        return None
+
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        from agents.handlers.common.shared import save_chart_to_minio
+
+        model_obj, X_val, y_val = reload
+        y_pred = model_obj.predict(X_val)
+        y_val_arr = np.asarray(y_val, dtype=float)
+        residuals = y_val_arr - np.asarray(y_pred, dtype=float)
+
+        fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), dpi=100)
+
+        # 1) 잔차 히스토그램 + 0 기준선
+        ax1 = axes[0]
+        ax1.hist(residuals, bins=30, color="#2563eb", alpha=0.7, edgecolor="white")
+        ax1.axvline(0, color="black", linestyle="--", lw=1, alpha=0.6, label="0 (편향 없음)")
+        ax1.axvline(np.mean(residuals), color="#dc2626", linestyle="-", lw=1.5, label=f"평균={np.mean(residuals):.2f}")
+        ax1.set_xlabel("잔차 (y_true - y_pred)")
+        ax1.set_ylabel("빈도")
+        ax1.set_title("잔차 분포")
+        ax1.legend(fontsize=9)
+        ax1.grid(True, alpha=0.3)
+
+        # 2) 잔차 vs 예측 — 이분산성/패턴 진단
+        ax2 = axes[1]
+        ax2.scatter(y_pred, residuals, alpha=0.5, s=20, color="#2563eb")
+        ax2.axhline(0, color="black", linestyle="--", lw=1, alpha=0.6)
+        ax2.set_xlabel("예측값")
+        ax2.set_ylabel("잔차")
+        ax2.set_title("잔차 vs 예측값")
+        ax2.grid(True, alpha=0.3)
+
+        fig.suptitle(f"Residual Diagnostics — {model_name}", fontsize=12)
+        fig.tight_layout()
+
+        path = save_chart_to_minio(fig, kind="tabular/residual", job_id=getattr(state, "job_id", ""))
+        return path
+
+    except Exception as exc:
+        logger.warning("residual_chart_failed: %s", exc)
+        return None
+
+
 def _build_learning_curve_chart(state: Any) -> str | None:
     """Learning Curve 차트 → MinIO path.
 
@@ -522,6 +597,11 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     lc_path = _build_learning_curve_chart(state)
     if lc_path:
         charts.append(lc_path)
+
+    # Day 11 (jh) — 회귀 task 잔차 진단 차트 (5번째)
+    res_path = _build_residual_chart(state)
+    if res_path:
+        charts.append(res_path)
 
     color = "#2563eb" if getattr(state, "category", "") == "tabular_ml" else "#0891b2"
     label = "정형 ML" if getattr(state, "category", "") == "tabular_ml" else "정형 DL"

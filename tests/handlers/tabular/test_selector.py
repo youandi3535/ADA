@@ -783,3 +783,189 @@ class TestSelectorScoreMatrix:
         result = score(state, recipes=[])
         rationale = result["rationale"]
         assert "대용량" in rationale or "불균형" in rationale
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — 다중 지표 보강 (PR AUC / MCC / log_loss / Brier / 잔차 / val_r2 임계)
+# ---------------------------------------------------------------------------
+
+
+class TestExtendedMetrics:
+    """pipeline.evaluate() 가 다중 지표를 반환하는지 + evaluator val_r2 게이트 검증."""
+
+    @pytest.fixture
+    def binary_clf(self):
+        rng = np.random.RandomState(42)
+        X = rng.normal(size=(200, 4))
+        y = (X[:, 0] + X[:, 1] > 0).astype(int)
+        return X, y
+
+    @pytest.fixture
+    def multi_clf(self):
+        from sklearn.datasets import load_iris
+
+        d = load_iris(as_frame=False)
+        return d.data, d.target
+
+    @pytest.fixture
+    def reg_data(self):
+        rng = np.random.RandomState(42)
+        X = rng.normal(size=(200, 4))
+        y = X[:, 0] * 2 + X[:, 1] + rng.normal(0, 0.1, size=200)
+        return X, y
+
+    def _fit_eval(self, X, y, model_name, task):
+        from pipelines.tabular_ml.pipeline import TabularMLPipeline
+
+        pipe = TabularMLPipeline()
+        params = {"random_state": 42} if model_name in ("Ridge",) else {"n_estimators": 30, "random_state": 42}
+        model = pipe.train(X, y, model_name, params)
+        return pipe.evaluate(model, X, y, task)
+
+    def test_binary_includes_pr_auc(self, binary_clf):
+        X, y = binary_clf
+        m = self._fit_eval(X, y, "RandomForest", "classification")
+        assert "val_pr_auc" in m
+        assert 0 <= m["val_pr_auc"] <= 1.0
+
+    def test_binary_includes_mcc(self, binary_clf):
+        X, y = binary_clf
+        m = self._fit_eval(X, y, "RandomForest", "classification")
+        assert "val_mcc" in m
+        # MCC 범위: -1 ~ +1
+        assert -1.0 <= m["val_mcc"] <= 1.0
+
+    def test_binary_includes_log_loss(self, binary_clf):
+        X, y = binary_clf
+        m = self._fit_eval(X, y, "RandomForest", "classification")
+        assert "val_log_loss" in m
+        assert m["val_log_loss"] >= 0
+
+    def test_binary_includes_brier(self, binary_clf):
+        X, y = binary_clf
+        m = self._fit_eval(X, y, "RandomForest", "classification")
+        assert "val_brier" in m
+        # Brier score 범위: 0 ~ 1
+        assert 0 <= m["val_brier"] <= 1.0
+
+    def test_binary_includes_optimal_threshold(self, binary_clf):
+        X, y = binary_clf
+        m = self._fit_eval(X, y, "RandomForest", "classification")
+        assert "val_optimal_threshold" in m
+        assert 0 <= m["val_optimal_threshold"] <= 1.0
+        assert "val_f1_at_optimal_threshold" in m
+
+    def test_multiclass_includes_per_class_f1(self, multi_clf):
+        X, y = multi_clf
+        m = self._fit_eval(X, y, "RandomForest", "classification")
+        assert "val_f1_per_class" in m
+        per_class = m["val_f1_per_class"]
+        assert isinstance(per_class, dict)
+        assert len(per_class) == 3  # Iris 3 클래스
+
+    def test_dummy_has_lower_mcc_than_strong_model(self, binary_clf):
+        """Dummy MCC 는 0 근처, 강모델은 더 높아야 함."""
+        X, y = binary_clf
+        dummy = self._fit_eval(X, y, "Dummy", "classification")
+        rf = self._fit_eval(X, y, "RandomForest", "classification")
+        # Dummy 의 MCC 는 stratified random 이라 ~0, RF 는 신호 학습 후 > 0
+        assert rf["val_mcc"] > dummy["val_mcc"]
+
+    def test_regression_includes_residual_stats(self, reg_data):
+        X, y = reg_data
+        m = self._fit_eval(X, y, "Ridge", "regression")
+        assert "val_residual_mean" in m
+        assert "val_residual_median" in m
+        assert "val_residual_std" in m
+        assert "val_residual_abs_max" in m
+        assert m["val_residual_std"] >= 0
+
+    def test_evaluator_val_r2_threshold_added(self):
+        """C4 해소 — THRESHOLDS_BY_CAT['tabular_ml'] 에 val_r2 임계 등록."""
+        from agents.handlers.tabular.evaluator import THRESHOLDS_BY_CAT
+
+        assert "val_r2" in THRESHOLDS_BY_CAT["tabular_ml"]
+        assert THRESHOLDS_BY_CAT["tabular_ml"]["val_r2"] == 0.30
+
+    def test_evaluator_fails_when_val_r2_below_threshold(self):
+        """회귀 게이트 — val_r2 가 0.30 미만이면 passed=False."""
+        from ada.core.state import PipelineState
+
+        from agents.handlers.tabular.evaluator import evaluate
+
+        state = PipelineState(
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            target_column="y",
+            best_model={"model_name": "Ridge", "metrics": {"val_r2": 0.10}},
+        )
+        result = evaluate(state)
+        assert result["passed"] is False
+        assert any("val_r2" in v for v in result["threshold_violations"])
+
+    def test_evaluator_passes_when_val_r2_above_threshold(self):
+        """회귀 게이트 — val_r2 >= 0.30 면 passed=True."""
+        from ada.core.state import PipelineState
+
+        from agents.handlers.tabular.evaluator import evaluate
+
+        state = PipelineState(
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            target_column="y",
+            best_model={"model_name": "Ridge", "metrics": {"val_r2": 0.55}},
+        )
+        result = evaluate(state)
+        assert result["passed"] is True
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — 잔차 차트 (회귀 진단)
+# ---------------------------------------------------------------------------
+
+
+class TestResidualChart:
+    def _state(self, *, task="regression", model_name="Ridge", category="tabular_ml"):
+        from ada.core.state import PipelineState
+
+        return PipelineState(
+            job_id="t",
+            file_id="m",
+            category=category,
+            target_column="y",
+            task=task,
+            best_model={"model_name": model_name, "metrics": {"val_r2": 0.55}},
+        )
+
+    def test_skips_when_classification(self):
+        """분류 task 면 residual chart skip."""
+        from agents.handlers.tabular.output_extras import _build_residual_chart
+
+        state = self._state(task="classification")
+        # 분류 best_model 도 강제 — metrics 로 분류 판단
+        from ada.core.state import PipelineState
+
+        state = PipelineState(
+            job_id="t", file_id="m", category="tabular_ml", target_column="y",
+            task="classification",
+            best_model={"model_name": "RandomForest", "metrics": {"val_f1": 0.83}},
+        )
+        assert _build_residual_chart(state) is None
+
+    def test_skips_when_baseline_model(self):
+        from agents.handlers.tabular.output_extras import _build_residual_chart
+
+        for name in ("Dummy", "Ridge"):
+            state = self._state(model_name=name)
+            assert _build_residual_chart(state) is None, f"{name} 은 skip"
+
+    def test_skips_gracefully_when_model_reload_fails(self):
+        """MinIO 없는 환경에서 모델 재로드 실패 → None 반환."""
+        from agents.handlers.tabular.output_extras import _build_residual_chart
+
+        state = self._state(model_name="RandomForest")
+        # task="regression" 인데 model_name=RandomForest → _is_classification False 되도록
+        # eval_result/best_model 의 metrics 가 회귀 metric (val_r2) 만 가지면 회귀로 판단
+        assert _build_residual_chart(state) is None

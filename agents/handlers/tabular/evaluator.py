@@ -17,8 +17,11 @@ from __future__ import annotations
 
 from typing import Any
 
+# Day 11 (jh) — val_r2 임계 추가 (C4 해소). 회귀 task 에서 evaluator 게이트가
+# 공허 통과하던 문제를 해결. Day10 test_e2e.py 가 직접 assert 하던 보호 장치를
+# evaluator 본체로 흡수.
 THRESHOLDS_BY_CAT = {
-    "tabular_ml": {"val_f1": 0.55},
+    "tabular_ml": {"val_f1": 0.55, "val_r2": 0.30},
     "tabular_dl": {"val_f1": 0.60},
 }
 
