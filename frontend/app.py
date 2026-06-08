@@ -167,6 +167,10 @@ _FLOW_HTML = """
     background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
     padding:7px 18px;margin-left:auto;margin-right:12px;white-space:nowrap;}
   .btn-new:hover{background:rgba(255,255,255,.20);}
+  .btn-home{font-family:inherit;font-size:15px;font-weight:600;border-radius:999px;cursor:pointer;
+    background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
+    padding:7px 18px;margin-left:14px;white-space:nowrap;}
+  .btn-home:hover{background:rgba(255,255,255,.20);}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
   <!-- 랜딩 오버레이 — G1 이전 단계 클릭 시 표시. 원본 Python 랜딩과 동일한 스타일 -->
@@ -190,7 +194,7 @@ _FLOW_HTML = """
     </div>
   </div>
   <div class="shell">
-    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><button class="btn-new" id="newBtn" style="display:none" onclick="resetAll()">＋ 새 분석</button><span class="status" id="status">대기</span></div>
+    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()">← 처음으로</button></div>
     <div class="steps" id="steps"></div>
     <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
     <div class="card"><div class="content" id="content"></div>
@@ -250,6 +254,17 @@ function startFromLanding(){
   if(ov){ ov.style.display='none'; }
   resetAll();
 }
+function goToStart(){
+  try{ if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } }catch(e){}
+  try{ clearState(); }catch(e){}
+  try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
+  try{ window.parent.history.replaceState({}, '', window.parent.location.pathname); }catch(e){}
+  try{
+    window.parent.location.href = window.parent.location.origin + window.parent.location.pathname + '?reset=1';
+  }catch(e){
+    window.location.reload();
+  }
+}
 function resetAll(){
   clearState();
   jobId=null; fileId=null; cur=0; frontier=0; maxReached=0;
@@ -259,7 +274,6 @@ function resetAll(){
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
   gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={};
   _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false;
-  var nb=document.getElementById('newBtn'); if(nb) nb.style.display='none';
   render();
 }
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
@@ -742,8 +756,6 @@ function render(){
   else if(isCompleted()){ stt.textContent='✓ 완료'; stt.className='status done'; }
   else if(jobId){ stt.textContent='진행 중'; stt.className='status'; }
   else { stt.textContent='대기'; stt.className='status'; }
-  var nb=document.getElementById('newBtn'); if(nb) nb.style.display=jobId?'inline-flex':'none';
-
   if(cur===0){
     const fi=document.getElementById('fileInput'), dz=document.getElementById('dz'),
           br=document.getElementById('browseBtn'), it=document.getElementById('intentInput');
@@ -876,6 +888,13 @@ def _flow_screen() -> None:
 # 라우팅 — 랜딩 → 플로우
 # ===========================================================================
 # F5 새로고침 시 URL 쿼리 파라미터로 flow 상태 복원
+# ── 처음으로 버튼 — 전체 세션 초기화 후 랜딩 복귀 ──
+if st.query_params.get("reset") == "1":
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    st.query_params.clear()
+    st.rerun()
+
 if st.query_params.get("flow") == "1":
     st.session_state["studio_started"] = True
 
