@@ -718,3 +718,147 @@ class TestIntegration:
         w = {1: 2.08, 0: 0.66}
         result = to_catboost(w)
         assert result == pytest.approx([0.66, 2.08])
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — apply_split: leakage-safe entry tests
+# ---------------------------------------------------------------------------
+
+
+class TestApplySplitLeakageGuard:
+    """split-first → train 만으로 fit → val 은 transform 만 흐름 검증.
+
+    핵심 보장: val 데이터를 극단값으로 오염시켜도 train transform 결과가
+    동일해야 함 (= val 통계가 train fit 에 새 들어가지 않음).
+    """
+
+    def _make_state(self, target="y", category="tabular_ml"):
+        from ada.core.state import PipelineState
+
+        return PipelineState(
+            job_id="test-leakage",
+            file_id="test",
+            category=category,
+            target_column=target,
+        )
+
+    def _make_df(self, seed=0):
+        rng = np.random.RandomState(seed)
+        n = 200
+        return pd.DataFrame(
+            {
+                "num1": rng.normal(50, 10, n),
+                "num2": rng.normal(100, 20, n),
+                "cat": rng.choice(["a", "b", "c"], n),
+                "y": rng.choice([0, 1], n, p=[0.7, 0.3]),
+            }
+        )
+
+    def test_apply_split_returns_three_tuple(self):
+        """apply_split 시그니처: (df_train, df_val, state)."""
+        from agents.handlers.tabular.preprocessor import apply_split
+
+        state = self._make_state()
+        df = self._make_df(seed=42)
+        plan_steps = [
+            {"name": "impute_numeric", "strategy": "median", "params": {}},
+            {"name": "scale_numeric", "method": "robust", "params": {}},
+        ]
+        result = apply_split(df, plan_steps, state, random_state=42)
+        assert isinstance(result, tuple) and len(result) == 3
+        df_tr, df_val, new_state = result
+        assert len(df_tr) > 0 and len(df_val) > 0
+        assert len(df_tr) + len(df_val) == len(df)
+
+    def test_leakage_guard_val_contamination_doesnt_affect_train(self):
+        """★ 핵심 — val 의 극단값 오염이 train scaled 결과에 영향 0.
+
+        잘못된 흐름(apply, 전체 fit)에선 val 오염이 train 결과에 새 들어감.
+        apply_split 은 train 으로만 fit 하므로 영향 없어야 함.
+        """
+        from agents.handlers.tabular.preprocessor import apply_split
+
+        state = self._make_state()
+        df_clean = self._make_df(seed=42)
+
+        # 같은 random_state → 동일 train/val split 보장
+        df_poison = df_clean.copy()
+        # val 영역(끝 20%) 의 num1 을 극단값으로 오염
+        from sklearn.model_selection import train_test_split
+
+        _, val_idx = train_test_split(df_clean.index, test_size=0.2, random_state=42, stratify=df_clean["y"])
+        df_poison.loc[val_idx, "num1"] = 1e6  # 100만 — 평균/median 을 크게 흔들 정도
+
+        plan_steps = [
+            {"name": "impute_numeric", "strategy": "median", "params": {}},
+            {"name": "scale_numeric", "method": "robust", "params": {}},
+        ]
+
+        df_tr_clean, _, _ = apply_split(df_clean, plan_steps, state, random_state=42)
+        df_tr_poison, _, _ = apply_split(df_poison, plan_steps, state, random_state=42)
+
+        # train 행은 동일한 위치 (같은 split) → scaled num1 값이 동일해야 함
+        assert "num1" in df_tr_clean.columns
+        np.testing.assert_allclose(
+            df_tr_clean["num1"].values,
+            df_tr_poison["num1"].values,
+            rtol=1e-6,
+            err_msg="val 오염이 train scaled 값에 영향 — leakage guard 실패",
+        )
+
+    def test_leakage_safe_split_meta_recorded(self):
+        """split 메타가 category_extras 에 기록되는지."""
+        from agents.handlers.tabular.preprocessor import apply_split
+
+        state = self._make_state()
+        df = self._make_df(seed=42)
+        _, _, new_state = apply_split(
+            df,
+            [{"name": "impute_numeric", "strategy": "median", "params": {}}],
+            state,
+            random_state=42,
+        )
+        meta = (new_state.category_extras or {}).get("tabular", {}).get("leakage_safe_split")
+        assert meta is not None
+        assert meta["method"] == "split_first_train_fit"
+        assert meta["n_train"] > 0
+        assert meta["n_val"] > 0
+        assert meta["random_state"] == 42
+
+    def test_smote_not_applied_to_val(self):
+        """SMOTE 는 val 에 적용 안 됨 (의도된 동작) — val 행 수 보존."""
+        from agents.handlers.tabular.preprocessor import apply_split
+
+        state = self._make_state()
+        df = self._make_df(seed=42)
+        plan_steps = [
+            {"name": "impute_numeric", "strategy": "median", "params": {}},
+            {"name": "encode_categorical", "params": {"high_card_threshold": 50}},
+            {"name": "smote_resample", "params": {}},
+        ]
+        _, df_val, _ = apply_split(df, plan_steps, state, random_state=42)
+        # val 행 수가 원본 split 비율 유지 (SMOTE 미적용)
+        expected_val_n = int(len(df) * 0.2)
+        # train_test_split 의 반올림 차이로 ±1 허용
+        assert abs(len(df_val) - expected_val_n) <= 1
+
+    def test_fallback_random_when_stratify_impossible(self):
+        """희소 클래스로 stratify 불가능해도 무작위 fallback 으로 통과."""
+        from agents.handlers.tabular.preprocessor import apply_split
+
+        state = self._make_state()
+        # 클래스 1 이 단 1개 → stratify 불가능
+        df = self._make_df(seed=42)
+        df.loc[df.index[1:], "y"] = 0
+        df.loc[df.index[0], "y"] = 1
+        plan_steps = [{"name": "impute_numeric", "strategy": "median", "params": {}}]
+        result = apply_split(df, plan_steps, state, random_state=42)
+        assert len(result) == 3
+
+    def test_apply_split_registered_as_capability(self):
+        """HANDLER_REGISTRY 자동 등록 확인 (HJ 영역 _base.py 변경 검증)."""
+        import agents.handlers.tabular  # noqa: F401
+        from agents.handlers import HANDLER_REGISTRY
+
+        for cat in ("tabular_ml", "tabular_dl"):
+            assert "apply_split" in HANDLER_REGISTRY.get(cat, {}), f"{cat} 에 apply_split 미등록"
