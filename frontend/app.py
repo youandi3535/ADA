@@ -273,7 +273,7 @@ function resetAll(){
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
   gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={};
-  _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false;
+  _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null;
   render();
 }
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
@@ -281,6 +281,14 @@ const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악
   error_recovery:'오류 복구 중',self_learning_dispatch:'학습 결과 저장 중'};
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// 숫자 표시 헬퍼 — 부동소수점은 소수점 3자리, 정수는 그대로, 문자열은 원본
+function fmtNum(v){
+  if(v==null) return '';
+  const n=Number(v);
+  if(!Number.isFinite(n)) return String(v);
+  if(Number.isInteger(n)) return String(n);
+  return n.toFixed(3);
+}
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
 function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[2-6]$/.test(g))?g:null; }
 function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
@@ -361,7 +369,7 @@ async function doResume(){
     });
     cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
-    _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false;  // gate 제출 직후 리셋
+    _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null;  // gate 제출 직후 리셋
     saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
@@ -455,55 +463,50 @@ setInterval(function(){
 //   - cur=0 (업로드)  : jobId 없으면 0, 업로드 시작 후 백엔드 진행률 따름
 //   - cur=1~5 (게이트): proposals 도착 = 분석 끝 → 100% (단계 종료 신호)
 //   - cur=6 (완료)   : 항상 100%
+// 단계별 평균 소요시간(초) — 환경 따라 조정. raw 백엔드 추정값 기준
+const STAGE_EST = {0:15, 1:8, 2:25, 3:45, 4:120, 5:30};
 let _shownPct=0;
 let _progressKey=null;
+let _stageStart=null;  // 현재 단계 진입 시각(ms). _progressKey 변경 시 리셋
 function _stageProgress(){
-  const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+(cur+1));  // 백엔드 게이트 코드: cur=0→G1 ... cur=5→G6
-  if(_progressKey!==key){ _progressKey=key; _shownPct=0; }
+  const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+(cur+1));
+  // 단계 전환 — 진행률·시작시각 모두 리셋 (각 단계 0% 부터 시작)
+  if(_progressKey!==key){
+    _progressKey=key;
+    _shownPct=0;
+    _stageStart=Date.now();
+  }
   if(isFailed()) return 0;
   if(isCompleted()||cur===LAST){ _shownPct=100; return 100; }
-  if(cur===0 && !jobId){ _shownPct=0; return 0; }
-  // 목표 진행률 계산
-  let target;
+  if(cur===0 && !jobId){ _shownPct=0; _stageStart=null; return 0; }
+
+  // 끝 신호 우선 — proposals 도착이면 즉시 100% 스냅 (기존 동작 유지)
   if(cur===0){
-    // Phase 1 — G1 데이터 파악 단계는 백엔드 진행률 0~18% 를 0~95% 로 정규화.
-    // G2 게이트(proposals 도착) 진입 = G1 완전 종료 → 100% 로 점프(잠시 후 cur=1 전환).
     const g1Reached = curGate()==='G2' && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
-    if(g1Reached){
-      _shownPct=100; return 100;  // proposals 도착 = G1 완전 종료 → 즉시 100%
-    } else {
-      const raw=(gateData.progress_pct!=null)?gateData.progress_pct:_shownPct;
-      // G1 의 백엔드 진행률 천장 = 18 (AGENT_PHASE_MAP 의 gate_direction 시작). 정규화.
-      target=Math.min(95, Math.round((raw/18)*95));
-    }
+    if(g1Reached){ _shownPct=100; return 100; }
   } else {
-    // 게이트 단계(G2~G6): proposals 도착 = 즉시 100% 스냅(애니메이션 지연 없음).
-    const tg='G'+(cur+1);  // cur 1~5 → 백엔드 G2~G6
+    const tg='G'+(cur+1);
     const ag=curGate();
-    // stale: resume 직후 analyzing() 미확인 구간은 이전 gate_data 무시
     const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
     const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
     const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
-    // proposals 도착 즉시 100% — 단, 제출 직후 분석 대기(lastSubmittedGate=tg & ag=null) 상태는 제외
-    if(ps.length && !(lastSubmittedGate===tg && !ag)){
-      _shownPct=100; return 100;
-    } else {
-      // 단계별 독립 0~100% — 백엔드 전체 진행률(0~100)을 이 단계 구간으로 정규화.
-      // cur=1(G2 로딩):14~18%, cur=2(G3):18~33%, cur=3(G4):33~50%, cur=4(G5):50~85%, cur=5(G6):85~98%
-      const STAGE_LO={1:14,2:18,3:33,4:50,5:85};
-      const STAGE_HI={1:18,2:33,3:50,4:85,5:98};
-      const lo=STAGE_LO[cur]||0, hi=STAGE_HI[cur]||100;
-      const raw=(gateData.progress_pct!=null)?gateData.progress_pct:lo;
-      target=Math.max(0, Math.min(99, Math.round((raw-lo)/(hi-lo)*100)));
-    }
+    if(ps.length && !(lastSubmittedGate===tg && !ag)){ _shownPct=100; return 100; }
   }
-  // 점프 보간 — 매 호출(500ms) 최대 step. 작은 차이는 즉시, 큰 점프(예: 30→100)는 약 2초간 부드럽게.
+
+  // 시간 기반 target — 단계 진입 후 elapsed 시간 / 평균 예상시간 (사용자 의도: 0부터 점진 증가)
+  // 백엔드 raw progress_pct 는 결합하지 않음 — 단계 진입 시점 이미 LO+많이 진척돼 있어 사용자 의도와 어긋남.
+  // 백엔드 신호는 끝 신호(proposals 도착) → 100% 스냅으로만 사용 (위쪽 분기에서 이미 처리).
+  if(_stageStart==null) _stageStart=Date.now();
+  const elapsed=(Date.now()-_stageStart)/1000;
+  const est=STAGE_EST[cur]||30;
+  const target=Math.min(99, Math.round((elapsed/est)*100));
+
+  // 점프 보간 (기존 패턴 유지) — 거꾸로 가지 않음
   if(target>_shownPct){
     const diff=target-_shownPct;
     const step=Math.max(2, Math.ceil(diff/4));
     _shownPct=Math.min(target, _shownPct+step);
   }
-  // 거꾸로 가지 않음(백엔드 일시 감소도 무시).
   return Math.round(_shownPct);
 }
 
@@ -588,7 +591,7 @@ function propCard(p, idx, recId){
   const rec=(!g5&&p.id===recId)?'<span class="rec">추천</span>':'';
   let extra='';
   if(p.models && p.models.length) extra='<div class="hint">🧩 모델: '+p.models.map(esc).join(', ')+'</div>';
-  else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(function(k){return esc(k)+' '+esc(p.metrics[k]);}).join(' · ')+'</div>'; }
+  else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(function(k){return esc(k)+' '+esc(fmtNum(p.metrics[k]));}).join(' · ')+'</div>'; }
   else if(p.outputs && p.outputs.length){ var OL={'OUT-01':'PPT','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'}; extra='<div class="hint">📦 '+p.outputs.map(function(o){return esc(OL[o]||o);}).join(' · ')+'</div>'; }
   const score=(p.score!=null)?('<div class="time">⭐ 추천도 '+Math.round(p.score*100)+'%</div>'):'';
   const rat=esc(p.rationale||'').replace(/\\n/g,'<br><br>');
@@ -613,7 +616,7 @@ function g6ReportBlock(d){
     let metricLine='';
     if(bm.metrics && typeof bm.metrics==='object'){
       const ks=Object.keys(bm.metrics).slice(0,3);
-      metricLine=ks.map(function(k){return '<span class="chip">'+esc(k)+' <b>'+esc(bm.metrics[k])+'</b></span>';}).join('');
+      metricLine=ks.map(function(k){return '<span class="chip">'+esc(k)+' <b>'+esc(fmtNum(bm.metrics[k]))+'</b></span>';}).join('');
     }
     parts+='<div class="rcard" style="grid-column:1/-1;margin-bottom:14px">'
       +'<h4>🏆 최적 모델 · '+esc(nm)+'</h4>'
@@ -625,7 +628,7 @@ function g6ReportBlock(d){
     if(ev.rationale) inner+='<p class="rtext">'+esc(ev.rationale)+'</p>';
     if(ev.metrics && typeof ev.metrics==='object'){
       const ks=Object.keys(ev.metrics).slice(0,4);
-      inner+='<div style="margin-top:8px">'+ks.map(function(k){return '<span class="chip">'+esc(k)+' <b>'+esc(ev.metrics[k])+'</b></span>';}).join('')+'</div>';
+      inner+='<div style="margin-top:8px">'+ks.map(function(k){return '<span class="chip">'+esc(k)+' <b>'+esc(fmtNum(ev.metrics[k]))+'</b></span>';}).join('')+'</div>';
     }
     if(inner) parts+='<div class="rcard" style="grid-column:1/-1;margin-bottom:14px"><h4>📊 평가 결과</h4>'+inner+'</div>';
   }
@@ -653,9 +656,8 @@ function contentGate(){
   if(g==='G2'||g==='G3'||g==='G4'||g==='G5') cards+=customCard(llmProps.length);
   let pop='';
   if(animatedGate!==g){ pop=' popin'; animatedGate=g; if(g==='G6') g5Checked={}; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
-  // G6 (산출물 선택) 상단에 학습·평가 리포트 표시
-  const reportTop=(g==='G6')?g6ReportBlock(d):'';
-  return gateHeader(g)+reportTop+'<div class="opts'+pop+'">'+cards+'</div>';
+  // G6 (산출물 선택) 화면은 산출물 카드만 표시 — 최적 모델·평가 결과 박스 숨김
+  return gateHeader(g)+'<div class="opts'+pop+'">'+cards+'</div>';
 }
 function rcard(title, inner){ return '<div class="rcard"><h4>'+title+'</h4>'+inner+'</div>'; }
 function contentResult(){
@@ -664,13 +666,13 @@ function contentResult(){
   if(g.best_model && typeof g.best_model==='object'){
     const m=g.best_model; let h='<div class="kpi">';
     if(m.model_name) h+='<div class="it"><div class="v">'+esc(m.model_name)+'</div><div class="l">최적 모델</div></div>';
-    if(m.metrics && typeof m.metrics==='object'){ const mk=Object.keys(m.metrics)[0]; if(mk) h+='<div class="it"><div class="v">'+esc(m.metrics[mk])+'</div><div class="l">'+esc(mk)+'</div></div>'; }
+    if(m.metrics && typeof m.metrics==='object'){ const mk=Object.keys(m.metrics)[0]; if(mk) h+='<div class="it"><div class="v">'+esc(fmtNum(m.metrics[mk]))+'</div><div class="l">'+esc(mk)+'</div></div>'; }
     h+='</div>'; panels+=rcard('최적 모델', h);
   }
   if(g.eval_result && typeof g.eval_result==='object'){
     const ev=g.eval_result; let h='';
     if(ev.rationale) h+='<p class="rtext">'+esc(ev.rationale)+'</p>';
-    if(ev.metrics && typeof ev.metrics==='object'){ const ks=Object.keys(ev.metrics).slice(0,3); h+='<div class="kpi" style="margin-top:10px">'+ks.map(function(k){return '<div class="it"><div class="v">'+esc(ev.metrics[k])+'</div><div class="l">'+esc(k)+'</div></div>';}).join('')+'</div>'; }
+    if(ev.metrics && typeof ev.metrics==='object'){ const ks=Object.keys(ev.metrics).slice(0,3); h+='<div class="kpi" style="margin-top:10px">'+ks.map(function(k){return '<div class="it"><div class="v">'+esc(fmtNum(ev.metrics[k]))+'</div><div class="l">'+esc(k)+'</div></div>';}).join('')+'</div>'; }
     if(h) panels+=rcard('평가 결과', h);
   }
   if(g.insights) panels+=rcard('인사이트','<p class="rtext">'+esc(g.insights)+'</p>');
