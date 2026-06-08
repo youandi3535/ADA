@@ -1,6 +1,7 @@
-"""ada.db.seeds — agent_registry 27행 시드.
+"""ada.db.seeds — agent_registry 28행 시드.
 
-Day02 §5 (v2 §5.5) — 27 에이전트 메타데이터 + persona 일괄 INSERT.
+Day02 §5 (v2 §5.5) — 28 에이전트 메타데이터 + persona 일괄 INSERT.
+HJ 2026-06-08: ReportArchitectAgent 추가 (Phase 2 통합).
 """
 
 from __future__ import annotations
@@ -43,7 +44,8 @@ AGENT_META: list[tuple[str, str, str, str]] = [
     ("EvalAgent", "eval", "임계치 룰 기반 출시 가능성 판정", "claude-opus-4-7"),
     ("ExplainabilityAgent", "eval", "SHAP / 시계열 분해 (Captum 백로그)", "none"),
     ("InsightAgent", "eval", "비즈니스 인사이트 (한국어 스토리텔링)", "claude-opus-4-7"),
-    # F 산출물 오케스트레이터 (1)
+    # F 산출물 오케스트레이터 (2) — HJ 2026-06-08: ReportArchitectAgent 추가
+    ("ReportArchitectAgent", "output", "동적 목차 설계 (SCQA/PSI/Pyramid 등 1종 + ReportPlan)", "claude-opus-4-6"),
     ("ReportComposerAgent", "output", "5종 산출물 fan-out + audit", "none"),
     # G 메타 (3)
     ("SelfLearningAgent", "meta", "3-Stack KB 증류 (Postgres+MinIO+pgvector)", "none"),
@@ -53,7 +55,7 @@ AGENT_META: list[tuple[str, str, str, str]] = [
     ("ErrorRecoveryAgent", "recovery", "최후 회복 + 사용자 친절 안내", "claude-opus-4-7"),
 ]
 
-assert len(AGENT_META) == 27, f"expected 27 agents, got {len(AGENT_META)}"
+assert len(AGENT_META) == 28, f"expected 28 agents, got {len(AGENT_META)}"
 
 # I/O 시그니처 — Day05~13 본문에서 본 형식대로 일관 유지
 AGENT_IO: dict[str, dict[str, list[str]]] = {
@@ -79,7 +81,8 @@ AGENT_IO: dict[str, dict[str, list[str]]] = {
     "EvalAgent": {"inputs": ["best_model", "metrics"], "outputs": ["evaluation"]},
     "ExplainabilityAgent": {"inputs": ["best_model", "features"], "outputs": ["shap_artifacts"]},
     "InsightAgent": {"inputs": ["evaluation", "shap_artifacts"], "outputs": ["insights"]},
-    "ReportComposerAgent": {"inputs": ["insights", "output_codes"], "outputs": ["artifacts"]},
+    "ReportArchitectAgent": {"inputs": ["report_context"], "outputs": ["report_plan"]},
+    "ReportComposerAgent": {"inputs": ["insights", "output_codes", "report_plan"], "outputs": ["artifacts"]},
     "SelfLearningAgent": {"inputs": ["job_id"], "outputs": ["kb_entries"]},
     "AutoErrorHandlerAgent": {"inputs": ["error_event"], "outputs": ["patch_or_escalate"]},
     "SecurityGuardAgent": {"inputs": ["request_payload"], "outputs": ["security_verdict"]},
@@ -109,6 +112,7 @@ CAPABILITY_MAP: dict[str, list[str]] = {
     "EvalAgent": ["quality_gate"],
     "ExplainabilityAgent": ["shap", "timeseries_decompose"],
     "InsightAgent": ["story_korean"],
+    "ReportArchitectAgent": ["skeleton_picking", "narrative_design", "pyramid_validation"],
     "ReportComposerAgent": ["fan_out"],
     "SelfLearningAgent": ["kb_distill"],
     "AutoErrorHandlerAgent": ["error_match", "patch_apply"],
@@ -163,7 +167,7 @@ _PERSONA_VERSION_BUMPS: dict[str, str] = {
 
 
 async def seed_agent_registry(session: AsyncSession) -> int:
-    """agent_registry 27 행 upsert. 이미 있으면 persona 업데이트만."""
+    """agent_registry 28 행 upsert. 이미 있으면 persona 업데이트만."""
     inserted = 0
     for name, role, desc, llm in AGENT_META:
         existing = await session.scalar(select(AgentRegistry).where(AgentRegistry.agent_name == name))

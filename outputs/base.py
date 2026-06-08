@@ -175,6 +175,66 @@ class OutputGenerator(abc.ABC):
         except Exception:
             return None
 
+    # ==============================================================
+    # HJ — 차트 다운로드 병렬화 헬퍼 (Method B)
+    # ==============================================================
+    # 슬라이드 append/이미지 임베드 자체는 ms 단위이지만,
+    # MinIO 왕복 다운로드는 차트당 100~500ms 가 누적된다.
+    # ThreadPoolExecutor 로 N 개 차트 다운로드를 동시에 수행하고,
+    # 그 결과를 carrier 가 순차로 소비(슬라이드 append)하도록 분리.
+    #
+    # 주의:
+    # - 결과 순서는 입력 순서를 보존 (executor.map).
+    # - 실패한 항목은 None (기존 _download_chart 시그니처와 동일).
+    # - monkeypatch 호환: 내부적으로 self._download_chart 를 호출하므로
+    #   기존 테스트의 _download_chart 패치가 그대로 적용된다.
+
+    _DOWNLOAD_MAX_WORKERS: int = 8
+
+    def _download_charts_parallel(
+        self,
+        chart_paths: list[str],
+        max_workers: int | None = None,
+    ) -> list[str | None]:
+        """차트 경로 리스트를 병렬 다운로드. 결과는 입력 순서 보존."""
+        if not chart_paths:
+            return []
+        from concurrent.futures import ThreadPoolExecutor
+
+        workers = min(max_workers or self._DOWNLOAD_MAX_WORKERS, len(chart_paths))
+        # 단일 항목이면 executor 오버헤드 회피
+        if workers <= 1:
+            return [self._download_chart(p) for p in chart_paths]
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            return list(ex.map(self._download_chart, chart_paths))
+
+    def _download_chart_bytes(self, chart_path: str) -> bytes | None:
+        """MinIO/S3 경로의 차트를 raw bytes 로 반환 (HTML inline base64 용)."""
+        try:
+            from tools.minio_tool import get_minio_client
+
+            mc = get_minio_client()
+            key = chart_path.replace(f"s3://{mc.bucket}/", "") if chart_path.startswith("s3://") else chart_path
+            return mc.download_bytes(key)
+        except Exception:
+            return None
+
+    def _download_chart_bytes_parallel(
+        self,
+        chart_paths: list[str],
+        max_workers: int | None = None,
+    ) -> list[bytes | None]:
+        """차트 경로 리스트를 병렬 다운로드 후 raw bytes 리스트 반환. 순서 보존."""
+        if not chart_paths:
+            return []
+        from concurrent.futures import ThreadPoolExecutor
+
+        workers = min(max_workers or self._DOWNLOAD_MAX_WORKERS, len(chart_paths))
+        if workers <= 1:
+            return [self._download_chart_bytes(p) for p in chart_paths]
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            return list(ex.map(self._download_chart_bytes, chart_paths))
+
 
 # ==============================================================
 # ADR-008 L2 — PII Re-attach 헬퍼 (모듈 레벨)

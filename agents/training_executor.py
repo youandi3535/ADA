@@ -15,6 +15,7 @@ Day 6 계약: state.best_params[model] 가 있으면 그 값을 params 로 흘�
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -39,6 +40,11 @@ class TrainingExecutorAgent(BaseAgent):
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
+            # HJ — 학습 시작 시각 기록 (TrainingMonitor 의 timeout 기준).
+            # 매 retry 마다 새 시점으로 리셋돼 retry-after-timeout 무한루프 방지.
+            # 데이터 로딩 시간도 학습 walltime 에 포함 (사용자 관점에서 "학습 단계" 전체).
+            training_started = datetime.utcnow()
+
             try:
                 from agents.handlers.common.shared import load_dataframe_from_state
 
@@ -123,7 +129,11 @@ class TrainingExecutorAgent(BaseAgent):
                 heavy_dispatched=heavy_used,
                 heavy_known=sorted(HEAVY_MODELS),
             )
-            return state.with_update(trained_models=trained, next_agent="training_monitor")
+            return state.with_update(
+                trained_models=trained,
+                training_started_at=training_started,
+                next_agent="training_monitor",
+            )
 
     # ------------------------------------------------------------------
     async def _train_remote(

@@ -1,10 +1,10 @@
-"""agents.stubs — 27 에이전트 canonical 등록 + ALL_AGENT_CLASSES (전수 검증 후 재구성).
+"""agents.stubs — 28 에이전트 canonical 등록 + ALL_AGENT_CLASSES (전수 검증 후 재구성).
 
 본 모듈은 **단일 권위 진입점** 이다:
   - 본격 구현(agents/<name>.py) 이 있으면 그것을 그대로 re-export
   - 본격 구현이 없으면 미니멀 통과 stub 을 정의 (현재는 모두 본격 구현 보유)
 
-LangGraph (orchestrator/graph.py) 는 본 모듈에서 27 클래스를 임포트하므로,
+LangGraph (orchestrator/graph.py) 는 본 모듈에서 28 클래스를 임포트하므로,
 이 파일 한 군데만 보면 어떤 클래스가 어디로 매핑되는지 확인 가능하다.
 """
 
@@ -43,7 +43,8 @@ from agents.preprocessing_choice import PreprocessingChoiceAgent
 # C 전처리·EDA + 미니 게이트 (4)
 from agents.preprocessing_strategist import PreprocessingStrategistAgent
 
-# F 산출물 오케스트레이터 (1)
+# F 산출물 오케스트레이터 (2) — HJ 2026-06-08: ReportArchitectAgent 추가
+from agents.report_architect import ReportArchitectAgent
 from agents.report_composer import ReportComposerAgent
 from agents.schema_validator import SchemaValidatorAgent
 from agents.security_guard import SecurityGuardAgent
@@ -56,7 +57,7 @@ from agents.supervisor import SupervisorAgent
 from agents.training_executor import TrainingExecutorAgent
 from agents.training_monitor import TrainingMonitorAgent
 
-# ---- 27 카운트 자가 검증 ----------------------------------------------------
+# ---- 28 카운트 자가 검증 ----------------------------------------------------
 ALL_AGENT_CLASSES = [
     SupervisorAgent,
     IntentElicitorAgent,
@@ -80,16 +81,17 @@ ALL_AGENT_CLASSES = [
     EvalAgent,
     ExplainabilityAgent,
     InsightAgent,
+    ReportArchitectAgent,
     ReportComposerAgent,
     SelfLearningAgent,
     AutoErrorHandlerAgent,
     SecurityGuardAgent,
     ErrorRecoveryAgent,
 ]
-assert len(ALL_AGENT_CLASSES) == 27, f"expected 27 agents, got {len(ALL_AGENT_CLASSES)}"
+assert len(ALL_AGENT_CLASSES) == 28, f"expected 28 agents, got {len(ALL_AGENT_CLASSES)}"
 
 AGENT_NAME_TO_CLASS = {cls.__name__: cls for cls in ALL_AGENT_CLASSES}
-assert len(AGENT_NAME_TO_CLASS) == 27, "agent class names must be unique"
+assert len(AGENT_NAME_TO_CLASS) == 28, "agent class names must be unique"
 
 __all__ = [
     "ALL_AGENT_CLASSES",

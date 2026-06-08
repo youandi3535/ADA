@@ -42,37 +42,18 @@ class DashboardArtifactGenerator(OutputGenerator):
 
         from outputs import CATEGORY_COLORS
 
-        chart_imgs = []
-        try:
-            from tools.minio_tool import get_minio_client
-
-            mc = get_minio_client()
-            for c in eda_charts[:4]:
-                key = c.replace(f"s3://{mc.bucket}/", "") if c.startswith("s3://") else c
-                try:
-                    body = mc.download_bytes(key)
-                    chart_imgs.append(base64.b64encode(body).decode("ascii"))
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
+        # HJ — Method B: eda_charts + extras['charts'] 를 한 번에 raw bytes 로 병렬 다운로드.
+        # HTML 임베드는 base64 inline 이라 파일 시스템 우회.
         # HJ-4 — 카테고리 핸들러 extras (charts/tables/text_blocks)
         extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
-        extras_chart_imgs: list[str] = []
-        try:
-            from tools.minio_tool import get_minio_client as _mc_get
+        eda_paths = [c for c in eda_charts[:4] if isinstance(c, str)]
+        extras_paths = [c for c in extras.get("charts", [])[:4] if isinstance(c, str)]
+        all_bytes = self._download_chart_bytes_parallel(eda_paths + extras_paths)
+        eda_bytes = all_bytes[: len(eda_paths)]
+        extras_bytes = all_bytes[len(eda_paths) :]
 
-            mc = _mc_get()
-            for c in extras.get("charts", [])[:4]:
-                key = c.replace(f"s3://{mc.bucket}/", "") if isinstance(c, str) and c.startswith("s3://") else c
-                try:
-                    body = mc.download_bytes(key)
-                    extras_chart_imgs.append(base64.b64encode(body).decode("ascii"))
-                except Exception:
-                    continue
-        except Exception:
-            pass
+        chart_imgs = [base64.b64encode(b).decode("ascii") for b in eda_bytes if b]
+        extras_chart_imgs = [base64.b64encode(b).decode("ascii") for b in extras_bytes if b]
 
         extras_charts_html = "".join(
             f"<div class='chart'><img src='data:image/png;base64,{b64}' /></div>" for b64 in extras_chart_imgs

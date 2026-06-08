@@ -84,23 +84,30 @@ class PresentationGenerator(OutputGenerator):
             p = body.add_paragraph()
             p.text = f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
 
-        for i, chart_path in enumerate(eda_charts[:4]):
+        # HJ — Method B: 차트 다운로드 병렬화.
+        # eda_charts + extras['charts'] 를 한 번에 모아 ThreadPoolExecutor 로 동시 다운로드.
+        # 슬라이드 append 자체는 순차 (python-pptx 비스레드 안전).
+        eda_paths = list(eda_charts[:4])
+        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
+        extras_paths = list(extras.get("charts", [])[:4])
+        local_paths = self._download_charts_parallel(eda_paths + extras_paths)
+        eda_local = local_paths[: len(eda_paths)]
+        extras_local = local_paths[len(eda_paths) :]
+
+        for i, tmp in enumerate(eda_local):
             slide = prs.slides.add_slide(prs.slide_layouts[5])
             slide.shapes.title.text = f"EDA Chart #{i + 1}"
             _set_title_color(slide, primary)
-            tmp = self._download_chart(chart_path)
             if tmp:
                 try:
                     slide.shapes.add_picture(tmp, Inches(0.5), Inches(1.5), width=Inches(8))
                 except Exception:
                     pass
 
-        extras = self._call_extras(state, ctx={"output_code": self.output_code, "category": category})
-        for j, chart_path in enumerate(extras.get("charts", [])[:4]):
+        for j, tmp in enumerate(extras_local):
             slide = prs.slides.add_slide(prs.slide_layouts[5])
             slide.shapes.title.text = f"[{label_ko}] Cat Analysis #{j + 1}"
             _set_title_color(slide, primary)
-            tmp = self._download_chart(chart_path)
             if tmp:
                 try:
                     slide.shapes.add_picture(tmp, Inches(0.5), Inches(1.5), width=Inches(8))
