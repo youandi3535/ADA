@@ -603,6 +603,21 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     if res_path:
         charts.append(res_path)
 
+    # Day 11 (jh) — 해석성·진단 차트 3종 (diagnostics 모듈로 분리).
+    # 가드는 각 함수가 자체 처리 (baseline/DL/대용량/재로드 실패 → None).
+    try:
+        from agents.handlers.tabular import diagnostics as _diag
+
+        for fn in (_diag.permutation_importance_chart, _diag.pdp_chart, _diag.qq_plot_chart):
+            try:
+                p = fn(state)
+                if p:
+                    charts.append(p)
+            except Exception as exc:
+                logger.warning("diagnostics_chart_failed: %s -> %s", fn.__name__, exc)
+    except Exception as exc:
+        logger.warning("diagnostics_module_import_failed: %s", exc)
+
     color = "#2563eb" if getattr(state, "category", "") == "tabular_ml" else "#0891b2"
     label = "정형 ML" if getattr(state, "category", "") == "tabular_ml" else "정형 DL"
 

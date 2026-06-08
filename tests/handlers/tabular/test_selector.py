@@ -969,3 +969,117 @@ class TestResidualChart:
         # task="regression" 인데 model_name=RandomForest → _is_classification False 되도록
         # eval_result/best_model 의 metrics 가 회귀 metric (val_r2) 만 가지면 회귀로 판단
         assert _build_residual_chart(state) is None
+
+
+# ---------------------------------------------------------------------------
+# Day 11 (jh) — diagnostics 모듈 (Permutation / PDP / QQ Plot)
+# ---------------------------------------------------------------------------
+
+
+class TestDiagnostics:
+    """diagnostics 차트 3종의 가드 + 안전 동작 검증.
+
+    실제 차트 생성은 MinIO + 모델 재로드 필요 → 운영 환경에서만.
+    단위 테스트는 가드 로직과 graceful skip 만.
+    """
+
+    def _state(
+        self,
+        *,
+        category="tabular_ml",
+        n_rows=300,
+        model_name="RandomForest",
+        task="classification",
+    ):
+        from ada.core.state import PipelineState
+
+        metrics = {"val_f1": 0.83} if task == "classification" else {"val_r2": 0.55}
+        return PipelineState(
+            job_id="t",
+            file_id="m",
+            category=category,
+            target_column="y",
+            task=task,
+            data_profile={"rows": n_rows, "class_distribution": {"0": 0.5, "1": 0.5}},
+            best_model={"model_name": model_name, "metrics": metrics},
+        )
+
+    # ───── permutation_importance_chart ─────
+
+    def test_permutation_skips_when_baseline(self):
+        from agents.handlers.tabular.diagnostics import permutation_importance_chart
+
+        for name in ("Dummy", "LogisticRegression", "Ridge"):
+            state = self._state(model_name=name)
+            assert permutation_importance_chart(state) is None
+
+    def test_permutation_skips_when_dl(self):
+        from agents.handlers.tabular.diagnostics import permutation_importance_chart
+
+        state = self._state(category="tabular_dl", model_name="FTTransformer")
+        assert permutation_importance_chart(state) is None
+
+    def test_permutation_skips_when_large_data(self):
+        from agents.handlers.tabular.diagnostics import permutation_importance_chart
+
+        state = self._state(n_rows=10000)
+        assert permutation_importance_chart(state) is None
+
+    def test_permutation_skips_gracefully_when_reload_fails(self):
+        from agents.handlers.tabular.diagnostics import permutation_importance_chart
+
+        state = self._state(model_name="RandomForest")
+        # MinIO 없는 단위 환경 → 재로드 실패 → None
+        assert permutation_importance_chart(state) is None
+
+    # ───── pdp_chart ─────
+
+    def test_pdp_skips_when_baseline(self):
+        from agents.handlers.tabular.diagnostics import pdp_chart
+
+        state = self._state(model_name="Dummy")
+        assert pdp_chart(state) is None
+
+    def test_pdp_skips_when_dl(self):
+        from agents.handlers.tabular.diagnostics import pdp_chart
+
+        state = self._state(category="tabular_dl", model_name="FTTransformer")
+        assert pdp_chart(state) is None
+
+    def test_pdp_skips_gracefully_when_reload_fails(self):
+        from agents.handlers.tabular.diagnostics import pdp_chart
+
+        state = self._state(model_name="RandomForest")
+        assert pdp_chart(state) is None
+
+    # ───── qq_plot_chart ─────
+
+    def test_qq_plot_skips_when_classification(self):
+        from agents.handlers.tabular.diagnostics import qq_plot_chart
+
+        state = self._state(task="classification")
+        assert qq_plot_chart(state) is None
+
+    def test_qq_plot_skips_when_baseline(self):
+        from agents.handlers.tabular.diagnostics import qq_plot_chart
+
+        state = self._state(task="regression", model_name="Ridge")
+        assert qq_plot_chart(state) is None
+
+    def test_qq_plot_skips_gracefully_when_reload_fails(self):
+        from agents.handlers.tabular.diagnostics import qq_plot_chart
+
+        state = self._state(task="regression", model_name="RandomForest")
+        assert qq_plot_chart(state) is None
+
+    # ───── output_extras 통합 ─────
+
+    def test_output_extras_assets_invokes_diagnostics_safely(self):
+        """assets() 가 diagnostics 함수 호출 중 예외 일어나도 charts 리스트 반환."""
+        from agents.handlers.tabular.output_extras import assets
+
+        state = self._state()
+        result = assets(state)
+        # 단위 환경에선 다 None 반환 → charts 비어있을 수 있지만 dict 구조는 유지
+        assert "charts" in result
+        assert isinstance(result["charts"], list)
