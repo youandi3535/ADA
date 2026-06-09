@@ -31,13 +31,23 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
             from pyod.models.iforest import IForest
 
             m = IForest(**params)
+            m.fit(X_train)
+            try:
+                m._ada_backend = "pyod"
+            except Exception:
+                pass
+            return m
         except ImportError:
             from sklearn.ensemble import IsolationForest
 
             sk_params = {k: v for k, v in params.items() if k != "contamination" or v != "auto"}
             m = IsolationForest(**sk_params)
-        m.fit(X_train)
-        return m
+            m.fit(X_train)
+            try:
+                m._ada_backend = "sklearn"
+            except Exception:
+                pass
+            return m
 
     if model_name == "LOF":
         try:
@@ -45,6 +55,10 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
 
             m = LOF(**params)
             m.fit(X_train)
+            try:
+                m._ada_backend = "pyod"
+            except Exception:
+                pass
             return m
         except ImportError:
             from sklearn.neighbors import LocalOutlierFactor
@@ -52,6 +66,10 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
             sk_params = {k: v for k, v in params.items() if k != "contamination"}
             m = LocalOutlierFactor(novelty=True, **sk_params)
             m.fit(X_train)
+            try:
+                m._ada_backend = "sklearn"
+            except Exception:
+                pass
             return m
 
     if model_name == "OneClassSVM":
@@ -59,19 +77,35 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
             from pyod.models.ocsvm import OCSVM
 
             m = OCSVM(**params)
+            m.fit(X_train)
+            try:
+                m._ada_backend = "pyod"
+            except Exception:
+                pass
+            return m
         except ImportError:
             from sklearn.svm import OneClassSVM
 
             sk_params = {k: v for k, v in params.items() if k != "contamination"}
             m = OneClassSVM(**sk_params)
-        m.fit(X_train)
-        return m
+            m.fit(X_train)
+            try:
+                m._ada_backend = "sklearn"
+            except Exception:
+                pass
+            return m
 
     if model_name == "AutoEncoder":
         from pyod.models.auto_encoder import AutoEncoder
 
-        m = AutoEncoder(**params)
+        _ae_key_map = {"epochs": "epoch_num", "hidden_neurons": "hidden_neuron_list"}
+        ae_params = {_ae_key_map.get(k, k): v for k, v in params.items()}
+        m = AutoEncoder(**ae_params)
         m.fit(X_train)
+        try:
+            m._ada_backend = "pyod"
+        except Exception:
+            pass
         return m
 
     if model_name == "COPOD":
@@ -79,6 +113,10 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
 
         m = COPOD(**params)
         m.fit(X_train)
+        try:
+            m._ada_backend = "pyod"
+        except Exception:
+            pass
         return m
 
     if model_name in ("TranAD", "AnomalyTransformer"):
@@ -123,6 +161,7 @@ class _TorchTSAnomalyModel:
         self.window_size = window_size
         self._net: Any = None
         self._train_scores: Any = None  # 학습 데이터 재구성 오류 분포 (임계 결정용)
+        self._ada_backend = "torch"
 
     def fit(self, X: np.ndarray) -> "_TorchTSAnomalyModel":
         """학습: X (n_samples, n_features) → 슬라이딩 윈도우 재구성 학습."""
@@ -248,24 +287,40 @@ def _train_torch_ts_model(model_name: str, X_train: np.ndarray, params: dict[str
     return m
 
 
-def _get_anomaly_scores(model: Any, X: np.ndarray, model_name: str) -> np.ndarray:
-    """모델별 anomaly score 추출 (높을수록 이상)."""
-    # PyOD: decision_function (높을수록 이상)
-    if hasattr(model, "decision_function") and model_name not in ("IsolationForest_sklearn",):
-        try:
-            return np.asarray(model.decision_function(X), dtype=float)
-        except Exception:
-            pass
+def _get_anomaly_scores(model: Any, X: np.ndarray) -> np.ndarray:
+    """모델별 anomaly score 추출 (높을수록 이상). backend-aware.
 
-    # sklearn IsolationForest: score_samples (낮을수록 이상) → 반전
+    우선순위:
+      1) _ada_backend == "pyod"    → decision_function 그대로 (높을수록 이상)
+      2) _ada_backend == "torch"   → decision_function 그대로 (재구성 오류, 높을수록 이상)
+      3) _ada_backend == "sklearn" → score_samples 있으면 -score_samples,
+                                     없으면 -decision_function, 그것도 없으면 predict
+      4) 태그 없는 경우(안전망)     → __module__ 로 pyod 여부 판별 후 동일 규약 적용
+    """
+    backend = getattr(model, "_ada_backend", None)
+
+    if backend == "pyod":
+        return np.asarray(model.decision_function(X), dtype=float)
+
+    if backend == "torch":
+        return np.asarray(model.decision_function(X), dtype=float)
+
+    if backend == "sklearn":
+        if hasattr(model, "score_samples"):
+            return -np.asarray(model.score_samples(X), dtype=float)
+        if hasattr(model, "decision_function"):
+            return -np.asarray(model.decision_function(X), dtype=float)
+        return np.asarray(model.predict(X), dtype=float)
+
+    # 안전망: _ada_backend 없는 경우 모듈명으로 판별
+    module = type(model).__module__ or ""
+    if module.startswith("pyod"):
+        return np.asarray(model.decision_function(X), dtype=float)
+    # sklearn 규약 (높을수록 정상 → 반전)
     if hasattr(model, "score_samples"):
         return -np.asarray(model.score_samples(X), dtype=float)
-
-    # sklearn LOF / OCSVM: decision_function (낮을수록 이상) → 반전
     if hasattr(model, "decision_function"):
         return -np.asarray(model.decision_function(X), dtype=float)
-
-    # fallback
     return np.asarray(model.predict(X), dtype=float)
 
 
@@ -411,7 +466,7 @@ class AnomalyPipeline(BasePipeline):
 
     def predict(self, model: Any, X: Any) -> np.ndarray:
         """anomaly_score 반환 (높을수록 이상)."""
-        return _get_anomaly_scores(model, X, model_name=self._resolve_model_name(model))
+        return _get_anomaly_scores(model, X)
 
     def evaluate(
         self,
@@ -421,7 +476,7 @@ class AnomalyPipeline(BasePipeline):
         task: str = "anomaly",
     ) -> dict[str, float]:
         """AUC + Otsu + predicted_anomalies. ★ DoD: AUC > 0.8."""
-        scores = _get_anomaly_scores(model, X_val, self._resolve_model_name(model))
+        scores = _get_anomaly_scores(model, X_val)
         # static method 이므로 클래스 경유 호출이 스타일상 명확
         threshold = AnomalyPipeline.otsu_threshold(scores)
         predicted = (scores > threshold).astype(bool)

@@ -10,6 +10,6 @@
 
 matplotlib>=3.7.0,<4        # eda·evaluator 차트 생성 (CI 환경 명시적 설치 필요)
 
-# 이상탐지 백본 (Day 6 NY 본구현 시 활성화)
-# pyod>=2.0.0,<3.0           # R-1003: PyOD 이상탐지 카테고리 백본
+# 이상탐지 백본
+pyod>=2.0.0,<3.0             # R-1003: PyOD 이상탐지 카테고리 백본
 # alibi-detect==0.12.0       # (선택) drift / outlier 추가 백본

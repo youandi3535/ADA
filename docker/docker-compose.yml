@@ -145,6 +145,13 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    healthcheck:
+      # mlflow 이미지(python 기반)에는 curl 이 없으므로 python 으로 /health 확인
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     deploy:
       resources:
         limits:

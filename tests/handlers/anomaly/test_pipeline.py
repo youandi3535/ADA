@@ -222,5 +222,32 @@ def test_normalize_scores_clipped():
     assert NORMALIZE_CLIP_HIGH == 0.95
 
 
+def test_base_models_score_sign_auc_above_080():
+    """#15 ★ P0 — IF/LOF/OCSVM sklearn fallback 점수 부호 회귀.
+
+    부호가 올바르면 AUC≈1.0, 뒤집히면 AUC≈0.0 — 부호 버그를 결정적으로 잡는다.
+    이상치를 ±8 방향으로 랜덤 시프트해 LOF cluster 효과를 차단한다.
+    """
+    from sklearn.metrics import roc_auc_score
+
+    from pipelines.anomaly.pipeline import AnomalyPipeline
+
+    rng = np.random.default_rng(0)
+    n_normal, n_anom, n_feat = 950, 50, 4
+    X_normal = rng.normal(0, 1, (n_normal, n_feat))
+    X_anomaly = rng.normal(0, 1, (n_anom, n_feat)) + rng.choice([-8, 8], size=(n_anom, n_feat))
+    X = np.vstack([X_normal, X_anomaly])
+    y = np.concatenate([np.zeros(n_normal), np.ones(n_anom)])
+    idx = rng.permutation(n_normal + n_anom)
+    X, y = X[idx], y[idx]
+
+    pipe = AnomalyPipeline()
+    for model_name in ("IsolationForest", "LOF", "OneClassSVM"):
+        model = pipe.train(X, y, model_name, {})
+        scores = np.asarray(pipe.predict(model, X))
+        auc = roc_auc_score(y, scores)
+        assert auc > 0.8, f"{model_name} AUC={auc:.4f} < 0.8 (점수 부호 버그 의심)"
+
+
 # #11 (predicted_anomalies dtype) — ★ X-3/X-6 이전: per-row predicted_anomalies 는
 #   Day 7 evaluator 가 생성(state.eval_result). 검증은 ny-day7-test_evaluator.md 로 이전됨.
