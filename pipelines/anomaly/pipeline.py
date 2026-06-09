@@ -98,7 +98,8 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
     if model_name == "AutoEncoder":
         from pyod.models.auto_encoder import AutoEncoder
 
-        m = AutoEncoder(**params)
+        ae_params = {("num_epochs" if k == "epochs" else k): v for k, v in params.items()}
+        m = AutoEncoder(**ae_params)
         m.fit(X_train)
         try:
             m._ada_backend = "pyod"
