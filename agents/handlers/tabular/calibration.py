@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # 가드 상수
 _MIN_VAL_SAMPLES = 50
 _N_BINS = 10
-_N_CV_SPLITS = 5
+_N_CV_SPLITS = 3  # 5 → 3: K-fold CV 시간 40% 단축 (honest 평가 충분)
 _BASELINE_MODELS = {"Dummy", "LogisticRegression", "Ridge", "Lasso"}
 
 

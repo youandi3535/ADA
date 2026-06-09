@@ -928,41 +928,42 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("diagnostics_module_import_failed: %s", exc)
 
-    # Day 11++ (jh) — SHAP 본구현. summary + dependence 차트 + top_features 캐시.
-    # explain() 1회 실행 → state.category_extras["tabular"]["shap"] 에 저장 →
-    # insight 가 동일 캐시를 읽어 중복 계산 방지.
+    # Day 11++ (jh) — 분석 모듈 3종 fan-out 병렬 실행.
+    # 이전: SHAP → Calibration → Threshold sequential (≈ 50s)
+    # 이후: SHAP + Calibration 병렬, Threshold 는 Calibration 직후 (≈ 28s)
+    # threshold 가 calibration calibrator 를 활용하므로 의존성 보존.
+    from concurrent.futures import ThreadPoolExecutor
+
     try:
-        from agents.handlers.tabular import explainability as _shap_mod
+        from agents.handlers.tabular import calibration as _cal_mod, explainability as _shap_mod
 
-        shap_result = _shap_mod.explain(state)
-        # MinIO 차트 경로들을 charts 리스트에 push
-        if shap_result.get("shap_summary_path"):
-            charts.append(shap_result["shap_summary_path"])
-        for dep_path in shap_result.get("shap_dependence_paths") or []:
-            charts.append(dep_path)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_shap = executor.submit(_shap_mod.explain, state)
+            future_cal = executor.submit(_cal_mod.calibrate, state)
 
-        # category_extras 에 결과 저장 (insight 가 fallback 으로 읽음). state 는
-        # PipelineState (immutable) 라 dict 인스턴스 mutation 으로 캐시. dispatcher
-        # 가 정식 머지 안 해줘도 같은 호출 사이클 내에선 동작.
-        _cache_in_state(state, "shap", shap_result)
+            # SHAP 결과 회수
+            try:
+                shap_result = future_shap.result()
+                if shap_result.get("shap_summary_path"):
+                    charts.append(shap_result["shap_summary_path"])
+                for dep_path in shap_result.get("shap_dependence_paths") or []:
+                    charts.append(dep_path)
+                _cache_in_state(state, "shap", shap_result)
+            except Exception as exc:
+                logger.warning("shap_integration_failed: %s", exc)
+
+            # Calibration 결과 회수 (Threshold 가 이걸 의존하므로 먼저 캐시)
+            try:
+                cal_result = future_cal.result()
+                if cal_result.get("reliability_chart_path"):
+                    charts.append(cal_result["reliability_chart_path"])
+                _cache_in_state(state, "calibration", cal_result)
+            except Exception as exc:
+                logger.warning("calibration_integration_failed: %s", exc)
     except Exception as exc:
-        logger.warning("shap_integration_failed: %s", exc)
+        logger.warning("analysis_fanout_failed: %s", exc)
 
-    # Day 11++ (jh) — 확률 캘리브레이션. ECE 측정 + Platt/Isotonic 자동 선택 +
-    # reliability diagram. 이진분류만 동작, 다른 케이스는 graceful skip.
-    try:
-        from agents.handlers.tabular import calibration as _cal_mod
-
-        cal_result = _cal_mod.calibrate(state)
-        if cal_result.get("reliability_chart_path"):
-            charts.append(cal_result["reliability_chart_path"])
-        _cache_in_state(state, "calibration", cal_result)
-    except Exception as exc:
-        logger.warning("calibration_integration_failed: %s", exc)
-
-    # Day 11++ (jh) — Cost-sensitive threshold 4 전략 (F1-max/cost-min/Youden J/
-    # recall-min). 보정된 확률 위에서 expected_cost honest 산출. 표 자체는
-    # _build_threshold_strategy_table 가 캐시 읽어 그림.
+    # Threshold 는 calibration calibrator 활용 — sequential 로 cal 직후 실행.
     try:
         from agents.handlers.tabular import threshold_optimizer as _ts_mod
 
