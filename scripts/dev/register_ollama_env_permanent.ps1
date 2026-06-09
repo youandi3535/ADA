@@ -19,6 +19,9 @@ Set-OllamaVar "OLLAMA_KEEP_ALIVE"        "30m"
 Set-OllamaVar "OLLAMA_FLASH_ATTENTION"   "1"
 Set-OllamaVar "OLLAMA_MAX_LOADED_MODELS" "1"
 Set-OllamaVar "OLLAMA_NUM_PARALLEL"      "1"
+# HJ 2026-06-09 G1 단축 W — KV cache 양자화 (메모리 절반, 처리 약간 ↑).
+# f16(기본) → q8_0: 정확도 손실 거의 0, KV cache 메모리 50% 절감, prompt cache hit 률 ↑.
+Set-OllamaVar "OLLAMA_KV_CACHE_TYPE"     "q8_0"
 
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Yellow

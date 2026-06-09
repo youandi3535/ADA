@@ -18,52 +18,33 @@ from ada.core.lang_guard import looks_non_korean
 from ada.core.state import CATEGORIES, PipelineState
 from agents.gates._base_gate import BaseGate
 
+# HJ 2026-06-09 G1 단축 U — system_prompt 압축 (1500t → ~500t).
+# 핵심 규칙·enum·rationale 형식 모두 유지. 반복 강조·영어 중복 제거.
+# rationale 은 사용자 요구대로 6줄 형식 (스크린샷 기준).
 SYSTEM_PROMPT = (
-    "You are a data strategy consultant. "
-    "Given the user intent and data profile, propose exactly TWO distinct analysis DIRECTIONS. "
-    "Each direction must be a concrete ML/DL analysis approach — for example: "
-    "binary classification, multi-class classification, regression, time-series forecasting, "
-    "anomaly detection, clustering, ranking, survival analysis, etc. "
-    "The two options must be genuinely different in their analytical goal or methodology. "
-    "Do NOT propose EDA, data exploration, or visualization as a direction — "
-    "those are steps within an analysis, not a direction itself. "
-    "For Option 1 pick the highest-confidence direction; "
-    "for Option 2 pick the second-best direction that offers a meaningfully different angle. "
-    "Titles must be in Korean (concise, 10-20 chars). "
-    "Each rationale MUST follow this exact 3-line Korean format (use \\n to separate lines in JSON):\n"
-    "• 방식: <핵심 분석 접근법·알고리즘 포함, 15~30자>\n"
-    "• 이유: <이 데이터·맥락에 적합한 이유, 15~30자>\n"
-    "• 결과: <사용자가 얻을 인사이트·지표·산출물, 15~30자>\n"
-    "Rationale rules: each line = one sentence, noun-ending preferred. "
-    "All 3 lines combined under 100 chars. "
-    "FORBIDDEN in rationale: 전형적인·다양한·체계적으로·최적화되어 있어·~에 적합합니다 류 수식어, "
-    "row/column count re-mention, two sentences per line. "
-    "For EACH option, also determine:\n"
-    "  - category: one of tabular_ml | tabular_dl | timeseries | anomaly_detection\n"
-    "    (use anomaly_detection for clustering / unsupervised approaches)\n"
-    "  - approach: supervised_classification | supervised_regression | unsupervised_clustering"
-    " | anomaly_detection | time_series_forecasting | supervised_other\n"
-    "  - target_column: supervised target column name, or null for unsupervised\n"
-    "\n## 절대 강제 사항 (반드시 지킬 것)\n"
-    "각 옵션 객체에는 다음 키를 한 글자도 빠뜨리지 말 것:\n"
-    '  - "category": tabular_ml | tabular_dl | timeseries | anomaly_detection 중 하나\n'
-    '  - "approach": supervised_classification | supervised_regression\n'
-    "                | unsupervised_clustering | anomaly_detection\n"
-    "                | time_series_forecasting | supervised_other 중 하나\n"
-    '  - "target_column": 지도학습이면 컬럼명 문자열, 아니면 null\n\n'
-    'Option 1 과 Option 2 는 반드시 서로 다른 "category" 를 가져야 한다.\n'
-    "(같은 category 안의 세부 차이는 G2 단계에서 제시하지 말 것 — G3 에서 다룬다.)\n\n"
-    "이 두 옵션은 사용자가 G3 의 후보군을 결정하는 분기점이다.\n"
-    "사용자가 Option 1 (예: tabular_ml) 을 고르면 다음 게이트(G3) 에서는\n"
-    "오직 tabular_ml 안의 세부 방법론만 보게 된다. category 를 의도와 다르게 채우면\n"
-    "사용자 경험이 깨진다.\n"
-    "Reply with a JSON array of exactly 2 objects, no markdown:\n"
-    '[{"id": 1, "title": "한국어 제목", '
-    '"rationale": "• 방식: 지도학습 이진 분류 (XGBoost)\\n• 이유: 0/1 명확 타겟 + 구조화 피처\\n• 결과: 생존 예측 + 핵심 영향 변수 식별", '
-    '"score": 0.0-1.0, "category": "tabular_ml", "approach": "supervised_classification", "target_column": "col"}, '
-    '{"id": 2, "title": "한국어 제목", '
-    '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ...", '
-    '"score": 0.0-1.0, "category": "anomaly_detection", "approach": "unsupervised_clustering", "target_column": null}]'
+    "당신은 데이터 전략 컨설턴트. 사용자 의도+프로파일 보고 서로 다른 분석 방향 2개를 JSON 으로 제안.\n\n"
+    "[규칙]\n"
+    "- Option 1=가장 확신 높은 방향, Option 2=의미 있게 다른 두 번째 방향.\n"
+    "- 두 옵션은 반드시 서로 다른 category.\n"
+    "- EDA·시각화는 방향 아님 (단계임).\n"
+    "- 한국어만, 한자(漢字·汉字)·중국어 금지.\n"
+    "- 카드 1장당 rationale 6줄, 각 줄 12~18자:\n"
+    "  • 목표: <분석 목표>\n"
+    "  • 방법: <핵심 알고리즘>\n"
+    "  • 결과: <산출 인사이트>\n"
+    "  • 강점: <강점·차별성>\n"
+    "  • 적합: <적합 상황>\n"
+    "  • 기대: <기대 효과·지표>\n\n"
+    "[각 카드 필드]\n"
+    "  id, title(한국어 10~20자), rationale(위 6줄), score(0~1),\n"
+    "  category: tabular_ml|tabular_dl|timeseries|anomaly_detection,\n"
+    "  approach: supervised_classification|supervised_regression|unsupervised_clustering"
+    "|anomaly_detection|time_series_forecasting|supervised_other,\n"
+    "  target_column: 지도학습이면 컬럼명, 아니면 null.\n\n"
+    "JSON 배열 2개만 반환 (markdown·부연 금지):\n"
+    '[{"id":1,"title":"...","rationale":"• 목표: ...\\n• 방법: ...\\n• 결과: ...\\n• 강점: ...\\n• 적합: ...\\n• 기대: ...",'
+    '"score":0.85,"category":"tabular_ml","approach":"supervised_classification","target_column":"price"},'
+    '{"id":2,...,"category":"anomaly_detection","approach":"unsupervised_clustering","target_column":null}]'
 )
 
 # Retry 시 더 강한 한국어 지시
@@ -193,17 +174,43 @@ class AnalysisProposerAgent(BaseGate):
     n_proposals = 2  # LLM generates 2; option 3 is always _CUSTOM_OPTION
 
     async def _propose(self, state: PipelineState) -> list[dict[str, Any]]:
-        payload = {
-            "user_intent": state.user_intent or state.user_question or "",
-            "data_profile": state.data_profile,
+        # HJ 2026-06-09 G1 단축 V — user_payload 압축 (data_profile 전체 → 핵심 필드만).
+        # gate_direction 결정에 필요한 정보: 카테고리, target, 컬럼명, dtype, 분포, 도메인 요약.
+        # 입력 토큰 ~3000t → ~500t. 입력 처리 시간 -15~20s.
+        # sample_rows·numeric_stats 등 무거운 필드는 제외 (gate 결정에 영향 없음).
+        dp = state.data_profile or {}
+        domain = dp.get("domain_analysis") or {}
+        missing = dp.get("missing") or {}
+        # missing 5% 초과 컬럼만 (작은 잡음 제거)
+        missing_hi = {k: round(float(v), 3) for k, v in missing.items() if isinstance(v, (int, float)) and v > 0.05}
+
+        payload: dict[str, Any] = {
+            "user_intent": (state.user_intent or state.user_question or "")[:500],
             "category": state.category,
+            "target_column": state.target_column,
+            "rows": dp.get("rows"),
+            "cols": dp.get("cols"),
+            "columns": (dp.get("columns") or [])[:30],
+            "dtypes": {k: v for k, v in list((dp.get("dtypes") or {}).items())[:30]},
+            "target_dtype": dp.get("target_dtype"),
+            "class_distribution": dp.get("class_distribution"),
+            "date_col": dp.get("date_col"),
+            "missing_hi_cols": missing_hi,
+            "domain": domain.get("domain"),
+            "dataset_summary": (domain.get("dataset_summary") or "")[:300],
         }
+        # 안전 cap — 30MB·컬럼 100 worst case 도 4000자 이내로 들어옴
         user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                max_tokens=1500,
+                # HJ 2026-06-09 — G1 단축: 1500 → 900 → 800.
+                # 카드 2개 × rationale 6줄 (typical, worst 8줄). 실측 화면 카드 출력 ~550t.
+                # cap 800: 6줄 typical 마진 40%, 8줄 worst (~700t) 마진 14% — P99 cap 미도달.
+                # 잘려도 _safe_parse_json_array → _FALLBACK_DEFAULTS 폴백.
+                # 추가 단축: -8s.
+                max_tokens=800,
                 temperature=0.3,
                 json_mode=True,
             )

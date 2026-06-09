@@ -1,7 +1,10 @@
-﻿# ADA Docker 관련 명령어 (PowerShell)
+# ADA Docker 관련 명령어 (PowerShell)
 # VS Code 터미널에서 로드: . .\scripts\ada.ps1
 
 $ADA_ROOT = "C:\IT\workspace_python\ADA"
+
+# Python 3.10 우선 확보 — VS Code 익스텐션이 다른 인터프리터를 PATH 앞에 주입해도 3.10이 이김
+$env:PATH = "C:\IT\Python310\Scripts\;C:\IT\Python310\;" + $env:PATH
 
 # 가상환경 자동 활성화
 $_venv = "$ADA_ROOT\.venv\Scripts\Activate.ps1"

@@ -24,6 +24,18 @@ from ada.core.logger import bind_context, get_logger, log_agent_run
 from ada.core.state import REPORT_CONTEXT_STAGES, PipelineState
 from agents.personas import get_persona
 
+# HJ 2026-06-09 G1 단축 T — module-level stop 토큰 (Ollama 호출 공통).
+# γ streaming 호출에서도 동일 사용.
+_OLLAMA_STOP_TOKENS: list[str] = [
+    "```",  # markdown fence
+    "\n```",
+    "\n\n참고:",
+    "\n\n설명:",
+    "\n\nNote:",
+    "\n\nExplanation:",
+    "</s>",  # Qwen EOS
+]
+
 
 class BaseAgent(abc.ABC):
     """모든 에이전트의 공통 베이스."""
@@ -262,6 +274,7 @@ class BaseAgent(abc.ABC):
         temperature: float = 0.2,
         model_name: Optional[str] = None,
         json_mode: bool = False,
+        on_partial: Any = None,  # Callable[[str], None] — Ollama streaming 시만 활용
     ) -> str:
         prefix = f"{self.persona}\n\n" if self.persona else ""
         full_system = prefix + system_prompt
@@ -290,12 +303,22 @@ class BaseAgent(abc.ABC):
         use_ollama = getattr(settings, "use_ollama_for_analysis", False) and not force_anthropic
         try:
             if use_ollama:
-                text = await self._call_llm_ollama(
-                    system_prompt=full_system,
-                    user_prompt=user_prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
+                # HJ 2026-06-09 G1 단축 γ — on_partial 콜백이 있으면 streaming 사용
+                if on_partial is not None:
+                    text = await self._call_llm_ollama_streaming(
+                        system_prompt=full_system,
+                        user_prompt=user_prompt,
+                        on_partial=on_partial,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                else:
+                    text = await self._call_llm_ollama(
+                        system_prompt=full_system,
+                        user_prompt=user_prompt,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
             elif settings.anthropic_api_key:
                 text = await self._call_llm_api(
                     system_prompt=full_system,
@@ -328,6 +351,25 @@ class BaseAgent(abc.ABC):
 
         if json_mode:
             text = self._strip_md_fence(text)
+        # HJ 2026-06-09 — 한국어 강제 가드 (응답 수신 후 한자 자동 제거).
+        # with_korean_guard (system prompt) + 응답 단계 strip 의 이중 안전망.
+        # qwen2.5:7b 가 가끔 한자 섞어 응답하는 경우 (영문 컬럼명 입력 등) 대응.
+        # 한자 발견 시: 로그 경고 + strip_cjk_han 으로 한자만 제거 (한국어 문장 보존).
+        try:
+            from ada.core.lang_guard import contains_cjk_han, count_cjk_han, strip_cjk_han
+
+            if text and contains_cjk_han(text):
+                n_han = count_cjk_han(text)
+                self.logger.warning(
+                    "llm_response_contained_cjk_han_stripped",
+                    agent=self.__class__.__name__,
+                    han_count=n_han,
+                    sample=text[:100],
+                )
+                text = strip_cjk_han(text)
+        except Exception:  # noqa: BLE001
+            # 가드 실패해도 본 흐름 영향 없음
+            pass
         return text
 
     async def _start_llm_progress_interp(self, agent_key: str, job_id: str):
@@ -472,6 +514,7 @@ class BaseAgent(abc.ABC):
         base_url = settings.ollama_base_url.rstrip("/")
         model = settings.ollama_model_analysis
 
+        # HJ 2026-06-09 — G1 단축 T: stop 토큰은 module-level _OLLAMA_STOP_TOKENS 사용.
         payload = _json.dumps(
             {
                 "model": model,
@@ -486,6 +529,7 @@ class BaseAgent(abc.ABC):
                     "top_p": 0.9,
                     "num_gpu": getattr(settings, "ollama_num_gpu", 0),
                     "num_thread": getattr(settings, "ollama_num_thread", 8),
+                    "stop": _OLLAMA_STOP_TOKENS,
                 },
             },
             ensure_ascii=False,
@@ -532,6 +576,127 @@ class BaseAgent(abc.ABC):
                             "input_tokens_est": self._last_input_tokens,
                             "output_tokens_est": self._last_output_tokens,
                             "backend": "ollama",
+                        }
+                    )
+                except Exception:
+                    pass
+            try:
+                from ada.observability.metrics import record_llm_tokens
+
+                record_llm_tokens(model, self._last_input_tokens, self._last_output_tokens)
+            except Exception:
+                pass
+        return text
+
+    async def _call_llm_ollama_streaming(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        on_partial: Any,  # Callable[[str], None]
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> str:
+        """HJ 2026-06-09 G1 단축 γ — Ollama streaming 호출 + partial 콜백.
+
+        Ollama /api/chat 의 stream=true 로 토큰 단위 응답 받음. 매 chunk 도착 시점에
+        on_partial(누적 텍스트) 호출. 호출자는 누적 텍스트에서 필드 등장 시점을 감지해
+        Redis publish 등 수행. 최종 누적 텍스트 반환.
+
+        누수 방지:
+          - HTTP 연결: `with urlopen` 자동 close
+          - on_partial 예외: try/except 로 본 흐름 보호
+          - timeout 180s + breaker 패턴 미적용 (streaming 은 breaker 호환 안 함, 명시적 timeout)
+          - chunk 단위 메모리 누적: 도메인 응답 ~3KB, 안전
+        """
+        import json as _json
+        import urllib.error as _ue
+        import urllib.request as _ur
+
+        base_url = settings.ollama_base_url.rstrip("/")
+        model = settings.ollama_model_analysis
+        payload = _json.dumps(
+            {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "stream": True,
+                "options": {
+                    "num_predict": max_tokens,
+                    "temperature": temperature,
+                    "top_p": 0.9,
+                    "num_gpu": getattr(settings, "ollama_num_gpu", 0),
+                    "num_thread": getattr(settings, "ollama_num_thread", 8),
+                    "stop": _OLLAMA_STOP_TOKENS,
+                },
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+        from ada.core.langfuse_client import track_llm
+
+        def _do_stream() -> str:
+            accumulated = ""
+            req = _ur.Request(
+                f"{base_url}/api/chat",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with _ur.urlopen(req, timeout=180) as resp:
+                    for raw_line in resp:
+                        if not raw_line:
+                            continue
+                        line_str = raw_line.decode("utf-8", errors="replace").strip()
+                        if not line_str:
+                            continue
+                        try:
+                            chunk = _json.loads(line_str)
+                        except Exception:
+                            continue
+                        # Ollama chunk: {"message":{"role":"assistant","content":"..."},"done":false}
+                        msg = chunk.get("message") or {}
+                        content = msg.get("content", "") or ""
+                        if content:
+                            accumulated += content
+                            try:
+                                on_partial(accumulated)
+                            except Exception as cb_e:  # noqa: BLE001
+                                self.logger.warning("ollama_stream_callback_failed", error=str(cb_e))
+                        if chunk.get("done"):
+                            break
+            except (_ue.URLError, TimeoutError, OSError, ValueError) as e:
+                self.logger.error("ollama_stream_failed", error=str(e), model=model)
+                raise
+            return accumulated
+
+        with track_llm(
+            name=self.__class__.__name__,
+            model=model,
+            job_id=getattr(self, "_current_job_id", None),
+            agent=self.__class__.__name__,
+        ) as span:
+            try:
+                text = await asyncio.to_thread(_do_stream)
+            except Exception as e:
+                if span is not None and hasattr(span, "update"):
+                    try:
+                        span.update(level="ERROR", status_message=str(e)[:200])
+                    except Exception:
+                        pass
+                raise
+            self._last_input_tokens = (len(system_prompt) + len(user_prompt)) // 4
+            self._last_output_tokens = len(text) // 4
+            if span is not None and hasattr(span, "update"):
+                try:
+                    span.update(
+                        metadata={
+                            "input_tokens_est": self._last_input_tokens,
+                            "output_tokens_est": self._last_output_tokens,
+                            "backend": "ollama_streaming",
                         }
                     )
                 except Exception:

@@ -55,7 +55,10 @@ class Settings(BaseSettings):
 
     # ----- App -----
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
-    max_upload_size_mb: int = Field(default=100, validation_alias="MAX_UPLOAD_SIZE_MB")
+    # HJ 2026-06-09 — 100 → 30 인하.
+    # G1 단축 작업의 일부 — 30MB 상한 하에선 컬럼 수 상한 ~100, CPU 비용 ~25s 로
+    # max_tokens cap 고정·worst case 통제 가능. 분석 카테고리 4종 모두 정상 사용 가능.
+    max_upload_size_mb: int = Field(default=30, validation_alias="MAX_UPLOAD_SIZE_MB")
     # HJ 2026-06-08: 30 → 60 상향.
     # 30 분은 GTX 1060 3GB + qwen2.5:7b 환경에서 카테고리 4종 모두 빈번히 초과.
     # training_started_at 도입 (state.py, training_executor, training_monitor) 으로

@@ -72,30 +72,40 @@ class SupervisorAgent(BaseAgent):
                     next_agent="error_recovery",
                 )
 
-            # 4) LLM 태스크 분류 (선택, 시그널)
-            task = state.task or "auto"
-            try:
-                user_prompt = (
-                    f"category: {state.category}\n"
-                    f"target_column: {state.target_column}\n"
-                    f"user_question: {state.user_question or state.user_intent or ''}"
-                )
-                raw = await self._call_llm(
-                    system_prompt=SYSTEM_PROMPT,
-                    user_prompt=user_prompt,
-                    max_tokens=300,
-                    temperature=0.0,
-                    json_mode=True,
-                )
-                parsed = self._parse_json(raw)
-                task = parsed.get("task", task)
-            except Exception as e:
-                self.logger.warning("supervisor_llm_failed", error=str(e))
+            # 4) Task 분류 — 100% 룰 기반 (HJ 2026-06-09 G1 단축 I)
+            #    a. state.task 가 이미 명시되면 그대로 사용
+            #    b. category=anomaly_detection → task=anomaly_detection (1:1)
+            #    c. category=timeseries → task=forecasting (1:1)
+            #    d. tabular: 'auto' 그대로 두고 data_profiler 가 dtype·nunique 룰로 확정
+            #       (그 시점에 target dtype 이 명확해 룰 정확도 100%)
+            # → supervisor 의 LLM 호출 완전 제거. 단축 ~15s (tabular 케이스).
+            task = self._classify_task_rule(state)
 
             return state.with_update(
-                task=task,
+                task=task,  # "auto" 가능 — data_profiler 가 최종 결정
                 next_agent="intent_elicitor",
             )
+
+    @staticmethod
+    def _classify_task_rule(state: PipelineState) -> str:
+        """G1 단축 I — category 기반 룰 분류. 'auto' 반환 시 data_profiler 가 dtype 으로 확정.
+
+        반환값:
+          - 'classification' | 'regression' | 'forecasting' | 'anomaly_detection'
+          - 'auto' : tabular 케이스 — data_profiler 의 `_resolve_task_from_profile` 가
+                     target dtype·nunique 로 최종 결정 (LLM 호출 없음).
+        """
+        # a. 사용자가 명시한 task 그대로
+        if state.task and state.task not in ("auto", "", "unknown"):
+            return state.task
+        # b. anomaly_detection 카테고리 → task 1:1
+        if state.category == "anomaly_detection":
+            return "anomaly_detection"
+        # c. timeseries 카테고리 → forecasting 1:1
+        if state.category == "timeseries":
+            return "forecasting"
+        # d. tabular: target dtype 없으면 LLM 폴백
+        return "auto"
 
     # ------------------------------------------------------------------
     async def _lookup_error_kb(self, error_message: str) -> dict[str, Any] | None:
