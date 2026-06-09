@@ -38,6 +38,9 @@ SYSTEM_PROMPT = """당신은 정형 데이터 분석 인사이트 작성자입�
      예: 'multicollinear_heavy' → "수치형 피처 간 강한 상관 — VIF drop 적용"
  13. calibration.method 가 있고 ece_before > 0.02 면 "확률 캘리브레이션 X 방식으로
      ECE A → B 개선" 1문장. predict_proba 신뢰성을 사용자에게 명시.
+ 14. threshold_strategies.recommended 가 'cost_min' 이고 cost_matrix 가 입력됐으면
+     "FN/FP 비용 비대칭 반영 — cost-min 임계치 T 사용 시 expected_cost 가 F1-max
+     대비 N% 절감" 1문장. 비즈니스 의사결정 직결.
 
 형식 규칙:
   - 마크다운/리스트/이모지/번호 매김 금지 — 자연스러운 한국어 문장
@@ -134,6 +137,10 @@ def prompt_payload(state: Any) -> dict[str, Any]:
         # output_extras.calibrate() 가 category_extras 에 저장. LLM 이 인용해
         # "확률 80% 가 진짜 80% 의미인가" 에 답할 수 있게 함.
         "calibration": cat_extras.get("calibration") or {},
+
+        # Day 11++ (jh) — Cost-sensitive 임계치 4 전략 결과.
+        # cost_matrix 입력 시 expected_cost 정식 계산. 권고 전략 + 비교표.
+        "threshold_strategies": cat_extras.get("threshold_strategies") or {},
     }
 
 
@@ -285,6 +292,30 @@ def fallback(state: Any) -> str:
                 f"확률 캘리브레이션을 {cal['method']} 방식으로 적용해 ECE 가 "
                 f"{eb:.3f} → {ea:.3f} ({improved_pct:.0f}% 개선) 됐습니다 — "
                 f"예측 확률이 실제 양성 비율에 가까워졌습니다."
+            )
+
+    # 0-3) Cost-sensitive 임계치 권고 (cost_matrix 있을 때만)
+    #    Day 11++ — FN/FP 비용 비대칭 시 expected_cost 최소화 임계치 안내.
+    ts = cat_extras_local.get("threshold_strategies") or {}
+    strategies = ts.get("strategies") or {}
+    recommended_key = ts.get("recommended")
+    cost_matrix = ts.get("cost_matrix") or {}
+    if recommended_key and strategies.get(recommended_key) and cost_matrix:
+        s = strategies[recommended_key]
+        rec_thr = s.get("threshold")
+        rec_cost = s.get("expected_cost")
+        f1_max = strategies.get("f1_max") or {}
+        f1_cost = f1_max.get("expected_cost")
+        if (
+            rec_thr is not None and rec_cost is not None
+            and f1_cost is not None and f1_cost > 0
+            and recommended_key == "cost_min"
+        ):
+            savings_pct = (1 - rec_cost / f1_cost) * 100
+            parts.append(
+                f"비용 비대칭(FP={cost_matrix.get('fp')}, FN={cost_matrix.get('fn')}) 을 "
+                f"반영한 cost-min 임계치 {float(rec_thr):.2f} 사용 시 expected_cost 가 "
+                f"F1-max 대비 {savings_pct:.0f}% 절감됩니다."
             )
 
     # 1) CV 통계 우선, 없으면 단일 수치

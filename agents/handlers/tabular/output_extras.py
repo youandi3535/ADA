@@ -730,38 +730,93 @@ def _build_monitoring_kpi_table(state: Any) -> dict[str, Any] | None:
 def _build_threshold_strategy_table(state: Any) -> dict[str, Any] | None:
     """임계치 전략 비교 표 — F1-max / cost-min / Youden J / recall-min.
 
-    분류 task 만. cost_matrix 가 category_extras 에 있으면 cost-min 추정치 포함.
+    Day 11++ (jh) — 기존 simple 추정 자리를 threshold_optimizer 실측치로 교체.
+    category_extras["tabular"]["threshold_strategies"] 가 있으면 사용, 없으면
+    재계산 시도 (보정된 확률 위에서 honest expected_cost).
     """
     if not _is_classification(state):
         return None
 
-    bm = getattr(state, "best_model", None) or {}
-    metrics = bm.get("metrics") or {}
-    opt_thr = metrics.get("val_optimal_threshold")
-    f1_at_opt = metrics.get("val_f1_at_optimal_threshold")
-
-    if opt_thr is None:
-        return None
-
-    # cost_matrix 가 user 입력으로 들어오면 cost-min threshold 계산 가능
+    # threshold_optimizer 결과 (output_extras assets() 가 사전에 캐시했어야 함)
     cat_extras = _tab_extras(state)
-    cost_matrix = cat_extras.get("cost_matrix") or {}
-    fp_cost = float(cost_matrix.get("fp", 1.0))
-    fn_cost = float(cost_matrix.get("fn", 1.0))
-    # 간이 cost-min: FN cost 비율이 높으면 임계치 낮춤 (재현율↑)
-    cost_min_thr = round(max(0.05, min(0.95, float(opt_thr) - 0.1 * (fn_cost / max(fp_cost, 1e-9) - 1))), 2)
-    cost_min_str = f"{cost_min_thr:.2f}" if cost_matrix else "cost_matrix 입력 필요"
+    ts = cat_extras.get("threshold_strategies") or {}
+    strategies = ts.get("strategies") or {}
+
+    # 캐시 미존재 시 직접 호출 (graceful)
+    if not strategies:
+        try:
+            from agents.handlers.tabular import threshold_optimizer as _ts_mod
+
+            ts = _ts_mod.optimize_thresholds(state)
+            strategies = ts.get("strategies") or {}
+        except Exception as exc:
+            logger.warning("threshold_table_compute_failed: %s", exc)
+
+    if not strategies:
+        # 폴백: best_model.metrics 의 optimal_threshold 만 활용한 최소 표
+        bm = getattr(state, "best_model", None) or {}
+        metrics = bm.get("metrics") or {}
+        opt_thr = metrics.get("val_optimal_threshold")
+        if opt_thr is None:
+            return None
+        f1_at_opt = metrics.get("val_f1_at_optimal_threshold")
+        return {
+            "title": "임계치 전략 비교 (간이)",
+            "columns": ["전략", "임계치", "비고"],
+            "rows": [
+                ["기본 0.5", "0.50", "확률 보정 완료된 경우"],
+                ["F1-max", f"{float(opt_thr):.2f}",
+                 f"F1={float(f1_at_opt):.2f}" if f1_at_opt else "F1 최대"],
+                ["cost-min / Youden J / recall-min", "—", "threshold_optimizer 미실행"],
+            ],
+        }
+
+    cost_matrix = ts.get("cost_matrix") or {}
+    cost_str_suffix = (
+        f" (FP={cost_matrix.get('fp')}, FN={cost_matrix.get('fn')})"
+        if cost_matrix else " — cost_matrix 입력 시 활성화"
+    )
+    recommended = ts.get("recommended") or "f1_max"
+
+    def _fmt_strategy(name: str, s: dict | None, fields: list[str]) -> list[str]:
+        if not s:
+            return [name, "—", "산출 불가"]
+        cells = [name, f"{float(s.get('threshold', 0)):.2f}"]
+        details: list[str] = []
+        for f in fields:
+            v = s.get(f)
+            if v is None:
+                continue
+            if f == "expected_cost":
+                details.append(f"cost={float(v):.0f}")
+            elif f in ("f1", "precision", "recall", "tpr", "fpr", "j_statistic"):
+                details.append(f"{f}={float(v):.2f}")
+        if recommended == name.split()[0].lower().replace("-", "_"):
+            details.append("⭐ 권고")
+        cells.append(", ".join(details) if details else "—")
+        return cells
+
+    rows = [
+        ["기본 0.5", "0.50", "확률 보정 완료된 경우만 권장"],
+        _fmt_strategy("F1-max", strategies.get("f1_max"), ["f1", "precision", "recall", "expected_cost"]),
+        _fmt_strategy("Cost-min", strategies.get("cost_min"),
+                      ["expected_cost", "f1", "precision", "recall"]),
+        _fmt_strategy("Youden J", strategies.get("youden_j"), ["j_statistic", "tpr", "fpr"]),
+        _fmt_strategy(
+            f"Recall-min (≥{ts.get('target_recall', 0.9):.1f})",
+            strategies.get("recall_min"),
+            ["recall", "precision", "expected_cost"],
+        ),
+    ]
+
+    title = f"임계치 전략 비교{cost_str_suffix}"
+    if ts.get("calibrated"):
+        title += " · 보정된 확률 사용"
 
     return {
-        "title": "임계치 전략 비교",
-        "columns": ["전략", "임계치", "최적화 대상", "권고 상황"],
-        "rows": [
-            ["기본 0.5", "0.50", "—", "확률 보정 완료된 경우"],
-            ["F1-max", f"{float(opt_thr):.2f}", f"F1={float(f1_at_opt):.2f}" if f1_at_opt else "F1", "균형 데이터"],
-            ["cost-min", cost_min_str, "expected_cost", "FP/FN 비용 비대칭"],
-            ["Youden J", f"{float(opt_thr):.2f} (근사)", "TPR-FPR", "민감도·특이도 균형"],
-            ["recall-min (0.9)", "≤0.30 (추정)", "recall ≥ 0.9", "FN 절대 회피"],
-        ],
+        "title": title,
+        "columns": ["전략", "임계치", "주요 지표"],
+        "rows": rows,
     }
 
 
@@ -904,6 +959,19 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
         _cache_in_state(state, "calibration", cal_result)
     except Exception as exc:
         logger.warning("calibration_integration_failed: %s", exc)
+
+    # Day 11++ (jh) — Cost-sensitive threshold 4 전략 (F1-max/cost-min/Youden J/
+    # recall-min). 보정된 확률 위에서 expected_cost honest 산출. 표 자체는
+    # _build_threshold_strategy_table 가 캐시 읽어 그림.
+    try:
+        from agents.handlers.tabular import threshold_optimizer as _ts_mod
+
+        ts_result = _ts_mod.optimize_thresholds(state)
+        if ts_result.get("chart_path"):
+            charts.append(ts_result["chart_path"])
+        _cache_in_state(state, "threshold_strategies", ts_result)
+    except Exception as exc:
+        logger.warning("threshold_integration_failed: %s", exc)
 
     color = "#2563eb" if getattr(state, "category", "") == "tabular_ml" else "#0891b2"
     label = "정형 ML" if getattr(state, "category", "") == "tabular_ml" else "정형 DL"
