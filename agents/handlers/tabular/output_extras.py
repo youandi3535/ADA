@@ -935,8 +935,7 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     from concurrent.futures import ThreadPoolExecutor
 
     try:
-        from agents.handlers.tabular import calibration as _cal_mod
-        from agents.handlers.tabular import explainability as _shap_mod
+        from agents.handlers.tabular import calibration as _cal_mod, explainability as _shap_mod
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_shap = executor.submit(_shap_mod.explain, state)
