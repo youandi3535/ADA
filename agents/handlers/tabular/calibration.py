@@ -344,6 +344,7 @@ def apply_calibration(state: Any, raw_proba: Any) -> Any:
     if path:
         try:
             import io
+
             import joblib
 
             from tools.minio_tool import get_minio_client

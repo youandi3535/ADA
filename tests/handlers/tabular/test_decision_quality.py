@@ -25,11 +25,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from agents.handlers.tabular import archetype as archetype_mod
-from agents.handlers.tabular import profiler as profiler_mod
-from agents.handlers.tabular import proposer as proposer_mod
-from agents.handlers.tabular import selector as selector_mod
-
+from agents.handlers.tabular import (
+    archetype as archetype_mod,
+    profiler as profiler_mod,
+    proposer as proposer_mod,
+    selector as selector_mod,
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 시나리오 합성 데이터 생성기

@@ -203,7 +203,6 @@ def find_recall_min(
     cost_matrix: dict[str, float] | None = None,
 ) -> dict[str, Any] | None:
     """recall-min — recall ≥ target 조건에서 precision 최대. 달성 불가면 None."""
-    import numpy as np
 
     grid = _grid()
     feasible: list[tuple[float, dict[str, float]]] = []
@@ -397,7 +396,6 @@ def _build_strategy_chart(
     """PR curve 위에 4 전략 임계치 위치 마킹."""
     try:
         import matplotlib.pyplot as plt
-        import numpy as np
         from sklearn.metrics import precision_recall_curve
 
         from agents.handlers.common.shared import save_chart_to_minio

@@ -20,9 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from agents.handlers.tabular import calibration as cal_mod
-from agents.handlers.tabular import preprocessor as prep_mod
-
+from agents.handlers.tabular import calibration as cal_mod, preprocessor as prep_mod
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -69,6 +67,7 @@ class TestApplyCalibration:
     def test_calibrator_serialization_round_trip(self):
         """직렬화·복원이 동일 결과 반환 (apply_calibration 의 핵심 가정)."""
         import io
+
         import joblib
 
         # 보정기 학습
@@ -110,8 +109,9 @@ class TestPredictProbaCalibrated:
 
     def test_returns_raw_when_calibration_skip(self):
         """calibration.method 없으면 model.predict_proba 그대로."""
-        from pipelines.tabular_ml.pipeline import TabularMLPipeline
         from sklearn.ensemble import RandomForestClassifier
+
+        from pipelines.tabular_ml.pipeline import TabularMLPipeline
 
         rng = np.random.default_rng(7)
         X = rng.normal(0, 1, (100, 3))
@@ -129,8 +129,9 @@ class TestPredictProbaCalibrated:
 
     def test_multiclass_returns_full_matrix(self):
         """다중분류는 보정 안 적용 (현재 구현은 이진만), 전체 행렬 반환."""
-        from pipelines.tabular_ml.pipeline import TabularMLPipeline
         from sklearn.ensemble import RandomForestClassifier
+
+        from pipelines.tabular_ml.pipeline import TabularMLPipeline
 
         rng = np.random.default_rng(11)
         X = rng.normal(0, 1, (150, 3))

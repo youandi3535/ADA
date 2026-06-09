@@ -30,12 +30,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from agents.handlers.tabular import archetype as archetype_mod
-from agents.handlers.tabular import calibration as cal_mod
-from agents.handlers.tabular import explainability as shap_mod
-from agents.handlers.tabular import proposer as proposer_mod
-from agents.handlers.tabular import threshold_optimizer as ts_mod
-
+from agents.handlers.tabular import (
+    archetype as archetype_mod,
+    calibration as cal_mod,
+    explainability as shap_mod,
+    proposer as proposer_mod,
+    threshold_optimizer as ts_mod,
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
