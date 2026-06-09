@@ -39,6 +39,7 @@ def _ensure_matplotlib() -> Optional[Any]:
             import matplotlib.font_manager as fm
 
             ko_candidates = (
+                "Pretendard",  # HJ 2026-06-08: worker 도 Dockerfile fc-cache 등록 후 1순위
                 "NanumGothic",
                 "Noto Sans CJK KR",
                 "Noto Sans KR",

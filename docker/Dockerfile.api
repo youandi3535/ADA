@@ -10,9 +10,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# 런타임 의존: 헬스체크 curl, psycopg2 런타임(libpq5), HTTPS
+# 런타임 의존: 헬스체크 curl, psycopg2 런타임(libpq5), HTTPS, 서버 폰트 렌더링(fontconfig)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates libpq5 \
+        curl ca-certificates libpq5 fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -32,6 +32,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -r /app/requirements/api.txt
 
 COPY . /app
+
+# Pretendard 시스템 폰트 등록 (assets/ 가 COPY 된 이후 실행, root 권한)
+RUN mkdir -p /usr/local/share/fonts/pretendard \
+    && cp /app/assets/fonts/Pretendard-*.otf /usr/local/share/fonts/pretendard/ \
+    && fc-cache -f /usr/local/share/fonts/pretendard/
 
 # 비루트 사용자 (R-003) - UID 1001 통일
 # HuggingFace 모델 캐시 디렉토리 미리 생성 (ada 소유 → 컨테이너 내에서 모델 다운로드 가능)

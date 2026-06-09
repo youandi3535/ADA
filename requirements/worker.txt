@@ -87,3 +87,5 @@ spacy==3.7.4
 # 반드시 본 파일에 핀하여 모든 팀원·운영 환경에 동일 적용.
 python-pptx==0.6.23          # OUT-01  PPT 발표자료     (outputs/ppt.py)
 reportlab==4.2.0             # OUT-02  PDF 리포트       (outputs/pdf.py)
+cairosvg==2.7.1              # HJ 2026-06-08 — Lucide·unDraw SVG → PNG (tools/visual/svg_tool.py)
+# Stock image API 는 stdlib (urllib) 만 사용 — 추가 의존성 0

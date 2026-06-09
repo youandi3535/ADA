@@ -14,8 +14,14 @@ _UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
 # 방법론 제목/근거 텍스트에서 카테고리를 키워드로 추론하기 위한 사전.
 # 우선순위 높음 → 낮음 순서 (anomaly_detection 먼저 검사하지 않으면 timeseries 가 흡수).
 _CATEGORY_KEYWORDS_KO: list[tuple[str, list[str]]] = [
-    ("anomaly_detection", ["이상탐지", "anomaly", "outlier", "이상치", "OneClass", "Isolation"]),  # "이상" 제거 — "0.85 이상의" 등 일반 용어와 충돌
-    ("timeseries", ["시계열", "forecast", "time series", "temporal", "SARIMA", "Prophet", "LSTM"]),  # "예측" 제거 — 분류 타이틀에도 흔히 등장
+    (
+        "anomaly_detection",
+        ["이상탐지", "anomaly", "outlier", "이상치", "OneClass", "Isolation"],
+    ),  # "이상" 제거 — "0.85 이상의" 등 일반 용어와 충돌
+    (
+        "timeseries",
+        ["시계열", "forecast", "time series", "temporal", "SARIMA", "Prophet", "LSTM"],
+    ),  # "예측" 제거 — 분류 타이틀에도 흔히 등장
     ("tabular_dl", ["딥러닝", "deep learning", "transformer", "FTTransformer", "TabTransformer"]),
     ("tabular_ml", ["정형 ML", "XGBoost", "LightGBM", "RandomForest", "tree", "boosting"]),
 ]

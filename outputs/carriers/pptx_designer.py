@@ -17,9 +17,11 @@ from outputs.architect.plan import ReportPlan, SlideSpec
 from outputs.context.schema import ReportContext
 from outputs.style.visual_kit import (
     GLYPHS,
+    add_color_band,
     add_glyph,
     add_gradient_rect,
     add_horizontal_rule,
+    add_image_with_overlay,
     add_oval,
     add_rect,
     add_rounded_rect,
@@ -28,7 +30,42 @@ from outputs.style.visual_kit import (
     add_vertical_accent,
 )
 
-KO = "Malgun Gothic"
+# HJ 2026-06-08 — 시각 품질 도구 (graceful import, 자산 없어도 동작)
+try:
+    from tools.visual import (
+        get_cover_image,
+        get_font_name,
+        icon_for_slide,
+        illustration_for_slide,
+        recolor_undraw,
+        svg_to_png_recolored,
+    )
+
+    _VISUAL_TOOLS_AVAILABLE = True
+except ImportError:
+    _VISUAL_TOOLS_AVAILABLE = False
+
+    def get_cover_image(*args, **kwargs):
+        return None
+
+    def get_font_name(*args, **kwargs):
+        return "Malgun Gothic"
+
+    def icon_for_slide(*args, **kwargs):
+        return None
+
+    def illustration_for_slide(*args, **kwargs):
+        return None
+
+    def recolor_undraw(*args, **kwargs):
+        return None
+
+    def svg_to_png_recolored(*args, **kwargs):
+        return None
+
+
+# 한국어 폰트 — 자산 있으면 Pretendard, 없으면 Malgun Gothic
+KO = get_font_name()
 SLIDE_W = 33.867
 SLIDE_H = 19.05
 
@@ -70,61 +107,21 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     #   →  본문 (시장·문제·솔루션·기술·데이터·모델·성능...)
     #   →  성능 평가 직후: 가설 입증 인사이트
     #   →  임팩트·로드맵·리스크  →  마무리
-    # ExecSummary 는 정보 중복이므로 제외.
+    # ExecSummary 는 본문에 포함 (컨설팅 BLUF — 임원이 1장만 봐도 결론 명확).
     cover_sl = next((s for s in raw_slides if s.layout == "cover"), None)
     agenda_sl = next((s for s in raw_slides if s.layout == "agenda"), None)
     exec_sl = next((s for s in raw_slides if s.id == "exec_summary"), None)
 
-    try:
-        from outputs.architect.skeletons._common import (
-            build_hypothesis_slide,
-            build_insight_slide,
-        )
+    # ml_pitch (및 향후 카테고리별 skeleton) 가 hypothesis/insights_derived 슬라이드를
+    # 자기 plan 안에 포함. 디자이너가 추가 주입하지 않음 (중복 방지).
 
-        hyp_sl = build_hypothesis_slide(ctx)
-        insight_sl = build_insight_slide(ctx)
-    except Exception:
-        hyp_sl = None
-        insight_sl = None
-
-    # Build body list (excluding cover, agenda, exec_summary)
+    # Build body list (excluding cover, exec_summary, agenda — 본문 흐름만)
     body = [s for s in raw_slides if s not in (cover_sl, agenda_sl, exec_sl)]
 
-    # Find the post-evidence anchor: slide right AFTER which we want to drop insight_sl.
-    # Anchors are slides that conclude the analysis evidence — performance/comparison/interpretation.
-    POST_EVIDENCE_IDS = (
-        "e5_interpretation",
-        "e4_performance",  # SCQA
-        "i1_kpi",  # PSI
-        "result_interp",
-        "result_primary",  # Analysis Standard
-        "deep_2",
-        "deep_1",
-        "score_matrix",  # Comparative
-        "evidence_h2",
-        "evidence_h1",  # Diagnostic
-        "reason_trust",
-        "reason_perf",  # Pyramid
-    )
-    insert_idx = None
-    for anchor in POST_EVIDENCE_IDS:
-        for k, b in enumerate(body):
-            if b.id == anchor:
-                insert_idx = k + 1
-                break
-        if insert_idx is not None:
-            break
-    # Fallback: insert at 2/3 point of body
-    if insert_idx is None:
-        insert_idx = max(1, len(body) * 2 // 3)
-
-    body_with_insight = body[:insert_idx]
-    if insight_sl is not None:
-        body_with_insight.append(insight_sl)
-    body_with_insight.extend(body[insert_idx:])
-
-    # Final flat order: cover, agenda, hypothesis, body (with insight injected mid), closing(last)
-    slides_flat = [s for s in (cover_sl, agenda_sl, hyp_sl) if s is not None] + body_with_insight
+    # Final flat order: cover, exec_summary, agenda, body (skeleton-defined order), closing(last)
+    # ml_pitch 의 20장 구조: 1.cover / 2.exec / 3.agenda / 4~19.body / 20.closing
+    # 향후 카테고리별 skeleton 도 자기 plan 안에 hypothesis/insights 포함하므로 추가 주입 없음.
+    slides_flat = [s for s in (cover_sl, exec_sl, agenda_sl) if s is not None] + body
     # Force-rebuild Agenda's body_outline = exact list of body slide titles
     # (everything after Agenda except the very last closing slide).
     if agenda_sl is not None:
@@ -152,7 +149,7 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
 
     # Section dividers removed - they showed empty pages with only a chapter number.
     # Section transitions are signaled by the body slide header (left accent + title).
-    # Iterate REORDERED slides_flat (cover, agenda, exec, rest; no backup)
+    # Iterate REORDERED slides_flat (cover, exec, agenda, rest; no backup)
     total = len(slides_flat)
     page_num = 0
     for sl in slides_flat:
@@ -176,10 +173,39 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
 
 
 def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: str, secondary: str):
-    # Left gradient block (primary -> secondary)
-    add_gradient_rect(slide, 0, 0, SLIDE_W * 0.55, SLIDE_H, primary, secondary, angle=135)
-    # Right white area
-    add_rect(slide, SLIDE_W * 0.55, 0, SLIDE_W * 0.45, SLIDE_H, "#FFFFFF")
+    # HJ 2026-06-08 — Stock photo background 시도 → 실패 시 기존 grad 디자인 폴백
+    user_intent = getattr(ctx.meta, "user_intent", "") or ""
+    cover_photo = get_cover_image("cover", user_intent) if _VISUAL_TOOLS_AVAILABLE else None
+
+    if cover_photo and cover_photo.exists():
+        # 풀블리드 사진 + 좌측 그라데이션 overlay (반투명 primary→secondary)
+        try:
+            add_image_with_overlay(
+                slide,
+                0,
+                0,
+                SLIDE_W,
+                SLIDE_H,
+                str(cover_photo),
+                overlay_color=primary,
+                overlay_alpha_pct=70,  # 70% 투명도로 텍스트 가독성
+            )
+            # 좌측 강조 색 band
+            add_color_band(slide, 0, 0, SLIDE_W * 0.02, SLIDE_H, accent)
+        except Exception as _e:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("pptx_designer").warning(
+                "cover_stock_photo_failed",
+                extra={"error": f"{type(_e).__name__}: {_e}"},
+            )
+            cover_photo = None  # 그라데이션 폴백
+
+    if not cover_photo:
+        # 폴백: 기존 그라데이션 디자인
+        add_gradient_rect(slide, 0, 0, SLIDE_W * 0.55, SLIDE_H, primary, secondary, angle=135)
+        # Right white area
+        add_rect(slide, SLIDE_W * 0.55, 0, SLIDE_W * 0.45, SLIDE_H, "#FFFFFF")
     # Big decorative circles bottom-left for depth
     add_oval(slide, -4.0, SLIDE_H - 7.0, 10.0, 10.0, accent)
     # Smaller overlay circle
@@ -531,16 +557,54 @@ def _draw_slide(
 # ==============================================================
 
 
+def _icon_name_for_sl(sl: SlideSpec) -> str:
+    """SlideSpec 으로부터 Lucide 아이콘 이름 추출 (없으면 빈 문자열)."""
+    if not _VISUAL_TOOLS_AVAILABLE:
+        return ""
+    # icon_for_slide 는 Path 반환 — 이름만 뽑기
+    p = icon_for_slide(sl.id, getattr(sl, "role", "claim"))
+    if p is None:
+        return ""
+    return p.stem  # 파일명 (확장자 제외)
+
+
 def _draw_header(slide, sl: SlideSpec, primary: str, ink: str, muted: str):
-    """Top header band: left accent + title + so-what."""
+    """Top header band: left accent + Lucide icon (if available) + title + so-what."""
     # Left vertical accent bar
     add_vertical_accent(slide, 1.0, 1.0, 1.3, primary, w_cm=0.18)
-    # Title
+
+    # HJ 2026-06-08 — Lucide 아이콘 시도 (slide_id 기준), 실패 시 텍스트만
+    icon_offset = 0.0
+    if _VISUAL_TOOLS_AVAILABLE:
+        try:
+            icon_name = _icon_name_for_sl(sl)
+            icon_png = svg_to_png_recolored(icon_name, color=primary, size_px=128)
+            if icon_png and icon_png.exists():
+                from pptx.util import Cm
+
+                slide.shapes.add_picture(str(icon_png), Cm(1.4), Cm(0.85), width=Cm(1.0), height=Cm(1.0))
+                icon_offset = 1.2  # 아이콘 너비만큼 텍스트 우측 이동
+        except FileNotFoundError as _e:
+            # 캐시 PNG 가 권한 문제로 안 보임 (sandbox 한정) — 운영에선 거의 없음
+            import logging
+
+            logging.getLogger("pptx_designer").warning(
+                "icon_add_picture_filenotfound", extra={"slide_id": sl.id, "icon": _icon_name_for_sl(sl)}
+            )
+        except Exception as _e:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("pptx_designer").warning(
+                "icon_add_picture_failed",
+                extra={"slide_id": sl.id, "error": f"{type(_e).__name__}: {_e}"},
+            )
+
+    # Title (아이콘이 있으면 그 옆에)
     add_text_box(
         slide,
-        1.5,
+        1.5 + icon_offset,
         0.9,
-        SLIDE_W - 3.0,
+        SLIDE_W - 3.0 - icon_offset,
         1.0,
         sl.title_ko or sl.id,
         size_pt=24,

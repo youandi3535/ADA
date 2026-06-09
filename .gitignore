@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -8,13 +8,13 @@ pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 
-# 가상환경
+# 媛?곹솚寃?
 venv/
 .venv/
 env/
 ENV/
 
-# 환경변수 (절대 커밋 금지!)
+# ?섍꼍蹂??(?덈? 而ㅻ컠 湲덉?!)
 .env
 .env.local
 .env.*.local
@@ -33,11 +33,11 @@ secrets.json
 Thumbs.db
 desktop.ini
 
-# 로그
+# 濡쒓렇
 *.log
 logs/
 
-# 데이터 (큰 파일은 따로 관리)
+# ?곗씠??(???뚯씪? ?곕줈 愿由?
 data/
 *.csv
 *.parquet
@@ -47,28 +47,31 @@ data/
 # Jupyter
 .ipynb_checkpoints/
 
-# 빌드 산출물
+# 鍮뚮뱶 ?곗텧臾?
 dist/
 build/
 *.egg-info/
 
-# 데모 로컬 출력물 (scripts/demo 실행 결과)
+# ?곕え 濡쒖뺄 異쒕젰臾?(scripts/demo ?ㅽ뻾 寃곌낵)
 out/
 
-# Claude Code 로컬 설정 (개인 파일은 무시, 팀 공유 설정은 추적)
+# PPT ?쒓컖 ?먯궛 ?고???罹먯떆 (SVG?뭁NG 蹂??寃곌낵)
+assets/cache/
+
+# Claude Code 濡쒖뺄 ?ㅼ젙 (媛쒖씤 ?뚯씪? 臾댁떆, ? 怨듭쑀 ?ㅼ젙? 異붿쟻)
 .claude/*
 !.claude/settings.json
 
-# 나연 개인 문서 (팀 공유 x, 깃허브 업로드 절대 금지)
+# ?섏뿰 媛쒖씤 臾몄꽌 (? 怨듭쑀 x, 源껎뿀釉??낅줈???덈? 湲덉?)
 ny_docs/
 
-# MLflow 로컬 실험 데이터
+# MLflow 濡쒖뺄 ?ㅽ뿕 ?곗씠??
 mlruns/
 
-# CatBoost 학습 로그
+# CatBoost ?숈뒿 濡쒓렇
 catboost_info/
 
-# Claude Code 내부 probe 파일
+# Claude Code ?대? probe ?뚯씪
 _bashprobe_*.py
 _probe_*
 .env.vps

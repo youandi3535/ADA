@@ -6,6 +6,7 @@ regression     : val_r2 최대
 forecasting    : val_rmse 최소
 anomaly        : val_auc 최대
 """
+
 from __future__ import annotations
 
 from typing import Any

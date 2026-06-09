@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libmagic1 poppler-utils \
         ffmpeg \
         curl ca-certificates \
+        libcairo2 libpango-1.0-0 libgdk-pixbuf2.0-0 libffi-dev \
+        fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -46,6 +48,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -r /app/requirements/worker.txt
 
 COPY . /app
+
+# Pretendard 시스템 폰트 등록 — matplotlib 차트 한글 깨짐 방지
+# (Dockerfile.api 와 동일 패턴. assets/ COPY 후 실행, root 권한)
+RUN mkdir -p /usr/local/share/fonts/pretendard \
+    && cp /app/assets/fonts/Pretendard-*.otf /usr/local/share/fonts/pretendard/ \
+    && fc-cache -f /usr/local/share/fonts/pretendard/
 
 # HuggingFace 사전학습 가중치 캐시 (compose 볼륨 마운트 지점)
 RUN mkdir -p /app/models_cache && chmod 777 /app/models_cache
