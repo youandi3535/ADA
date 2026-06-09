@@ -155,7 +155,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 300M
+          memory: 1G
     networks: [ada-net]
 
   api:
@@ -318,9 +318,10 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      # - "443:443"           # Day17 TLS 인증서 발급 후 활성화
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - api
       - frontend
