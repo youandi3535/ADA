@@ -95,30 +95,37 @@ celery_app.conf.update(
 # (start, end) 폭은 그 agent 의 평균 작업 비중에 비례. 데이터 크기/방법에 따라 LLM 호출 시간이
 # 달라져도 phase 단위 4회 보고로 클라이언트가 시간 비례 화면을 그릴 수 있다.
 AGENT_PHASE_MAP: dict[str, tuple[int, int]] = {
-    "supervisor": (1, 3),
-    "intent_elicitor": (3, 5),
-    "data_profiler": (5, 12),
-    "schema_validator": (12, 14),
-    "gate_direction": (14, 18),
-    "eda_agent": (18, 28),
-    "gate_methodology": (28, 33),
-    "preprocessing_strategist": (33, 38),
-    "feature_engineer": (38, 43),
-    "preprocessing_choice": (43, 45),
-    "gate_model_strategy": (45, 50),
-    "model_selection": (50, 55),
-    "hyperparameter_tuner": (55, 65),
-    "training_executor": (65, 75),
-    "training_monitor": (75, 78),
-    "metrics_aggregator": (78, 82),
-    "gate_best_model": (82, 85),
-    "fine_tune_executor": (85, 88),
-    "eval_agent": (88, 92),
-    "explainability": (92, 95),
-    "insight": (95, 97),
-    "gate_outputs": (97, 98),
-    "report_composer": (98, 99),
-    "self_learning_dispatch": (99, 100),
+    # G1 (0~18, 폭 18) — gate_direction(AnalysisProposerAgent) 이 LLM 호출 무거워 압도적
+    "supervisor": (0, 1),  # ~1초
+    "intent_elicitor": (1, 2),  # ~5초
+    "data_profiler": (2, 6),  # ~30초
+    "schema_validator": (6, 7),  # ~5초
+    "gate_direction": (7, 18),  # ~90초 ← G1 시간의 절반 이상
+    # G2 (18~33, 폭 15)
+    "eda_agent": (18, 30),  # ~60초
+    "gate_methodology": (30, 33),  # ~15초
+    # G3 (33~50, 폭 17)
+    "preprocessing_strategist": (33, 40),  # ~30초
+    "feature_engineer": (40, 45),  # ~20초
+    "preprocessing_choice": (45, 46),  # ~5초
+    "gate_model_strategy": (46, 50),  # ~20초
+    # G4 (50~85, 폭 35) — 학습 단계, 가장 무거움
+    "model_selection": (50, 52),  # ~15초
+    "hyperparameter_tuner": (52, 64),  # ~120초
+    "training_executor": (64, 82),  # ~180초 ← G4 핵심
+    "training_monitor": (82, 83),  # ~10초
+    "metrics_aggregator": (83, 84),  # ~10초
+    "gate_best_model": (84, 85),  # ~15초
+    # G5 (85~98, 폭 13)
+    "fine_tune_executor": (85, 90),  # ~60초
+    "eval_agent": (90, 93),  # ~30초
+    "explainability": (93, 95),  # ~30초
+    "insight": (95, 97),  # ~20초
+    "gate_outputs": (97, 98),  # ~10초
+    # G6 (98~100, 폭 2)
+    "report_composer": (98, 99),  # ~30초
+    "self_learning_dispatch": (99, 100),  # ~5초
+    # 특수 — 변경 없음
     "error_recovery": (50, 50),
 }
 # 호환: 기존 호출자들이 참조하는 AGENT_PROGRESS_MAP — 각 agent 의 end 값으로 자동 생성.
@@ -160,6 +167,155 @@ def _get_redis() -> Any:
     return redis.Redis.from_url(settings.redis_url)
 
 
+# ---------------------------------------------------------------------------
+# 단계별 ETA — DB 실측(agent_runs.duration_ms) 기반 (사용자 1순위 — 환경별 정확도)
+# ---------------------------------------------------------------------------
+# agents/base.py 가 매 agent 실행마다 duration_ms 를 agent_runs 에 기록한다.
+# 이 실측값은 LLM·CPU·네트워크 같은 환경별 차이를 이미 반영한 진짜 ETA 소스 —
+# 별도의 EWMA bucket 학습이나 LLM ping 보정 계층 없이 이것만으로 충분하다.
+STAGE_AGENTS: dict[str, list[str]] = {
+    "G1": ["SupervisorAgent", "IntentElicitorAgent", "DataProfilerAgent",
+           "SchemaValidatorAgent", "AnalysisProposerAgent"],
+    "G2": ["EDAAgent", "MethodologyProposerAgent"],
+    "G3": ["PreprocessingStrategistAgent", "FeatureEngineerAgent",
+           "PreprocessingChoiceAgent", "ModelStrategyProposerAgent"],
+    "G4": ["ModelSelectionAgent", "HyperparameterTunerAgent", "TrainingExecutorAgent",
+           "TrainingMonitorAgent", "MetricsAggregatorAgent", "ModelComparisonReporterAgent"],
+    "G5": ["FineTuneExecutorAgent", "EvalAgent", "ExplainabilityAgent",
+           "InsightAgent", "OutputTypeSelectorAgent"],
+    "G6": ["ReportComposerAgent", "SelfLearningAgent"],
+}
+
+_STAGE_AVG_CACHE_TTL = 300  # Redis 캐시 5분 — DB 부하 경감
+_STAGE_AVG_LOOKBACK_DAYS = 30
+
+
+async def _stage_avg_duration_sec(stage: str) -> int | None:
+    """단계 구성 agent 들의 최근 30일 평균 duration_ms 합산(초) — ETA 1순위 소스.
+
+    agent_runs 에 단계 구성 agent 의 절반을 초과하는 실측 데이터가 있을 때만 값을 반환한다.
+    그렇지 않으면 None — 호출자(``_stage_eta_now``)가 ``estimate_stage_eta`` 폴백을 사용.
+    캐시: ``ada:stage_avg:{stage}`` (TTL 5분, Redis).
+    """
+    r = _get_redis()
+    cache_key = f"ada:stage_avg:{stage}"
+    try:
+        cached = r.get(cache_key)
+        if cached is not None:
+            return json.loads(cached).get("sec")
+    except Exception:  # noqa: BLE001
+        pass
+
+    agents = STAGE_AGENTS.get(stage, [])
+    if not agents:
+        return None
+    try:
+        from datetime import datetime, timedelta, timezone  # noqa: WPS433
+
+        from sqlalchemy import func, select  # noqa: WPS433
+
+        from ada.db.models import AgentRun  # noqa: WPS433
+        from ada.db.session import AsyncSessionLocal  # noqa: WPS433
+
+        since = datetime.now(timezone.utc) - timedelta(days=_STAGE_AVG_LOOKBACK_DAYS)
+
+        async def _query() -> dict[str, float]:
+            async with AsyncSessionLocal() as session:
+                rows = await session.execute(
+                    select(AgentRun.agent_name, func.avg(AgentRun.duration_ms))
+                    .where(
+                        AgentRun.agent_name.in_(agents),
+                        AgentRun.status == "completed",
+                        AgentRun.created_at >= since,
+                    )
+                    .group_by(AgentRun.agent_name)
+                )
+                return {name: float(avg_ms) for name, avg_ms in rows.all() if avg_ms is not None}
+
+        averages = await _query()
+    except Exception as e:  # noqa: BLE001
+        log.warning("stage_avg_duration_query_failed", stage=stage, error=str(e))
+        return None
+
+    # 절반 이상 비어있으면(=실측 보유 agent 가 절반 이하) 신뢰 불가 — 폴백 baseline 사용
+    if len(averages) * 2 <= len(agents):
+        return None
+
+    total_sec = int(round(sum(averages.values()) / 1000))
+    log.info(
+        "stage_avg_duration",
+        stage=stage,
+        agents_known=len(averages),
+        agents_total=len(agents),
+        sec=total_sec,
+    )
+    try:
+        r.setex(cache_key, _STAGE_AVG_CACHE_TTL, json.dumps({"sec": total_sec}))
+    except Exception:  # noqa: BLE001
+        pass
+    return total_sec
+
+
+def estimate_stage_eta(
+    stage: str,
+    file_size_bytes: int | None = None,
+    n_rows: int | None = None,
+    n_cols: int | None = None,
+    text_col_ratio: float | None = None,
+    missing_ratio: float | None = None,
+) -> int:
+    """단계별 ETA(초) 폴백 baseline — file_size + rows + cols + dtype 가중치.
+
+    ``_stage_eta_now`` 가 DB 실측(``_stage_avg_duration_sec``) 을 우선 사용하고,
+    학습 데이터가 부족할 때만(예: 운영 초기) 이 함수로 추정한다.
+    text_col_ratio·missing_ratio 가 주어지면 더 정밀해진다.
+    """
+    mb = (file_size_bytes or 0) / (1024 * 1024)
+    rows = n_rows or 0
+    cols = n_cols or 0
+    txt = max(0.0, min(1.0, float(text_col_ratio or 0.0)))
+    miss = max(0.0, min(1.0, float(missing_ratio or 0.0)))
+    if stage == "G1":  # supervisor + intent + profile + schema + gate_direction
+        base = 30
+        if mb > 5:
+            base += 15
+        if mb > 50:
+            base += 30
+        if mb > 200:
+            base += 60
+        return base
+    if stage == "G2":  # EDA + gate_methodology
+        base = 45
+        if rows > 100_000:
+            base += 20
+        if cols > 50:
+            base += 10
+        base += int(txt * 15)  # 텍스트 컬럼 많을수록 EDA 길어짐
+        return base
+    if stage == "G3":  # preprocessing + feature_engineer + preprocessing_choice + gate
+        base = 60
+        if cols > 20:
+            base += min(cols, 200)  # 컬럼당 ~1초, 200초 cap
+        base += int(miss * 30)  # 결측 처리 시간
+        base += int(txt * 20)   # 텍스트 인코딩 시간
+        return base
+    if stage == "G4":  # model_selection + tuning + training + monitor + metrics + gate
+        base = 180
+        if rows > 10_000:
+            base += 60
+        if rows > 100_000:
+            base += 120
+        return base
+    if stage == "G5":  # fine_tune + eval + explain + insight + gate_outputs
+        base = 60
+        if rows > 50_000:
+            base += 30
+        return base
+    if stage == "G6":  # report_composer + self_learning_dispatch
+        return 45
+    return 60
+
+
 def publish_progress(
     job_id: str,
     current_agent: str,
@@ -168,6 +324,7 @@ def publish_progress(
     pipeline_status: str | None = None,
     error: str | None = None,
     progress: int | None = None,
+    eta_sec: int | None = None,
 ) -> None:
     """대시보드 SSE / WebSocket 채널.
 
@@ -178,6 +335,9 @@ def publish_progress(
     progress: 명시 진행률(0~100). 지정 시 그 값으로 발행, None 이면 AGENT_PROGRESS_MAP
         의 agent 별 end 값으로 폴백(기존 호환). BaseAgent 는 phase 단위로 이 인자를
         채워 호출해 시간 비례 진행을 구현한다.
+    eta_sec: 단계 baseline 잔여 시간(초). 단계 시작 시점에 ``_stage_eta_now`` 로 계산해
+        publish — 프론트는 이 값을 (현재시각 - eta_base_ts) 만큼 감소시켜 표시한다.
+        None 이면 ETA 필드를 갱신하지 않는다(보간 publish).
     """
     r = _get_redis()
     pct = progress if progress is not None else AGENT_PROGRESS_MAP.get(current_agent, 0)
@@ -188,6 +348,9 @@ def publish_progress(
         "ts": time.time(),
         "message": message,
     }
+    if eta_sec is not None:
+        payload["eta_sec"] = max(0, int(eta_sec))
+        payload["eta_base_ts"] = time.time()
     if pipeline_status:
         payload["status"] = pipeline_status
     if error:
@@ -269,11 +432,82 @@ def _get_callbacks() -> list:
     return callbacks
 
 
+def _get_file_meta(file_id: str | None) -> tuple[int | None, str | None]:
+    """업로드 메타 — (size_bytes, extension). 캐시 키는 file_id.
+
+    캐시(`ada:file_meta:{file_id}`) 우선, 없으면 DB 1회 조회 후 캐시 (TTL 6시간).
+    """
+    if not file_id:
+        return None, None
+    r = _get_redis()
+    ck = f"ada:file_meta:{file_id}"
+    try:
+        cached = r.get(ck)
+        if cached:
+            data = json.loads(cached)
+            return data.get("size"), data.get("ext")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from pathlib import Path as _Path  # noqa: WPS433
+
+        from sqlalchemy import select  # noqa: WPS433
+
+        from ada.db.models import Upload  # noqa: WPS433
+        from ada.db.session import AsyncSessionLocal  # noqa: WPS433
+
+        async def _lookup() -> tuple[int | None, str | None]:
+            async with AsyncSessionLocal() as session:
+                row = await session.scalar(select(Upload).where(Upload.file_id == file_id))
+                if row is None:
+                    return None, None
+                size = int(row.size_bytes or 0) if row.size_bytes else None
+                ext = _Path(row.filename or "").suffix.lower() or None
+                return size, ext
+
+        size, ext = asyncio.run(_lookup())
+        try:
+            r.setex(ck, 6 * 3600, json.dumps({"size": size, "ext": ext}))
+        except Exception:  # noqa: BLE001
+            pass
+        return size, ext
+    except Exception as e:  # noqa: BLE001
+        log.warning("file_meta_lookup_failed", error=str(e))
+        return None, None
+
+
+async def _stage_eta_now(
+    stage: str,
+    file_size_bytes: int | None = None,
+    n_rows: int | None = None,
+    n_cols: int | None = None,
+    text_col_ratio: float | None = None,
+    missing_ratio: float | None = None,
+) -> int:
+    """단계 ETA(초) — DB 실측 평균(``_stage_avg_duration_sec``) 우선, 부족하면 baseline 폴백."""
+    learned = await _stage_avg_duration_sec(stage)
+    if learned is not None:
+        return learned
+    return estimate_stage_eta(
+        stage,
+        file_size_bytes=file_size_bytes,
+        n_rows=n_rows,
+        n_cols=n_cols,
+        text_col_ratio=text_col_ratio,
+        missing_ratio=missing_ratio,
+    )
+
+
 @celery_app.task(bind=True, name="ada.pipeline.run", max_retries=3)
 def run_pipeline_task(self: Any, job_id: str, initial_state: dict) -> dict:
-    """파이프라인 시작 — 첫 인터럽트(G2)까지 진행 후 대기 상태로 반환."""
+    """파이프라인 시작 — 첫 인터럽트(G2)까지 진행 후 대기 상태로 반환.
+
+    ETA: agent_runs 실측 평균(``_stage_eta_now``) 우선, 학습 데이터 부족 시
+    file_size + 확장자 기반 baseline 으로 폴백 — 첫 publish 에 사용.
+    """
     log.info("pipeline_start", job_id=job_id)
-    publish_progress(job_id, "supervisor", "파이프라인 시작")
+    file_id = initial_state.get("file_id") if isinstance(initial_state, dict) else None
+    file_size, _ext = _get_file_meta(file_id)
 
     # Pydantic 검증 실패 시 Job 이 "pending" 으로 영원히 남지 않도록 보호
     try:
@@ -295,7 +529,18 @@ def run_pipeline_task(self: Any, job_id: str, initial_state: dict) -> dict:
         publish_progress(job_id, "error_recovery", err_msg, pipeline_status="failed", error=err_msg)
         return {"status": "failed", "error": err_msg}
 
-    return asyncio.run(_invoke(job_id=job_id, state=state, resume=False))
+    async def _start() -> dict:
+        # G1 baseline — DB 실측 평균 우선, 부족하면 file_size + 확장자 기반 baseline.
+        # _invoke 와 동일 이벤트 루프에서 계산해야 DB 커넥션 풀이 루프 간에 어긋나지 않는다.
+        g1_eta = None
+        try:
+            g1_eta = await _stage_eta_now("G1", file_size_bytes=file_size)
+        except Exception as e:  # noqa: BLE001
+            log.warning("g1_baseline_failed", error=str(e))
+        publish_progress(job_id, "supervisor", "파이프라인 시작", eta_sec=g1_eta)
+        return await _invoke(job_id=job_id, state=state, resume=False)
+
+    return asyncio.run(_start())
 
 
 @celery_app.task(bind=True, name="ada.pipeline.resume", max_retries=3)
@@ -484,9 +729,53 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
 
         gate_code = gate_response.get("gate", "G?")
 
+        # 다음 단계 baseline ETA — 사용자가 G{n} 응답하면 G{n+1} 단계로 진입.
+        # DB 실측 평균(_stage_eta_now) 우선, 부족하면 full_state 의 rows/cols + dtype 기반 baseline.
+        next_stage = None
+        if gate_code in ("G2", "G3", "G4", "G5"):
+            next_stage = f"G{int(gate_code[1]) + 1}"
+        elif gate_code == "G6":
+            next_stage = "G6"
+        next_eta = None
+        if next_stage:
+            try:
+                _fs_raw = _get_redis().get(f"ada:full_state:{job_id}")
+                _fs = json.loads(_fs_raw) if _fs_raw else {}
+                _prof = (_fs.get("profile") or {}) if isinstance(_fs, dict) else {}
+                _shape = (_prof.get("shape") or {}) if isinstance(_prof, dict) else {}
+                _rows = int(_shape.get("rows") or 0) or None
+                _cols = int(_shape.get("cols") or 0) or None
+                # dtype 분포 — profile.dtypes 가 {col: dtype_str} 형태라고 가정. 없으면 폴백 0.
+                _dtypes = _prof.get("dtypes") if isinstance(_prof, dict) else None
+                _text_ratio = None
+                if isinstance(_dtypes, dict) and _dtypes:
+                    _text_n = sum(1 for v in _dtypes.values() if isinstance(v, str) and ("object" in v or "string" in v))
+                    _text_ratio = _text_n / max(1, len(_dtypes))
+                _missing_ratio = _prof.get("missing_ratio") if isinstance(_prof, dict) else None
+                _file_id = _fs.get("file_id") if isinstance(_fs, dict) else None
+                _next_size: int | None = None
+                if _file_id:
+                    _next_size, _ = _get_file_meta(_file_id)
+                next_eta = await _stage_eta_now(
+                    next_stage,
+                    file_size_bytes=_next_size,
+                    n_rows=_rows,
+                    n_cols=_cols,
+                    text_col_ratio=_text_ratio,
+                    missing_ratio=_missing_ratio,
+                )
+            except Exception as _e:  # noqa: BLE001
+                log.warning("resume_baseline_eta_failed", error=str(_e))
+
         # 재개 시 이전 실행의 stale progress·agent 를 덮어씀.
         # (예: G3 응답 후 재개 시 이전 97%·하이퍼파라미터 튜닝이 G4 로딩 화면에 잔존하는 버그 방지)
-        publish_progress(job_id, "supervisor", "파이프라인 재개", progress=GATE_WAIT_PROGRESS.get(gate_code, 0))
+        publish_progress(
+            job_id,
+            "supervisor",
+            "파이프라인 재개",
+            progress=GATE_WAIT_PROGRESS.get(gate_code, 0),
+            eta_sec=next_eta,
+        )
 
         # full_state 를 Redis 에서 먼저 로드 (aupdate_state partial 누락 방지)
         full_state_dict: dict = {}

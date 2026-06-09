@@ -380,7 +380,14 @@ class AnomalyPipeline(BasePipeline):
         모델 종류별 분기(_get_anomaly_scores 의 IsolationForest_sklearn 등)를
         정확히 수행할 수 있게 한다.
         """
-        with self._start_mlflow_run(tags={"model": model_name}):
+        from contextlib import nullcontext
+
+        try:
+            mlflow_ctx: Any = self._start_mlflow_run(tags={"model": model_name})
+        except Exception:
+            mlflow_ctx = nullcontext()
+
+        with mlflow_ctx:
             try:
                 import mlflow  # noqa: WPS433
 
