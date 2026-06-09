@@ -33,19 +33,72 @@ logger = structlog.get_logger(__name__)
 
 
 def _detect_date_column(df: Any) -> Optional[str]:
-    """datetime64 dtype 우선, 이름 패턴(date/time/ts/timestamp) 차선."""
+    """datetime64 dtype 우선 → 컬럼명 패턴(영어+한국어) 차선 → 내용 기반 최후."""
     import pandas as pd
 
+    # 1순위: 이미 datetime64 dtype
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             return col
+
+    # 2순위: 컬럼명 패턴 — 영어 + 한국어 날짜 관련어
+    _DATE_NAME_PAT = re.compile(
+        r"(date|time|ts|timestamp|datetime|year|month|week|day|period|"
+        r"시점|날짜|일시|기간|연월|시간|일자|년월|연도|기준일|측정일|조사일"
+        r"|발생일|등록일|작성일|기준연월|기준년월|년월일|일련번호|ym|ymd)",
+        re.IGNORECASE,
+    )
     for col in df.columns:
-        if re.search(r"(date|time|ts|timestamp)", col, re.IGNORECASE):
+        if _DATE_NAME_PAT.search(str(col)):
             try:
                 pd.to_datetime(df[col].head(100), errors="raise")
                 return col
             except Exception:
+                # 표준 파싱 실패 시 한국/통계청 형식 재시도 (예: "2013. 01", "2023년 1월")
+                for fmt in ("%Y. %m", "%Y.%m", "%Y-%m", "%Y/%m", "%Y년 %m월", "%Y년%m월", "%Y%m"):
+                    try:
+                        parsed = pd.to_datetime(df[col].head(10), format=fmt, errors="coerce")
+                        if parsed.notna().mean() >= 0.8:
+                            return col
+                    except Exception:
+                        continue
+
+    # 3순위: 내용 기반 — object 컬럼 중 다양한 날짜 형식으로 80% 이상 파싱 성공
+    _CONTENT_FORMATS = [
+        None,  # pandas 자동 추론
+        "%Y. %m",
+        "%Y.%m",
+        "%Y-%m",
+        "%Y/%m",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y.%m.%d",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y년 %m월",
+        "%Y년%m월",
+        "%Y%m",
+        "%Y년 %m월 %d일",
+        "%Y-%m-%dT%H:%M:%S",
+    ]
+    for col in df.columns:
+        if df[col].dtype != object:
+            continue
+        sample = df[col].dropna().head(20)
+        if len(sample) == 0:
+            continue
+        for fmt in _CONTENT_FORMATS:
+            try:
+                if fmt is None:
+                    parsed = pd.to_datetime(sample, errors="coerce", infer_datetime_format=True)
+                else:
+                    parsed = pd.to_datetime(sample, format=fmt, errors="coerce")
+                if parsed.notna().mean() >= 0.8:
+                    return col
+            except Exception:
                 continue
+
     return None
 
 
