@@ -98,7 +98,8 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
     if model_name == "AutoEncoder":
         from pyod.models.auto_encoder import AutoEncoder
 
-        ae_params = {("num_epochs" if k == "epochs" else k): v for k, v in params.items()}
+        _ae_key_map = {"epochs": "epoch_num", "hidden_neurons": "hidden_neuron_list"}
+        ae_params = {_ae_key_map.get(k, k): v for k, v in params.items()}
         m = AutoEncoder(**ae_params)
         m.fit(X_train)
         try:
