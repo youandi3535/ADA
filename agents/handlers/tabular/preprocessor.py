@@ -1966,11 +1966,73 @@ def plan(state: Any) -> list[dict[str, Any]]:
 
     steps.extend(catalog_steps)
 
+    # ── honest gap closure (Day 11++) — archetype 룰 반영 ────────────────────
+    # archetype.EXPECTED_DECISIONS 의 preprocessing_must / preprocessing_should_not
+    # 가 그동안 룰만 있고 실제 plan 에 영향 없었음. 여기서 후처리 적용:
+    #   - preprocessing_should_not: plan 에서 해당 transform 제거
+    #   - preprocessing_must: plan 에 없으면 추가 (catalog 미적용된 강제 룰)
+    steps = _apply_archetype_rules_to_plan(steps, profile)
+
     # Store log for debugging
     if hasattr(state, "category_extras"):
         pass  # log stored in apply()
 
     return steps
+
+
+def _apply_archetype_rules_to_plan(
+    steps: list[dict[str, Any]],
+    profile: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """archetype.EXPECTED_DECISIONS 룰을 plan 에 반영.
+
+    동작:
+      1. profile["archetype"]["expected"] 의 preprocessing_should_not 목록에 있는
+         step name 은 plan 에서 제거.
+      2. preprocessing_must 목록에 있는 step name 이 plan 에 없으면
+         needs_review=True 인 placeholder step 으로 추가 (사용자 검토 요청).
+
+    이름 매칭은 step["name"] 정확 일치. archetype 룰에 적힌 이름이 catalog 의
+    실제 transform name 과 다르면 무시 (예: "leakage_column_drop" 은 catalog 에
+    없으므로 placeholder 로만 추가됨).
+
+    confidence 기반 약화: primary_confidence < 0.5 면 룰 무시 (경계선 매칭).
+    """
+    archetype_info = profile.get("archetype") or {}
+    expected = archetype_info.get("expected") or {}
+    conf = float(archetype_info.get("primary_confidence", 1.0) or 0.0)
+
+    if conf < 0.5 or not expected:
+        return steps
+
+    forbid = set(expected.get("preprocessing_should_not") or [])
+    must = list(expected.get("preprocessing_must") or [])
+
+    primary = archetype_info.get("primary") or "unknown"
+
+    # 1) forbid 적용 — 해당 step 제거
+    filtered: list[dict[str, Any]] = []
+    for step in steps:
+        name = step.get("name")
+        if name in forbid:
+            # 제거하되 흔적 남김 (다음 step 에서 needs_review 와 함께 알림)
+            continue
+        filtered.append(step)
+
+    # 2) must 적용 — 없는 step 강제 추가
+    existing_names = {s.get("name") for s in filtered}
+    for must_name in must:
+        if must_name in existing_names:
+            continue
+        filtered.append({
+            "name": must_name,
+            "params": {},
+            "needs_review": True,
+            "source": f"archetype:{primary}",
+            "rationale": f"archetype '{primary}' 룰에 의해 강제 추가 (confidence {conf:.2f})",
+        })
+
+    return filtered
 
 
 # ---------------------------------------------------------------------------

@@ -151,6 +151,31 @@ def reliability_diagram_data(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+class _PlattCalibrator:
+    """joblib-picklable Platt scaling 보정기 (closure 대신 class)."""
+
+    def __init__(self, lr: Any) -> None:
+        self._lr = lr
+
+    def __call__(self, new_proba: Any) -> Any:
+        import numpy as np
+
+        arr = np.asarray(new_proba).astype(float).reshape(-1, 1)
+        return self._lr.predict_proba(arr)[:, 1]
+
+
+class _IsotonicCalibrator:
+    """joblib-picklable Isotonic 보정기 (closure 대신 class)."""
+
+    def __init__(self, ir: Any) -> None:
+        self._ir = ir
+
+    def __call__(self, new_proba: Any) -> Any:
+        import numpy as np
+
+        return self._ir.predict(np.asarray(new_proba).astype(float))
+
+
 def fit_platt(y_true: Any, y_proba: Any) -> Callable[[Any], Any]:
     """Platt scaling — predict_proba 출력 위에 LogisticRegression fit.
 
@@ -164,12 +189,7 @@ def fit_platt(y_true: Any, y_proba: Any) -> Callable[[Any], Any]:
 
     lr = LogisticRegression(solver="lbfgs", max_iter=1000)
     lr.fit(y_proba, y_true)
-
-    def calibrator(new_proba: Any) -> Any:
-        arr = np.asarray(new_proba).astype(float).reshape(-1, 1)
-        return lr.predict_proba(arr)[:, 1]
-
-    return calibrator
+    return _PlattCalibrator(lr)
 
 
 def fit_isotonic(y_true: Any, y_proba: Any) -> Callable[[Any], Any]:
@@ -185,11 +205,7 @@ def fit_isotonic(y_true: Any, y_proba: Any) -> Callable[[Any], Any]:
 
     ir = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
     ir.fit(y_proba, y_true)
-
-    def calibrator(new_proba: Any) -> Any:
-        return ir.predict(np.asarray(new_proba).astype(float))
-
-    return calibrator
+    return _IsotonicCalibrator(ir)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -253,9 +269,120 @@ def _skipped_result(reason: str) -> dict[str, Any]:
         "methods_tried": {},
         "improvement_ratio": None,
         "reliability_chart_path": None,
+        "calibrator_minio_path": None,
         "n_samples_used": 0,
         "skipped_reason": reason,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Honest gap closure — calibrator 직렬화 + 적용 (Day 11++ 후속)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _serialize_calibrator(
+    calibrator: Any, method: str, state: Any
+) -> str | None:
+    """학습된 calibrator 를 joblib 로 직렬화 → MinIO 업로드 → 경로 반환.
+
+    실패 시 None (graceful — calibrate() 가 skipped_reason 안 채움. 산출물 표
+    + insight 는 측정값만 그대로 표시. serving 적용은 calibrator 없으면 skip).
+    """
+    try:
+        import io
+
+        import joblib
+
+        from tools.minio_tool import get_minio_client
+
+        buf = io.BytesIO()
+        joblib.dump({"calibrator": calibrator, "method": method}, buf)
+        buf.seek(0)
+
+        mc = get_minio_client()
+        job_id = getattr(state, "job_id", "no-job")
+        key = f"calibrators/tabular/{job_id}/{method}.joblib"
+        mc.upload_bytes(buf.read(), key)
+        return f"s3://{mc.bucket}/{key}"
+    except Exception as exc:
+        logger.warning("calibrator_serialize_failed: %s", exc)
+        return None
+
+
+def apply_calibration(state: Any, raw_proba: Any) -> Any:
+    """raw predict_proba 출력에 보정 적용해 honest 확률 반환.
+
+    serving·후처리 단에서 호출. 호출 우선순위:
+      1. category_extras["tabular"]["calibration"]["calibrator_minio_path"]
+         → joblib 다운로드 + 적용 (정식 경로)
+      2. category_extras["tabular"]["calibration"]["method"]
+         → val 데이터로 재학습 (fallback — calibrator 직렬화 실패한 경우)
+      3. 둘 다 없음 → raw_proba 그대로 반환 (정상 — calibration skip 상태)
+
+    Args:
+        state    : PipelineState
+        raw_proba: model.predict_proba(X) 의 양성 클래스 컬럼 (1-D array)
+
+    Returns:
+        보정된 확률 (1-D array) 또는 raw_proba 그대로.
+    """
+    import numpy as np
+
+    raw = np.asarray(raw_proba).astype(float)
+
+    cal_info = (
+        (getattr(state, "category_extras", None) or {})
+        .get("tabular", {})
+        .get("calibration") or {}
+    )
+    method = cal_info.get("method")
+    if not method:
+        return raw
+
+    # 경로 1: MinIO 에서 calibrator joblib 다운로드
+    path = cal_info.get("calibrator_minio_path")
+    if path:
+        try:
+            import io
+            import joblib
+
+            from tools.minio_tool import get_minio_client
+
+            mc = get_minio_client()
+            key = path.replace(f"s3://{mc.bucket}/", "") if path.startswith("s3://") else path
+            blob = mc.download_bytes(key)
+            payload = joblib.load(io.BytesIO(blob))
+            calibrator = payload.get("calibrator")
+            if callable(calibrator):
+                return calibrator(raw)
+            # IsotonicRegression 처럼 객체 자체에 predict 가 있는 경우
+            if hasattr(calibrator, "predict"):
+                return calibrator.predict(raw)
+        except Exception as exc:
+            logger.debug("calibrator_download_failed: %s → fallback 재학습 시도", exc)
+
+    # 경로 2: val 데이터로 재학습 (output_extras._try_reload_model_and_data 활용)
+    try:
+        from agents.handlers.tabular.output_extras import _try_reload_model_and_data
+
+        reload = _try_reload_model_and_data(state)
+        if reload is None:
+            return raw
+        model_obj, X_val, y_val = reload
+        if not hasattr(model_obj, "predict_proba"):
+            return raw
+        val_proba = model_obj.predict_proba(X_val)[:, 1]
+
+        if method == "platt":
+            calibrator = fit_platt(np.asarray(y_val).astype(float), val_proba)
+        elif method == "isotonic":
+            calibrator = fit_isotonic(np.asarray(y_val).astype(float), val_proba)
+        else:
+            return raw
+        return calibrator(raw)
+    except Exception as exc:
+        logger.debug("calibrator_refit_failed: %s → raw 반환", exc)
+        return raw
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -347,6 +474,19 @@ def calibrate(state: Any) -> dict[str, Any]:
             y_true, y_proba, methods_tried, best_method, ece_before, state
         )
 
+        # honest gap closure — best method 로 전체 val 에 fit 한 calibrator 직렬화
+        # → MinIO 업로드. apply_calibration() 이 이걸 읽어 serving 시점에 적용.
+        if best_method == "platt":
+            best_calibrator = fit_platt(y_true, y_proba)
+        elif best_method == "isotonic":
+            best_calibrator = fit_isotonic(y_true, y_proba)
+        else:
+            best_calibrator = None
+        calibrator_path = (
+            _serialize_calibrator(best_calibrator, best_method, state)
+            if best_calibrator is not None else None
+        )
+
         return {
             "ece_before": round(float(ece_before), 4),
             "ece_after": round(float(ece_after), 4),
@@ -354,6 +494,7 @@ def calibrate(state: Any) -> dict[str, Any]:
             "methods_tried": {k: round(float(v), 4) for k, v in methods_tried.items()},
             "improvement_ratio": round(float(improvement_ratio), 3),
             "reliability_chart_path": chart_path,
+            "calibrator_minio_path": calibrator_path,
             "n_samples_used": int(len(y_true)),
             "skipped_reason": None,
         }
