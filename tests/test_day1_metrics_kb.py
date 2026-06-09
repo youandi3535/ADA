@@ -90,8 +90,14 @@ async def test_supervisor_calls_error_kb_on_retry(monkeypatch):
 async def test_supervisor_skips_kb_when_no_retry(monkeypatch):
     from agents.supervisor import SupervisorAgent
 
+    # task 를 미리 세팅 — CI 에서 LLM 미사용 환경이라도 _call_llm 성공/실패 무관하게
+    # task 값이 "classification" 으로 유지됨 (supervisor: task = state.task or "auto")
     state = PipelineState(
-        job_id="00000000-0000-0000-0000-000000000001", file_id="f.csv", category="tabular_ml", target_column="y"
+        job_id="00000000-0000-0000-0000-000000000001",
+        file_id="f.csv",
+        category="tabular_ml",
+        target_column="y",
+        task="classification",
     )
 
     called: list[Any] = []
@@ -102,7 +108,6 @@ async def test_supervisor_skips_kb_when_no_retry(monkeypatch):
 
     monkeypatch.setattr(SupervisorAgent, "_lookup_error_kb", fake_lookup)
 
-    # LLM 우회
     async def fake_llm(self, **k):
         return '{"task":"classification","reason":"x","confidence":0.9}'
 
