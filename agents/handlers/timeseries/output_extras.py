@@ -163,6 +163,103 @@ def _ts_extras(state: Any) -> dict:
 
 
 # ════════════════════════════════════════════════════════════════
+# Phase 1-A/B (2026-06-08) — 전문가 차원 + 운영 권고 표 빌더
+# ════════════════════════════════════════════════════════════════
+_FREQ_DAY_MULT = {"D": 1, "W": 7, "M": 30, "MS": 30, "Q": 90, "QS": 90, "H": 1 / 24}
+_DIM_KO = {
+    "interpretability": "해석성",
+    "robustness": "강건성",
+    "uncertainty_quality": "불확실성",
+    "retraining_cost": "재학습 효율",
+}
+
+
+def _selector_meta_for_output(state):
+    """selector.score() meta — category_extras 1순위 + 재호출 fallback."""
+    extras = getattr(state, "category_extras", None) or {}
+    if isinstance(extras, dict):
+        cat = extras.get("timeseries") or {}
+        if isinstance(cat, dict):
+            m = cat.get("selector_meta") or {}
+            if isinstance(m, dict) and m:
+                return m
+    try:
+        from agents.handlers.timeseries.selector import score as _score
+
+        result = _score(state, recipes=None)
+        if isinstance(result, dict):
+            m = result.get("meta") or {}
+            return m if isinstance(m, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _build_expert_dimensions_table(state):
+    """4 차원 priorities + top3 expert_score 표.
+
+    반환: {title, columns, rows} 또는 None (메타 없음).
+    """
+    meta = _selector_meta_for_output(state)
+    if not meta:
+        return None
+    priorities = meta.get("expert_priorities") or {}
+    expert_scores = meta.get("expert_scores") or {}
+    if not priorities or not expert_scores:
+        return None
+
+    dim_keys = list(_DIM_KO.keys())
+    rows = []
+    # 헤더 행 — 가중치
+    rows.append(["가중치", *[f"{priorities.get(d, 0):.0%}" for d in dim_keys]])
+    # 모델별 4 차원 점수 (top3 만)
+    sorted_models = sorted(expert_scores.items(), key=lambda x: -x[1])[:3]
+    for model_name, total_score in sorted_models:
+        cells = [f"{model_name} ({total_score:.2f})"]
+        for d in dim_keys:
+            try:
+                from agents.handlers.timeseries.selector import EXPERT_DIMENSIONS as _ED
+
+                v = _ED.get(d, {}).get(model_name, 0.5)
+                cells.append(f"{v:.2f}")
+            except Exception:
+                cells.append("—")
+        rows.append(cells)
+
+    return {
+        "title": "전문가 차원 점수표",
+        "columns": ["모델 (총점)"] + [_DIM_KO[d] for d in dim_keys],
+        "rows": rows,
+    }
+
+
+def _build_ops_recommendation_table(state):
+    """재학습 주기 + 긴급도 + 근거 신호 표.
+
+    반환: {title, columns, rows} 또는 None.
+    """
+    try:
+        from agents.handlers.timeseries.insight import _recommend_retrain_schedule
+
+        retrain = _recommend_retrain_schedule(state)
+    except Exception:
+        return None
+    if not retrain or not isinstance(retrain, dict):
+        return None
+    interval_days = retrain.get("interval_days")
+    if not isinstance(interval_days, int):
+        return None
+    triggers = retrain.get("triggers") or []
+    urgency_ko = retrain.get("urgency_ko", "표준")
+    rows = [
+        ["재학습 권장 주기", f"{interval_days}일"],
+        ["긴급도", urgency_ko],
+        ["근거 신호", " · ".join(triggers[:3]) if triggers else "표준 운영"],
+    ]
+    return {"title": "운영 권고 (재학습 주기)", "columns": ["항목", "값"], "rows": rows}
+
+
+# ════════════════════════════════════════════════════════════════
 # §A~§F. build — 메인 진입점
 # ════════════════════════════════════════════════════════════════
 def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -493,6 +590,22 @@ def build(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
             diag_rows.append(["DM 통계량", f"{dm_test_obj.get('dm_stat')}"])
     if diag_rows:
         tables.append({"title": "잔차·통계 비교 검정", "columns": ["지표", "값"], "rows": diag_rows})
+
+    # ── E-5 (Phase 1-A): 전문가 차원 점수표 ──
+    try:
+        expert_table = _build_expert_dimensions_table(state)
+        if expert_table:
+            tables.append(expert_table)
+    except Exception as _e:
+        logger.warning("expert_dimensions_table_failed: %s", _e)
+
+    # ── E-6 (Phase 1-B): 운영 권고 (재학습 주기) 표 ──
+    try:
+        ops_table = _build_ops_recommendation_table(state)
+        if ops_table:
+            tables.append(ops_table)
+    except Exception as _e:
+        logger.warning("ops_recommendation_table_failed: %s", _e)
 
     # ════════════════════════════════════════════════════════════
     # §F. 반환 (OUTPUT_EXTRAS_KEYS 3 키)
