@@ -90,9 +90,8 @@ UNEXPECTED=$(ss -tlnp | grep -v 127.0.0.1 | grep LISTEN | \
 
 # ── 9. TLS 인증서 만료 ───────────────────────────────────────
 log "--- 9. TLS 인증서 만료일"
-CERT_EXPIRY=$(echo | openssl s_client -connect ada-aiagent.com:443 \
-              -servername ada-aiagent.com 2>/dev/null \
-              | openssl x509 -noout -enddate 2>/dev/null \
+CERT_FILE="/etc/letsencrypt/live/ada-aiagent.com/fullchain.pem"
+CERT_EXPIRY=$(sudo openssl x509 -noout -enddate -in "$CERT_FILE" 2>/dev/null \
               | cut -d= -f2 || echo "ERR")
 if [[ "$CERT_EXPIRY" == "ERR" ]]; then
   warn "TLS 인증서 확인 실패"
