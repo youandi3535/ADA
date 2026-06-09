@@ -32,6 +32,15 @@ SYSTEM_PROMPT = """당신은 정형 데이터 분석 인사이트 작성자입�
   9. val_f1_per_class (multiclass) 가 있으면 가장 낮은 클래스 1개 약점 언급
  10. val_residual_mean (회귀) 가 |0.1| 보다 크면 "예측에 편향 의심" 1문장
  11. class_imbalance_ratio >= 5 면 "클래스 불균형(N:1)" 사실 1문장
+ 12. archetype.primary 가 'clean_balanced' 가 아니면 그 archetype 특성을 1문장으로 설명
+     예: 'extreme_imbalance' → "극단 불균형이라 이상탐지 카테고리도 검토 권합니다"
+     예: 'p_gg_n' → "피처가 행보다 많아 정규화 선형 모델 위주로 추천했습니다"
+     예: 'multicollinear_heavy' → "수치형 피처 간 강한 상관 — VIF drop 적용"
+ 13. calibration.method 가 있고 ece_before > 0.02 면 "확률 캘리브레이션 X 방식으로
+     ECE A → B 개선" 1문장. predict_proba 신뢰성을 사용자에게 명시.
+ 14. threshold_strategies.recommended 가 'cost_min' 이고 cost_matrix 가 입력됐으면
+     "FN/FP 비용 비대칭 반영 — cost-min 임계치 T 사용 시 expected_cost 가 F1-max
+     대비 N% 절감" 1문장. 비즈니스 의사결정 직결.
 
 형식 규칙:
   - 마크다운/리스트/이모지/번호 매김 금지 — 자연스러운 한국어 문장
@@ -75,12 +84,19 @@ def prompt_payload(state: Any) -> dict[str, Any]:
     best_model = state.best_model or {}
     best_metrics = best_model.get("metrics") or {}
 
+    # Day 11++ — SHAP top features. state.explanations (dispatcher 가 채워야 정식)
+    # 가 비어있으면 category_extras["tabular"]["shap"] 캐시 fallback (output_extras
+    # 가 SHAP 계산해 저장한 결과). 미연결 환경에서도 insight 가 실제 SHAP 인용.
+    shap_top = _safe_get(state.explanations, "shap_top_features")
+    if not shap_top:
+        shap_top = (cat_extras.get("shap") or {}).get("shap_top_features") or []
+
     return {
         # 기본
         "category": state.category,
         "user_intent": state.user_intent,
         "best_model": best_model,
-        "shap_top": _safe_get(state.explanations, "shap_top_features") or [],
+        "shap_top": shap_top,
 
         # 평가 결과 + 다중 지표
         "eval_result": eval_result,
@@ -112,7 +128,124 @@ def prompt_payload(state: Any) -> dict[str, Any]:
 
         # 누수 가드 사용 여부
         "leakage_safe_split_used": bool(cat_extras.get("leakage_safe_split")),
+
+        # Day 11+ (jh, decision-aware) — archetype 인용
+        # selector·proposer 와 동일한 ground truth 를 insight 도 인용 → 일관성 보장.
+        "archetype": data_profile.get("archetype") or {},
+
+        # Day 11++ (jh) — 확률 캘리브레이션 결과 (ECE before/after, method).
+        # output_extras.calibrate() 가 category_extras 에 저장. LLM 이 인용해
+        # "확률 80% 가 진짜 80% 의미인가" 에 답할 수 있게 함.
+        "calibration": cat_extras.get("calibration") or {},
+
+        # Day 11++ (jh) — Cost-sensitive 임계치 4 전략 결과.
+        # cost_matrix 입력 시 expected_cost 정식 계산. 권고 전략 + 비교표.
+        "threshold_strategies": cat_extras.get("threshold_strategies") or {},
     }
+
+
+def _archetype_insight_line(archetype: dict[str, Any]) -> str | None:
+    """archetype 매칭 결과를 signals 값 + confidence 톤으로 1 문장 생성.
+
+    confidence < 0.5  → None (너무 약한 매칭, 사용자 혼란 방지)
+    confidence 0.5~0.8 → 추정 톤 ("가능성", "의심")
+    confidence ≥ 0.8  → 단정 톤
+
+    Day 11++ — 정적 메시지 cliff 제거 + 실제 signals 인용으로 투명성 확보.
+    """
+    primary = archetype.get("primary")
+    if not primary or primary == "clean_balanced":
+        return None
+    signals = archetype.get("signals") or {}
+    conf = float(archetype.get("primary_confidence", 1.0) or 0.0)
+    if conf < 0.5:
+        return None
+    weak = conf < 0.8  # 약한 매칭이면 추정 톤
+
+    if primary == "target_leakage_suspected":
+        cols = signals.get("leakage_columns") or []
+        col_str = ", ".join(f"'{c}'" for c in cols[:2]) if cols else "일부 컬럼"
+        verb = "보일 가능성이 있어" if weak else "보여"
+        return (
+            f"{col_str} 가 타겟과 매우 강한 상관을 {verb} 누수 의심으로 "
+            f"보수적 모델을 우선 추천했습니다."
+        )
+
+    if primary == "extreme_imbalance":
+        ratio = signals.get("imbalance_ratio")
+        ratio_str = f"1:{int(ratio):,}" if ratio else "극단"
+        verb = "수준일 가능성" if weak else "수준"
+        return (
+            f"클래스 비율이 {ratio_str} {verb}이라 정형 분류 부적합 — "
+            f"이상탐지 카테고리 검토를 권합니다."
+        )
+
+    if primary == "p_gg_n":
+        r = signals.get("feature_to_row_ratio")
+        r_str = f"{r:.2f}" if r is not None else "≥0.5"
+        verb = "근접해" if weak else "넘어"
+        return (
+            f"피처/행 비율 {r_str} 로 p≫n 영역에 {verb} "
+            f"정규화 선형 모델 위주로 추천했습니다."
+        )
+
+    if primary == "high_cardinality_heavy":
+        n = signals.get("high_cardinality_count")
+        n_str = f"{int(n)}개" if n is not None else "다수"
+        return (
+            f"고차원 범주형 컬럼 {n_str} 감지 — CatBoost·LightGBM 의 native "
+            f"범주 처리를 우선했습니다."
+        )
+
+    if primary == "multicollinear_heavy":
+        clusters = signals.get("corr_clusters")
+        cond = signals.get("corr_condition_number")
+        if clusters:
+            return (
+                f"수치형 피처 간 강한 상관 클러스터 {int(clusters)}개 감지 — "
+                f"VIF drop 적용을 권합니다."
+            )
+        if cond:
+            return (
+                f"상관 행렬 condition number {float(cond):.0f} — "
+                f"다중공선성 강해 VIF drop 적용을 권합니다."
+            )
+        return "수치형 피처 간 강한 다중공선성이 있어 VIF 기반 컬럼 제거가 적용되었습니다."
+
+    if primary == "id_overload":
+        r = signals.get("id_like_ratio")
+        r_str = f"{float(r):.0%}" if r is not None else "30% 이상"
+        return (
+            f"전체 컬럼의 {r_str} 가 식별자 추정 — "
+            f"학습 피처 구성 재검토를 권합니다."
+        )
+
+    if primary == "imbalanced_moderate":
+        ratio = signals.get("imbalance_ratio")
+        if ratio:
+            return (
+                f"클래스 비율 1:{int(ratio):,} — class weight 와 "
+                f"cost-sensitive 임계치 적용을 권합니다."
+            )
+        return "클래스 불균형이 중간 수준이라 class weight 와 cost-sensitive 임계치 적용을 권합니다."
+
+    if primary == "low_signal":
+        mi = signals.get("max_mutual_info")
+        mi_str = f"{float(mi):.3f}" if mi is not None else "< 0.05"
+        return (
+            f"피처-타겟 mutual information 최댓값 {mi_str} — "
+            f"추가 피처 엔지니어링 또는 비지도 접근이 효과적입니다."
+        )
+
+    if primary == "regression_heteroscedastic":
+        cv = signals.get("max_coefficient_of_variation")
+        cv_str = f"(변동계수 {float(cv):.1f})" if cv is not None else ""
+        return (
+            f"수치형 변동성이 큼 {cv_str} — log 또는 yeo-johnson "
+            f"분포 변환을 권합니다."
+        ).replace("  ", " ").strip()
+
+    return None
 
 
 def fallback(state: Any) -> str:
@@ -134,6 +267,56 @@ def fallback(state: Any) -> str:
     parts: list[str] = [
         f"본 분석은 {bm.get('model_name', '미정')} 모델이 가장 우수한 성능을 보였습니다."
     ]
+
+    # 0) archetype 1 문장 (clean_balanced 면 생략, confidence < 0.5 면 생략)
+    #    Day 11++ — 정적 메시지 대신 실제 signals 값을 인용 + confidence 톤 조절.
+    archetype_line = _archetype_insight_line(data_profile.get("archetype") or {})
+    if archetype_line:
+        parts.append(archetype_line)
+
+    # 0-2) 캘리브레이션 결과 인용 (적용됐고 의미있는 개선이면 1문장)
+    #    Day 11++ — predict_proba 가 진짜 확률에 가까운지 사용자에게 알림.
+    cat_key = "tabular" if str(getattr(state, "category", "")).startswith("tabular") else getattr(state, "category", "")
+    cat_extras_local = (getattr(state, "category_extras", None) or {}).get(cat_key, {})
+    cal = cat_extras_local.get("calibration") or {}
+    if (
+        cal.get("method")
+        and cal.get("ece_before") is not None
+        and cal.get("ece_after") is not None
+    ):
+        eb = float(cal["ece_before"])
+        ea = float(cal["ece_after"])
+        if eb > 0.02:  # 보정 필요 영역
+            improved_pct = (1 - ea / eb) * 100 if eb > 0 else 0
+            parts.append(
+                f"확률 캘리브레이션을 {cal['method']} 방식으로 적용해 ECE 가 "
+                f"{eb:.3f} → {ea:.3f} ({improved_pct:.0f}% 개선) 됐습니다 — "
+                f"예측 확률이 실제 양성 비율에 가까워졌습니다."
+            )
+
+    # 0-3) Cost-sensitive 임계치 권고 (cost_matrix 있을 때만)
+    #    Day 11++ — FN/FP 비용 비대칭 시 expected_cost 최소화 임계치 안내.
+    ts = cat_extras_local.get("threshold_strategies") or {}
+    strategies = ts.get("strategies") or {}
+    recommended_key = ts.get("recommended")
+    cost_matrix = ts.get("cost_matrix") or {}
+    if recommended_key and strategies.get(recommended_key) and cost_matrix:
+        s = strategies[recommended_key]
+        rec_thr = s.get("threshold")
+        rec_cost = s.get("expected_cost")
+        f1_max = strategies.get("f1_max") or {}
+        f1_cost = f1_max.get("expected_cost")
+        if (
+            rec_thr is not None and rec_cost is not None
+            and f1_cost is not None and f1_cost > 0
+            and recommended_key == "cost_min"
+        ):
+            savings_pct = (1 - rec_cost / f1_cost) * 100
+            parts.append(
+                f"비용 비대칭(FP={cost_matrix.get('fp')}, FN={cost_matrix.get('fn')}) 을 "
+                f"반영한 cost-min 임계치 {float(rec_thr):.2f} 사용 시 expected_cost 가 "
+                f"F1-max 대비 {savings_pct:.0f}% 절감됩니다."
+            )
 
     # 1) CV 통계 우선, 없으면 단일 수치
     cv_stats = eval_result.get("cv_stats") or {}

@@ -112,6 +112,44 @@ class TabularMLPipeline(BasePipeline):
     def predict(self, model: Any, X: Any) -> np.ndarray:
         return model.predict(X)
 
+    def predict_proba_calibrated(self, model: Any, X: Any, state: Any) -> np.ndarray:
+        """honest predict_proba — calibration 결과가 있으면 보정 적용.
+
+        Day 11++ honest gap closure — 산출물에 "Isotonic 적용 ECE 0.018" 약속한
+        시스템이 실제 serving 에선 raw proba 반환하던 거짓말 해소.
+
+        흐름:
+          1. model.predict_proba(X) → raw proba (양성 클래스만)
+          2. agents.handlers.tabular.calibration.apply_calibration(state, raw)
+             → 보정된 확률 (calibrator 없으면 raw 그대로)
+
+        Args:
+            model: 학습된 모델 (predict_proba 필수)
+            X    : 예측 대상
+            state: PipelineState — category_extras 의 calibration 메타데이터 사용
+
+        Returns:
+            np.ndarray (1-D) — 양성 클래스의 보정된 확률.
+            classification + binary 가 아니면 raw proba 그대로 (전체 행렬).
+        """
+        if not hasattr(model, "predict_proba"):
+            return self.predict(model, X)
+
+        raw = model.predict_proba(X)
+        # 이진 분류만 보정 적용 (Day 11++ 시점)
+        if raw.ndim != 2 or raw.shape[1] != 2:
+            return raw
+
+        raw_positive = raw[:, 1]
+        try:
+            from agents.handlers.tabular.calibration import apply_calibration
+
+            calibrated = apply_calibration(state, raw_positive)
+            return np.asarray(calibrated)
+        except Exception:
+            # graceful — calibration 모듈 import 실패해도 raw 반환
+            return raw_positive
+
     def evaluate(self, model: Any, X_val: Any, y_val: Any, task: str) -> dict[str, float]:
         """val 평가 — Day 11 (jh) 다중 지표 보강.
 
