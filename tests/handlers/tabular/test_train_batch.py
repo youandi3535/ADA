@@ -92,6 +92,11 @@ class TestTrainBatchPerformance:
         Dummy/LR/Ridge 는 매우 빨라 병렬화 오버헤드가 더 클 수 있음.
         그래서 무거운 모델(RandomForest) 4번 학습으로 비교.
         """
+        import os
+
+        if (os.cpu_count() or 1) <= 1:
+            pytest.skip("단일 코어 환경 — 병렬화 효과 없음")
+
         X, y = _make_data(n=2000, n_features=10)
         pipe = TabularMLPipeline()
 
