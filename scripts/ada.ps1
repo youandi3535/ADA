@@ -1,4 +1,4 @@
-# ADA Docker 관련 명령어 (PowerShell)
+﻿# ADA Docker 관련 명령어 (PowerShell)
 # VS Code 터미널에서 로드: . .\scripts\ada.ps1
 
 $ADA_ROOT = "C:\IT\workspace_python\ADA"
