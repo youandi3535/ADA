@@ -48,6 +48,10 @@ class PipelineStatusResponse(BaseModel):
     current_agent: Optional[str] = None
     current_gate: Optional[str] = None
     progress_pct: int = 0
+    # 단계 baseline ETA — 단계 시작 시점에 file_size/rows/cols 기반으로 계산된 잔여 초.
+    # 프론트가 (현재시각 - eta_base_ts) 만큼 감소시켜 표시한다.
+    eta_sec: Optional[int] = None
+    eta_base_ts: Optional[float] = None
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
