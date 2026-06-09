@@ -36,6 +36,8 @@ SYSTEM_PROMPT = """당신은 정형 데이터 분석 인사이트 작성자입�
      예: 'extreme_imbalance' → "극단 불균형이라 이상탐지 카테고리도 검토 권합니다"
      예: 'p_gg_n' → "피처가 행보다 많아 정규화 선형 모델 위주로 추천했습니다"
      예: 'multicollinear_heavy' → "수치형 피처 간 강한 상관 — VIF drop 적용"
+ 13. calibration.method 가 있고 ece_before > 0.02 면 "확률 캘리브레이션 X 방식으로
+     ECE A → B 개선" 1문장. predict_proba 신뢰성을 사용자에게 명시.
 
 형식 규칙:
   - 마크다운/리스트/이모지/번호 매김 금지 — 자연스러운 한국어 문장
@@ -127,6 +129,11 @@ def prompt_payload(state: Any) -> dict[str, Any]:
         # Day 11+ (jh, decision-aware) — archetype 인용
         # selector·proposer 와 동일한 ground truth 를 insight 도 인용 → 일관성 보장.
         "archetype": data_profile.get("archetype") or {},
+
+        # Day 11++ (jh) — 확률 캘리브레이션 결과 (ECE before/after, method).
+        # output_extras.calibrate() 가 category_extras 에 저장. LLM 이 인용해
+        # "확률 80% 가 진짜 80% 의미인가" 에 답할 수 있게 함.
+        "calibration": cat_extras.get("calibration") or {},
     }
 
 
@@ -259,6 +266,26 @@ def fallback(state: Any) -> str:
     archetype_line = _archetype_insight_line(data_profile.get("archetype") or {})
     if archetype_line:
         parts.append(archetype_line)
+
+    # 0-2) 캘리브레이션 결과 인용 (적용됐고 의미있는 개선이면 1문장)
+    #    Day 11++ — predict_proba 가 진짜 확률에 가까운지 사용자에게 알림.
+    cat_key = "tabular" if str(getattr(state, "category", "")).startswith("tabular") else getattr(state, "category", "")
+    cat_extras_local = (getattr(state, "category_extras", None) or {}).get(cat_key, {})
+    cal = cat_extras_local.get("calibration") or {}
+    if (
+        cal.get("method")
+        and cal.get("ece_before") is not None
+        and cal.get("ece_after") is not None
+    ):
+        eb = float(cal["ece_before"])
+        ea = float(cal["ece_after"])
+        if eb > 0.02:  # 보정 필요 영역
+            improved_pct = (1 - ea / eb) * 100 if eb > 0 else 0
+            parts.append(
+                f"확률 캘리브레이션을 {cal['method']} 방식으로 적용해 ECE 가 "
+                f"{eb:.3f} → {ea:.3f} ({improved_pct:.0f}% 개선) 됐습니다 — "
+                f"예측 확률이 실제 양성 비율에 가까워졌습니다."
+            )
 
     # 1) CV 통계 우선, 없으면 단일 수치
     cv_stats = eval_result.get("cv_stats") or {}

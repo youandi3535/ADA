@@ -51,6 +51,23 @@ def _tab_extras(state: Any) -> dict[str, Any]:
     return (getattr(state, "category_extras", {}) or {}).get("tabular", {})
 
 
+def _cache_in_state(state: Any, key: str, value: Any) -> None:
+    """SHAP·calibration 결과를 state.category_extras["tabular"][key] 에 저장.
+
+    PipelineState 가 immutable 이지만, category_extras 는 mutable dict 인스턴스.
+    같은 호출 사이클 내에서 다른 모듈(insight)이 캐시 읽을 수 있도록 in-place.
+    (정식 dispatcher 가 with_update 로 머지하기 전까지의 임시 캐시)
+    """
+    cat_extras = getattr(state, "category_extras", None)
+    if not isinstance(cat_extras, dict):
+        return
+    tab = cat_extras.get("tabular")
+    if not isinstance(tab, dict):
+        tab = {}
+        cat_extras["tabular"] = tab
+    tab[key] = value
+
+
 def _preprocess_artifacts(state: Any) -> dict[str, Any]:
     return _tab_extras(state).get("preprocess_artifacts", {})
 
@@ -597,11 +614,24 @@ def _build_deployment_checklist(state: Any) -> dict[str, Any] | None:
         "imbalanced_moderate": "10%",
     }.get(archetype, "20% (표준)")
 
+    # Day 11++ — 캘리브레이션 실측치 인용 (calibrate() 가 채웠으면)
+    cat_extras_local = _tab_extras(state)
+    cal = cat_extras_local.get("calibration") or {}
+    if cal.get("method") and cal.get("ece_before") is not None and cal.get("ece_after") is not None:
+        cal_str = (
+            f"{cal['method']} 적용 — ECE {float(cal['ece_before']):.3f} "
+            f"→ {float(cal['ece_after']):.3f}"
+        )
+    elif cal.get("skipped_reason"):
+        cal_str = f"보정 skip ({cal['skipped_reason']}) — 기본 확률 사용"
+    else:
+        cal_str = "ECE > 0.05 면 Platt 또는 Isotonic 권고"
+
     rows = [
         ["모델 SHA256", str(sha256)[:16] + "..." if len(str(sha256)) > 16 else str(sha256)],
         ["MLflow run", str(mlflow_run)],
         ["임계치 산출", threshold_basis],
-        ["캘리브레이션", "ECE > 0.05 면 Platt 또는 Isotonic 권고"],
+        ["캘리브레이션", cal_str],
         ["A/B 트래픽 비율", ab_ratio],
         ["데이터 누수 가드", "leakage_safe_split=True 확인 (preprocessor)"],
     ]
@@ -679,13 +709,18 @@ def _build_monitoring_kpi_table(state: Any) -> dict[str, Any] | None:
     drift_cadence = "주 1회" if archetype == "extreme_imbalance" else "월 1회"
     perf_cadence = "일 1회" if archetype in ("extreme_imbalance", "target_leakage_suspected") else "주 1회"
 
+    # Day 11++ — 캘리브레이션 초기값을 실측치로 채움 (calibrate() 결과)
+    cal = _tab_extras(state).get("calibration") or {}
+    ece_after = cal.get("ece_after")
+    ece_init_str = f"{float(ece_after):.3f} ({cal.get('method')})" if ece_after is not None else "최초 측정 필요"
+
     return {
         "title": "모니터링 KPI",
         "columns": ["지표", "임계치", "점검 주기", "초기값"],
         "rows": [
             ["데이터 드리프트 (top-5 feature PSI)", "0.25", drift_cadence, "기준선 측정 필요"],
             [f"성능 ({primary_metric_name}) 롤링 평균", "-3%p 알람", perf_cadence, primary_str],
-            ["캘리브레이션 (ECE)", "0.05", "월 1회", "최초 측정 필요"],
+            ["캘리브레이션 (ECE)", "0.05", "월 1회", ece_init_str],
             ["추론 레이턴시 p95", "200ms", "실시간", "serving 측정"],
             ["오류율 (503/5xx)", "0.1%", "실시간", "—"],
         ],
@@ -851,18 +886,24 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
         for dep_path in shap_result.get("shap_dependence_paths") or []:
             charts.append(dep_path)
 
-        # category_extras 에 결과 저장 (insight 가 fallback 으로 읽음).
-        # state 가 PipelineState (immutable) 라 with_update 가 권장이지만, 본 함수는
-        # 반환 dict 만으로 동작하는 게 dispatcher 계약. 별도 캐시 위치로 결과 반환.
-        cat_extras_dict = getattr(state, "category_extras", None) or {}
-        tab_dict = dict(cat_extras_dict.get("tabular") or {})
-        tab_dict["shap"] = shap_result
-        # 본 dict 는 호출자(report_composer 또는 dispatcher)가 with_update 로 머지해야 함.
-        # 단, 본 헬퍼 자체에서 in-place 캐시 보장은 못 하므로 explainability.py 의
-        # shap_top_features / shap_summary_chart 가 explain() 을 다시 부를 수도 있음
-        # (idempotent — 같은 결과). 비용은 cache miss 1회 정도라 무시 가능.
+        # category_extras 에 결과 저장 (insight 가 fallback 으로 읽음). state 는
+        # PipelineState (immutable) 라 dict 인스턴스 mutation 으로 캐시. dispatcher
+        # 가 정식 머지 안 해줘도 같은 호출 사이클 내에선 동작.
+        _cache_in_state(state, "shap", shap_result)
     except Exception as exc:
         logger.warning("shap_integration_failed: %s", exc)
+
+    # Day 11++ (jh) — 확률 캘리브레이션. ECE 측정 + Platt/Isotonic 자동 선택 +
+    # reliability diagram. 이진분류만 동작, 다른 케이스는 graceful skip.
+    try:
+        from agents.handlers.tabular import calibration as _cal_mod
+
+        cal_result = _cal_mod.calibrate(state)
+        if cal_result.get("reliability_chart_path"):
+            charts.append(cal_result["reliability_chart_path"])
+        _cache_in_state(state, "calibration", cal_result)
+    except Exception as exc:
+        logger.warning("calibration_integration_failed: %s", exc)
 
     color = "#2563eb" if getattr(state, "category", "") == "tabular_ml" else "#0891b2"
     label = "정형 ML" if getattr(state, "category", "") == "tabular_ml" else "정형 DL"
