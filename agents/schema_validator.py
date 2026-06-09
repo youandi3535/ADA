@@ -2,10 +2,62 @@
 
 from __future__ import annotations
 
+import json as _json
 from typing import Any
 
 from ada.core.state import PipelineState
 from agents.base import BaseAgent
+
+
+def _save_g2_screen_ready(state: PipelineState) -> None:
+    """HJ 2026-06-09 G1 단축 Z' — G2 화면 사전 진입용 부분 gate_data 를 Redis 에 저장.
+
+    저장 키: ``ada:gate_data:{job_id}`` — 기존 _save_gate_data 와 동일 키 사용.
+    gate_direction 이 끝나면 _save_gate_data 가 proposals 채워 덮어씀 — race-safe.
+
+    저장 필드:
+      - gate: "G2"
+      - proposals: [] (빈 배열 = "분석 방향 생성 중" spinner 표시 트리거)
+      - g2_pending: True (frontend 가 spinner 인식)
+      - category, target_column, data_profile, domain_partial 등 화면 표시용
+
+    누수 방지: Redis 실패해도 본 G1 흐름 영향 없음 (best-effort).
+    """
+    try:
+        import redis as _redis  # noqa: WPS433
+
+        from ada.core.config import settings as _s  # noqa: WPS433
+
+        r = _redis.Redis.from_url(_s.redis_url)
+        dp = state.data_profile or {}
+        payload = {
+            "gate": "G2",
+            "proposals": [],  # 빈 = spinner 트리거
+            "g2_pending": True,  # gate_direction 진행 중 신호
+            "category": state.category,
+            "target_column": state.target_column,
+            "data_profile": {
+                # 필수 필드만 — 전체 보내면 페이로드 큼
+                "rows": dp.get("rows"),
+                "cols": dp.get("cols"),
+                "columns": dp.get("columns"),
+                "target_dtype": dp.get("target_dtype"),
+                "class_distribution": dp.get("class_distribution"),
+                "domain_analysis": dp.get("domain_analysis"),
+                "date_col": dp.get("date_col"),
+            },
+            "requested_outputs": [],
+            "output_paths": {},
+        }
+        r.set(
+            f"ada:gate_data:{state.job_id}",
+            _json.dumps(payload, ensure_ascii=False, default=str),
+            ex=86400,
+        )
+    except Exception:  # noqa: BLE001
+        # G1 critical path 안전 — Redis 실패해도 정상 진행
+        pass
+
 
 # v2 4 카테고리만
 CATEGORY_RULES: dict[str, dict[str, Any]] = {
@@ -43,11 +95,19 @@ class SchemaValidatorAgent(BaseAgent):
                 return state.with_update(validation=v, next_agent="error_recovery", error=v["errors"][0])
             v = self._validate(state.data_profile or {}, rules)
             if v["is_valid"]:
+                # HJ 2026-06-09 G1 단축 Z' — 검증 성공 시 G2 화면 사전 진입 신호.
+                # gate_direction LLM (~55s) 가 진행되는 동안 사용자는 G2 의 "주제 선정" 영역
+                # (도메인·column_meanings) 을 먼저 보면서 결정 고민. 사용자 고민 시간이
+                # gate_direction LLM 시간에 흡수 → 체감 -30~50s.
+                _save_g2_screen_ready(state)
                 return state.with_update(validation=v, next_agent="gate_direction", error=None)
 
             # 데이터 검증 실패 = 사용자가 잘못된 카테고리를 선택한 경우.
             # AutoErrorHandler(코드 패치)로 보내지 않고 tabular_ml 로 자동 보정 후
             # gate_direction(G2)에서 재진행 — 사용자 입장에서는 자동 복구로 보임.
+            #
+            # Z' 적용 시 카테고리 보정이 발생하면 stale 도메인 분석을 사전 표시하지 않음
+            # (도메인 분석은 보정 전 카테고리 기반이라 불일치 위험). 기존 흐름만 유지.
             fallback = "tabular_ml"
             fallback_rules = CATEGORY_RULES[fallback]
             v2 = self._validate(state.data_profile or {}, fallback_rules)

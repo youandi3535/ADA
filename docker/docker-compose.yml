@@ -190,6 +190,7 @@ services:
       - /tmp
     volumes:
       - ../ada:/app/ada
+      - ../api:/app/api
       - ../agents:/app/agents
       - ../orchestrator:/app/orchestrator
       - ../pipelines:/app/pipelines

@@ -207,6 +207,9 @@ _FLOW_HTML = """
       </div>
     </div>
   </div>
+<!-- HJ 2026-06-09 G1 단축 Phase 4 — client-side 파일 파싱 (PapaParse: CSV, SheetJS: XLSX) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 const steps=[{label:'업로드',sub:'G1 · 데이터 파악'},{label:'분석 방향',sub:'G2 · EDA'},{label:'방법론',sub:'G3 · 전처리'},{label:'모델 전략',sub:'G4 · 피처링'},{label:'모델 선택',sub:'G5 · 학습·평가'},{label:'산출물',sub:'G6 · 리포트'},{label:'완료',sub:'G7 · 인사이트'}];
 const N=steps.length, LAST=N-1;
@@ -227,6 +230,13 @@ const GATE_TITLE={G2:['어떤 방식으로 분석할까요?','Choose your analys
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
+// HJ 2026-06-09 G1 단축 Phase 4 — θ-B prefetch state.
+// 파일 선택 시점에 client-side 파싱 → 백엔드 /upload/prefetch → 카테고리 LLM 미리 시작.
+// G1 시작 전에 사용자가 의도 입력하는 ~10s 동안 카테고리 LLM (~15s) 흡수.
+let prefetchSig=null;                  // 현재 파일의 signature
+let prefetchResult=null;               // {category, target_column, auto_intent, cached}
+let prefetchPolling=false;             // /prefetch/{sig} polling 중복 방지
+let prefetchPreview=null;              // {rows, cols, columns} — UI 즉시 표시용
 let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
@@ -334,6 +344,108 @@ async function api(path, opts){
   if(!r.ok) throw new Error('HTTP '+r.status+' '+txt.slice(0,180));
   return txt ? JSON.parse(txt) : {};
 }
+// HJ 2026-06-09 G1 단축 Phase 4 — client-side 파일 헤더+sample 파싱 + prefetch.
+// 파일 선택 시 즉시 실행 (fire-and-forget). 실패해도 정식 업로드는 정상 동작.
+async function startPrefetch(file){
+  if(!file) return;
+  prefetchSig=null; prefetchResult=null; prefetchPreview=null;
+  try{
+    const ext=(file.name.split('.').pop()||'').toLowerCase();
+    let columns=[], sample=[], dtypes={};
+    if(ext==='csv'||ext==='tsv'){
+      // PapaParse: 첫 100행만 파싱 (Worker 모드 비활성, sync 짧음)
+      const text=await file.slice(0, 1024*256).text();  // 256KB 만 (헤더+sample 충분)
+      const parsed=Papa.parse(text, {header:true, skipEmptyLines:true, preview:100});
+      if(parsed.errors && parsed.errors.length) console.warn('PapaParse warn', parsed.errors);
+      const rows=parsed.data||[];
+      if(rows.length){
+        columns=Object.keys(rows[0]);
+        sample=rows.slice(0, 3);
+        // dtype 추정: 첫 5행 기준
+        columns.forEach(function(c){
+          const vals=rows.slice(0,5).map(function(r){return r[c];}).filter(function(v){return v!=null && v!=='';});
+          if(!vals.length){ dtypes[c]='object'; return; }
+          const allNum=vals.every(function(v){return !isNaN(Number(v));});
+          dtypes[c]=allNum?'float64':'object';
+        });
+      }
+    } else if(ext==='xlsx'||ext==='xls'){
+      const buf=await file.slice(0, 1024*512).arrayBuffer();  // 512KB
+      const wb=XLSX.read(buf, {type:'array', sheetRows:100});
+      const sn=wb.SheetNames[0];
+      const ws=wb.Sheets[sn];
+      const rows=XLSX.utils.sheet_to_json(ws, {defval:null});
+      if(rows.length){
+        columns=Object.keys(rows[0]);
+        sample=rows.slice(0, 3);
+        columns.forEach(function(c){
+          const vals=rows.slice(0,5).map(function(r){return r[c];}).filter(function(v){return v!=null && v!=='';});
+          dtypes[c]=vals.length && vals.every(function(v){return typeof v==='number';})?'float64':'object';
+        });
+      }
+    } else if(ext==='json'){
+      const text=await file.slice(0, 1024*256).text();
+      try{
+        const obj=JSON.parse(text);
+        const rows=Array.isArray(obj)?obj:(Array.isArray(obj.data)?obj.data:[]);
+        if(rows.length && typeof rows[0]==='object'){
+          columns=Object.keys(rows[0]);
+          sample=rows.slice(0, 3);
+        }
+      }catch(e){ /* JSON parse fail — prefetch 스킵 */ }
+    }
+    if(!columns.length) return;  // 파싱 실패 → prefetch 스킵
+    // 미리보기 표시용 — UI 즉시 갱신
+    prefetchPreview={cols:columns.length, sample_rows:sample.length, columns:columns.slice(0,8)};
+    render();
+    // signature = sha256(sorted_columns) — 백엔드도 동일 계산
+    const sortedCols=columns.slice().sort();
+    const sig=await sha256(JSON.stringify(sortedCols));
+    prefetchSig=sig.slice(0,32);
+    // 백엔드 prefetch 호출 (fire-and-forget)
+    let resp;
+    try{
+      resp=await api('/upload/prefetch',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({columns:columns, dtypes:dtypes, sample:sample, signature:prefetchSig, user_intent:intentText||null})
+      });
+    }catch(e){ console.warn('prefetch failed:', e.message); return; }
+    if(resp && resp.cached && resp.category){
+      // 즉시 hit — 캐시 결과 적용
+      prefetchResult=resp; render();
+    } else {
+      // 비동기 polling 시작 (LLM 완료 ~15s 후)
+      pollPrefetch(prefetchSig);
+    }
+  }catch(e){
+    console.warn('startPrefetch error:', e.message);
+  }
+}
+
+async function pollPrefetch(sig){
+  if(prefetchPolling) return;
+  prefetchPolling=true;
+  const maxTries=20;  // 2.5s × 20 = 50s
+  for(let i=0; i<maxTries; i++){
+    if(!selectedFile || prefetchSig!==sig){ break; }  // 파일 변경 시 중단
+    try{
+      const resp=await api('/upload/prefetch/'+sig);
+      if(resp && resp.ready){
+        prefetchResult=resp; render(); break;
+      }
+    }catch(e){ /* polling 실패는 silent */ }
+    await new Promise(function(r){ setTimeout(r, 2500); });
+  }
+  prefetchPolling=false;
+}
+
+async function sha256(str){
+  const buf=new TextEncoder().encode(str);
+  const hash=await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+
 async function doUpload(){
   if(!selectedFile){ errMsg='먼저 파일을 선택하세요.'; render(); return; }
   errMsg=''; busy=true; render();
@@ -345,8 +457,11 @@ async function doUpload(){
       body:JSON.stringify({file_id:fileId,user_intent:intentText||null,requested_outputs:[]})});
     // Phase 1 — G1 데이터 파악 단계 유지. cur=0 으로 두고 follow=false 로 자동 전환 방지.
     // G2 proposals 도착 시점에 poll() 안에서 명시적으로 cur=1 전환 + follow=true 부여.
+    // HJ 2026-06-09 G1 단축 fix — busy=false 직후 render() 로 G1 진행 화면 즉시 표시.
+    // render() 없으면 첫 poll() 완료(~2.5s)까지 업로드 화면이 그대로 남는다.
     jobId=stt.job_id; follow=false; cur=0; frontier=0; maxReached=0; busy=false;
     gateData={}; analyzeStart=Date.now();
+    render();
     saveState();
     startPolling();
   }catch(e){ errMsg='업로드/시작 실패 — '+e.message; busy=false; render(); }
@@ -418,8 +533,12 @@ async function poll(){
   // 백엔드가 G2 게이트 도달했는데 proposals 가 비어 있는 경우(LLM 응답 직전·직렬화 실패 등)에도
   // 클라이언트가 stuck 되지 않도록 proposals 조건 제거. G2 화면에서 contentGate 가 자체적으로
   // loading→옵션 전환을 처리한다. _shownPct 는 100 으로 보존하여 시각 단절 방지.
-  if(cur===0 && jobId && curGate()==='G2' && _shownPct >= 99){
-    cur=1; follow=true; _progressKey='G2'; _shownPct=100;
+  // HJ 2026-06-09 G1 단축 Z' — schema_validator 가 g2_pending 신호 보내면
+  // 진행률 무관하게 G2 화면 진입 (gate_direction 백그라운드 대기).
+  if(cur===0 && jobId && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
+    cur=1; follow=true; _progressKey='G2';
+    if(_shownPct < 99) _shownPct = Math.max(_shownPct, 10); // Z' 진입은 진행률 보존, 100% 강제 안 함
+    else _shownPct=100;
   }
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
@@ -451,8 +570,8 @@ function startPolling(){ if(polling){ render(); return; } polling=true; clearTim
 setInterval(function(){
   if(paused) return;
   // G1→G2 자동 전환: polling 이 멈춘 케이스에 대비해 매 500ms 도 조건 재확인.
-  // proposals 조건 제거(2026-06-04) — G2 게이트 도달 신호만으로 전환.
-  if(cur===0 && jobId && curGate()==='G2' && _shownPct >= 99){
+  // HJ 2026-06-09 G1 단축 Z' — g2_pending=true 면 진행률 무관하게 전환 (schema_validator 직후).
+  if(cur===0 && jobId && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
     cur=1; follow=true;
     // _progressKey/_shownPct 를 여기서 세팅하지 않음 — _stageProgress() 가 key 불일치 감지 후
     // 자연스럽게 _shownPct=0 으로 리셋. G2 로딩 중에 100% 고정되는 버그 방지.
@@ -713,6 +832,36 @@ function g6ReportBlock(d){
   return parts;
 }
 
+// HJ 2026-06-09 G1 단축 Z' — G2 "주제 선정" 영역 렌더링.
+// schema_validator 가 _save_g2_screen_ready 로 도메인·column_meanings 사전 저장.
+// gate_direction LLM (~55s) 진행 동안 사용자가 도메인 보면서 주제 고민 → 시간 흡수.
+function g2TopicArea(d){
+  const dp=(d&&d.data_profile)||{};
+  const da=dp.domain_analysis||{};
+  // domain_partial 캐시도 fallback (도메인 LLM streaming 중간 상태)
+  const dpart=(d&&d.domain_partial)||{};
+  const domain=da.domain||dpart.domain||'';
+  const summary=da.dataset_summary||dpart.dataset_summary||'';
+  const tInsight=da.target_insight||dpart.target_insight||'';
+  const cm=da.column_meanings||{};
+  if(!domain && !summary && !Object.keys(cm).length) return '';
+  let cmHtml='';
+  const cmKeys=Object.keys(cm).slice(0,12);
+  if(cmKeys.length){
+    cmHtml='<div style="margin-top:10px"><div style="font-size:11px;opacity:.7;margin-bottom:6px">컬럼 의미 ('+cmKeys.length+(Object.keys(cm).length>12?'/'+Object.keys(cm).length:'')+')</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:12px">'
+      +cmKeys.map(function(k){return '<div style="background:#fff;padding:6px 8px;border-radius:4px;border:1px solid #e2e8f0"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+esc(String(cm[k]))+'</span></div>';}).join('')
+      +'</div></div>';
+  }
+  return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:14px">'
+    +'<div style="font-weight:600;color:#0f172a;margin-bottom:8px">📌 주제 선정 — 데이터 도메인</div>'
+    +(domain?'<div style="font-size:14px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(domain)+'</b></div>':'')
+    +(summary?'<div style="margin-top:6px;font-size:13px"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(summary)+'</div>':'')
+    +(tInsight?'<div style="margin-top:6px;font-size:13px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
+    +cmHtml
+    +'</div>';
+}
+
 function contentGate(){
   const tg='G'+(cur+1);           // 사용자가 보고 싶은 게이트 (cur 기준). cur=1→G2 ... cur=5→G6
   const ag=curGate();             // 백엔드 현재 게이트
@@ -724,6 +873,17 @@ function contentGate(){
   const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
   const g=tg;
   const props=(d.proposals)||[];
+  // HJ 2026-06-09 G1 단축 Z' — G2 에서 proposals 없을 때 (gate_direction 진행 중)
+  // "주제 선정" 영역 먼저 표시 + 분석 방향 영역엔 spinner.
+  if(g==='G2' && !props.length && d.g2_pending){
+    const topic=g2TopicArea(d);
+    return gateHeader(g)+topic
+      +'<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:10px">'
+      +'<div style="font-weight:600;color:#92400e;margin-bottom:6px">🔄 분석 방향 카드 생성 중…</div>'
+      +'<div style="font-size:13px;opacity:.8">위 도메인 정보를 보면서 어떤 분석을 원하시는지 떠올려 보세요. 곧 추천 카드가 표시됩니다.</div>'
+      +'</div>'
+      +loadingBlock();
+  }
   if(!props.length){ return gateHeader(g)+loadingBlock(); }
   // filter out backend-injected custom placeholder — customCard is added separately below
   const llmProps=props.filter(function(p){ return !p.is_custom; });
@@ -734,8 +894,10 @@ function contentGate(){
   if(g==='G2'||g==='G3'||g==='G4'||g==='G5') cards+=customCard(llmProps.length);
   let pop='';
   if(animatedGate!==g){ pop=' popin'; animatedGate=g; if(g==='G6') g5Checked={}; setTimeout(function(){ try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){} }, 30); }
+  // HJ 2026-06-09 G1 단축 Z' — G2 에선 카드 위에 "주제 선정" 영역 함께 표시.
+  const topicArea = (g==='G2') ? g2TopicArea(d) : '';
   // G6 (산출물 선택) 화면은 산출물 카드만 표시 — 최적 모델·평가 결과 박스 숨김
-  return gateHeader(g)+'<div class="opts'+pop+'">'+cards+'</div>';
+  return gateHeader(g)+topicArea+'<div class="opts'+pop+'">'+cards+'</div>';
 }
 function rcard(title, inner){ return '<div class="rcard"><h4>'+title+'</h4>'+inner+'</div>'; }
 function contentResult(){
@@ -781,19 +943,64 @@ function content(i){
     //   (b) jobId 있음 + 분석 중 → 데이터 파악 진행 화면(15단계 백엔드 작업).
     //       이 화면을 끝까지 보여주다 G2 proposals 도착 시 poll() 이 cur=1 로 전환.
     if(jobId){
+      // HJ 2026-06-09 G1 단축 γ — partial domain 점진 표시.
+      // 도메인 LLM 의 streaming 콜백이 첫 필드 도착 시점부터 partial 값을 보냄.
+      // 사용자가 71초를 빈 화면으로 보내지 않고 "도메인: 이커머스 ★" 같이 점진 확인.
+      const dp=gateData.domain_partial||{};
+      let partialHtml='';
+      if(dp.domain || dp.dataset_summary || dp.target_insight){
+        let lines=[];
+        if(dp.domain) lines.push('<div><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(dp.domain)+'</b></div>');
+        if(dp.dataset_summary) lines.push('<div style="margin-top:6px"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(dp.dataset_summary)+'</div>');
+        if(dp.target_insight) lines.push('<div style="margin-top:6px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(dp.target_insight)+'</div>');
+        if(dp.column_meanings_count) lines.push('<div style="margin-top:6px;opacity:.7">컬럼 의미 분석 중 ('+dp.column_meanings_count+'개 도착)</div>');
+        partialHtml='<div style="background:#f1f5f9;border-left:3px solid #10b981;padding:10px 14px;margin:12px 0;border-radius:4px;font-size:13px">'
+          +'<div style="font-weight:600;color:#10b981;font-size:11px;margin-bottom:6px">🟢 실시간 분석 결과</div>'
+          +lines.join('')+'</div>';
+      }
       return '<div class="ahdr"><h2>데이터를 파악하는 중입니다</h2>'
         +'<div class="en">G1 — Data Understanding</div></div>'
         +'<p class="desc">출처·스키마·도메인 의미·데이터 품질·카테고리 판정·PII 점검까지 마치는 중입니다. '
         +'끝나면 자동으로 분석 방향 추천이 표시됩니다.</p>'
+        +partialHtml
         +loadingBlock();
     }
     const has=!!selectedFile;
     const t=has?('선택됨: '+esc(selectedFile.name)):'파일을 끌어다 놓거나 선택';
+    // HJ 2026-06-09 G1 단축 Phase 4 — 사전 분석 UI (사용자 자연 연장).
+    let prefetchUi='';
+    if(has && prefetchPreview){
+      let pvHtml='';
+      pvHtml+='<div style="margin-top:6px;font-size:12px;opacity:.85">컬럼 <b>'+prefetchPreview.cols+'개</b>';
+      if(prefetchPreview.columns && prefetchPreview.columns.length){
+        pvHtml+=' &nbsp;·&nbsp; '+prefetchPreview.columns.slice(0,6).map(esc).join(', ');
+        if(prefetchPreview.cols>6) pvHtml+=' …';
+      }
+      pvHtml+='</div>';
+      let resultHtml='';
+      if(prefetchResult && prefetchResult.category){
+        resultHtml+='<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;font-size:12px">';
+        resultHtml+='<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px"><b>추정 카테고리</b> '+esc(prefetchResult.category)+'</span>';
+        if(prefetchResult.target_column){
+          resultHtml+='<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:4px"><b>추정 타겟</b> '+esc(prefetchResult.target_column)+'</span>';
+        }
+        resultHtml+='</div>';
+        if(prefetchResult.auto_intent && !intentText.trim()){
+          resultHtml+='<div style="margin-top:6px;font-size:12px;color:#6b7280">💡 자동 추천 의도: <i>'+esc(prefetchResult.auto_intent)+'</i> &nbsp;<span style="opacity:.7">(의도란에 자유롭게 수정해 입력하세요)</span></div>';
+        }
+      } else if(prefetchSig){
+        resultHtml='<div style="margin-top:6px;font-size:12px;color:#10b981">🟢 사전 분석 중… (의도를 입력하시는 동안 진행됩니다)</div>';
+      }
+      prefetchUi='<div style="background:#f0fdf4;border-left:3px solid #10b981;padding:10px 14px;margin:10px 0;border-radius:4px">'
+        +'<div style="font-weight:600;color:#065f46;font-size:12px">📊 파일 사전 분석</div>'
+        +pvHtml+resultHtml+'</div>';
+    }
     return '<div class="ahdr"><h2>데이터 업로드</h2></div><p class="desc">파일을 올리면 ADA가 데이터를 분석해 방향을 제안합니다.</p>'
       +'<div class="dz'+(has?' has':'')+'" id="dz"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 8.5a3.5 3.5 0 0 1 .5 6.96"/><path d="M12 19v-7"/><path d="m9 14 3-3 3 3"/></svg>'
-      +'<div style="flex:1"><div class="t" id="dzt">'+t+'</div><div class="s">CSV · XLSX · JSON (최대 100MB)</div></div>'
+      +'<div style="flex:1"><div class="t" id="dzt">'+t+'</div><div class="s">CSV · XLSX · JSON (최대 30MB)</div></div>'
       +'<button class="browse" id="browseBtn">찾아보기</button></div>'
       +'<input type="file" id="fileInput" style="display:none" accept=".csv,.xlsx,.json">'
+      +prefetchUi
       +'<textarea class="intent" id="intentInput" placeholder="💬 분석 의도 — 예) 타이타닉 승객의 생존 여부를 예측하고 싶어요"></textarea>';
   }
   if(i>=1 && i<=5) return contentGate();
@@ -841,9 +1048,17 @@ function render(){
           br=document.getElementById('browseBtn'), it=document.getElementById('intentInput');
     if(br&&fi) br.onclick=function(e){ e.stopPropagation(); fi.click(); };
     if(dz&&fi) dz.onclick=function(){ fi.click(); };
-    if(fi) fi.onchange=function(){ if(fi.files[0]){ selectedFile=fi.files[0]; render(); } };
-    if(dz){ dz.ondragover=function(e){ e.preventDefault(); }; dz.ondrop=function(e){ e.preventDefault(); if(e.dataTransfer.files[0]){ selectedFile=e.dataTransfer.files[0]; render(); } }; }
-    if(it){ it.value=intentText; it.oninput=function(){ intentText=it.value; }; }
+    // HJ 2026-06-09 G1 단축 Phase 4 — 파일 선택 즉시 client 파싱 + prefetch.
+    if(fi) fi.onchange=function(){ if(fi.files[0]){ selectedFile=fi.files[0]; render(); startPrefetch(fi.files[0]); } };
+    if(dz){ dz.ondragover=function(e){ e.preventDefault(); }; dz.ondrop=function(e){ e.preventDefault(); if(e.dataTransfer.files[0]){ selectedFile=e.dataTransfer.files[0]; render(); startPrefetch(e.dataTransfer.files[0]); } }; }
+    if(it){
+      it.value=intentText;
+      it.oninput=function(){
+        intentText=it.value;
+        // auto_intent 추천 표시는 사용자가 직접 입력 시작하면 더 이상 안내 안 함
+        if(prefetchResult && prefetchResult.auto_intent && it.value.trim()){ prefetchResult.auto_intent=null; }
+      };
+    }
   }
   if(cur>=1 && cur<=5){
     const isG5=curGate()==='G6';

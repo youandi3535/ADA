@@ -174,15 +174,29 @@ def _get_redis() -> Any:
 # 이 실측값은 LLM·CPU·네트워크 같은 환경별 차이를 이미 반영한 진짜 ETA 소스 —
 # 별도의 EWMA bucket 학습이나 LLM ping 보정 계층 없이 이것만으로 충분하다.
 STAGE_AGENTS: dict[str, list[str]] = {
-    "G1": ["SupervisorAgent", "IntentElicitorAgent", "DataProfilerAgent",
-           "SchemaValidatorAgent", "AnalysisProposerAgent"],
+    "G1": [
+        "SupervisorAgent",
+        "IntentElicitorAgent",
+        "DataProfilerAgent",
+        "SchemaValidatorAgent",
+        "AnalysisProposerAgent",
+    ],
     "G2": ["EDAAgent", "MethodologyProposerAgent"],
-    "G3": ["PreprocessingStrategistAgent", "FeatureEngineerAgent",
-           "PreprocessingChoiceAgent", "ModelStrategyProposerAgent"],
-    "G4": ["ModelSelectionAgent", "HyperparameterTunerAgent", "TrainingExecutorAgent",
-           "TrainingMonitorAgent", "MetricsAggregatorAgent", "ModelComparisonReporterAgent"],
-    "G5": ["FineTuneExecutorAgent", "EvalAgent", "ExplainabilityAgent",
-           "InsightAgent", "OutputTypeSelectorAgent"],
+    "G3": [
+        "PreprocessingStrategistAgent",
+        "FeatureEngineerAgent",
+        "PreprocessingChoiceAgent",
+        "ModelStrategyProposerAgent",
+    ],
+    "G4": [
+        "ModelSelectionAgent",
+        "HyperparameterTunerAgent",
+        "TrainingExecutorAgent",
+        "TrainingMonitorAgent",
+        "MetricsAggregatorAgent",
+        "ModelComparisonReporterAgent",
+    ],
+    "G5": ["FineTuneExecutorAgent", "EvalAgent", "ExplainabilityAgent", "InsightAgent", "OutputTypeSelectorAgent"],
     "G6": ["ReportComposerAgent", "SelfLearningAgent"],
 }
 
@@ -297,7 +311,7 @@ def estimate_stage_eta(
         if cols > 20:
             base += min(cols, 200)  # 컬럼당 ~1초, 200초 cap
         base += int(miss * 30)  # 결측 처리 시간
-        base += int(txt * 20)   # 텍스트 인코딩 시간
+        base += int(txt * 20)  # 텍스트 인코딩 시간
         return base
     if stage == "G4":  # model_selection + tuning + training + monitor + metrics + gate
         base = 180
@@ -325,6 +339,7 @@ def publish_progress(
     error: str | None = None,
     progress: int | None = None,
     eta_sec: int | None = None,
+    extra: dict | None = None,
 ) -> None:
     """대시보드 SSE / WebSocket 채널.
 
@@ -353,6 +368,11 @@ def publish_progress(
         payload["eta_base_ts"] = time.time()
     if pipeline_status:
         payload["status"] = pipeline_status
+    # HJ 2026-06-09 G1 단축 γ — partial domain 등 보조 정보 전달 (frontend G1 화면 점진 표시).
+    if extra and isinstance(extra, dict):
+        for k, v in extra.items():
+            if k not in payload:  # 핵심 필드 덮어쓰기 금지
+                payload[k] = v
     if error:
         # R-103 — PII 마스킹 후 영속화
         try:
@@ -749,7 +769,9 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                 _dtypes = _prof.get("dtypes") if isinstance(_prof, dict) else None
                 _text_ratio = None
                 if isinstance(_dtypes, dict) and _dtypes:
-                    _text_n = sum(1 for v in _dtypes.values() if isinstance(v, str) and ("object" in v or "string" in v))
+                    _text_n = sum(
+                        1 for v in _dtypes.values() if isinstance(v, str) and ("object" in v or "string" in v)
+                    )
                     _text_ratio = _text_n / max(1, len(_dtypes))
                 _missing_ratio = _prof.get("missing_ratio") if isinstance(_prof, dict) else None
                 _file_id = _fs.get("file_id") if isinstance(_fs, dict) else None

@@ -24,42 +24,31 @@ from agents.handlers.common.shared import (
     load_dataframe_from_state,
 )
 
+# HJ 2026-06-09 G1 단축 U — system_prompt 압축 (반복 강조 제거).
 _PII_SYSTEM_PROMPT = (
-    "당신은 데이터 프라이버시 전문가입니다. "
-    "PII(개인식별정보) 가능성이 높은 컬럼을 식별하세요. "
-    "이름·이메일·전화번호·주소·주민번호·여권번호 등.\n\n"
-    "응답은 컬럼명 문자열의 JSON 배열만 반환. "
-    '예: ["full_name", "email"]. 해당 없으면 [].'
+    "PII(개인식별정보) 가능성 컬럼 식별. 이름·이메일·전화·주소·주민·여권 등.\n"
+    'JSON 배열만 반환. 예: ["full_name","email"]. 없으면 [].'
 )
 
 _CATEGORY_SYSTEM_PROMPT = (
-    "당신은 데이터 사이언스 전문가입니다. 다음 데이터셋을 정확히 한 가지 카테고리로 분류하세요:\n"
-    '- "tabular_ml"        : 분류·회귀를 위한 정형 데이터\n'
-    '- "tabular_dl"        : 딥러닝이 필요한 정형 데이터\n'
-    '- "timeseries"        : 시간/날짜 차원이 있는 예측용 데이터\n'
-    '- "anomaly_detection" : 이상치·이탈 탐지용 데이터\n\n'
-    "예측 대상이 될 가능성이 가장 높은 컬럼도 함께 식별. "
-    "anomaly_detection 인 경우 target_column 은 null.\n\n"
-    "한자(汉字)·중국어 절대 금지. reason 은 한국어 1문장.\n\n"
-    "JSON 만 반환 (마크다운 금지):\n"
-    '{"category": "tabular_ml", "target_column": "price", "reason": "한국어 1문장"}'
+    "데이터셋을 한 카테고리로 분류:\n"
+    "- tabular_ml: 분류·회귀 정형\n"
+    "- tabular_dl: 딥러닝 필요 정형\n"
+    "- timeseries: 시간 차원 예측\n"
+    "- anomaly_detection: 이상치·이탈 탐지\n"
+    "예측 타겟 컬럼도 식별 (anomaly_detection 이면 null).\n"
+    "한자·중국어 금지. reason 한국어 1문장.\n"
+    'JSON 만: {"category":"tabular_ml","target_column":"price","reason":"한국어 1문장"}'
 )
 
 _DOMAIN_SYSTEM_PROMPT = (
-    "당신은 데이터 분석 전문가입니다. "
-    "컬럼명·데이터 타입·샘플 행을 보고 다음 4가지를 분석하세요:\n"
-    "1. 데이터셋이 속한 도메인·산업 (예: 이커머스, 의료, 금융, 물류 등)\n"
-    "2. 각 컬럼의 의미를 평범한 한국어로 설명\n"
-    "3. 이 데이터셋이 무엇을 다루는지 한국어 1-2문장 요약\n"
-    "4. 명확한 예측 타겟이 존재하는지, 그 근거\n\n"
-    "[필수 규칙]\n"
-    "- 모든 텍스트 값(domain · dataset_summary · column_meanings · target_insight)은 한국어.\n"
-    "- 한자(漢字·汉字)·중국어 문장 절대 금지. 영문 컬럼명은 키로 그대로 유지.\n\n"
-    "JSON 만 반환 (마크다운·코드블록 금지):\n"
-    '{"domain": "이커머스", '
-    '"dataset_summary": "이 데이터셋은 ...", '
-    '"column_meanings": {"price": "상품 가격 (원)", ...}, '
-    '"target_insight": "Survived 컬럼은 이진 분류의 타겟으로 적합합니다."}'
+    "컬럼·dtype·sample 보고 분석:\n"
+    "1) domain (산업)\n"
+    "2) 각 컬럼 의미 (한국어)\n"
+    "3) dataset_summary (1~2문장)\n"
+    "4) target_insight (예측 타겟 적합성·근거)\n"
+    "모든 텍스트 한국어, 한자 금지. 영문 컬럼명은 키로 유지.\n"
+    'JSON 만: {"domain":"이커머스","dataset_summary":"...","column_meanings":{"price":"상품 가격(원)",...},"target_insight":"..."}'
 )
 
 
@@ -98,6 +87,17 @@ class DataProfilerAgent(BaseAgent):
             async def _detect_category_safe():
                 if not need_category:
                     return state.category, state.target_column, {}
+                # HJ 2026-06-09 G1 단축 Phase 4 — θ-B prefetch 결과 회수.
+                # 파일 선택 시점에 frontend 가 /upload/prefetch 호출했으면
+                # 동일 컬럼 signature 의 결과가 Redis 에 있음 → LLM 스킵.
+                _cached = _try_prefetch_cache(df)
+                if _cached is not None:
+                    self.logger.info(
+                        "category_prefetch_hit",
+                        category=_cached[0],
+                        target_column=_cached[1],
+                    )
+                    return _cached
                 try:
                     return await self._llm_detect_category(generic_for_cat, df, intent)
                 except Exception as e:
@@ -273,9 +273,14 @@ class DataProfilerAgent(BaseAgent):
         return await self._heuristic_anonymize_df(df)
 
     async def _llm_domain_analysis(self, df: Any, category: str, target_column: Any, intent: str) -> dict[str, Any]:
-        """LLM-based domain understanding: 컬럼 의미·도메인·데이터셋 요약."""
+        """LLM-based domain understanding: 컬럼 의미·도메인·데이터셋 요약.
+
+        HJ 2026-06-09 G1 단축 V — user_prompt 압축 (sample 5행 → 2행, 잘림 3000자 → 1500자).
+        도메인 분석은 컬럼 의미·dtype 으로 충분, sample 은 보조 (대표 1~2행이면 짐작 가능).
+        입력 토큰 ~2000t → ~700t, 입력 처리 -10~15s.
+        """
         try:
-            sample = df.head(5).fillna("").astype(str).to_dict(orient="records")
+            sample = df.head(2).fillna("").astype(str).to_dict(orient="records")
         except Exception:
             sample = []
         cols = list(map(str, df.columns))
@@ -286,10 +291,10 @@ class DataProfilerAgent(BaseAgent):
         user_prompt = (
             f"columns: {cols}\n"
             f"dtypes: {_json.dumps(dtypes, ensure_ascii=False)}\n"
-            f"sample_rows (first 5): {_json.dumps(sample, ensure_ascii=False)[:3000]}\n"
-            f"detected_category: {category}\n"
-            f"detected_target: {target_column or 'none'}\n"
-            f"user_intent: {intent or 'none'}"
+            f"sample (2행): {_json.dumps(sample, ensure_ascii=False)[:1500]}\n"
+            f"category: {category}\n"
+            f"target: {target_column or 'none'}\n"
+            f"intent: {(intent or 'none')[:300]}"
         )
         # HJ 2026-06-09 — G1 단축: max_tokens 800 고정 유지하되 30MB 상한 하 worst case 점검.
         # column_meanings 가 컬럼당 ~15t. 30MB·컬럼 100 → ~1500t 필요할 수 있으나
@@ -297,12 +302,19 @@ class DataProfilerAgent(BaseAgent):
         # 컬럼 50 초과 시만 cap 동적 (cap = max(800, n_cols * 15 + 300))
         n_cols = len(df.columns) if hasattr(df, "columns") else 0
         _domain_max_tokens = max(800, n_cols * 15 + 300) if n_cols > 50 else 800
+
+        # HJ 2026-06-09 G1 단축 γ — streaming + partial publish.
+        # 도메인 LLM (~71s) 의 첫 필드 (domain) 가 도착하는 시점 (~10s) 에 G1 진행 화면에
+        # "도메인: 이커머스" 같이 점진 표시. 사용자 체감 시간 -50~60s.
+        # callback 은 누적 텍스트에서 새 필드 등장 시 1회만 publish (throttle 자동).
+        on_partial = self._make_domain_partial_callback()
         raw = await self._call_llm(
             system_prompt=_DOMAIN_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             max_tokens=_domain_max_tokens,
             temperature=0.2,
             json_mode=True,
+            on_partial=on_partial,  # Ollama 라우팅에서만 활용, Anthropic 경로면 None 처리
         )
         parsed = self._parse_json(raw)
         if not isinstance(parsed, dict):
@@ -349,6 +361,103 @@ class DataProfilerAgent(BaseAgent):
 
     # ------------------------------------------------------------------
 
+    def _make_domain_partial_callback(self):
+        """HJ 2026-06-09 G1 단축 γ — 도메인 streaming 의 partial 콜백 생성.
+
+        누적 텍스트에서 ``"domain"``, ``"dataset_summary"``, ``"target_insight"`` 등
+        새 필드 등장 시 1회만 publish (throttle 자동). column_meanings 는 컬럼 단위 점진
+        도착하므로 별도 처리 (첫 컬럼 + 컬럼 5개 단위 publish).
+
+        Redis 키: ``ada:domain_partial:{job_id}`` (TTL 600s)
+        Pub channel: ``ada:pipeline:{job_id}`` (publish_progress 와 동일 채널, extra 필드)
+
+        누수 방지: callback 내부 모든 작업 try/except, Redis 실패해도 본 흐름 영향 없음.
+        """
+        import re as _re
+
+        job_id = getattr(self, "_current_job_id", None)
+        if not job_id:
+            return None
+
+        # closure state: 이미 publish 한 필드 추적
+        seen_fields: set = set()
+        last_col_count: list = [0]  # mutable in closure
+
+        # 컴파일 한 번
+        _field_patterns = {
+            "domain": _re.compile(r'"domain"\s*:\s*"([^"]+)"'),
+            "dataset_summary": _re.compile(r'"dataset_summary"\s*:\s*"([^"]+)"'),
+            "target_insight": _re.compile(r'"target_insight"\s*:\s*"([^"]+)"'),
+        }
+        _col_pattern = _re.compile(r'"column_meanings"\s*:\s*\{([^}]*)')
+
+        def _publish_partial(partial: dict) -> None:
+            """Redis 캐시 + pub/sub (publish_progress 의 extra 필드 활용)."""
+            try:
+                from orchestrator.runner import _get_redis, agent_phase_progress, publish_progress
+
+                r = _get_redis()
+                # 캐시 (frontend polling 시 활용)
+                existing = {}
+                try:
+                    raw = r.get(f"ada:domain_partial:{job_id}")
+                    if raw:
+                        existing = _json.loads(raw)
+                except Exception:  # noqa: BLE001
+                    pass
+                existing.update(partial)
+                try:
+                    r.setex(
+                        f"ada:domain_partial:{job_id}",
+                        600,
+                        _json.dumps(existing, ensure_ascii=False, default=str),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                # pub: publish_progress 호출 (extra 필드 활용)
+                try:
+                    pct = agent_phase_progress("data_profiler", "llm_end")
+                    # 진행률은 보간 task 가 별도 publish 하므로 여기선 동일값 유지
+                    publish_progress(
+                        job_id,
+                        "data_profiler",
+                        message=f"도메인 partial: {list(partial.keys())[0]}",
+                        progress=pct,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("domain_partial_publish_failed", error=str(e))
+
+        def _on_partial(accumulated: str) -> None:
+            """누적 텍스트에서 새 필드 등장 감지 → 1회 publish."""
+            try:
+                new_partial: dict = {}
+                # 1) 단순 필드들
+                for field, pat in _field_patterns.items():
+                    if field in seen_fields:
+                        continue
+                    m = pat.search(accumulated)
+                    if m:
+                        seen_fields.add(field)
+                        new_partial[field] = m.group(1)
+                # 2) column_meanings — 컬럼 5개씩 publish
+                m_cols = _col_pattern.search(accumulated)
+                if m_cols:
+                    cols_body = m_cols.group(1)
+                    # 단순 카운트: '":' 갯수 == 컬럼 수 추정
+                    col_count = cols_body.count('":')
+                    if col_count - last_col_count[0] >= 5:
+                        last_col_count[0] = col_count
+                        new_partial["column_meanings_count"] = col_count
+                if new_partial:
+                    _publish_partial(new_partial)
+            except Exception as e:  # noqa: BLE001
+                # callback 어떤 예외도 본 LLM 흐름에 영향 없음
+                self.logger.debug("domain_partial_callback_minor", error=str(e))
+
+        return _on_partial
+
     async def _persist_detection(self, state: PipelineState, category: str, target_column: Any) -> None:
         """Persist detected category/target to Job row. best-effort."""
         if self.session is None:
@@ -372,6 +481,46 @@ class DataProfilerAgent(BaseAgent):
 # ==============================================================
 # Module-level helpers
 # ==============================================================
+
+
+def _try_prefetch_cache(df: Any) -> tuple[str, Any, dict[str, Any]] | None:
+    """HJ 2026-06-09 G1 단축 Phase 4 — θ-B prefetch 결과 회수.
+
+    파일 선택 시점에 frontend 의 /upload/prefetch 가 sha256(sorted_columns) 키로
+    카테고리 LLM 결과를 Redis 에 저장. data_profiler 가 동일 키로 조회 → hit 이면
+    카테고리 LLM 호출 스킵 (-15s).
+
+    Returns:
+        (category, target_column, detection_dict) 또는 None (miss)
+    """
+    try:
+        import hashlib as _hash
+
+        import redis as _redis
+
+        from ada.core.config import settings as _s
+
+        cols = sorted(map(str, df.columns))
+        sig_input = _json.dumps(cols, ensure_ascii=False).encode("utf-8")
+        signature = _hash.sha256(sig_input).hexdigest()[:32]
+        r = _redis.Redis.from_url(_s.redis_url)
+        raw = r.get(f"ada:prefetch:{signature}")
+        if not raw:
+            return None
+        data = _json.loads(raw)
+        category = data.get("category")
+        target_column = data.get("target_column")
+        if not category:
+            return None
+        detection = {
+            "detected_category": category,
+            "detected_target": target_column,
+            "reason": "prefetch cache hit (사용자 의도 입력 시간에 카테고리 LLM 사전 수행)",
+            "signals": {"prefetch_hit": True},
+        }
+        return category, target_column, detection
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _resolve_task_from_profile(

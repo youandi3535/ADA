@@ -255,6 +255,7 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             data["gate"] = _gd.get("gate") or job.current_gate
             data["proposals"] = _gd.get("proposals") or []
             # 직전 단계 결과 필드 전부를 게이트 화면에 노출 (eda_summary/eval_result 추가)
+            # HJ 2026-06-09 G1 단축 Z' — g2_pending 추가 (gate_direction 진행 중 신호)
             for k in (
                 "category",
                 "target_column",
@@ -265,6 +266,7 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                 "pipeline_status",
                 "eda_summary",
                 "eval_result",
+                "g2_pending",
             ):
                 v = _gd.get(k)
                 if v is not None:
@@ -306,6 +308,14 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                 data["pipeline_status"] = pr.get("status")
             if pr.get("error"):
                 data["pipeline_error"] = pr.get("error")
+        # HJ 2026-06-09 G1 단축 γ — partial domain 정보 (G1 진행 화면 점진 표시).
+        # data_profiler 의 도메인 streaming 콜백이 ada:domain_partial:{job_id} 에 저장.
+        try:
+            raw_partial = rc.get(f"ada:domain_partial:{job_id}")
+            if raw_partial:
+                data["domain_partial"] = _json.loads(raw_partial)
+        except Exception:  # noqa: BLE001
+            pass
     except Exception:  # noqa: BLE001
         pass
 
