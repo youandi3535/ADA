@@ -1,6 +1,8 @@
 """agents.handlers.tabular.output_extras — 정형 산출물 추가 (jh 담당).
 
 Day 9: ROC Curve, Calibration Curve, Confusion Matrix 3종 차트 구현.
+Day 11: Learning Curve · Residual + diagnostics (Permutation/PDP/QQ).
+Day 11+ (jh, decision-aware): archetype 기반 운영 권고 표 4 종 (tables 키).
 
 진입함수 (dispatcher 자동 등록, "assets" capability):
   - assets(state, ctx=None) -> dict  {charts, tables, text_blocks}
@@ -12,18 +14,21 @@ Day 9: ROC Curve, Calibration Curve, Confusion Matrix 3종 차트 구현.
 
 반환 키 (E-3, OUTPUT_EXTRAS_KEYS):
   - charts: list[str]       MinIO 차트 경로
-  - tables: list[dict]      {title, columns, rows}
+  - tables: list[dict]      {title, columns, rows} — 운영 권고 표 4 종
   - text_blocks: list[str]  (미사용, 빈 리스트)
+
+운영 권고 표 4 종 (tables, Day 11+ jh):
+  1. 배포 체크리스트       — SHA256 / MLflow / 임계치 / 캘리브레이션 / A/B 권고비율
+  2. 모니터링 KPI 표        — 데이터 드리프트 / 성능 / 캘리브레이션 / 레이턴시
+  3. 임계치 전략 비교       — F1-max / cost-min / Youden J / recall-min (분류만)
+  4. 재학습 권고            — archetype × 메트릭 기반 강도/범위/트리거/롤백
 
 차트 생성 전략:
   - ROC Curve: best_model.metrics["val_roc_auc"] 보유 + 분류 task 일 때 생성.
-    y_true/y_proba 는 state 에 없으므로 model_obj 재로드 시도 후 없으면
-    AUC 스칼라로부터 대각 + AUC 레이블 요약 차트로 대체.
   - Calibration: 분류 + y_proba 재로드 성공 시 신뢰도 곡선, 실패 시 생략.
-  - Confusion Matrix: class_weight 아티팩트의 class_counts 기반 히트맵.
-    실제 y_pred 재로드 시도; 실패 시 class_counts 비율 기반 대각 행렬로 대체.
+  - Confusion Matrix: 실제 y_pred 재로드 시도; 실패 시 class_counts 폴백.
 
-B-1 원칙: 데이터/모델 재로드 실패 시 graceful degrade (빈 charts 반환).
+B-1 원칙: 차트/표 생성 실패 시 graceful degrade (해당 항목만 skip, 다른 건 반환).
 """
 
 from __future__ import annotations
@@ -562,6 +567,165 @@ def _build_confusion_matrix_chart(state: Any) -> str | None:
         return None
 
 
+# ── 운영 권고 표 4 종 (Day 11+ jh, decision-aware) ──────────────────────────
+
+
+def _build_deployment_checklist(state: Any) -> dict[str, Any] | None:
+    """배포 체크리스트 표 — SHA256/MLflow/임계치/캘리브레이션/A/B 권고비율."""
+    bm = getattr(state, "best_model", None) or {}
+    if not bm:
+        return None
+
+    metrics = bm.get("metrics") or {}
+    sha256 = bm.get("model_sha256") or "—"
+    mlflow_run = bm.get("mlflow_run_id") or "—"
+    opt_thr = metrics.get("val_optimal_threshold")
+    threshold_basis = f"F1-max 자동 탐색 (opt={float(opt_thr):.2f})" if opt_thr is not None else "기본 0.5"
+
+    # archetype 기반 A/B 권고비율
+    profile = getattr(state, "data_profile", None) or {}
+    archetype = (profile.get("archetype") or {}).get("primary")
+    ab_ratio = {
+        "extreme_imbalance": "5% (위험도 큼)",
+        "target_leakage_suspected": "0% (롤아웃 보류 — 누수 확인 우선)",
+        "low_signal": "5% (신호 약함 — 보수적)",
+        "p_gg_n": "10%",
+        "imbalanced_moderate": "10%",
+    }.get(archetype, "20% (표준)")
+
+    return {
+        "title": "배포 체크리스트",
+        "columns": ["항목", "값/권고"],
+        "rows": [
+            ["모델 SHA256", str(sha256)[:16] + "..." if len(str(sha256)) > 16 else str(sha256)],
+            ["MLflow run", str(mlflow_run)],
+            ["임계치 산출", threshold_basis],
+            ["캘리브레이션", "ECE > 0.05 면 Platt 또는 Isotonic 권고"],
+            ["A/B 트래픽 비율", ab_ratio],
+            ["데이터 누수 가드", "leakage_safe_split=True 확인 (preprocessor)"],
+        ],
+    }
+
+
+def _build_monitoring_kpi_table(state: Any) -> dict[str, Any] | None:
+    """모니터링 KPI 표 — 데이터 드리프트 / 성능 / 캘리브레이션 / 레이턴시."""
+    profile = getattr(state, "data_profile", None) or {}
+    archetype = (profile.get("archetype") or {}).get("primary")
+    bm = getattr(state, "best_model", None) or {}
+    metrics = bm.get("metrics") or {}
+    primary_metric_name = "F1" if _is_classification(state) else "R²"
+    primary_value = (
+        metrics.get("val_f1") if _is_classification(state) else metrics.get("val_r2")
+    )
+    primary_str = f"{float(primary_value):.3f}" if primary_value is not None else "—"
+
+    # archetype 별로 점검 주기 조정
+    drift_cadence = "주 1회" if archetype == "extreme_imbalance" else "월 1회"
+    perf_cadence = "일 1회" if archetype in ("extreme_imbalance", "target_leakage_suspected") else "주 1회"
+
+    return {
+        "title": "모니터링 KPI",
+        "columns": ["지표", "임계치", "점검 주기", "초기값"],
+        "rows": [
+            ["데이터 드리프트 (top-5 feature PSI)", "0.25", drift_cadence, "기준선 측정 필요"],
+            [f"성능 ({primary_metric_name}) 롤링 평균", "-3%p 알람", perf_cadence, primary_str],
+            ["캘리브레이션 (ECE)", "0.05", "월 1회", "최초 측정 필요"],
+            ["추론 레이턴시 p95", "200ms", "실시간", "serving 측정"],
+            ["오류율 (503/5xx)", "0.1%", "실시간", "—"],
+        ],
+    }
+
+
+def _build_threshold_strategy_table(state: Any) -> dict[str, Any] | None:
+    """임계치 전략 비교 표 — F1-max / cost-min / Youden J / recall-min.
+
+    분류 task 만. cost_matrix 가 category_extras 에 있으면 cost-min 추정치 포함.
+    """
+    if not _is_classification(state):
+        return None
+
+    bm = getattr(state, "best_model", None) or {}
+    metrics = bm.get("metrics") or {}
+    opt_thr = metrics.get("val_optimal_threshold")
+    f1_at_opt = metrics.get("val_f1_at_optimal_threshold")
+
+    if opt_thr is None:
+        return None
+
+    # cost_matrix 가 user 입력으로 들어오면 cost-min threshold 계산 가능
+    cat_extras = _tab_extras(state)
+    cost_matrix = cat_extras.get("cost_matrix") or {}
+    fp_cost = float(cost_matrix.get("fp", 1.0))
+    fn_cost = float(cost_matrix.get("fn", 1.0))
+    # 간이 cost-min: FN cost 비율이 높으면 임계치 낮춤 (재현율↑)
+    cost_min_thr = round(max(0.05, min(0.95, float(opt_thr) - 0.1 * (fn_cost / max(fp_cost, 1e-9) - 1))), 2)
+    cost_min_str = f"{cost_min_thr:.2f}" if cost_matrix else "cost_matrix 입력 필요"
+
+    return {
+        "title": "임계치 전략 비교",
+        "columns": ["전략", "임계치", "최적화 대상", "권고 상황"],
+        "rows": [
+            ["기본 0.5", "0.50", "—", "확률 보정 완료된 경우"],
+            ["F1-max", f"{float(opt_thr):.2f}", f"F1={float(f1_at_opt):.2f}" if f1_at_opt else "F1", "균형 데이터"],
+            ["cost-min", cost_min_str, "expected_cost", "FP/FN 비용 비대칭"],
+            ["Youden J", f"{float(opt_thr):.2f} (근사)", "TPR-FPR", "민감도·특이도 균형"],
+            ["recall-min (0.9)", "≤0.30 (추정)", "recall ≥ 0.9", "FN 절대 회피"],
+        ],
+    }
+
+
+def _build_retrain_policy_table(state: Any) -> dict[str, Any] | None:
+    """재학습 권고 표 — archetype + 메트릭 기반 강도/범위/트리거/롤백."""
+    profile = getattr(state, "data_profile", None) or {}
+    archetype = (profile.get("archetype") or {}).get("primary")
+    n_rows = int(profile.get("rows", 0) or 0)
+
+    # 재학습 강도 — archetype 별
+    intensity_map = {
+        "extreme_imbalance": ("주기적 (월)", "medium (HPO warm-start 재실행)"),
+        "target_leakage_suspected": ("즉시", "heavy (전처리·피처 재설계)"),
+        "low_signal": ("보류", "피처 엔지니어링 우선 — 모델만 재학습 무의미"),
+        "p_gg_n": ("주기적 (분기)", "light (기존 모델 + 새 데이터로 fit)"),
+        "high_cardinality_heavy": ("주기적 (월)", "light (새 카테고리 등장 모니터링)"),
+    }
+    intensity, scope = intensity_map.get(archetype, ("주기적 (분기)", "light"))
+
+    # 필요 데이터량 — n_rows × 0.2 (rule-of-thumb)
+    data_req = f"≥ {int(n_rows * 0.2):,} 건 누적" if n_rows else "기준 미정"
+
+    return {
+        "title": "재학습 권고",
+        "columns": ["항목", "권고"],
+        "rows": [
+            ["재학습 강도", intensity],
+            ["재학습 범위", scope],
+            ["트리거 — 성능", "primary metric -3%p (롤링 1000건)"],
+            ["트리거 — 드리프트", "top-5 feature PSI > 0.25"],
+            ["트리거 — 캘리브레이션", "ECE > 0.05"],
+            ["필요 데이터량", data_req],
+            ["롤백 조건", "신규 모델 primary metric < 기존 - 2%p 시 자동 폐기"],
+        ],
+    }
+
+
+def _build_operational_tables(state: Any) -> list[dict[str, Any]]:
+    """4 종 운영 권고 표 일괄 생성. 각 표 생성 실패 시 해당 표만 skip."""
+    tables: list[dict[str, Any]] = []
+    for fn in (
+        _build_deployment_checklist,
+        _build_monitoring_kpi_table,
+        _build_threshold_strategy_table,
+        _build_retrain_policy_table,
+    ):
+        try:
+            t = fn(state)
+            if t:
+                tables.append(t)
+        except Exception as exc:
+            logger.warning("operational_table_failed: %s -> %s", fn.__name__, exc)
+    return tables
+
+
 # ── 진입점 (dispatcher 자동 등록, "assets") ─────────────────────────────────
 
 
@@ -621,9 +785,13 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     color = "#2563eb" if getattr(state, "category", "") == "tabular_ml" else "#0891b2"
     label = "정형 ML" if getattr(state, "category", "") == "tabular_ml" else "정형 DL"
 
+    # Day 11+ (jh, decision-aware) — 운영 권고 표 4 종.
+    # 차트만 있던 것에서 carrier 가 표 슬롯(PPT slide 19 모니터링 KPI 등) 을 채울 수 있게 함.
+    tables = _build_operational_tables(state)
+
     return {
         "charts": charts,
-        "tables": [],
+        "tables": tables,
         "text_blocks": [],
         # 하위 호환 (scripts/demo/tabular_demo.py 참조)
         "extra_charts": charts,

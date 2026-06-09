@@ -32,6 +32,10 @@ SYSTEM_PROMPT = """당신은 정형 데이터 분석 인사이트 작성자입�
   9. val_f1_per_class (multiclass) 가 있으면 가장 낮은 클래스 1개 약점 언급
  10. val_residual_mean (회귀) 가 |0.1| 보다 크면 "예측에 편향 의심" 1문장
  11. class_imbalance_ratio >= 5 면 "클래스 불균형(N:1)" 사실 1문장
+ 12. archetype.primary 가 'clean_balanced' 가 아니면 그 archetype 특성을 1문장으로 설명
+     예: 'extreme_imbalance' → "극단 불균형이라 이상탐지 카테고리도 검토 권합니다"
+     예: 'p_gg_n' → "피처가 행보다 많아 정규화 선형 모델 위주로 추천했습니다"
+     예: 'multicollinear_heavy' → "수치형 피처 간 강한 상관 — VIF drop 적용"
 
 형식 규칙:
   - 마크다운/리스트/이모지/번호 매김 금지 — 자연스러운 한국어 문장
@@ -112,6 +116,10 @@ def prompt_payload(state: Any) -> dict[str, Any]:
 
         # 누수 가드 사용 여부
         "leakage_safe_split_used": bool(cat_extras.get("leakage_safe_split")),
+
+        # Day 11+ (jh, decision-aware) — archetype 인용
+        # selector·proposer 와 동일한 ground truth 를 insight 도 인용 → 일관성 보장.
+        "archetype": data_profile.get("archetype") or {},
     }
 
 
@@ -134,6 +142,23 @@ def fallback(state: Any) -> str:
     parts: list[str] = [
         f"본 분석은 {bm.get('model_name', '미정')} 모델이 가장 우수한 성능을 보였습니다."
     ]
+
+    # 0) archetype 1 문장 (clean_balanced 면 생략) — 데이터 본질을 가장 먼저 알림
+    archetype = data_profile.get("archetype") or {}
+    archetype_primary = archetype.get("primary")
+    archetype_msgs = {
+        "target_leakage_suspected": "데이터에서 타겟 누수가 의심되어 보수적 모델을 우선 추천했습니다.",
+        "extreme_imbalance": "클래스 비율이 1:1000 이상으로 극단 불균형이라 이상탐지 카테고리도 검토를 권합니다.",
+        "p_gg_n": "피처 수가 행 수에 가깝거나 더 많아(p≫n), 정규화 선형 모델 위주로 추천했습니다.",
+        "high_cardinality_heavy": "고차원 범주형 컬럼이 다수라 CatBoost·LightGBM 처럼 native 처리 모델을 우선했습니다.",
+        "multicollinear_heavy": "수치형 피처 간 강한 다중공선성이 있어 VIF 기반 컬럼 제거가 적용되었습니다.",
+        "id_overload": "식별자 추정 컬럼이 다수라 학습 피처 구성 재검토를 권합니다.",
+        "imbalanced_moderate": "클래스 불균형이 중간 수준이라 class weight 와 cost-sensitive 임계치 적용을 권합니다.",
+        "low_signal": "피처 신호가 약해(MI<0.05) 추가 피처 엔지니어링이 효과적일 수 있습니다.",
+        "regression_heteroscedastic": "수치형 변동성이 커서 log 또는 yeo-johnson 분포 변환을 권합니다.",
+    }
+    if archetype_primary and archetype_primary in archetype_msgs:
+        parts.append(archetype_msgs[archetype_primary])
 
     # 1) CV 통계 우선, 없으면 단일 수치
     cv_stats = eval_result.get("cv_stats") or {}
