@@ -154,6 +154,41 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
         extra["mutual_info_warning"] = str(e)
 
     extra["preprocessing_thresholds_suggested"] = compute_preprocessing_thresholds_suggested(df, extra)
+
+    # ── archetype 분류 ──────────────────────────────────────────────────────
+    # 신호를 individual 키로만 두지 않고, "이 데이터는 어떤 archetype 인가"를
+    # 1 개(+우선순위 후보들)로 종합 판단해 selector/insight/output_extras 가
+    # 데이터 맞춤 결정을 할 수 있게 함.
+    try:
+        # data_profile 폴백 — profile 이 아직 state 에 반영 안 됐을 수 있어
+        # df.shape 기반 rows/cols 를 안전하게 주입.
+        merged_profile = dict(extra)
+        merged_profile.setdefault("rows", int(df.shape[0]))
+        merged_profile.setdefault("cols", int(df.shape[1]))
+        # dtypes 주입 — classify_archetypes 가 numeric 필터에 사용
+        merged_profile.setdefault("dtypes", {c: str(df[c].dtype) for c in df.columns})
+        # numeric 통계도 archetype 의 회귀 heteroscedasticity 추정에 필요
+        try:
+            num_df = df.select_dtypes(include=[np.number])
+            merged_profile.setdefault(
+                "numeric_stats",
+                {
+                    c: {
+                        "mean": float(num_df[c].mean()) if num_df[c].notna().any() else 0.0,
+                        "std": float(num_df[c].std()) if num_df[c].notna().any() else 0.0,
+                    }
+                    for c in num_df.columns
+                },
+            )
+        except Exception:
+            pass
+
+        from agents.handlers.tabular.archetype import classify_archetypes
+
+        extra["archetype"] = classify_archetypes(merged_profile, state)
+    except Exception as e:
+        extra["archetype_warning"] = str(e)
+
     return extra
 
 
@@ -180,6 +215,9 @@ def _detect_id_like_and_leakage(df: Any, target: str | None) -> dict[str, Any]:
         if col == target:
             continue
         try:
+            # 연속 float 는 unique_ratio=1.0 이 정상 — id-like 오탐 방지
+            if "float" in str(df[col].dtype).lower():
+                continue
             uniq = int(df[col].nunique(dropna=True))
             if n_rows > 0 and (uniq / n_rows) >= 0.99:
                 id_like.append(str(col))
