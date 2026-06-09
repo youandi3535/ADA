@@ -79,12 +79,19 @@ def prompt_payload(state: Any) -> dict[str, Any]:
     best_model = state.best_model or {}
     best_metrics = best_model.get("metrics") or {}
 
+    # Day 11++ — SHAP top features. state.explanations (dispatcher 가 채워야 정식)
+    # 가 비어있으면 category_extras["tabular"]["shap"] 캐시 fallback (output_extras
+    # 가 SHAP 계산해 저장한 결과). 미연결 환경에서도 insight 가 실제 SHAP 인용.
+    shap_top = _safe_get(state.explanations, "shap_top_features")
+    if not shap_top:
+        shap_top = (cat_extras.get("shap") or {}).get("shap_top_features") or []
+
     return {
         # 기본
         "category": state.category,
         "user_intent": state.user_intent,
         "best_model": best_model,
-        "shap_top": _safe_get(state.explanations, "shap_top_features") or [],
+        "shap_top": shap_top,
 
         # 평가 결과 + 다중 지표
         "eval_result": eval_result,

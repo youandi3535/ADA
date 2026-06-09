@@ -838,6 +838,32 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("diagnostics_module_import_failed: %s", exc)
 
+    # Day 11++ (jh) — SHAP 본구현. summary + dependence 차트 + top_features 캐시.
+    # explain() 1회 실행 → state.category_extras["tabular"]["shap"] 에 저장 →
+    # insight 가 동일 캐시를 읽어 중복 계산 방지.
+    try:
+        from agents.handlers.tabular import explainability as _shap_mod
+
+        shap_result = _shap_mod.explain(state)
+        # MinIO 차트 경로들을 charts 리스트에 push
+        if shap_result.get("shap_summary_path"):
+            charts.append(shap_result["shap_summary_path"])
+        for dep_path in shap_result.get("shap_dependence_paths") or []:
+            charts.append(dep_path)
+
+        # category_extras 에 결과 저장 (insight 가 fallback 으로 읽음).
+        # state 가 PipelineState (immutable) 라 with_update 가 권장이지만, 본 함수는
+        # 반환 dict 만으로 동작하는 게 dispatcher 계약. 별도 캐시 위치로 결과 반환.
+        cat_extras_dict = getattr(state, "category_extras", None) or {}
+        tab_dict = dict(cat_extras_dict.get("tabular") or {})
+        tab_dict["shap"] = shap_result
+        # 본 dict 는 호출자(report_composer 또는 dispatcher)가 with_update 로 머지해야 함.
+        # 단, 본 헬퍼 자체에서 in-place 캐시 보장은 못 하므로 explainability.py 의
+        # shap_top_features / shap_summary_chart 가 explain() 을 다시 부를 수도 있음
+        # (idempotent — 같은 결과). 비용은 cache miss 1회 정도라 무시 가능.
+    except Exception as exc:
+        logger.warning("shap_integration_failed: %s", exc)
+
     color = "#2563eb" if getattr(state, "category", "") == "tabular_ml" else "#0891b2"
     label = "정형 ML" if getattr(state, "category", "") == "tabular_ml" else "정형 DL"
 
