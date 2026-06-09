@@ -48,8 +48,16 @@ async def upload_file(
         raise HTTPException(422, detail=f"지원하지 않는 확장자: {ext}")
 
     content = await file.read()
-    if len(content) > settings.max_upload_size_mb * 1024 * 1024:
-        raise HTTPException(413, detail="파일 크기 초과")
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        actual_mb = len(content) / (1024 * 1024)
+        raise HTTPException(
+            413,
+            detail=(
+                f"파일 크기 초과 — 업로드 {actual_mb:.1f}MB > 상한 {settings.max_upload_size_mb}MB. "
+                "큰 데이터는 샘플링 후 재업로드하거나 컬럼·기간을 좁혀 다시 시도해 주세요."
+            ),
+        )
 
     if not _check_magic(content, ext):
         raise HTTPException(422, detail="확장자와 매직바이트 불일치")

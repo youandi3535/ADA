@@ -22,8 +22,56 @@ from api.routes import pipeline as pipeline_routes, upload as upload_routes
 log = get_logger("api")
 
 
+async def _ollama_warmup() -> None:
+    """HJ 2026-06-09 — G1 단축: Ollama 모델 사전 로드.
+
+    qwen2.5:7b 첫 호출은 모델 가중치 로드로 +10~20s 비용. KEEP_ALIVE=30m 이라 두 번째부터는
+    무료. 서버 시작 직후 짧은 ping 한 번으로 첫 사용자의 cold start 부담 제거.
+    Ollama 가 안 떠있어도 silent fail — 본 서비스 흐름 영향 없음.
+    """
+    import asyncio
+    import json
+    import urllib.error
+    import urllib.request
+
+    if not getattr(settings, "use_ollama_for_analysis", False):
+        return
+
+    base_url = settings.ollama_base_url.rstrip("/")
+    model = settings.ollama_model_analysis
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+            "options": {"num_predict": 1, "num_gpu": settings.ollama_num_gpu, "num_thread": settings.ollama_num_thread},
+        }
+    ).encode("utf-8")
+
+    def _do_ping() -> None:
+        req = urllib.request.Request(
+            f"{base_url}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                resp.read()  # 결과 무시
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass  # silent
+
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_do_ping), timeout=35.0)
+        log.info("ollama_warmup_ok", model=model)
+    except Exception as e:  # noqa: BLE001
+        log.warning("ollama_warmup_failed", error=str(e), model=model)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    import asyncio as _asyncio
+
     log.info("api_startup", env=settings.environment)
     # DB 초기화는 Alembic 책임. MinIO 버킷만 보장.
     try:
@@ -32,6 +80,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         get_minio_client()  # _ensure_bucket
     except Exception as e:
         log.warning("minio_init_failed", error=str(e))
+    # G1 단축 — Ollama 모델 사전 로드 (fire-and-forget, startup 차단 안 함)
+    _asyncio.create_task(_ollama_warmup())
     yield
     log.info("api_shutdown")
     # ADR-007 L3.3 — Langfuse 버퍼 강제 전송 (graceful shutdown)

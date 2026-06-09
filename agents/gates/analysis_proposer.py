@@ -203,7 +203,12 @@ class AnalysisProposerAgent(BaseGate):
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                max_tokens=1500,
+                # HJ 2026-06-09 — G1 단축: 1500 → 900 → 800.
+                # 카드 2개 × rationale 6줄 (typical, worst 8줄). 실측 화면 카드 출력 ~550t.
+                # cap 800: 6줄 typical 마진 40%, 8줄 worst (~700t) 마진 14% — P99 cap 미도달.
+                # 잘려도 _safe_parse_json_array → _FALLBACK_DEFAULTS 폴백.
+                # 추가 단축: -8s.
+                max_tokens=800,
                 temperature=0.3,
                 json_mode=True,
             )

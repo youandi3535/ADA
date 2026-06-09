@@ -472,6 +472,19 @@ class BaseAgent(abc.ABC):
         base_url = settings.ollama_base_url.rstrip("/")
         model = settings.ollama_model_analysis
 
+        # HJ 2026-06-09 — G1 단축 T: stop 토큰 추가.
+        # qwen2.5:7b 가 JSON 응답 후 markdown fence·부연·예시를 추가로 생성하는 경향이 있음.
+        # 명백히 본문에 포함될 수 없는 시그널 (```, "\n\n참고", "\n\nNote") 에서 즉시 종료.
+        # 본문 응답에는 영향 없음. 응답 평균 -50t 정도 절감 → 호출당 -5~15s.
+        _STOP_TOKENS = [
+            "```",  # markdown fence (가장 흔한 부연 시작)
+            "\n```",
+            "\n\n참고:",  # 한국어 부연 시작
+            "\n\n설명:",
+            "\n\nNote:",  # 영어 부연 시작
+            "\n\nExplanation:",
+            "</s>",  # Qwen EOS (보통 자동, 안전 차원)
+        ]
         payload = _json.dumps(
             {
                 "model": model,
@@ -486,6 +499,7 @@ class BaseAgent(abc.ABC):
                     "top_p": 0.9,
                     "num_gpu": getattr(settings, "ollama_num_gpu", 0),
                     "num_thread": getattr(settings, "ollama_num_thread", 8),
+                    "stop": _STOP_TOKENS,
                 },
             },
             ensure_ascii=False,

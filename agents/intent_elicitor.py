@@ -1,7 +1,4 @@
-"""agents.intent_elicitor -- IntentElicitorAgent (Day05 v2 / G1 gate).
-
-free-form intent text -> structured intent_spec.
-"""
+"""agents.intent_elicitor -- IntentElicitorAgent (Day05 v2 / G1 gate)."""
 
 from __future__ import annotations
 
@@ -22,6 +19,47 @@ If user text is provided, use it directly. If not, infer from the given data con
 Output only JSON. No markdown fences."""
 
 
+# HJ 2026-06-09 -- G1 short: category -> task_keyword direct mapping (no LLM).
+_CATEGORY_TO_TASK_KEYWORD: dict[str, str] = {
+    "tabular_ml": "prediction",
+    "tabular_dl": "prediction",
+    "timeseries": "timeseries",
+    "anomaly_detection": "anomaly_detection",
+}
+
+_TASK_TO_KEYWORD: dict[str, str] = {
+    "classification": "classification",
+    "regression": "prediction",
+    "forecasting": "timeseries",
+    "anomaly_detection": "anomaly_detection",
+}
+
+
+def _default_spec_from_state(state: PipelineState) -> dict:
+    """Empty-input default — derive from category/task without LLM call.
+
+    빈 입력 시 LLM 도 데이터 컨텍스트만 보고 답함. 룰과 동일 → LLM 1회(~40s) 절감.
+    """
+    keyword = _TASK_TO_KEYWORD.get(state.task or "") or _CATEGORY_TO_TASK_KEYWORD.get(state.category, "other")
+    if state.category == "timeseries":
+        target_kind = "timeseries"
+    elif state.category == "anomaly_detection":
+        target_kind = "anomaly"
+    elif state.task == "classification":
+        target_kind = "categorical"
+    elif state.task == "regression":
+        target_kind = "numeric"
+    else:
+        target_kind = "unknown"
+    return {
+        "task_keyword": keyword,
+        "target_kind": target_kind,
+        "audience": "unknown",
+        "deadline": "unknown",
+        "free_form": "",
+    }
+
+
 class IntentElicitorAgent(BaseAgent):
     uses_llm = True
     model_name = "claude-sonnet-4-6"
@@ -30,44 +68,34 @@ class IntentElicitorAgent(BaseAgent):
         async with self.log_agent_run(state):
             user_text = (state.user_intent or state.user_question or "").strip()
 
-            if user_text:
-                llm_prompt = user_text
-            else:
-                # No user input -> LLM infers from state context
+            if not user_text:
+                # HJ 2026-06-09 G1 short: empty input -> skip LLM, use rule default.
                 self.logger.info(
-                    "intent_inferred_from_state",
+                    "intent_default_no_llm",
                     category=state.category,
                     task=state.task,
                     target_column=state.target_column,
                 )
-                llm_prompt = (
-                    "No user intent was provided. "
-                    "Infer the analysis intent from the data context below and fill in the JSON.\n"
-                    f"category: {state.category}\n"
-                    f"task: {state.task or 'auto'}\n"
-                    f"target_column: {state.target_column or 'none'}"
-                )
-
-            try:
-                raw = await self._call_llm(
-                    system_prompt=SYSTEM_PROMPT,
-                    user_prompt=llm_prompt,
-                    max_tokens=600,
-                    temperature=0.0,
-                    json_mode=True,
-                )
-                spec = self._parse_json(raw)
-                if not user_text:
-                    spec["free_form"] = ""
-            except Exception as e:
-                self.logger.warning("intent_parse_fallback", error=str(e))
-                spec = {
-                    "task_keyword": "unknown",
-                    "target_kind": "unknown",
-                    "audience": "unknown",
-                    "deadline": "unknown",
-                    "free_form": user_text,
-                }
+                spec = _default_spec_from_state(state)
+            else:
+                try:
+                    raw = await self._call_llm(
+                        system_prompt=SYSTEM_PROMPT,
+                        user_prompt=user_text,
+                        max_tokens=400,  # 600->400 (measured ~250t, margin 1.6x)
+                        temperature=0.0,
+                        json_mode=True,
+                    )
+                    spec = self._parse_json(raw)
+                except Exception as e:
+                    self.logger.warning("intent_parse_fallback", error=str(e))
+                    spec = {
+                        "task_keyword": "unknown",
+                        "target_kind": "unknown",
+                        "audience": "unknown",
+                        "deadline": "unknown",
+                        "free_form": user_text,
+                    }
 
             gate_responses = dict(state.gate_responses)
             gate_responses["G1"] = {"intent_spec": spec}

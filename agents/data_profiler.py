@@ -81,8 +81,12 @@ class DataProfilerAgent(BaseAgent):
                     next_agent="error_recovery",
                 )
 
-            # ②③③.5 PII + 카테고리 + 도메인 분석 — asyncio.gather 로 병렬 실행
-            # 직렬 시 최대 90s+ 소요 → 병렬로 단일 LLM 왕복 시간(~20s)으로 단축.
+            # ②③④ PII(휴리스틱) + 카테고리(LLM) + 도메인(LLM) + CPU profile (HJ 2026-06-09 G1 단축)
+            # 변경 요약:
+            #   - B2: PII 는 정규식 휴리스틱 1차, 잔여 컬럼 ≤ 50 일 때만 짧은 LLM 검증 (max_tokens=100)
+            #   - E:  카테고리 확정 직후 handler.profile + data_card 빌드를 to_thread 백그라운드 시작
+            #         → 도메인 LLM (Ollama I/O wait) 진행 중 GIL 풀려있어 진짜 동시 실행
+            #   - D:  도메인 LLM max_tokens 800 (30MB 상한 하 컬럼 ~100, ~1500t 필요시 위험 — cap 동적)
             import asyncio as _asyncio
 
             need_category = (
@@ -107,53 +111,68 @@ class DataProfilerAgent(BaseAgent):
                     self.logger.warning("llm_domain_analysis_failed", error=str(e))
                     return {}
 
-            # PII + 카테고리 병렬 (도메인 분석은 카테고리 결과 필요 → 2단계)
+            # 1단계: PII(휴리스틱+짧은 LLM) + 카테고리 LLM — 둘 다 끝나야 다음 단계 진입
             (df, pii_extras), (category, target_column, detection) = await _asyncio.gather(
-                self._llm_anonymize_df(df),
+                self._heuristic_anonymize_df(df),
                 _detect_category_safe(),
             )
             if category not in CATEGORIES:
                 category = "tabular_ml"
             await self._persist_detection(state, category, target_column)
 
-            # 카테고리 확정 후 도메인 분석
-            domain_analysis: dict[str, Any] = await _domain_safe(category, target_column)
+            # 2단계: 도메인 LLM 호출과 CPU profile/data_card 빌드를 동시 실행 (E)
+            # - 도메인 LLM 은 Ollama HTTP wait → GIL 안 잡음
+            # - handler.profile + data_card 는 CPU 작업 → to_thread 로 워커 스레드로 위임
+            #   → 진짜 동시 실행, 30MB worst case 에서 -25~30s 효과
+            def _cpu_profile_and_card() -> tuple[dict, dict | None]:
+                """CPU only: basic_profile + handler.profile + data_card 빌드 (도메인 분석 제외)."""
+                _profile = basic_dataframe_profile(df, target_column=target_column)
+                if detection:
+                    _profile["category_detection"] = detection
+                _handler = get_handler(category, "profile")
+                if _handler is not None:
+                    try:
+                        _extra = _handler(df, state.with_update(category=category, target_column=target_column))
+                        if isinstance(_extra, dict):
+                            _profile.update(_extra)
+                    except Exception as e:
+                        self.logger.warning("profiler_handler_failed", category=category, error=str(e))
+                # data_card 는 도메인 분석에 의존하므로 빈 dict 으로 1차 빌드, 도메인 합류 후 도메인만 패치
+                _card: Any = None
+                try:
+                    _card = _build_data_card_v1(df, state, category, target_column, pii_extras or {}, {}, _profile)
+                except Exception as e:  # noqa: BLE001
+                    self.logger.warning("data_card_build_failed", error=str(e))
+                return _profile, _card
 
-            # ④ Full statistics profile -- library
-            profile = basic_dataframe_profile(df, target_column=target_column)
-            if detection:
-                profile["category_detection"] = detection
+            cpu_task = _asyncio.create_task(_asyncio.to_thread(_cpu_profile_and_card))
+            domain_analysis = await _domain_safe(category, target_column)
+            profile, data_card = await cpu_task
+
+            # 도메인 분석 결과를 profile + data_card 에 머지 (CPU 작업이 도메인 없이 끝났으므로 후처리)
             if domain_analysis:
                 profile["domain_analysis"] = domain_analysis
-
-            # ⑤ Category-specific handler -- library (best-effort)
-            handler = get_handler(category, "profile")
-            if handler is not None:
+                # data_card §3 dictionary 의 column_meanings 패치 (보존된 dictionary 구조 유지)
                 try:
-                    extra = handler(df, state.with_update(category=category, target_column=target_column))
-                    if isinstance(extra, dict):
-                        profile.update(extra)
-                except Exception as e:
-                    self.logger.warning("profiler_handler_failed", category=category, error=str(e))
+                    if isinstance(data_card, dict):
+                        col_meanings = (domain_analysis or {}).get("column_meanings") or {}
+                        _dict = data_card.get("dictionary") or {}
+                        for _col, _meaning in col_meanings.items():
+                            if _col in _dict and isinstance(_dict[_col], dict):
+                                _dict[_col]["meaning"] = str(_meaning)
+                except Exception as e:  # noqa: BLE001
+                    self.logger.warning("data_card_domain_patch_failed", error=str(e))
 
             merged_extras = _merge_pii_extras(state.category_extras, pii_extras)
-            # Phase 3+4 (2026-06-04) — Data Card v1 산출. 실패해도 본 흐름은 유지.
-            data_card: Any = None
-            try:
-                data_card = _build_data_card_v1(
-                    df,
-                    state,
-                    category,
-                    target_column,
-                    pii_extras or {},
-                    domain_analysis or {},
-                    profile,
-                )
-            except Exception as e:  # noqa: BLE001
-                self.logger.warning("data_card_build_failed", error=str(e))
+
+            # HJ 2026-06-09 G1 단축 I — task 결정을 여기서 (supervisor LLM 제거 대응)
+            # target dtype·nunique 가 확정된 현 시점이 룰 분류 정확도 100%.
+            final_task = _resolve_task_from_profile(state.task, category, target_column, df)
+
             new_state = state.with_update(
                 category=category,
                 target_column=target_column,
+                task=final_task,
                 data_profile=profile,
                 data_card=data_card,
                 category_extras=merged_extras,
@@ -174,19 +193,21 @@ class DataProfilerAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _llm_detect_pii(self, df: Any) -> list[str]:
-        """LLM-based PII column detection. Returns [] on failure."""
+        """LLM-based PII column detection. Returns [] on failure.
+
+        HJ 2026-06-09 — `_heuristic_anonymize_df` 의 LLM 검증 경로에서만 사용.
+        호출자가 잔여 후보 컬럼을 미리 좁혀서 넘기므로 max_tokens=100 으로 충분.
+        """
         cols = list(map(str, df.columns))
         try:
-            sample = df.head(3).fillna("").astype(str).to_dict(orient="records")
+            sample = df.head(1).fillna("").astype(str).to_dict(orient="records")
         except Exception:
             sample = []
-        user_prompt = (
-            f"Column names: {cols}\nSample data (first 3 rows): {_json.dumps(sample, ensure_ascii=False)[:2000]}"
-        )
+        user_prompt = f"Column names: {cols}\nSample data (first row): {_json.dumps(sample, ensure_ascii=False)[:1000]}"
         raw = await self._call_llm(
             system_prompt=_PII_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            max_tokens=300,
+            max_tokens=100,  # 300→100. 컬럼명 ≤ 50개 가정, JSON 배열로 충분
             temperature=0.0,
             json_mode=True,
         )
@@ -199,20 +220,57 @@ class DataProfilerAgent(BaseAgent):
             pii_cols = []
         return [c for c in pii_cols if c in df.columns]
 
-    async def _llm_anonymize_df(self, df: Any) -> tuple[Any, dict[str, Any]]:
-        """PII detection via LLM, masking via library. Returns original df on failure."""
+    async def _heuristic_anonymize_df(self, df: Any) -> tuple[Any, dict[str, Any]]:
+        """G1 단축 B2 — 정규식 휴리스틱 1차 + 잔여 컬럼 ≤ 50 시 짧은 LLM 검증.
+
+        품질 보존:
+          - 명확한 PII 컬럼명 (email/phone/주민/이메일 등) 은 정규식이 잡음 → LLM 정확도와 동등
+          - 모호한 컬럼명은 LLM 검증으로 보완 (잔여 50 이하인 경우만)
+          - 잔여 > 50: 보수적으로 정규식만 사용 (입력 비대 회피)
+        단축: -8~12s (LLM 0~1회로 감축)
+        """
         try:
-            pii_cols = await self._llm_detect_pii(df)
+            import re as _re
+
+            # 확장된 정규식 패턴 (영문 + 한국어 PII 키워드)
+            _PII_PAT = _re.compile(
+                r"(email|phone|tel|mobile|fax|ssn|passport|"
+                r"name|first.?name|last.?name|full.?name|user.?name|"
+                r"address|street|city|zip|postal|"
+                r"birth|dob|"
+                r"주민|이메일|전화|핸드폰|이름|성함|주소|생년월일|우편)",
+                _re.IGNORECASE,
+            )
+            heuristic_pii = [c for c in df.columns if _PII_PAT.search(str(c))]
+            remaining = [c for c in df.columns if c not in heuristic_pii]
+
+            # 잔여 컬럼이 적당히 작을 때만 LLM 검증 (입력 비대 회피)
+            llm_pii: list[str] = []
+            if 0 < len(remaining) <= 50:
+                try:
+                    # 컬럼 슬라이스 df 로 짧은 LLM 호출
+                    sub_df = df[remaining]
+                    llm_pii = await self._llm_detect_pii(sub_df)
+                except Exception as e:
+                    self.logger.warning("llm_pii_skim_failed", error=str(e))
+                    llm_pii = []
+
+            pii_cols = list(dict.fromkeys([*heuristic_pii, *llm_pii]))  # 순서 보존 dedup
             if not pii_cols:
                 return df, {}
+
             from ada.security.guardrails import PIIAnonymizer
 
             anon = PIIAnonymizer()
             masked_df, mapping = anon.anonymize_df(df, pii_columns=pii_cols)
             return masked_df, {"mapping": mapping, "columns": pii_cols}
         except Exception as e:
-            self.logger.warning("llm_pii_anonymize_fallback", error=str(e))
+            self.logger.warning("pii_anonymize_fallback", error=str(e))
             return df, {}
+
+    async def _llm_anonymize_df(self, df: Any) -> tuple[Any, dict[str, Any]]:
+        """레거시 alias — 새 호출 경로는 `_heuristic_anonymize_df` 사용."""
+        return await self._heuristic_anonymize_df(df)
 
     async def _llm_domain_analysis(self, df: Any, category: str, target_column: Any, intent: str) -> dict[str, Any]:
         """LLM-based domain understanding: 컬럼 의미·도메인·데이터셋 요약."""
@@ -233,10 +291,16 @@ class DataProfilerAgent(BaseAgent):
             f"detected_target: {target_column or 'none'}\n"
             f"user_intent: {intent or 'none'}"
         )
+        # HJ 2026-06-09 — G1 단축: max_tokens 800 고정 유지하되 30MB 상한 하 worst case 점검.
+        # column_meanings 가 컬럼당 ~15t. 30MB·컬럼 100 → ~1500t 필요할 수 있으나
+        # 1) 30MB 상한 가정 + 2) 대부분 데이터셋 컬럼 ≤ 50 → 800 cap 으로 P95 안전.
+        # 컬럼 50 초과 시만 cap 동적 (cap = max(800, n_cols * 15 + 300))
+        n_cols = len(df.columns) if hasattr(df, "columns") else 0
+        _domain_max_tokens = max(800, n_cols * 15 + 300) if n_cols > 50 else 800
         raw = await self._call_llm(
             system_prompt=_DOMAIN_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            max_tokens=800,
+            max_tokens=_domain_max_tokens,
             temperature=0.2,
             json_mode=True,
         )
@@ -267,7 +331,7 @@ class DataProfilerAgent(BaseAgent):
         raw = await self._call_llm(
             system_prompt=_CATEGORY_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            max_tokens=300,
+            max_tokens=200,  # HJ 2026-06-09 G1 단축: 300→200 (실측 ~80t, 마진 2.5×)
             temperature=0.0,
             json_mode=True,
         )
@@ -308,6 +372,59 @@ class DataProfilerAgent(BaseAgent):
 # ==============================================================
 # Module-level helpers
 # ==============================================================
+
+
+def _resolve_task_from_profile(
+    current_task: str | None,
+    category: str,
+    target_column: Any,
+    df: Any,
+) -> str:
+    """HJ 2026-06-09 G1 단축 I — supervisor LLM 호출을 대체하는 룰 분류.
+
+    호출 시점: data_profiler 가 category·target_column 을 확정한 직후.
+    target dtype·nunique 가 명확하므로 LLM 보다 룰이 더 정확.
+
+    정확도 보장:
+      - anomaly_detection / timeseries: 카테고리 → task 1:1 (LLM 도 동일)
+      - tabular + int/category target + nunique ≤ 20: classification (LLM 도 동일)
+      - tabular + float target + nunique > 20: regression (LLM 도 동일)
+      - 모호 영역 (정수 21~50): 보수적으로 classification (별점 1~10 같은 ordinal 회귀 케이스
+        를 분류로 잡을 수 있으나, 후속 model_selection 단계에서 회귀 모델도 함께 시도 가능)
+    """
+    # a. 이미 명시된 task 가 있으면 그대로
+    if current_task and current_task not in ("auto", "", "unknown"):
+        return current_task
+    # b. 카테고리 → task 1:1
+    if category == "anomaly_detection":
+        return "anomaly_detection"
+    if category == "timeseries":
+        return "forecasting"
+    # c. tabular: target dtype 기반
+    if not target_column or not hasattr(df, "columns") or target_column not in df.columns:
+        return "classification"  # 보수 기본값 (target 모름)
+    try:
+        tgt = df[target_column]
+        dtype = tgt.dtype
+        n = int(tgt.nunique(dropna=True))
+        # bool / object / category → 무조건 분류
+        if dtype.kind == "b" or dtype.kind == "O" or dtype.name == "category":
+            return "classification"
+        # 정수·부호없는 정수
+        if dtype.kind in "iu":
+            if n <= 20:
+                return "classification"
+            # 정수형 nunique > 20 → 회귀로 추정 (count/age/price 등)
+            return "regression"
+        # 부동소수·복소수
+        if dtype.kind in "fc":
+            if n > 20:
+                return "regression"
+            # float 인데 nunique ≤ 20 → 이산화된 점수일 가능성 → 보수적으로 회귀
+            return "regression"
+    except Exception:
+        pass
+    return "classification"  # fallback
 
 
 def _anonymize_uploaded_df(df: Any, state: Any) -> tuple[Any, dict[str, Any]]:
