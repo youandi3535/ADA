@@ -582,9 +582,13 @@ def _build_deployment_checklist(state: Any) -> dict[str, Any] | None:
     opt_thr = metrics.get("val_optimal_threshold")
     threshold_basis = f"F1-max 자동 탐색 (opt={float(opt_thr):.2f})" if opt_thr is not None else "기본 0.5"
 
-    # archetype 기반 A/B 권고비율
+    # archetype 기반 A/B 권고비율 + 매칭 근거
     profile = getattr(state, "data_profile", None) or {}
-    archetype = (profile.get("archetype") or {}).get("primary")
+    archetype_info = profile.get("archetype") or {}
+    archetype = archetype_info.get("primary")
+    archetype_conf = float(archetype_info.get("primary_confidence", 0) or 0)
+    archetype_signals = archetype_info.get("signals") or {}
+
     ab_ratio = {
         "extreme_imbalance": "5% (위험도 큼)",
         "target_leakage_suspected": "0% (롤아웃 보류 — 누수 확인 우선)",
@@ -593,18 +597,70 @@ def _build_deployment_checklist(state: Any) -> dict[str, Any] | None:
         "imbalanced_moderate": "10%",
     }.get(archetype, "20% (표준)")
 
+    rows = [
+        ["모델 SHA256", str(sha256)[:16] + "..." if len(str(sha256)) > 16 else str(sha256)],
+        ["MLflow run", str(mlflow_run)],
+        ["임계치 산출", threshold_basis],
+        ["캘리브레이션", "ECE > 0.05 면 Platt 또는 Isotonic 권고"],
+        ["A/B 트래픽 비율", ab_ratio],
+        ["데이터 누수 가드", "leakage_safe_split=True 확인 (preprocessor)"],
+    ]
+
+    # Day 11++ — archetype 매칭 근거를 표에 명시 (투명성).
+    # confidence < 0.5 면 노출 생략, ≥ 0.5 면 신호값 + confidence 표시.
+    if archetype and archetype != "clean_balanced" and archetype_conf >= 0.5:
+        signal_summary = _format_archetype_signals(archetype, archetype_signals)
+        conf_str = f"{archetype_conf:.0%}"
+        rows.append([
+            "데이터 archetype",
+            f"{archetype} (신뢰도 {conf_str}) — {signal_summary}",
+        ])
+
     return {
         "title": "배포 체크리스트",
         "columns": ["항목", "값/권고"],
-        "rows": [
-            ["모델 SHA256", str(sha256)[:16] + "..." if len(str(sha256)) > 16 else str(sha256)],
-            ["MLflow run", str(mlflow_run)],
-            ["임계치 산출", threshold_basis],
-            ["캘리브레이션", "ECE > 0.05 면 Platt 또는 Isotonic 권고"],
-            ["A/B 트래픽 비율", ab_ratio],
-            ["데이터 누수 가드", "leakage_safe_split=True 확인 (preprocessor)"],
-        ],
+        "rows": rows,
     }
+
+
+def _format_archetype_signals(archetype: str, signals: dict[str, Any]) -> str:
+    """archetype 매칭 근거를 한 줄 텍스트로 요약 (운영 표에 노출)."""
+    if archetype == "target_leakage_suspected":
+        cols = signals.get("leakage_columns") or []
+        if cols:
+            return f"누수 의심 컬럼: {', '.join(str(c) for c in cols[:3])}"
+        return "누수 의심 컬럼 감지"
+    if archetype == "extreme_imbalance":
+        r = signals.get("imbalance_ratio")
+        return f"클래스 비율 1:{int(r):,}" if r else "1:1000 이상"
+    if archetype == "p_gg_n":
+        r = signals.get("feature_to_row_ratio")
+        return f"피처/행 비율 {float(r):.2f}" if r is not None else "p≫n"
+    if archetype == "high_cardinality_heavy":
+        n = signals.get("high_cardinality_count")
+        return f"고카디 컬럼 {int(n)}개" if n is not None else "고카디 다수"
+    if archetype == "multicollinear_heavy":
+        c = signals.get("corr_clusters")
+        cn = signals.get("corr_condition_number")
+        parts = []
+        if c:
+            parts.append(f"상관 클러스터 {int(c)}개")
+        if cn:
+            parts.append(f"cond.number {float(cn):.0f}")
+        return ", ".join(parts) or "다중공선성 감지"
+    if archetype == "id_overload":
+        r = signals.get("id_like_ratio")
+        return f"id-like 컬럼 비율 {float(r):.0%}" if r is not None else "id-like 다수"
+    if archetype == "imbalanced_moderate":
+        r = signals.get("imbalance_ratio")
+        return f"클래스 비율 1:{int(r):,}" if r else "중간 불균형"
+    if archetype == "low_signal":
+        mi = signals.get("max_mutual_info")
+        return f"MI 최댓값 {float(mi):.3f}" if mi is not None else "신호 약함"
+    if archetype == "regression_heteroscedastic":
+        cv = signals.get("max_coefficient_of_variation")
+        return f"변동계수 {float(cv):.1f}" if cv is not None else "이분산 의심"
+    return "매칭됨"
 
 
 def _build_monitoring_kpi_table(state: Any) -> dict[str, Any] | None:

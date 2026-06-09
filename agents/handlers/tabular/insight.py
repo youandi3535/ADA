@@ -123,6 +123,110 @@ def prompt_payload(state: Any) -> dict[str, Any]:
     }
 
 
+def _archetype_insight_line(archetype: dict[str, Any]) -> str | None:
+    """archetype 매칭 결과를 signals 값 + confidence 톤으로 1 문장 생성.
+
+    confidence < 0.5  → None (너무 약한 매칭, 사용자 혼란 방지)
+    confidence 0.5~0.8 → 추정 톤 ("가능성", "의심")
+    confidence ≥ 0.8  → 단정 톤
+
+    Day 11++ — 정적 메시지 cliff 제거 + 실제 signals 인용으로 투명성 확보.
+    """
+    primary = archetype.get("primary")
+    if not primary or primary == "clean_balanced":
+        return None
+    signals = archetype.get("signals") or {}
+    conf = float(archetype.get("primary_confidence", 1.0) or 0.0)
+    if conf < 0.5:
+        return None
+    weak = conf < 0.8  # 약한 매칭이면 추정 톤
+
+    if primary == "target_leakage_suspected":
+        cols = signals.get("leakage_columns") or []
+        col_str = ", ".join(f"'{c}'" for c in cols[:2]) if cols else "일부 컬럼"
+        verb = "보일 가능성이 있어" if weak else "보여"
+        return (
+            f"{col_str} 가 타겟과 매우 강한 상관을 {verb} 누수 의심으로 "
+            f"보수적 모델을 우선 추천했습니다."
+        )
+
+    if primary == "extreme_imbalance":
+        ratio = signals.get("imbalance_ratio")
+        ratio_str = f"1:{int(ratio):,}" if ratio else "극단"
+        verb = "수준일 가능성" if weak else "수준"
+        return (
+            f"클래스 비율이 {ratio_str} {verb}이라 정형 분류 부적합 — "
+            f"이상탐지 카테고리 검토를 권합니다."
+        )
+
+    if primary == "p_gg_n":
+        r = signals.get("feature_to_row_ratio")
+        r_str = f"{r:.2f}" if r is not None else "≥0.5"
+        verb = "근접해" if weak else "넘어"
+        return (
+            f"피처/행 비율 {r_str} 로 p≫n 영역에 {verb} "
+            f"정규화 선형 모델 위주로 추천했습니다."
+        )
+
+    if primary == "high_cardinality_heavy":
+        n = signals.get("high_cardinality_count")
+        n_str = f"{int(n)}개" if n is not None else "다수"
+        return (
+            f"고차원 범주형 컬럼 {n_str} 감지 — CatBoost·LightGBM 의 native "
+            f"범주 처리를 우선했습니다."
+        )
+
+    if primary == "multicollinear_heavy":
+        clusters = signals.get("corr_clusters")
+        cond = signals.get("corr_condition_number")
+        if clusters:
+            return (
+                f"수치형 피처 간 강한 상관 클러스터 {int(clusters)}개 감지 — "
+                f"VIF drop 적용을 권합니다."
+            )
+        if cond:
+            return (
+                f"상관 행렬 condition number {float(cond):.0f} — "
+                f"다중공선성 강해 VIF drop 적용을 권합니다."
+            )
+        return "수치형 피처 간 강한 다중공선성이 있어 VIF 기반 컬럼 제거가 적용되었습니다."
+
+    if primary == "id_overload":
+        r = signals.get("id_like_ratio")
+        r_str = f"{float(r):.0%}" if r is not None else "30% 이상"
+        return (
+            f"전체 컬럼의 {r_str} 가 식별자 추정 — "
+            f"학습 피처 구성 재검토를 권합니다."
+        )
+
+    if primary == "imbalanced_moderate":
+        ratio = signals.get("imbalance_ratio")
+        if ratio:
+            return (
+                f"클래스 비율 1:{int(ratio):,} — class weight 와 "
+                f"cost-sensitive 임계치 적용을 권합니다."
+            )
+        return "클래스 불균형이 중간 수준이라 class weight 와 cost-sensitive 임계치 적용을 권합니다."
+
+    if primary == "low_signal":
+        mi = signals.get("max_mutual_info")
+        mi_str = f"{float(mi):.3f}" if mi is not None else "< 0.05"
+        return (
+            f"피처-타겟 mutual information 최댓값 {mi_str} — "
+            f"추가 피처 엔지니어링 또는 비지도 접근이 효과적입니다."
+        )
+
+    if primary == "regression_heteroscedastic":
+        cv = signals.get("max_coefficient_of_variation")
+        cv_str = f"(변동계수 {float(cv):.1f})" if cv is not None else ""
+        return (
+            f"수치형 변동성이 큼 {cv_str} — log 또는 yeo-johnson "
+            f"분포 변환을 권합니다."
+        ).replace("  ", " ").strip()
+
+    return None
+
+
 def fallback(state: Any) -> str:
     """LLM 실패 시 결정적 인사이트 텍스트 생성.
 
@@ -143,22 +247,11 @@ def fallback(state: Any) -> str:
         f"본 분석은 {bm.get('model_name', '미정')} 모델이 가장 우수한 성능을 보였습니다."
     ]
 
-    # 0) archetype 1 문장 (clean_balanced 면 생략) — 데이터 본질을 가장 먼저 알림
-    archetype = data_profile.get("archetype") or {}
-    archetype_primary = archetype.get("primary")
-    archetype_msgs = {
-        "target_leakage_suspected": "데이터에서 타겟 누수가 의심되어 보수적 모델을 우선 추천했습니다.",
-        "extreme_imbalance": "클래스 비율이 1:1000 이상으로 극단 불균형이라 이상탐지 카테고리도 검토를 권합니다.",
-        "p_gg_n": "피처 수가 행 수에 가깝거나 더 많아(p≫n), 정규화 선형 모델 위주로 추천했습니다.",
-        "high_cardinality_heavy": "고차원 범주형 컬럼이 다수라 CatBoost·LightGBM 처럼 native 처리 모델을 우선했습니다.",
-        "multicollinear_heavy": "수치형 피처 간 강한 다중공선성이 있어 VIF 기반 컬럼 제거가 적용되었습니다.",
-        "id_overload": "식별자 추정 컬럼이 다수라 학습 피처 구성 재검토를 권합니다.",
-        "imbalanced_moderate": "클래스 불균형이 중간 수준이라 class weight 와 cost-sensitive 임계치 적용을 권합니다.",
-        "low_signal": "피처 신호가 약해(MI<0.05) 추가 피처 엔지니어링이 효과적일 수 있습니다.",
-        "regression_heteroscedastic": "수치형 변동성이 커서 log 또는 yeo-johnson 분포 변환을 권합니다.",
-    }
-    if archetype_primary and archetype_primary in archetype_msgs:
-        parts.append(archetype_msgs[archetype_primary])
+    # 0) archetype 1 문장 (clean_balanced 면 생략, confidence < 0.5 면 생략)
+    #    Day 11++ — 정적 메시지 대신 실제 signals 값을 인용 + confidence 톤 조절.
+    archetype_line = _archetype_insight_line(data_profile.get("archetype") or {})
+    if archetype_line:
+        parts.append(archetype_line)
 
     # 1) CV 통계 우선, 없으면 단일 수치
     cv_stats = eval_result.get("cv_stats") or {}

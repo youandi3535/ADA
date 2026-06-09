@@ -173,9 +173,12 @@ def _apply_archetype_constraints(
 ) -> tuple[list[tuple[str, float]], list[str]]:
     """archetype 의 expected_decisions 로 점수 매트릭스를 보정.
 
-    - selector_top1_in 의 모델이 ranked 에 없으면 base 0.70 으로 주입 후 +0.20 가산.
-    - selector_top1_in 에 있는 기존 모델은 +0.20.
-    - selector_top1_not_in 모델은 -0.30.
+    - selector_top1_in 의 모델이 ranked 에 없으면 base 0.70 으로 주입 후 가산.
+    - selector_top1_in 에 있는 기존 모델은 +0.20 * confidence.
+    - selector_top1_not_in 모델은 -0.30 * confidence.
+
+    Day 11++ — primary_confidence 를 보정 폭에 곱함. 경계선 매칭(conf≈0.5)이면
+    보정이 약화돼 archetype 룰이 점수표를 강제로 뒤집지 않음.
     """
     expected = archetype_info.get("expected") or {}
     include = expected.get("selector_top1_in") or set()
@@ -183,30 +186,37 @@ def _apply_archetype_constraints(
     if not include and not exclude:
         return ranked, []
 
+    # primary_confidence 가 없으면 보수적으로 1.0 (기존 동작 유지)
+    conf = float(archetype_info.get("primary_confidence", 1.0))
+    conf = max(0.0, min(1.0, conf))
+    include_boost = 0.20 * conf
+    exclude_penalty = 0.30 * conf
+
     adjusted: dict[str, float] = {name: float(score_val) for name, score_val in ranked}
     injected: list[str] = []
 
-    # include 의 모델이 dict 에 없으면 base 0.70 으로 주입
+    # include 의 모델이 dict 에 없으면 base 0.70 으로 주입 (confidence 무관 — 후보 자체는 노출)
     for model in include:
         if model not in adjusted:
             adjusted[model] = 0.70
             injected.append(model)
 
-    # 가산/감점 적용
+    # 가산/감점 적용 (confidence 가중)
     for name in list(adjusted.keys()):
         new = adjusted[name]
         if include and name in include:
-            new += 0.20
+            new += include_boost
         if exclude and name in exclude:
-            new -= 0.30
+            new -= exclude_penalty
         adjusted[name] = round(new, 3)
 
     notes: list[str] = []
+    conf_tag = f" (신뢰도 {conf:.0%})" if conf < 0.85 else ""
     if include:
         tag = "우선 주입+가산" if injected else "우선 가산"
-        notes.append(f"{tag}: {', '.join(sorted(include))}")
+        notes.append(f"{tag}{conf_tag}: {', '.join(sorted(include))}")
     if exclude:
-        notes.append(f"감점: {', '.join(sorted(exclude))}")
+        notes.append(f"감점{conf_tag}: {', '.join(sorted(exclude))}")
 
     re_ranked = sorted(adjusted.items(), key=lambda kv: (-kv[1], kv[0]))
     return re_ranked, notes
@@ -274,7 +284,9 @@ def score(state: Any, recipes: list[dict[str, Any]]) -> dict[str, Any]:
         "model_scores": model_scores,
         "archetype": {
             "primary": archetype_info.get("primary"),
+            "primary_confidence": archetype_info.get("primary_confidence"),
             "matched": archetype_info.get("matched", []),
+            "confidences": archetype_info.get("confidences", {}),
             "signals": archetype_info.get("signals", {}),
         },
     }

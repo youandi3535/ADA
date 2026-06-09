@@ -60,6 +60,7 @@ decision audit (test_decision_quality.py) 가 이 매핑을 ground truth 로 사
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -175,6 +176,88 @@ def _is_numeric_dtype(dtype_str: str) -> bool:
     """dtype 문자열이 numeric 인지 판단."""
     s = str(dtype_str).lower()
     return any(t in s for t in ("int", "float", "number"))
+
+
+def _sigmoid_confidence(value: float, threshold: float, width: float) -> float:
+    """매칭 신호 강도를 0~1 confidence 로 변환 (시그모이드).
+
+    value == threshold 일 때 0.5, threshold + 2*width 일 때 ≈ 0.88,
+    threshold - 2*width 일 때 ≈ 0.12. width 가 크면 더 부드러운 전이.
+
+    설계 의도: 하드 cliff (예: ratio≥1000 이냐 아니냐) 대신 경계 근처는
+    중간 confidence 로 표시해 selector·insight 의 강제 폭을 비례 축소.
+    """
+    if width <= 0:
+        return 1.0 if value >= threshold else 0.0
+    x = (value - threshold) / width
+    # exp overflow 방어
+    if x > 50:
+        return 1.0
+    if x < -50:
+        return 0.0
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _compute_confidence(archetype: str, signals: dict[str, Any], profile: dict[str, Any]) -> float:
+    """이미 매칭된 archetype 에 대해 신호 강도 0~1 점수화.
+
+    binary 매칭 (classify_archetypes 의 if 분기) 은 동작 유지하고,
+    매칭된 archetype 의 "얼마나 강하게 매칭됐는가" 만 별도로 계산.
+    selector 보정 폭과 insight 인용 톤을 이걸로 조절.
+    """
+    if archetype == "target_leakage_suspected":
+        leak = profile.get("target_leakage_suspects") or []
+        if not leak:
+            return 0.0
+        max_corr = max(
+            (abs(float(x.get("correlation", 0) or 0)) for x in leak), default=0.95
+        )
+        return _sigmoid_confidence(max_corr, 0.95, 0.015)
+
+    if archetype == "extreme_imbalance":
+        ratio = float(signals.get("imbalance_ratio", 0) or 0)
+        return _sigmoid_confidence(ratio, _EXTREME_IMBALANCE_RATIO, 200.0)
+
+    if archetype == "p_gg_n":
+        r = float(signals.get("feature_to_row_ratio", 0) or 0)
+        return _sigmoid_confidence(r, _P_GG_N_FEATURE_RATIO, 0.1)
+
+    if archetype == "high_cardinality_heavy":
+        n = float(signals.get("high_cardinality_count", 0) or 0)
+        return _sigmoid_confidence(n, float(_HIGH_CARD_COUNT_THRESHOLD), 1.0)
+
+    if archetype == "multicollinear_heavy":
+        clusters = float(signals.get("corr_clusters", 0) or 0)
+        cond = float(signals.get("corr_condition_number", 0) or 0)
+        c_clusters = _sigmoid_confidence(clusters, float(_MULTICOLLINEAR_CLUSTER_THRESHOLD), 1.0)
+        c_cond = _sigmoid_confidence(cond, _MULTICOLLINEAR_COND_NUMBER, 30.0)
+        return max(c_clusters, c_cond)
+
+    if archetype == "id_overload":
+        r = float(signals.get("id_like_ratio", 0) or 0)
+        return _sigmoid_confidence(r, _ID_OVERLOAD_RATIO, 0.05)
+
+    if archetype == "imbalanced_moderate":
+        ratio = float(signals.get("imbalance_ratio", 0) or 0)
+        if ratio >= _EXTREME_IMBALANCE_RATIO:
+            return 0.0  # extreme 영역
+        # 10 경계에서 0.5, 20 이상이면 거의 1.0
+        return _sigmoid_confidence(ratio, float(_MODERATE_IMBALANCE_RATIO), 3.0)
+
+    if archetype == "low_signal":
+        mi = float(signals.get("max_mutual_info", 0) or 0)
+        # 낮을수록 강한 신호 (방향 반전)
+        return _sigmoid_confidence(_LOW_SIGNAL_MI_THRESHOLD - mi, 0.0, 0.01)
+
+    if archetype == "regression_heteroscedastic":
+        cv = float(signals.get("max_coefficient_of_variation", 0) or 0)
+        return _sigmoid_confidence(cv, 3.0, 1.0)
+
+    if archetype == "clean_balanced":
+        # 모든 priority 매칭 실패 폴백 — 풀 confidence
+        return 1.0
+
+    return 0.5
 
 
 def classify_archetypes(profile: dict[str, Any], state: Any) -> dict[str, Any]:
@@ -307,9 +390,18 @@ def classify_archetypes(profile: dict[str, Any], state: Any) -> dict[str, Any]:
     matched = sorted(matched, key=lambda a: ARCHETYPE_PRIORITY.index(a))
     primary = matched[0] if matched else "clean_balanced"
 
+    # 매칭된 archetype 마다 신호 강도 0~1 계산. primary 의 confidence 는
+    # selector 보정 폭과 insight 인용 톤을 결정한다 (cliff 완화).
+    confidences = {a: round(_compute_confidence(a, signals, profile), 3) for a in matched}
+    if primary not in confidences:
+        # clean_balanced 폴백 (matched 가 비어서 primary 만 채워진 경우)
+        confidences[primary] = 1.0
+
     return {
         "primary": primary,
+        "primary_confidence": confidences[primary],
         "matched": matched,
+        "confidences": confidences,
         "signals": signals,
         "expected": dict(EXPECTED_DECISIONS.get(primary, {})),
     }
