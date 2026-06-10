@@ -52,7 +52,6 @@ from outputs.architect.plan import (
 from outputs.architect.substitution_manifest import (
     TechStackItem,
     VerdictTone,
-    check_required_ctx_fields,
     is_metric_compatible,
     resolve_slide,
     resolve_tech_stack,
@@ -60,9 +59,6 @@ from outputs.architect.substitution_manifest import (
 )
 from outputs.context.schema import ReportContext
 from outputs.style.text_budget import (
-    TextBudget,
-    char_budget,
-    fit_text,
     format_delta,
     format_metric,
 )
@@ -1032,7 +1028,7 @@ def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
         layout="method_flow_with_why",
         role="evidence",
         so_what=(
-            f"5단계 분석 방법 — 각 단계의 *선택 이유* 와 *정량 결과* 를 함께 추적, "
+            "5단계 분석 방법 — 각 단계의 *선택 이유* 와 *정량 결과* 를 함께 추적, "
             "재현 가능성 + 의사결정 트레이스 보존"
         ),
         title_ko="분석 방법",
