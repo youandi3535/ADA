@@ -49,6 +49,22 @@ from outputs.architect.plan import (
     SlideSpec,
     VisualSpec,
 )
+from outputs.architect.skeleton_helpers import (
+    auto_label as _auto_label,
+    build_derived_features_slide as _build_derived_features_slide,
+    build_eda_placeholder as _build_eda_placeholder,
+    build_eda_slide_from_chart as _build_eda_slide_from_chart,
+    build_method_steps as _build_method_steps,
+    build_method_whys as _build_method_whys,
+    derived_features_richness as _derived_features_richness,
+    eda_key_insights as _eda_key_insights,
+    format_pm_value as _format_pm_value,
+    get_verdict_tone as _get_verdict_tone,
+    is_auto_domain as _is_auto_domain,
+    select_top_eda_charts as _select_top_eda_charts,
+    summarize_dtypes as _summarize_dtypes,
+    summarize_target as _summarize_target,
+)
 from outputs.architect.substitution_manifest import (
     TechStackItem,
     VerdictTone,
@@ -70,119 +86,6 @@ SKELETON_NAME = "ML Pitch"
 # 공통 헬퍼 — verdict / 자동 도메인 라벨
 # 본 헬퍼는 ml_pitch 외의 skeleton (dl/ts/anomaly) 에서도 동일 패턴으로 사용 예정.
 # ==============================================================
-
-
-def _get_verdict_tone(ctx: ReportContext) -> VerdictTone:
-    """ctx.evaluation.verdict → VerdictTone (미정/미지원 시 adopt 폴백)."""
-    v = getattr(ctx.evaluation, "verdict", "") or ""
-    return resolve_verdict_tone(v)
-
-
-def _is_auto_domain(ctx: ReportContext) -> bool:
-    """도메인 해석이 *자동 추론* 인지 여부 — True 면 [auto-inferred] 라벨 부착."""
-    src = getattr(ctx.domain, "domain_source", "auto") or "auto"
-    return src.strip().lower() == "auto"
-
-
-def _auto_label(text: str, ctx: ReportContext) -> str:
-    """자동 추론 도메인 텍스트에 ``[auto-inferred]`` 마커 부착 (인용 면제 표시).
-
-    이미 마커가 있으면 중복 부착하지 않음. 사용자 입력 도메인이면 그대로.
-    """
-    if not text:
-        return text
-    if not _is_auto_domain(ctx):
-        return text
-    marker = "[auto-inferred]"
-    if marker in text:
-        return text
-    return f"{text} {marker}"
-
-
-# ==============================================================
-# 도메인 프로필 — 슬라이드 5 (시장·맥락) · 17 (ROI) 텍스트 적응용
-# HJ 2026-06-08: ML 카테고리 5 도메인 (churn / credit / propensity / fraud / generic)
-# ==============================================================
-
-_DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
-    "churn": {
-        "label_ko": "고객 이탈 예측",
-        "market_context": "구독·통신·SaaS·금융 고객 행동 데이터 (사용·결제·VOC)",
-        "roi": {
-            "primary_kpi": "월간 이탈률 감소",
-            "primary_unit": "%p",
-            "secondary": [
-                "이탈 방지 캠페인 ROI — 정확 타겟팅으로 +24%",
-                "재가입 비용 절감 — 이탈 후 재유치 대비 1/5 비용",
-                "고객 LTV 연장 — 평균 잔존 +N 개월",
-            ],
-            "fp_cost": "5,000원 (불필요 리텐션 캠페인)",
-            "fn_cost": "180,000원/건 (이탈 고객 LTV 손실)",
-        },
-    },
-    "credit_scoring": {
-        "label_ko": "신용 평가·스코어링",
-        "market_context": "금융·핀테크 대출·여신 신용 데이터 (소득·자산·연체)",
-        "roi": {
-            "primary_kpi": "부도율 감소 + 승인율 향상",
-            "primary_unit": "%p",
-            "secondary": [
-                "부도 손실 절감 — 정확 예측으로 N%p 감소",
-                "승인 자동화 — 분석가 검토 부하 -65%",
-                "Compliance — 모델 설명 가능성 (SHAP) 으로 규제 대응",
-            ],
-            "fp_cost": "이자 수익 손실 (정상 고객 거절)",
-            "fn_cost": "부도 손실 (대출 원금 평균 N백만원)",
-        },
-    },
-    "propensity": {
-        "label_ko": "구매 성향·전환 예측",
-        "market_context": "리테일·이커머스 행동 데이터 (방문·장바구니·이전 구매)",
-        "roi": {
-            "primary_kpi": "캠페인 전환율 향상",
-            "primary_unit": "%p",
-            "secondary": [
-                "마케팅 ROAS 향상 — 고성향 고객 타겟팅",
-                "할인 쿠폰 비용 절감 — Uplift 모델로 증분 효과만 측정",
-                "재방문 유도 — Top 5% 우선 채널 노출",
-            ],
-            "fp_cost": "쿠폰 비용 (저성향 고객 노출)",
-            "fn_cost": "기회 손실 (고성향 고객 누락)",
-        },
-    },
-    "fraud_tabular": {
-        "label_ko": "거래 사기 (정형 데이터)",
-        "market_context": "금융·결제 거래 데이터 (시간·금액·지역·디바이스)",
-        "roi": {
-            "primary_kpi": "사기 손실 절감",
-            "primary_unit": "원/년",
-            "secondary": [
-                "False alarm 감소 — 정상 거래 차단 ↓, 고객 경험 ↑",
-                "분석가 검토 부하 감소 — SHAP Root Cause 자동",
-                "신규 사기 패턴 조기 감지 — 정기 재학습",
-            ],
-            "fp_cost": "2,000원 (불필요 차단·CS 응대)",
-            "fn_cost": "280,000원/건 (사기 평균 손실)",
-        },
-    },
-    "generic": {
-        "label_ko": "일반 정형 ML 분석",
-        "market_context": "정형 데이터 기반 분류·회귀 과제",
-        "roi": {
-            "primary_kpi": "비즈니스 KPI 개선",
-            "primary_unit": "%p",
-            "secondary": [
-                "운영 효율 향상",
-                "분석 자동화로 시간 절감",
-                "재현 가능한 의사결정 지원",
-            ],
-            "fp_cost": "분석 비용",
-            "fn_cost": "기회 손실",
-        },
-    },
-}
-
-
 def _infer_ml_domain(ctx: ReportContext) -> str:
     """ctx 의 도메인·use_case·intent 로부터 ML 도메인 추론."""
     industry = (getattr(ctx.domain, "inferred_industry", "") or "").lower()
@@ -449,19 +352,6 @@ def build(
 # 슬라이드 빌더 — 각 슬라이드 1개 함수
 # ==============================================================
 
-
-def _format_pm_value(pm: dict[str, Any]) -> str:
-    """primary_metric 값을 format_metric 으로 안전 포매팅."""
-    name = pm.get("name", "primary")
-    raw = pm.get("value")
-    if raw is None:
-        return "-"
-    try:
-        return format_metric(float(raw), str(name))
-    except (TypeError, ValueError):
-        return str(raw)
-
-
 def _build_top_findings_from_ctx(ctx: ReportContext) -> list[dict[str, Any]]:
     """S2 상단 3 KEY FINDINGS — interpretation.global_importance Top 3 기반.
 
@@ -667,80 +557,6 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
         ),
         speaker_notes_hint="가설 3개를 명확히 — 검증은 슬라이드 15 에서 1:1 대응.",
     )
-
-
-def _summarize_dtypes(ctx: ReportContext) -> str:
-    """dataset.dtypes 의 numeric/categorical/text 카운트 요약."""
-    dtypes = ctx.dataset.dtypes or {}
-    if not dtypes:
-        return "타입 정보 없음"
-    num_count = sum(1 for v in dtypes.values() if str(v).lower() in {"int", "int64", "float", "float64", "number", "numeric"})
-    cat_count = sum(1 for v in dtypes.values() if str(v).lower() in {"object", "category", "categorical", "str", "string"})
-    other = len(dtypes) - num_count - cat_count
-    parts = []
-    if num_count:
-        parts.append(f"수치 {num_count}")
-    if cat_count:
-        parts.append(f"범주 {cat_count}")
-    if other:
-        parts.append(f"기타 {other}")
-    return " · ".join(parts)
-
-
-def _summarize_target(ctx: ReportContext) -> str:
-    """dataset.detected_target 의 분포 요약.
-
-    분류 — categorical_top[target] 의 클래스별 비율 (Top 3).
-    회귀 — numeric_stats[target] 의 mean / std.
-    """
-    target = ctx.dataset.detected_target
-    if not target:
-        return "타겟 미감지"
-    # 분류 — categorical_top 우선
-    cat_top = (ctx.dataset.categorical_top or {}).get(target, [])
-    if cat_top:
-        # 각 항목: {"value": ..., "count": ...} 또는 (value, count) tuple 가정
-        total = sum(_safe_count(it) for it in cat_top) or 1
-        parts: list[str] = []
-        for it in cat_top[:3]:
-            val = _safe_value(it)
-            cnt = _safe_count(it)
-            parts.append(f"{val} {cnt/total*100:.1f}%")
-        return " · ".join(parts) if parts else f"{target} (분포 미산출)"
-    # 회귀 — numeric_stats
-    num_stats = (ctx.dataset.numeric_stats or {}).get(target, {})
-    if num_stats:
-        mean = num_stats.get("mean")
-        std = num_stats.get("std")
-        if mean is not None and std is not None:
-            return f"{target} 평균 {mean:.2f} ± {std:.2f}"
-    return f"타겟 {target}"
-
-
-def _safe_value(item: Any) -> str:
-    """categorical_top 항목에서 value 안전 추출."""
-    if isinstance(item, dict):
-        return str(item.get("value", item.get("name", "?")))
-    if isinstance(item, (list, tuple)) and len(item) >= 1:
-        return str(item[0])
-    return str(item)
-
-
-def _safe_count(item: Any) -> int:
-    """categorical_top 항목에서 count 안전 추출."""
-    if isinstance(item, dict):
-        try:
-            return int(item.get("count", item.get("freq", 0)) or 0)
-        except (TypeError, ValueError):
-            return 0
-    if isinstance(item, (list, tuple)) and len(item) >= 2:
-        try:
-            return int(item[1])
-        except (TypeError, ValueError):
-            return 0
-    return 0
-
-
 def _build_market_context(ctx: ReportContext) -> SlideSpec:
     """슬라이드 5 — 데이터 개요 + 품질 (통합).
 
@@ -860,152 +676,6 @@ def _build_pain_points(ctx: ReportContext) -> SlideSpec:
             "표준 스택이 자동 적응 — 매니페스트 단일 진실원 (substitution_manifest)."
         ),
     )
-
-
-def _build_method_steps(ctx: ReportContext) -> list[dict[str, str]]:
-    """분석 방법 흐름의 5 단계 — 좌측 미니 흐름도 입력.
-
-    각 step: {label, kind} — kind 는 "preprocessing" / "feature" / "model" / "training" / "evaluation"
-    """
-    steps: list[dict[str, str]] = []
-    pp_steps = list(ctx.preprocessing.applied_steps or [])
-    if pp_steps:
-        steps.append({"label": f"전처리 ({len(pp_steps)}단계)", "kind": "preprocessing"})
-    feats = list(ctx.features.created or [])
-    if feats:
-        steps.append({"label": f"신규 피처 {len(feats)}개", "kind": "feature"})
-    chosen_name = (ctx.model_selection.chosen or {}).get("name") or ""
-    if chosen_name:
-        steps.append({"label": f"모델 {chosen_name}", "kind": "model"})
-    if ctx.training.runs:
-        steps.append({"label": "학습 · 튜닝", "kind": "training"})
-    if ctx.evaluation.primary_metric:
-        steps.append({"label": "평가 · 검증", "kind": "evaluation"})
-    # 폴백 — ctx 가 빈 경우 (이른 파이프라인 단계) 기본 5 단계
-    if not steps:
-        steps = [
-            {"label": "1 · 전처리", "kind": "preprocessing"},
-            {"label": "2 · 피처 엔지니어링", "kind": "feature"},
-            {"label": "3 · 모델 선정", "kind": "model"},
-            {"label": "4 · 학습", "kind": "training"},
-            {"label": "5 · 평가", "kind": "evaluation"},
-        ]
-    return steps[:5]
-
-
-def _build_method_whys(ctx: ReportContext) -> list[dict[str, str]]:
-    """우측 WHY 카드 4개 — (header, what, why, result).
-
-    header: "단계 N · {라벨}"
-    what:   *선택 결과* (큰 글씨)
-    why:    *왜 그렇게 했나* (rationale / justification)
-    result: *정량 결과* (해당 단계의 결과)
-    """
-    cards: list[dict[str, str]] = []
-
-    # ① 전처리 — 가장 큰 영향 step 1개
-    for ps in (ctx.preprocessing.applied_steps or [])[:1]:
-        op = getattr(ps, "op", "") or "전처리"
-        scope = ", ".join(getattr(ps, "scope", []) or [])
-        rationale = getattr(ps, "rationale", "") or ""
-        before = getattr(ps, "before_stats", {}) or {}
-        after = getattr(ps, "after_stats", {}) or {}
-        what = f"{op}" + (f" · {scope}" if scope else "")
-        result = ""
-        # 결측률 / 표준편차 변화 추출 (best-effort)
-        for key in ("missing_rate", "missing", "std", "mean"):
-            if key in before and key in after:
-                result = f"{key}: {before[key]} → {after[key]}"
-                break
-        if not result:
-            result = "before / after 통계 적립 완료"
-        cards.append({
-            "header": f"단계 1 · {op}",
-            "what": what,
-            "why": rationale or "데이터 분포 보강 — 모델 학습 안정성 향상",
-            "result": result,
-        })
-
-    # ② 피처 엔지니어링
-    feats = list(ctx.features.created or [])
-    if feats:
-        top = feats[:3]
-        names = " · ".join(getattr(f, "name", "") or "" for f in top)
-        rationale = next(
-            (getattr(f, "rationale", "") for f in top if getattr(f, "rationale", "")),
-            "",
-        )
-        cards.append({
-            "header": f"단계 2 · 신규 피처 {len(feats)}개",
-            "what": names or f"피처 {len(feats)}개 추가",
-            "why": rationale or "비선형·상호작용 신호 포착 — 단일 변수로 못 잡는 패턴",
-            "result": f"최종 피처 수 {ctx.features.final_feature_count or len(feats)}",
-        })
-
-    # ③ 모델 선정
-    chosen = ctx.model_selection.chosen or {}
-    chosen_name = chosen.get("name") or ""
-    if chosen_name:
-        justification = chosen.get("justification") or ""
-        candidates = ctx.model_selection.candidates or []
-        result_lines: list[str] = []
-        for c in candidates[:2]:
-            c_name = getattr(c, "name", "")
-            c_score = getattr(c, "score", None)
-            if c_name and c_score is not None:
-                result_lines.append(f"{c_name} {c_score:.3f}")
-        result = " / ".join(result_lines) if result_lines else (
-            f"후보 {len(candidates)}개 비교 후 선택"
-        )
-        cards.append({
-            "header": "단계 3 · 모델 선정",
-            "what": chosen_name,
-            "why": justification or "후보 모델 비교 — 본 데이터 특성에 가장 적합",
-            "result": result,
-        })
-
-    # ④ 검증 방식
-    runs = ctx.training.runs or []
-    baseline = ctx.model_selection.baselines.naive or {}
-    pm = ctx.evaluation.primary_metric or {}
-    if runs or pm or baseline:
-        split = "80/20 hold-out + Baseline 직접 비교"
-        if runs:
-            hp = getattr(runs[0], "hyperparameters", {}) or {}
-            split = str(hp.get("split", split))
-        result = ""
-        if baseline and pm:
-            b_score = baseline.get("score")
-            p_val = pm.get("value")
-            if b_score is not None and p_val is not None:
-                try:
-                    delta = float(p_val) - float(b_score)
-                    result = (
-                        f"룰 {format_metric(float(b_score), pm.get('name', ''))} → "
-                        f"모델 {format_metric(float(p_val), pm.get('name', ''))} "
-                        f"({format_delta(delta * 100 if abs(delta) <= 1.5 else delta, unit='%p')})"
-                    )
-                except (TypeError, ValueError):
-                    pass
-        cards.append({
-            "header": "단계 4 · 검증 방식",
-            "what": split,
-            "why": "모델의 *추가 가치* 정량화 — Baseline 직접 비교로 향상폭 측정",
-            "result": result or "Baseline 비교 완료",
-        })
-
-    # 폴백 4개
-    while len(cards) < 4:
-        i = len(cards) + 1
-        cards.append({
-            "header": f"단계 {i} · 추가 분석",
-            "what": "ctx 적립 후 채워짐",
-            "why": "분석 결과 기록 진행 중",
-            "result": "-",
-        })
-    return cards[:4]
-
-
 def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
     """슬라이드 7 — 분석 방법 흐름 + WHY 패널 (Option C).
 
@@ -1047,134 +717,6 @@ def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
             "WHY 는 ctx 의 rationale·justification 필드에서 자동 추출 — 빈 필드면 폴백 문구."
         ),
     )
-
-
-def _select_top_eda_charts(ctx: ReportContext, n: int = 3) -> list[Any]:
-    """Top N EDAChart 선정 — severity → finding 길이 → 입력 순서."""
-    charts = list(ctx.eda.charts or [])
-    if not charts:
-        return []
-    sev_order = {"critical": 0, "important": 1, "info": 2}
-    indexed = [(i, c) for i, c in enumerate(charts)]
-    indexed.sort(key=lambda t: (
-        sev_order.get(getattr(t[1], "severity", "info"), 2),
-        -len(getattr(t[1], "finding", "") or ""),
-        t[0],
-    ))
-    return [c for _, c in indexed[:n]]
-
-
-def _eda_key_insights(chart: Any, ctx: ReportContext) -> list[str]:
-    """EDAChart 의 callouts·numbers·finding 을 KEY INSIGHTS 5줄로 정리.
-
-    포맷 '사실 → 그래서 알 수 있는 것' 페어 — callouts.text 에 \n 으로 페어
-    들어있으면 그대로, 아니면 finding 을 마지막 인사이트로 부착.
-    """
-    insights: list[str] = []
-    for callout in (getattr(chart, "callouts", None) or [])[:5]:
-        if isinstance(callout, dict):
-            text = callout.get("text", "") or ""
-        else:
-            text = str(callout)
-        if text:
-            insights.append(_auto_label(text, ctx))
-    if not insights:
-        for num in (getattr(chart, "numbers", None) or [])[:5]:
-            if isinstance(num, dict):
-                name = num.get("name", "")
-                val = num.get("value", "")
-                if name or val:
-                    insights.append(f"{name} {val}")
-    finding = getattr(chart, "finding", "") or ""
-    if finding and finding not in insights:
-        insights.append(_auto_label(finding, ctx))
-    return insights[:5]
-
-
-def _build_eda_slide_from_chart(
-    chart: Any,
-    slide_id: str,
-    slide_index: int,
-    ctx: ReportContext,
-    role_key: str,
-) -> SlideSpec:
-    """단일 EDAChart → chart_callout SlideSpec.
-
-    substitution_manifest.resolve_slide(role_key, category) 로 title 변형 적응.
-    """
-    category = ctx.meta.category or "tabular_ml"
-    variant = resolve_slide(role_key, category)
-
-    feature = getattr(chart, "x", None) or getattr(chart, "title_ko", "") or f"Feature {slide_index}"
-    title_ko = (variant.title_ko if variant else None) or getattr(chart, "title_ko", "") or f"EDA · {feature}"
-    finding = getattr(chart, "finding", "") or ""
-    so_what = _auto_label(finding, ctx) if finding else f"{feature} 의 핵심 분포·패턴 발견"
-
-    insights = _eda_key_insights(chart, ctx)
-    body = insights if insights else [f"{feature} — 분석 결과 적립 후 채워짐"]
-
-    chart_type = getattr(chart, "chart_type", "") or (
-        variant.visual_type if variant else "chart_annotated_bar"
-    )
-    ref_id = getattr(chart, "ref_id", None)
-
-    return SlideSpec(
-        id=slide_id,
-        section_id="solution",
-        layout=(variant.layout if variant else "chart_callout"),
-        role="evidence",
-        so_what=so_what,
-        title_ko=title_ko,
-        body_outline=body,
-        parent_message_id="solution_root",
-        required_refs=[ref_id] if ref_id else [],
-        visual_spec=VisualSpec(
-            type=chart_type,
-            title=title_ko,
-            spec={
-                "chart_path": getattr(chart, "path", "") or "",
-                "x": getattr(chart, "x", None),
-                "y": getattr(chart, "y", None),
-                "numbers": list(getattr(chart, "numbers", None) or []),
-                "callouts": list(getattr(chart, "callouts", None) or []),
-                "severity": getattr(chart, "severity", "info"),
-            },
-        ),
-        speaker_notes_hint=(
-            f"EDA #{slide_index} — {feature}. finding: {finding[:80]}. "
-            "KEY INSIGHTS 는 callouts → numbers → finding 순서로 자동 채워짐."
-        ),
-    )
-
-
-def _build_eda_placeholder(
-    slide_id: str,
-    slide_index: int,
-    ctx: ReportContext,
-    role_key: str,
-) -> SlideSpec:
-    """ctx.eda.charts 가 빈 경우의 placeholder — 골격은 유지하되 내용 비움 안내."""
-    category = ctx.meta.category or "tabular_ml"
-    variant = resolve_slide(role_key, category)
-    title_ko = (variant.title_ko if variant else f"EDA · 슬라이드 {slide_index}")
-    return SlideSpec(
-        id=slide_id,
-        section_id="solution",
-        layout=(variant.layout if variant else "chart_callout"),
-        role="evidence",
-        so_what=f"EDA {slide_index} — 분석 결과 적립 후 채워짐",
-        title_ko=title_ko,
-        body_outline=["분석 결과 적립 후 채워짐"],
-        parent_message_id="solution_root",
-        visual_spec=VisualSpec(
-            type=(variant.visual_type if variant else "chart_annotated_bar"),
-            title=title_ko,
-            spec={"chart_path": "", "placeholder": True},
-        ),
-        speaker_notes_hint=f"EDA #{slide_index} placeholder — ctx.eda.charts 적립 시 자동 채워짐.",
-    )
-
-
 def _build_solution_overview(ctx: ReportContext) -> SlideSpec:
     """슬라이드 8 — EDA · 주요 변수 1 (ctx.eda.charts Top 1).
 
@@ -1197,95 +739,6 @@ def _build_tech_architecture_with_lineage(ctx: ReportContext) -> SlideSpec:
     if len(charts) >= 2:
         return _build_eda_slide_from_chart(charts[1], "tech_architecture", 2, ctx, "eda_main_2")
     return _build_eda_placeholder("tech_architecture", 2, ctx, "eda_main_2")
-
-
-def _derived_features_richness(ctx: ReportContext) -> int:
-    """파생 피처의 *정보 풍부도* 점수.
-
-    name 만 있으면 1점, rationale 있으면 +2, formula 있으면 +2, importance 있으면 +1.
-    임계 5 이상이면 S11 EDA-Extra 를 파생 피처 슬라이드로 우선 사용.
-    """
-    feats = list(ctx.features.created or [])
-    if not feats:
-        return 0
-    score = 0
-    for f in feats:
-        score += 1
-        if getattr(f, "rationale", "") or "":
-            score += 2
-        if getattr(f, "formula", "") or "":
-            score += 2
-        if getattr(f, "importance", None) is not None:
-            score += 1
-    return score
-
-
-def _build_derived_features_slide(ctx: ReportContext, slide_id: str) -> SlideSpec:
-    """파생 피처 표 슬라이드 — name / formula / rationale / importance.
-
-    S11 EDA-Extra 가 본 슬라이드로 전환되는 경로.
-    """
-    feats = list(ctx.features.created or [])[:6]
-    items: list[dict[str, Any]] = []
-    body: list[str] = []
-    for f in feats:
-        name = getattr(f, "name", "") or "?"
-        formula = getattr(f, "formula", "") or ""
-        rationale = getattr(f, "rationale", "") or ""
-        importance = getattr(f, "importance", None)
-        items.append({
-            "name": name,
-            "formula": formula,
-            "rationale": rationale,
-            "importance": importance,
-        })
-        # body — 카드 안 2단 위계
-        imp_str = ""
-        if importance is not None:
-            try:
-                imp_str = f" · {format_metric(float(importance), 'shap', as_percent=False, decimals=2)}"
-            except (TypeError, ValueError):
-                pass
-        body.append(f"{name}{imp_str}" + (f" · {rationale}" if rationale else ""))
-
-    dropped = list(ctx.features.dropped or [])[:3]
-    dropped_items: list[dict[str, str]] = []
-    for d in dropped:
-        if isinstance(d, dict):
-            dropped_items.append({
-                "name": str(d.get("name", "")),
-                "reason": str(d.get("reason", "")),
-            })
-
-    return SlideSpec(
-        id=slide_id,
-        section_id="solution",
-        layout="derived_features_table",
-        role="evidence",
-        so_what=(
-            f"파생 피처 {len(items)}개 — 각 피처의 *공식·근거·중요도* 트레이스"
-            + (f" (시도 후 폐기 {len(dropped_items)}개)" if dropped_items else "")
-        ),
-        title_ko="파생 피처 엔지니어링",
-        body_outline=body[:5],
-        parent_message_id="solution_root",
-        visual_spec=VisualSpec(
-            type="v28_derived_features",
-            title="파생 피처 엔지니어링",
-            spec={
-                "features": items,
-                "dropped": dropped_items,
-                "selection_method": ctx.features.selection_method or "",
-                "final_count": ctx.features.final_feature_count or len(items),
-            },
-        ),
-        speaker_notes_hint=(
-            "파생 피처 표 — name / formula / rationale / importance. "
-            "S11 EDA-Extra 가 파생 피처 풍부도 점수 ≥ 5 이면 본 슬라이드로 전환."
-        ),
-    )
-
-
 def _build_differentiation(ctx: ReportContext) -> SlideSpec:
     """슬라이드 11 — EDA Extra (파생 피처 우선 / 4번째 chart / 결측 분포).
 
