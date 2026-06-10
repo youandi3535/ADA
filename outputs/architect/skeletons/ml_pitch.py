@@ -1248,260 +1248,423 @@ def _build_differentiation(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_kpi_with_baseline(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 12 — 핵심 성과 + Baseline 비교 막대 (보강 G).
+    """슬라이드 12 — 모델 성능 (4-metric 균형 + Baseline 실값 비교).
 
-    선정 모델 + 룰 기반 + 로지스틱 + 이론적 상한 4 막대 비교.
+    [재구성] 가짜 '이론적 상한' 제거. ctx.evaluation.metrics + baselines 의 실값만 사용.
+    카테고리별 metric 호환성 검사 (is_metric_compatible) → 부적합 시 visual_spec 안에 hint.
     """
     pm = ctx.evaluation.primary_metric or {}
     pm_name = pm.get("name", "primary")
-    pm_value = pm.get("value", "-")
+    pm_value_str = _format_pm_value(pm)
     chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+    category = ctx.meta.category or "tabular_ml"
 
-    # baseline 추정 — 실 데이터 없으면 가정값
-    try:
-        pm_float = float(pm_value) if isinstance(pm_value, (int, float)) else 0.85
-    except (TypeError, ValueError):
-        pm_float = 0.85
-    rule_baseline = round(pm_float * 0.73, 2)  # 룰 기반 ~73%
-    logistic_baseline = round(pm_float * 0.86, 2)  # 로지스틱 ~86%
-    theoretical_ceiling = min(round(pm_float * 1.08, 2), 0.99)
+    # 카테고리 ↔ metric 호환성 (typed schema assert)
+    metric_ok = is_metric_compatible(category, pm_name)
 
-    body = [
-        f"01 · 룰 기반 (현행) · {pm_name} {rule_baseline}",
-        f"02 · 로지스틱 회귀 (baseline) · {pm_name} {logistic_baseline}",
-        f"03 · {chosen} (선정) · {pm_name} {pm_value}  ← 본 모델",
-        f"04 · 이론적 상한 (가정) · {pm_name} {theoretical_ceiling}",
-    ]
+    # 실제 baseline 막대 (가짜 추정 X)
+    baselines = ctx.model_selection.baselines
+    bars: list[dict[str, Any]] = []
+    if baselines.naive:
+        b = baselines.naive
+        v = b.get("score")
+        if v is not None:
+            bars.append({"label": b.get("name", "Naive"), "value": v, "color": "muted"})
+    if baselines.domain_rule:
+        b = baselines.domain_rule
+        v = b.get("score")
+        if v is not None:
+            bars.append({"label": b.get("name", "도메인 룰"), "value": v, "color": "muted"})
+    if baselines.previous_best:
+        b = baselines.previous_best
+        v = b.get("score")
+        if v is not None:
+            bars.append({"label": b.get("name", "이전 최고"), "value": v, "color": "muted"})
+    bars.append({
+        "label": f"{chosen} (선정)",
+        "value": pm.get("value"),
+        "color": "primary",
+        "highlight": True,
+    })
+
+    # 4-metric 균형 (Top 4 metric 평균)
+    metric_lines: list[str] = []
+    metric_balance_top4: list[tuple[str, str]] = []
+    for name, m in list((ctx.evaluation.metrics or {}).items())[:4]:
+        val = m.get("value") if isinstance(m, dict) else None
+        if val is None:
+            continue
+        formatted = format_metric(float(val), name)
+        metric_lines.append(f"{name} {formatted}")
+        metric_balance_top4.append((name, formatted))
+
+    # body_outline (legacy 호환)
+    body: list[str] = []
+    for bar in bars[:5]:
+        v = bar["value"]
+        v_str = format_metric(float(v), pm_name) if isinstance(v, (int, float)) else str(v)
+        body.append(f"{bar['label']} · {pm_name} {v_str}")
+    if metric_lines:
+        body.append("4-metric · " + " · ".join(metric_lines))
+
+    # so_what (verdict 어조 적용)
+    tone = _get_verdict_tone(ctx)
+    so_what = (
+        f"{chosen} 성능: {pm_name} {pm_value_str} "
+        f"({tone.accent})"
+    )
+
     return SlideSpec(
         id="i1_kpi",
         section_id="results",
-        layout="kpi_cards_4",
+        layout="model_perf_baseline_grouped",
         role="evidence",
-        so_what=(
-            f"{chosen} 가 룰 기반 대비 {pm_name} +{((pm_float - rule_baseline) / max(rule_baseline, 0.01) * 100):.0f}% 개선 "
-            f"— 운영 도입 가능 수준"
-        ),
-        title_ko="핵심 성과 + Baseline 비교",
-        body_outline=body,
+        so_what=so_what,
+        title_ko="모델 성능 · Baseline 비교",
+        body_outline=body[:5],
         required_refs=primary_metric_ref(ctx),
         parent_message_id="results_root",
         visual_spec=VisualSpec(
-            type="chart_annotated_bar",
+            type="v28_model_perf",
             title=f"Baseline 비교 — {pm_name}",
-            caption="룰 기반·로지스틱·선정 모델·이론적 상한 4 막대 비교",
             spec={
                 "metric": pm_name,
-                "bars": [
-                    {"label": "룰 기반 (현행)", "value": rule_baseline, "color": "muted"},
-                    {"label": "로지스틱 회귀", "value": logistic_baseline, "color": "muted"},
-                    {"label": f"{chosen} (선정)", "value": pm_value, "color": "primary", "highlight": True},
-                    {"label": "이론적 상한", "value": theoretical_ceiling, "color": "accent"},
-                ],
+                "metric_value": pm.get("value"),
+                "bars": bars,
+                "metric_balance_top4": metric_balance_top4,
+                "metric_category_compatible": metric_ok,
+                "verdict": ctx.evaluation.verdict or "",
             },
         ),
         speaker_notes_hint=(
-            "Baseline 막대 4종 비교 — 절대값만 보여주는 deck 과 차별화. '85% 가 충분히 좋은가?' 의 직관 즉시 전달."
+            "선정 모델 + 실제 baseline (naive/domain_rule/previous_best) 비교. "
+            "가짜 '이론적 상한' 제거. 4-metric 균형으로 단일 metric 편향 회피. "
+            "metric_category_compatible=False 면 typed schema 경고 — fallback 변형 검토."
         ),
     )
 
 
 def _build_eda_findings(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 13 — EDA 핵심 발견 (신규)."""
-    charts = list(ctx.eda.charts)
-    rank = {"critical": 0, "important": 1, "info": 2}
-    charts.sort(key=lambda c: rank.get(getattr(c, "severity", "info"), 9))
-    top_charts = charts[:2]
-    chart_refs = [getattr(c, "ref_id", "") for c in top_charts if getattr(c, "ref_id", None)]
+    """슬라이드 13 — SHAP Global Importance (Top 5).
 
-    # body 는 발견 3가지 — 실 데이터 없으면 일반 패턴
-    findings = []
-    if ctx.interpretation.global_importance:
-        imps = ctx.interpretation.global_importance[:3]
-        total = sum(i.importance for i in imps)
-        findings.append(f"01 · {imps[0].feature} 등 상위 3 피처가 전체 영향력의 {int(total * 100)}% 차지 (SHAP)")
-    else:
-        findings.append("01 · 상위 3 피처가 전체 영향력의 60%+ 차지 — 신호 집중")
-    if ctx.dataset.shape.get("rows", 0) > 0:
-        findings.append(f"02 · 표본 {ctx.dataset.shape['rows']:,} 행 분석 — 통계적 유의 가능")
-    findings.append("03 · 결측치 < 3% — 데이터 품질 양호, 추가 정제 불필요")
+    [재구성] EDA 슬라이드는 S8~S11 로 이동. 본 슬라이드는 모델 해석 시작점:
+    interpretation.global_importance Top 5 + 카테고리별 적응 (Integrated Gradients / Reason Code 등).
+    """
+    category = ctx.meta.category or "tabular_ml"
+    variant = resolve_slide("shap_global", category)
+    title_ko = (variant.title_ko if variant else "SHAP Global Importance · Top 5")
+
+    imps = list(ctx.interpretation.global_importance or [])[:5]
+    items: list[dict[str, Any]] = []
+    refs: list[str] = []
+    for it in imps:
+        items.append({
+            "feature": getattr(it, "feature", ""),
+            "importance": getattr(it, "importance", 0.0),
+            "method": getattr(it, "method", "shap"),
+        })
+        rid = getattr(it, "ref_id", None)
+        if rid:
+            refs.append(rid)
+
+    body = [
+        f"{i+1}순위 · {it['feature']} · {format_metric(float(it['importance']), 'shap', as_percent=False, decimals=2)}"
+        for i, it in enumerate(items)
+    ]
+    if not body:
+        body = ["분석 결과 적립 후 채워짐"]
+
+    # 종합 인사이트 — Top 3 합계 비율
+    so_what = "상위 5 피처의 영향력 분포 — 모델이 무엇을 보고 결정하는지"
+    if items:
+        total = sum(float(it["importance"]) for it in items)
+        top3 = sum(float(it["importance"]) for it in items[:3])
+        if total > 0:
+            ratio = top3 / total * 100
+            so_what = (
+                f"상위 3 피처가 전체 영향력의 {ratio:.0f}% — "
+                f"모델이 핵심 {items[0]['feature']} 등에 강하게 의존"
+            )
 
     return SlideSpec(
         id="eda_findings",
         section_id="results",
-        layout="chart_dual",
+        layout=(variant.layout if variant else "chart_callout"),
         role="evidence",
-        so_what="데이터에서 발견된 3개의 결정적 신호 — 가설을 데이터로 뒷받침",
-        title_ko="EDA 핵심 발견",
-        body_outline=findings,
-        data_refs=chart_refs,
+        so_what=so_what,
+        title_ko=title_ko,
+        body_outline=body[:5],
+        required_refs=refs,
+        parent_message_id="results_root",
         visual_spec=VisualSpec(
-            type="chart_dual",
-            title="EDA 핵심 시각화 2개",
-            caption="좌: Feature Importance (SHAP) | 우: Target Distribution",
-            spec={
-                "left": "feature_importance",
-                "right": "target_distribution",
-                "left_data_ref": chart_refs[0] if chart_refs else None,
-                "right_data_ref": chart_refs[1] if len(chart_refs) > 1 else None,
-            },
+            type=(variant.visual_type if variant else "chart_annotated_bar"),
+            title=title_ko,
+            spec={"items": items},
             severity="important",
         ),
-        parent_message_id="results_root",
-        speaker_notes_hint="좌차트(피처 중요도) + 우차트(타겟 분포) 동시. 발견 3개로 가설 검증 다리.",
+        speaker_notes_hint=(
+            "SHAP / Integrated Gradients / Reason Code — 카테고리에 따라 자동 적응. "
+            "Top 5 만 보여주고 나머지는 백업 슬라이드로."
+        ),
     )
 
 
 def _build_error_analysis(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 14 — ★ Error Analysis & Segment (보강 B, FAANG 핵심).
+    """슬라이드 14 — SHAP Cases (개별 예측 사례 3건).
 
-    Confusion Matrix + Segment 성능 + 비즈니스 비용 비대칭 + 임계값 권고.
-    이 슬라이드가 *진짜 전문가다움* 의 핵심.
+    [재구성] Error CM 책임은 S15 (_build_insights_derived) 로 이동.
+    본 슬라이드는 interpretation.local_examples 의 개별 사례 3건 — 카테고리별 적응:
+    - tabular_dl: attention map / per-sample IG
+    - timeseries: 계절 분해 효과 / 잔차 패턴
+    - anomaly: 이상 사례 3건 + reason code
     """
-    pm = ctx.evaluation.primary_metric or {}
-    pm_value = pm.get("value", 0.85)
-    try:
-        pm_float = float(pm_value) if isinstance(pm_value, (int, float)) else 0.85
-    except (TypeError, ValueError):
-        pm_float = 0.85
+    category = ctx.meta.category or "tabular_ml"
+    variant = resolve_slide("shap_cases", category)
+    title_ko = (variant.title_ko if variant else "개별 예측 사례 · 3건")
 
-    # 추정 FP/FN — 메트릭 없으면 가정
-    fp_rate = round((1 - pm_float) * 0.4, 2)
-    fn_rate = round((1 - pm_float) * 0.6, 2)
-    body = [
-        f"01 · Confusion Matrix · FP {fp_rate:.0%} (오탐지) · FN {fn_rate:.0%} (미탐지)",
-        "02 · Segment · 신규 (가입 <90일) AUC 0.71 ← 데이터 부족, 보완 필요",
-        "03 · Segment · 기존 (가입 ≥90일) AUC 0.89 ← 강건",
-        "04 · 비용 비대칭 · FN 1건 ≫ FP 1건 (비즈니스 가치 손실 큼)",
-        "05 · 권고 · 임계값 0.35 (recall 우선) — 운영 환경 따라 튜닝",
-    ]
+    locals_ = list(ctx.interpretation.local_examples or [])[:3]
+    cases: list[dict[str, Any]] = []
+    body: list[str] = []
+    for i, ex in enumerate(locals_):
+        if not isinstance(ex, dict):
+            continue
+        pred = ex.get("prediction", "-")
+        true = ex.get("true", "-")
+        contributions = ex.get("contributions", [])
+        top_feats = ", ".join(
+            f"{c.get('feature', '')}({c.get('value', '')})"
+            for c in (contributions[:3] if isinstance(contributions, list) else [])
+        )
+        cases.append({
+            "index": i + 1,
+            "prediction": pred,
+            "true": true,
+            "top_contributions": contributions[:3] if isinstance(contributions, list) else [],
+        })
+        body.append(f"사례 {i+1} · 예측 {pred} / 실제 {true} · {top_feats}")
+    while len(body) < 3:
+        body.append(f"사례 {len(body)+1} · ctx 적립 후 채워짐")
+
     return SlideSpec(
         id="error_analysis",
         section_id="results",
-        layout="2x2_matrix",
-        role="caveat",
-        so_what="모델이 어떤 케이스에서 틀리는가 — 4 분면 분석 + 임계값 권고",
-        title_ko="Error Analysis & Segment",
-        body_outline=body,
+        layout=(variant.layout if variant else "one_message"),
+        role="evidence",
+        so_what="개별 사례 3건의 예측 근거 — 모델이 '왜 그렇게 예측했는가' 트레이스",
+        title_ko=title_ko,
+        body_outline=body[:5],
         parent_message_id="results_root",
         visual_spec=VisualSpec(
-            type="custom",
-            title="오류 분석 4분면",
-            caption="Confusion + Segment + 비용 + 임계값",
-            spec={
-                "quadrants": [
-                    {"title": "Confusion Matrix", "fp_rate": fp_rate, "fn_rate": fn_rate},
-                    {"title": "Segment Performance", "new_users_auc": 0.71, "existing_users_auc": 0.89},
-                    {"title": "Cost Asymmetry", "fp_cost_unit": "low", "fn_cost_unit": "high"},
-                    {"title": "Threshold Recommendation", "threshold": 0.35, "rationale": "recall 우선"},
-                ]
-            },
-            severity="critical",
+            type="shap_cases_cards",
+            title=title_ko,
+            spec={"cases": cases},
         ),
         speaker_notes_hint=(
-            "★ 진짜 전문가다움의 핵심 — 단순 정확도만 보여주는 deck 과 차별화. "
-            "FP/FN 비대칭 + Segment 분해 + 임계값 권고로 운영 신뢰성 어필."
+            "개별 사례 3건 — 모델 해석의 *지역* 측면. "
+            "global 영향도(S13) 와 짝. 카테고리별로 attention map / 잔차 / reason code 로 변형."
         ),
     )
 
 
 def _build_insights_derived(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 15 — 가설 입증 인사이트 (insight_funnel)."""
-    pm = ctx.evaluation.primary_metric or {}
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
-    if ctx.interpretation.global_importance:
-        top_feat = ctx.interpretation.global_importance[0].feature
+    """슬라이드 15 — Error CM / Diagnostic (카테고리별 적응).
+
+    [재구성] '가설 입증 인사이트' → 카테고리별 진단:
+    - tabular_ml/dl: Confusion Matrix + 오류 분석
+    - timeseries:    잔차 진단 (ACF residual / Q-Q)
+    - anomaly:       precision@k 곡선 + 알람 budget 곡선
+    """
+    category = ctx.meta.category or "tabular_ml"
+    variant = resolve_slide("error_cm", category)
+    title_ko = (variant.title_ko if variant else "Confusion Matrix · 오류 분석")
+
+    cm = ctx.evaluation.confusion_matrix or {}
+    body: list[str] = []
+
+    if cm:
+        tn = cm.get("tn") or cm.get("true_negative") or 0
+        fp = cm.get("fp") or cm.get("false_positive") or 0
+        fn = cm.get("fn") or cm.get("false_negative") or 0
+        tp = cm.get("tp") or cm.get("true_positive") or 0
+        total = max(1, tn + fp + fn + tp)
+        body.extend([
+            f"TN {tn} ({tn/total*100:.0f}%) · TP {tp} ({tp/total*100:.0f}%)",
+            f"FP {fp} ({fp/total*100:.0f}%) · FN {fn} ({fn/total*100:.0f}%)",
+        ])
+        if fn > fp:
+            body.append("미탐지(FN) > 오탐지(FP) — 임계값 낮춰 recall 우선 고려")
+        elif fp > fn:
+            body.append("오탐지(FP) > 미탐지(FN) — 임계값 높여 precision 우선 고려")
+        else:
+            body.append("FP / FN 균형 — 현재 임계값 적정")
     else:
-        top_feat = "주요 피처"
-    body = [
-        f"01 · H1 입증 · {top_feat} 가 결과의 주요 동인",
-        f"02 · H2 입증 · {chosen} 의 {pm.get('name', '지표')} {pm.get('value', '-')} 달성 — baseline 대비 우수",
-        "03 · H3 부분 입증 · 세그먼트별 일관 (단, 신규 세그먼트 보완 필요 — 슬라이드 14 참조)",
-        "→ 종합 · 데이터 → 패턴 → 인사이트 → 액션 4단계 도출",
-    ]
+        body.append("Confusion Matrix 미적립 — 카테고리별 진단으로 폴백")
+
     return SlideSpec(
         id="insights_derived",
         section_id="results",
-        layout="kpi_cards_3",
-        role="claim",
-        so_what="가설 3개를 데이터로 입증 — 1·2 입증 / 3 부분 입증, 핵심 인사이트 도출",
-        title_ko="가설 입증 인사이트",
-        body_outline=body,
-        thread_part="resolution",
+        layout=(variant.layout if variant else "chart_callout"),
+        role="caveat",
+        so_what="모델이 어떤 케이스에서 틀리는가 — CM·잔차·알람 budget 진단",
+        title_ko=title_ko,
+        body_outline=body[:5],
         parent_message_id="results_root",
         visual_spec=VisualSpec(
-            type="custom",
-            title="가설 → 증거 → 인사이트",
-            caption="3가설 × 증거·인사이트 1:1 대응",
-            spec={"layout": "insight_funnel"},
+            type=(variant.visual_type if variant else "diagram_confusion_matrix"),
+            title=title_ko,
+            spec={"confusion_matrix": cm},
+            severity="important",
         ),
-        speaker_notes_hint="슬라이드 4 의 가설 3개에 1:1 대응 — Pyramid Principle 완결.",
+        speaker_notes_hint=(
+            "Error CM / 잔차 진단 / precision@k 곡선 — 카테고리에 따라 자동 변형. "
+            "FN > FP / FP > FN 패턴으로 임계값 조정 방향 제시."
+        ),
     )
 
 
 def _build_as_is_to_be(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 16 — AS-IS vs TO-BE (as_is_to_be)."""
-    chosen = (ctx.model_selection.chosen or {}).get("name", "ML 모델")
-    body = [
-        "AS-IS · 수작업 분석 (주 3~5일/분석가)",
-        "AS-IS · 재현 불가 (분석마다 결과 편차)",
-        "AS-IS · 운영 자동화 부재",
-        "AS-IS · 모니터링 수동",
-        f"TO-BE · {chosen} 자동 분석 (30분/분석)",
-        "TO-BE · MLflow + SHA256 으로 100% 재현",
-        "TO-BE · 통합 ADA 파이프라인",
-        "TO-BE · 드리프트 자동 감지 + 재학습 트리거",
-    ]
+    """슬라이드 16 — 세그먼트별 성능 비교 (카테고리별 적응).
+
+    [재구성] 영업 톤 'AS-IS vs TO-BE' → 분석 보고서 톤 세그먼트 비교:
+    - tabular_ml/dl: ctx.evaluation.per_segment (세그먼트별 metric)
+    - timeseries:    계절·시간대·요일별 성능 차이
+    - anomaly:       정상 / 이상 클러스터 비교
+    """
+    category = ctx.meta.category or "tabular_ml"
+    variant = resolve_slide("segment", category)
+    title_ko = (variant.title_ko if variant else "세그먼트별 성능 비교")
+
+    segs = list(ctx.evaluation.per_segment or [])[:6]
+    body: list[str] = []
+    seg_items: list[dict[str, Any]] = []
+    for seg in segs:
+        if not isinstance(seg, dict):
+            continue
+        name = seg.get("segment") or seg.get("name") or "?"
+        metric_name = seg.get("metric") or "score"
+        value = seg.get("value")
+        if value is None:
+            continue
+        formatted = format_metric(float(value), str(metric_name))
+        body.append(f"{name} · {metric_name} {formatted}")
+        seg_items.append({"segment": name, "metric": metric_name, "value": value})
+
+    if not body:
+        body = ["세그먼트별 성능 미적립 — ctx.evaluation.per_segment 채움 시 자동 반영"]
+
+    # 분산 인사이트
+    so_what = "세그먼트별 성능 — 모델이 *모든* 세그먼트에서 일관된지 확인"
+    if len(seg_items) >= 2:
+        vals = [float(s["value"]) for s in seg_items]
+        gap = max(vals) - min(vals)
+        if gap > 0.1:
+            so_what = (
+                f"세그먼트 격차 {gap:.2f} 발생 — 일부 세그먼트는 보완·재학습 필요"
+            )
+
     return SlideSpec(
         id="as_is_to_be",
         section_id="impact",
-        layout="comparison_before_after",
-        role="claim",
-        so_what="현재 vs 도입 후 — 4축 (시간·재현·자동화·모니터링) 모두 개선",
-        title_ko="AS-IS vs TO-BE",
-        body_outline=body,
+        layout=(variant.layout if variant else "one_message"),
+        role="evidence",
+        so_what=so_what,
+        title_ko=title_ko,
+        body_outline=body[:6],
         parent_message_id="impact_root",
-        speaker_notes_hint="좌 AS-IS 4 한계 + 우 TO-BE 4 개선. 1:1 대응으로 정량 비교.",
+        visual_spec=VisualSpec(
+            type="segment_perf_table",
+            title=title_ko,
+            spec={"segments": seg_items},
+        ),
+        speaker_notes_hint=(
+            "세그먼트별 성능 비교 — 분류·DL 은 per_segment, timeseries 는 계절·시간대, "
+            "anomaly 는 정상/이상 클러스터. 격차 0.1 이상이면 보완 시사."
+        ),
     )
 
 
 def _build_roi(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 17 — ROI / 비즈니스 임팩트 (circular_progress). ★ 도메인 적응."""
-    profile = _get_domain_profile(ctx)
-    roi = profile["roi"]
-    biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    kpi_value = f"{biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else f"{roi['primary_unit']} 단위 개선"
+    """슬라이드 17 — Policy Insight (verdict-aware).
 
-    body = [
-        f"01 · 핵심 KPI · {roi['primary_kpi']} · {kpi_value}",
-        f"02 · {roi['secondary'][0]}",
-        f"03 · {roi['secondary'][1]}",
-        f"04 · {roi['secondary'][2]}",
-        f"05 · 비용 비대칭 · FP {roi['fp_cost']} / FN {roi['fn_cost']}",
-        "06 · 운영 효율 · 분석 시간 주 3~5일 → 30분/건 (98% 절감)",
-    ]
+    [재구성] 영업 톤 'ROI' → 분석 결과 기반 *운영 정책 인사이트* 로:
+    - verdict=adopt: 도입 정책 + 운영 룰 + 모니터링 정책
+    - verdict=iterate: 보강 우선순위 + 재시도 조건
+    - verdict=reject: 폐기 사유 + 대안 권고
+
+    카테고리별 적응 (resolve_slide('policy_insight', category)):
+    - timeseries: 예측 구간 기반 안전재고·임계 정책
+    - anomaly:    임계값·알람 budget·운영 시나리오
+    """
+    category = ctx.meta.category or "tabular_ml"
+    variant = resolve_slide("policy_insight", category)
+    tone = _get_verdict_tone(ctx)
+    title_ko = tone.s17_section_label or (variant.title_ko if variant else "정책 인사이트")
+
+    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+    pm = ctx.evaluation.primary_metric or {}
+    pm_value = _format_pm_value(pm)
+
+    policy_items: list[tuple[str, str]] = []
+    if (ctx.evaluation.verdict or "").lower() == "adopt":
+        policy_items = [
+            ("운영 임계", ctx.evaluation.gate_rationale or f"{pm_value} 기반 임계 설정"),
+            ("모니터링", "drift score · 메트릭 alarm · 재학습 트리거"),
+            ("Owner", "모델 운영팀 — 월간 리뷰 · 분기별 재검증"),
+        ]
+    elif (ctx.evaluation.verdict or "").lower() == "iterate":
+        policy_items = [
+            ("보강 우선순위", "데이터 수집 확대 · 결측 보강 · 신규 피처"),
+            ("재시도 조건", f"{pm_value} 대비 +5%p 이상 향상 시 재평가"),
+            ("Owner", "분석팀 — 보강 후 재학습"),
+        ]
+    elif (ctx.evaluation.verdict or "").lower() == "reject":
+        policy_items = [
+            ("폐기 사유", ctx.evaluation.gate_rationale or "운영 임계 미달"),
+            ("대안 권고", "문제 재정의 → 대안 모델 탐색"),
+            ("Owner", "프로덕트 / 분석팀 공동 재정의"),
+        ]
+    else:
+        policy_items = [
+            ("판정 미정", "ctx.evaluation.verdict 적립 시 자동 분기"),
+            ("기본 모니터링", "drift · 메트릭 추적"),
+            ("재검토", "월간"),
+        ]
+
+    body = [f"{k} · {v}" for k, v in policy_items]
+    biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
+    if biz_kpi:
+        body.append(f"비즈니스 KPI · {getattr(biz_kpi, 'name', '')} {getattr(biz_kpi, 'estimated_value', '')} {getattr(biz_kpi, 'unit', '')}")
+
+    so_what = f"{chosen} 분석 결과 기반 운영 정책 — 판정: {ctx.evaluation.verdict or '미정'}"
+
     return SlideSpec(
         id="i3_roi",
         section_id="impact",
-        layout="kpi_cards_4",
-        role="claim",
-        so_what=(f"{profile['label_ko']} 효과 — {roi['primary_kpi']} {kpi_value} + 비용 비대칭 기반 의사결정"),
-        title_ko="ROI / 비즈니스 임팩트",
-        body_outline=body,
+        layout=(variant.layout if variant else "one_message"),
+        role="action",
+        so_what=so_what,
+        title_ko=title_ko,
+        body_outline=body[:5],
         parent_message_id="impact_root",
         visual_spec=VisualSpec(
-            type="custom",
-            title=f"ROI ({profile['label_ko']})",
-            caption="달성률 도넛 + 도메인 KPI + FP/FN 비용",
+            type="v28_policy_insight",
+            title=title_ko,
             spec={
-                "layout": "circular_progress",
-                "domain": _infer_ml_domain(ctx),
-                "primary_kpi": roi["primary_kpi"],
-                "fp_cost": roi["fp_cost"],
-                "fn_cost": roi["fn_cost"],
+                "policy_items": policy_items,
+                "verdict": ctx.evaluation.verdict or "",
+                "tone_accent": tone.accent,
+                "biz_kpi": (
+                    {
+                        "name": getattr(biz_kpi, "name", ""),
+                        "value": getattr(biz_kpi, "estimated_value", ""),
+                        "unit": getattr(biz_kpi, "unit", ""),
+                    } if biz_kpi else None
+                ),
             },
         ),
         speaker_notes_hint=(
-            f"★ 도메인 적응 — {profile['label_ko']}. 비즈니스 KPI + FP/FN 비용 비대칭 기반 의사결정 강조."
+            "verdict 에 따라 어조 분기 — adopt 면 운영 정책, iterate 면 보강 계획, reject 면 폐기 사유. "
+            "ADA '도메인 자동화' 영업 표현 전량 제거. 비즈니스 KPI 가 ctx.evaluation.business_kpi 에 있으면 부착."
         ),
     )
 
@@ -1544,36 +1707,62 @@ def _build_risk_mitigation(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_roadmap(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 19 — 실행 계획 + 모니터링 KPI (보강 D).
+    """슬라이드 19 — 실행 로드맵 (verdict-aware).
 
-    Phase 1·2·3 각각에 *모니터링 KPI* 명시. 빠뜨리면 'POC만 잘 만들고 운영 모름' 인상.
+    [재구성] verdict 에 따라 Phase 패턴 자동 분기 (VerdictTone.s19_phase_pattern):
+    - adopt:   'Phase 1 (30일) 파일럿 → Phase 2 (90일) 전사 확장'
+    - iterate: 'Phase 1 데이터 보강 → Phase 2 재학습 → Phase 3 재평가'
+    - reject:  'Phase 1 문제 재정의 → Phase 2 대안 모델 탐색 → Phase 3 검증'
+
+    모니터링 KPI 는 verdict=adopt 인 경우에만 첨부 (iterate/reject 에선 의미 없음).
     """
-    body = [
-        "Phase 01 · (0~30일) · 파일럿 · 모니터링 KPI: AUC > 0.80 · drift score < 0.1",
-        "Phase 02 · (30~90일) · 운영 전환 · 모니터링 KPI: 월 재학습 · recall@business_threshold",
-        "Phase 03 · (90일+) · 확장 · 모니터링 KPI: feature drift alert · fairness audit",
-        "고도화 · 추가 피처 · 행동·실시간 신호 연동",
-        "고도화 · 앙상블 확장 · 멀티 모델 + 개인화",
-        "고도화 · A/B 인프라 · 도메인 룰 결합 운영",
-    ]
+    tone = _get_verdict_tone(ctx)
+    verdict = (ctx.evaluation.verdict or "").lower() or "adopt"
+
+    # Phase 라벨을 verdict 별로 — 한 줄 패턴을 ' → ' 로 분해
+    raw_pattern = tone.s19_phase_pattern or "Phase 1 → Phase 2 → Phase 3"
+    phases = [p.strip() for p in raw_pattern.split("→") if p.strip()][:3]
+
+    body: list[str] = []
+    for i, phase in enumerate(phases):
+        body.append(f"{i+1}. {phase}")
+
+    if verdict == "adopt":
+        body.extend([
+            "모니터링 KPI · drift score · primary_metric alarm",
+            "재학습 트리거 · 분기별 또는 drift > 0.1 시",
+        ])
+    elif verdict == "iterate":
+        body.extend([
+            "보강 측정 · 새로 적립된 데이터 규모 / 결측률 변화",
+            "재평가 기준 · 본 모델 대비 +5%p 이상 향상 시 도입 재고려",
+        ])
+    else:  # reject
+        body.extend([
+            "대안 후보 · 문제 재정의 후 새 모델 탐색",
+            "재학습 금지 · 현 데이터·정의로는 본 모델 폐기",
+        ])
+
     return SlideSpec(
         id="roadmap",
         section_id="plan",
-        layout="process_flow",
+        layout="roadmap_phase_kpi",
         role="action",
-        so_what="단계별 실행 + Phase 마다 모니터링 KPI 명시 — 운영 신뢰성 확보",
-        title_ko="실행 계획 + 모니터링 KPI",
-        body_outline=body,
+        so_what=f"실행 로드맵 — 판정({verdict}) 에 맞춰 단계 자동 분기",
+        title_ko="실행 로드맵",
+        body_outline=body[:5],
         parent_message_id="plan_root",
         visual_spec=VisualSpec(
-            type="custom",
-            title="Roadmap with Monitoring KPI",
-            caption="Phase 별 KPI 명시 — 운영 ML 차별화 포인트",
-            spec={"layout": "roadmap_upgrades", "monitoring_kpi_enforced": True},
+            type="v28_domain_mapping",
+            title="실행 로드맵",
+            spec={
+                "verdict": verdict,
+                "phases": phases,
+                "tone_accent": tone.accent,
+            },
         ),
         speaker_notes_hint=(
-            "Phase 별 모니터링 KPI 강제 — 'POC 만 잘 만들고 운영 모름' 인상 차단. "
-            "drift score · recall@threshold · fairness audit 등 운영 메트릭 명시."
+            "Phase 는 verdict 에 따라 자동 변형. adopt 만 운영 KPI / iterate 는 보강 / reject 는 폐기 후 대안."
         ),
     )
 
