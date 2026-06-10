@@ -483,40 +483,191 @@ def build(
 # ==============================================================
 
 
-def _build_exec_summary_ml(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 2 — Executive Summary (보강 A: ML 전용 5박스).
+def _format_pm_value(pm: dict[str, Any]) -> str:
+    """primary_metric 값을 format_metric 으로 안전 포매팅."""
+    name = pm.get("name", "primary")
+    raw = pm.get("value")
+    if raw is None:
+        return "-"
+    try:
+        return format_metric(float(raw), str(name))
+    except (TypeError, ValueError):
+        return str(raw)
 
-    [배경 · 접근 · 결과 · 효과 · 권고] 5박스. 임원이 1장만 봐도 의사결정 가능해야 함.
+
+def _build_top_findings_from_ctx(ctx: ReportContext) -> list[dict[str, Any]]:
+    """S2 상단 3 KEY FINDINGS — interpretation.global_importance Top 3 기반.
+
+    각 finding 은 carrier 가 카드로 렌더할 구조:
+        {label, feature, importance, big, sub}
+    - big: 한 줄 임팩트 수치 (예: SHAP 값 또는 격차%)
+    - sub: 2~3 줄 근거 (해당 변수의 인사이트)
+    """
+    importance_list = list(ctx.interpretation.global_importance or [])[:3]
+    findings: list[dict[str, Any]] = []
+    for i, item in enumerate(importance_list):
+        feature = getattr(item, "feature", "") or getattr(item, "name", "") or f"Feature {i+1}"
+        value = getattr(item, "value", None) or getattr(item, "importance", None) or 0.0
+        story = ctx.interpretation.per_feature_story.get(feature, "")
+        findings.append({
+            "label": f"FINDING {i+1:02d}",
+            "feature": feature,
+            "big": format_metric(float(value), "shap", as_percent=False, decimals=2),
+            "sub": _auto_label(story, ctx) if story else feature,
+        })
+    # ctx 가 비어있으면 placeholder 3개 (carrier 가 자연스럽게 빈 카드로 렌더)
+    while len(findings) < 3:
+        findings.append({
+            "label": f"FINDING {len(findings)+1:02d}",
+            "feature": "",
+            "big": "-",
+            "sub": "분석 결과 적립 후 채워짐",
+        })
+    return findings
+
+
+def _build_method_subitems(ctx: ReportContext) -> list[tuple[str, str]]:
+    """S2 하단 METHOD 박스의 2단 (소제목, 설명) 쌍 3개."""
+    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+    n_candidates = len(ctx.model_selection.candidates or [])
+    n_features = ctx.features.final_feature_count or len(
+        ctx.features.created or []
+    )
+    split = "80/20 hold-out + Baseline 비교"
+    if ctx.training.runs:
+        first = ctx.training.runs[0]
+        if first.hyperparameters and "split" in first.hyperparameters:
+            split = str(first.hyperparameters["split"])
+    return [
+        ("모델 선정", f"{chosen} — 후보 {n_candidates}개 비교 후 선택" if n_candidates else f"{chosen} 선정"),
+        ("신규 피처", f"{n_features}개 추가" if n_features else "신규 피처 생성 없음"),
+        ("검증 방식", split),
+    ]
+
+
+def _build_perf_subitems(ctx: ReportContext) -> list[tuple[str, str]]:
+    """S2 하단 PERFORMANCE 박스의 2단 쌍 3개."""
+    pm = ctx.evaluation.primary_metric or {}
+    pm_str = _format_pm_value(pm)
+    gate = "운영 임계 통과" if ctx.evaluation.gate_passed else "운영 임계 미통과"
+    rationale = ctx.evaluation.gate_rationale or gate
+
+    baseline = ctx.model_selection.baselines.naive or {}
+    baseline_str = ""
+    if baseline:
+        b_val = baseline.get("score")
+        if b_val is not None:
+            try:
+                baseline_str = format_metric(float(b_val), pm.get("name", ""))
+            except (TypeError, ValueError):
+                baseline_str = str(b_val)
+            baseline_str = f"룰 {baseline_str} 대비 +{pm_str}"
+        else:
+            baseline_str = "Baseline 비교 완료"
+    else:
+        baseline_str = "Baseline 미설정"
+
+    n_metrics = len(ctx.evaluation.metrics or {})
+    balance = f"{n_metrics}-metric 균형" if n_metrics >= 2 else "단일 metric 평가"
+
+    return [
+        ("운영 임계", rationale),
+        ("베이스라인 대비", baseline_str),
+        ("균형", balance),
+    ]
+
+
+def _build_limitation_subitems(ctx: ReportContext) -> list[tuple[str, str]]:
+    """S2 하단 LIMITATION 박스의 2단 쌍 3개.
+
+    LimitationItem.description 을 *소제목* 으로 (한계 자체), impact + mitigation 을
+    *설명* 으로 결합.
+    """
+    gaps = list(ctx.limitations.data_gaps or [])[:3]
+    items: list[tuple[str, str]] = []
+    for g in gaps:
+        label = getattr(g, "description", "") or "데이터 결함"
+        impact = getattr(g, "impact", "") or ""
+        mitigation = getattr(g, "mitigation", None) or ""
+        if mitigation:
+            desc = f"영향 {impact} · {mitigation}" if impact else mitigation
+        else:
+            desc = f"영향 {impact}" if impact else "영향 추정 필요"
+        items.append((str(label), str(desc)))
+    # caveat 보완
+    if len(items) < 3 and ctx.limitations.model_caveats:
+        for cav in ctx.limitations.model_caveats[: 3 - len(items)]:
+            items.append(("모델 한계", str(cav)))
+    while len(items) < 3:
+        items.append(("한계", "추가 분석 필요"))
+    return items
+
+
+def _build_exec_summary_ml(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 2 — Executive Summary (분석 보고서 톤).
+
+    상단: 3 KEY FINDINGS (interpretation Top 3).
+    하단: METHOD / PERFORMANCE / LIMITATION 3 박스 (각각 2단 소제목+설명 3쌍).
+    so_what: verdict (adopt/iterate/reject) 에 따라 어조 분기.
     """
     pm = ctx.evaluation.primary_metric or {}
-    chosen_name = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
-    biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    industry = ctx.domain.inferred_industry or ctx.meta.category
+    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
+    horizon = ctx.limitations.revalidation_window or "6개월"
     pm_name = pm.get("name", "primary")
-    pm_value = pm.get("value", "-")
+    pm_value = _format_pm_value(pm)
 
+    tone = _get_verdict_tone(ctx)
+    so_what = tone.s2_so_what_template.format(
+        chosen=chosen,
+        use_case=use_case,
+        metric_name=pm_name,
+        metric_value=pm_value,
+        horizon=horizon,
+    )
+
+    findings = _build_top_findings_from_ctx(ctx)
+    method_items = _build_method_subitems(ctx)
+    perf_items = _build_perf_subitems(ctx)
+    limitation_items = _build_limitation_subitems(ctx)
+
+    # body_outline — legacy carrier (kpi_cards_3) 호환용 단순 텍스트 5줄.
+    # 신규 carrier 는 visual_spec.spec 의 구조화 데이터를 우선 사용.
     body = [
-        f"배경 · {industry} 의 {use_case} — 현황 데이터 {ctx.dataset.shape.get('rows', 0):,} 행 분석",
-        f"접근 · {chosen_name} + SHAP — 자동화된 ADA 파이프라인",
-        f"결과 · {pm_name} {pm_value} (vs baseline 대비 우수)",
-        f"효과 · {biz_kpi.name + ' ' + str(biz_kpi.estimated_value) + ' ' + biz_kpi.unit if biz_kpi else '비즈니스 KPI 추정 필요'}",
-        "권고 · Phase 1 (30일) 파일럿 → Phase 2 (90일) 전사 확장",
+        f"발견 1 · {findings[0]['feature']} {findings[0]['big']}",
+        f"발견 2 · {findings[1]['feature']} {findings[1]['big']}",
+        f"발견 3 · {findings[2]['feature']} {findings[2]['big']}",
+        f"방법 · {method_items[0][1]}",
+        f"성능 · {pm_name} {pm_value} ({tone.accent})",
     ]
+
     return SlideSpec(
         id="exec_summary",
         section_id="front_matter",
-        layout="kpi_cards_3",
+        layout="exec_summary_3finding_3box",
         role="claim",
-        so_what=f"{chosen_name} 모델로 {use_case} 를 {pm_value} 정확도로 예측 — 6개월 내 운영 도입 권장",
+        so_what=so_what,
         title_ko="Executive Summary",
         body_outline=body,
         required_refs=primary_metric_ref(ctx),
         thread_part="resolution",
         parent_message_id="root",
+        visual_spec=VisualSpec(
+            type="exec_summary_v32",
+            title="Executive Summary",
+            spec={
+                "findings": findings,
+                "method_items": method_items,
+                "perf_items": perf_items,
+                "limitation_items": limitation_items,
+                "verdict": ctx.evaluation.verdict or "adopt",
+                "tone_accent": tone.accent,
+            },
+        ),
         speaker_notes_hint=(
-            "이 1장만 봐도 임원이 의사결정 가능. 배경→접근→결과→효과→권고 5박스. "
-            "30초 elevator pitch 룰 — 다른 슬라이드 안 봐도 결론 명확."
+            "1장만 봐도 의사결정 가능. 상단 3 KEY FINDINGS = 무엇을 알아냈나, "
+            "하단 METHOD/PERFORMANCE/LIMITATION = 어디까지 볼 수 있나. "
+            "verdict 에 따라 so_what 어조가 자동 분기 (adopt/iterate/reject)."
         ),
     )
 
