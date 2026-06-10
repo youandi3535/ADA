@@ -301,6 +301,14 @@ const STAGE_RANGE=[
   [98, 100], // G6: report_composer → self_learning_dispatch
 ];
 const GATE_TITLE={G2:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G3:['어떤 방법론으로 진행할까요?','Choose your methodology'],G4:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G5:['어떤 모델을 채택할까요?','Pick the best model'],G6:['어떤 산출물을 만들까요?','Choose your outputs']};
+// CS 2026-06-10 — 게이트 전환 구간 (사용자가 진행 누른 후 다음 카드 도착 전) 사용자 친화 설명.
+// cur 2~5 만 매핑. cur=1 (G2 분석 방향 단계) 은 항상 정적 "어떤 방식으로 분석할까요?" 유지.
+const STAGE_TRANSITION_DESC={
+  2:{ko:'EDA를 분석 중입니다',en:'Running EDA analysis'},
+  3:{ko:'전처리·피처 엔지니어링 중입니다',en:'Running preprocessing & feature engineering'},
+  4:{ko:'모델 학습 중입니다',en:'Training models'},
+  5:{ko:'평가·인사이트 분석 중입니다',en:'Running evaluation & insight analysis'}
+};
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 let _suppressG1Advance=false; // 사용자가 뒤로가기로 G1 으로 이동했을 때 자동 G1→G2 전환 억제
@@ -948,11 +956,31 @@ function progressBar(){
   return '<div class="progbox">'+barHtml+meta+'</div>';
 }
 function gateHeader(g){
+  // CS 2026-06-10 — 동적 헤더: 단계 전환 구간엔 사용자 친화 설명.
+  //   proposals 도착 = 정적 제목 (사용자 결정 시점)
+  //   proposals 없음 + cur 2~5 = STAGE_TRANSITION_DESC[cur] 의 단계 친화 표현
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
   const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
   const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
-  return '<div class="ahdr"><h2>'+tt[0]+'</h2><div class="en">'+tt[1]+'</div></div>'
-    +'<p class="desc">업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.</p>'
+  const props=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
+  const stage=STAGE_TRANSITION_DESC[cur];
+  let h2, en, desc;
+  if(props.length){
+    // proposals 도착 = 사용자 결정 시점 → 정적 제목
+    h2=tt[0]; en=tt[1];
+    desc='업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.';
+  } else if(stage){
+    // 전환 구간 = 단계 친화 설명 (agent 이름 X)
+    h2=stage.ko;
+    en=stage.en;
+    desc='곧 "'+esc(tt[0])+'" 화면이 표시됩니다.';
+  } else {
+    // 폴링 대기·미정 → 기본
+    h2=tt[0]; en=tt[1];
+    desc='업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.';
+  }
+  return '<div class="ahdr"><h2>'+h2+'</h2><div class="en">'+en+'</div></div>'
+    +'<p class="desc">'+desc+'</p>'
     +((cat||tgt)?('<div class="databar"><span class="t">✓ 데이터 분석 완료</span>'+cat+tgt+'</div>'):'');
 }
 function propCard(p, idx, recId){
