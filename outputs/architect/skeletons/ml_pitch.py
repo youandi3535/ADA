@@ -57,59 +57,25 @@ from outputs.architect.skeleton_helpers import (
     build_method_steps as _build_method_steps,
     build_method_whys as _build_method_whys,
     derived_features_richness as _derived_features_richness,
-    eda_key_insights as _eda_key_insights,
     format_pm_value as _format_pm_value,
     get_verdict_tone as _get_verdict_tone,
-    is_auto_domain as _is_auto_domain,
     select_top_eda_charts as _select_top_eda_charts,
     summarize_dtypes as _summarize_dtypes,
     summarize_target as _summarize_target,
 )
 from outputs.architect.substitution_manifest import (
     TechStackItem,
-    VerdictTone,
     is_metric_compatible,
     resolve_slide,
     resolve_tech_stack,
-    resolve_verdict_tone,
 )
 from outputs.context.schema import ReportContext
 from outputs.style.text_budget import (
-    format_delta,
     format_metric,
 )
 
 SKELETON_NAME = "ML Pitch"
 
-
-# ==============================================================
-# 공통 헬퍼 — verdict / 자동 도메인 라벨
-# 본 헬퍼는 ml_pitch 외의 skeleton (dl/ts/anomaly) 에서도 동일 패턴으로 사용 예정.
-# ==============================================================
-def _infer_ml_domain(ctx: ReportContext) -> str:
-    """ctx 의 도메인·use_case·intent 로부터 ML 도메인 추론."""
-    industry = (getattr(ctx.domain, "inferred_industry", "") or "").lower()
-    use_case = (getattr(ctx.domain, "inferred_use_case", "") or "").lower()
-    intent = (ctx.meta.user_intent or "").lower()
-    text = f"{industry} {use_case} {intent}"
-
-    domain_keywords: list[tuple[str, tuple[str, ...]]] = [
-        # 구체적인 도메인부터 — 첫 매치가 이김
-        ("fraud_tabular", ("사기", "fraud", "이상거래", "money laundering")),
-        ("credit_scoring", ("신용", "credit", "여신", "대출", "부도", "스코어링", "scoring")),
-        ("churn", ("이탈", "churn", "해지", "retention", "구독", "subscriber")),
-        ("propensity", ("구매", "전환", "propensity", "uplift", "캠페인", "마케팅", "marketing")),
-    ]
-    for domain, keywords in domain_keywords:
-        if any(kw in text for kw in keywords):
-            return domain
-    return "generic"
-
-
-def _get_domain_profile(ctx: ReportContext) -> dict[str, Any]:
-    """현재 ctx 의 도메인 프로필."""
-    domain = _infer_ml_domain(ctx)
-    return _DOMAIN_PROFILES.get(domain, _DOMAIN_PROFILES["generic"])
 
 
 # ==============================================================

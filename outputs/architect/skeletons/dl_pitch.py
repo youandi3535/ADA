@@ -59,8 +59,6 @@ from outputs.architect.skeleton_helpers import (
     format_pm_value as _format_pm_value,
     get_verdict_tone as _get_verdict_tone,
     select_top_eda_charts as _select_top_eda_charts,
-    summarize_dtypes as _summarize_dtypes,
-    summarize_target as _summarize_target,
 )
 from outputs.architect.substitution_manifest import (
     TechStackItem,
@@ -299,7 +297,7 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
     chosen = (ctx.model_selection.chosen or {}).get("name", "Tabular DL")
     intent = ctx.meta.user_intent or "분석 과제"
     body = [
-        f"H1 · 표현학습 · Embedding/Attention 으로 비선형 신호 자동 포착",
+        "H1 · 표현학습 · Embedding/Attention 으로 비선형 신호 자동 포착",
         f"H2 · 모델 적합성 · {chosen} 가 ML Baseline 대비 {pm.get('name', '지표')} 향상",
         "H3 · 운영 안정성 · Calibration + Inference Cost 통제 가능",
     ]
