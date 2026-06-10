@@ -199,8 +199,9 @@ class AnalysisProposerAgent(BaseGate):
             "domain": domain.get("domain"),
             "dataset_summary": (domain.get("dataset_summary") or "")[:300],
         }
-        # 안전 cap — 30MB·컬럼 100 worst case 도 4000자 이내로 들어옴
-        user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
+        # 안전 cap — 30MB·컬럼 100 worst case 도 4000자 이내로 들어옴.
+        # default=str — class_distribution·target_dtype 등에 numpy 타입 섞여도 TypeError 안 나도록.
+        user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,

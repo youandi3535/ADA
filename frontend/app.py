@@ -183,6 +183,15 @@ _FLOW_HTML = """
   .modal-pending .t{font-weight:700;color:#92400e;margin-bottom:8px;font-size:28px;}
   .modal-pending .s{font-size:22px;color:#7c5012;line-height:1.4;}
   .modal-placeholder{text-align:center;padding:36px 0;color:#52647d;font-size:26px;}
+  /* HJ 2026-06-10 — 모래시계 SVG (2배 크기). 모래가 위→아래로 떨어진 후 뒤집히고 반복. 6초 사이클. */
+  .hg-svg{display:inline-block;vertical-align:middle;margin-right:8px;width:36px;height:54px;animation:hgFlip 6s ease-in-out infinite;transform-origin:50% 50%;}
+  .hg-sand-top{animation:hgTopAnim 6s ease-in-out infinite;}
+  .hg-sand-bot{transform:translateY(20px);animation:hgBotAnim 6s ease-in-out infinite;}
+  .hg-stream{animation:hgStream 6s ease-in-out infinite;}
+  @keyframes hgFlip{0%,44%{transform:rotate(0deg);}50%,94%{transform:rotate(180deg);}100%{transform:rotate(360deg);}}
+  @keyframes hgTopAnim{0%{transform:translateY(0);}44%{transform:translateY(20px);}50%{transform:translateY(20px);}94%{transform:translateY(0);}100%{transform:translateY(0);}}
+  @keyframes hgBotAnim{0%{transform:translateY(20px);}44%{transform:translateY(0);}50%{transform:translateY(0);}94%{transform:translateY(20px);}100%{transform:translateY(20px);}}
+  @keyframes hgStream{0%,3%{opacity:0;}6%,42%{opacity:1;}46%,56%{opacity:0;}60%,92%{opacity:1;}96%,100%{opacity:0;}}
   /* HJ 2026-06-10 — 마일스톤 세그먼트 바. 각 segment = 단계의 한 agent. 완료/현재/대기 색상 구분. */
   .ms-bar{display:flex;width:100%;height:48px;background:#eef2f8;border-radius:12px;overflow:hidden;border:1px solid #d8e3f2;max-width:760px;margin:0 auto;}
   .ms-seg{flex:1;display:flex;align-items:center;justify-content:center;padding:0 10px;font-size:14px;font-weight:600;color:#7e98ba;border-right:1px solid rgba(255,255,255,.6);transition:background .35s,color .35s;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;min-width:0;line-height:1.2;}
@@ -330,20 +339,25 @@ const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악
   G2:'분석 방향 제안 완료',G3:'방법론 제안 완료',G4:'모델 전략 제안 완료',G5:'최적 모델 선정 완료',G6:'산출물 선택 완료',
   error_recovery:'오류 복구 중',self_learning_dispatch:'학습 결과 저장 중'};
 // HJ 2026-06-10 — 마일스톤 진행률용 단계별 agent 흐름. orchestrator/runner.py STAGE_AGENTS 와 동기.
-// cur(UI 인덱스) → 실제 backend stage:
-//   cur=0,1 → G1 (cur=1 은 Z' 단축으로 UI 만 먼저 전환, backend 는 gate_direction 마무리 중)
-//   cur=2~5 → G2~G5 (cur=N 의 loading 은 backend stage G(N) agents 실행 중)
+// 사용자 멘탈 모델: 각 단계 N 화면에서 진행 누르면 그 자리에서 단계 N 분석 (= G(N) backend stage) 진행.
+//   화면 단계 1 (cur=0): G1 — 데이터 파악 (supervisor → ... → gate_direction)        — 5 agents
+//   화면 단계 2 (cur=1): G2 — EDA·방법론 (eda_agent → gate_methodology)              — 2 agents
+//   화면 단계 3 (cur=2): G3 — 전처리·피처 (preprocessing → gate_model_strategy)      — 4 agents
+//   화면 단계 4 (cur=3): G4 — 모델 학습 (model_selection → gate_best_model)          — 6 agents
+//   화면 단계 5 (cur=4): G5 — 평가·인사이트 (fine_tune → gate_outputs)               — 5 agents
+//   화면 단계 6 (cur=5): G6 — 리포트 생성 (report_composer → self_learning_dispatch) — 2 agents
+//   화면 단계 7 (cur=6): 완료 — 분석 없음 (결과 표시만)
 const STAGE_AGENT_FLOW={
   G1:['supervisor','intent_elicitor','data_profiler','schema_validator','gate_direction'],
   G2:['eda_agent','gate_methodology'],
   G3:['preprocessing_strategist','feature_engineer','preprocessing_choice','gate_model_strategy'],
   G4:['model_selection','hyperparameter_tuner','training_executor','training_monitor','metrics_aggregator','gate_best_model'],
-  G5:['fine_tune_executor','eval_agent','explainability','insight','gate_outputs']
+  G5:['fine_tune_executor','eval_agent','explainability','insight','gate_outputs'],
+  G6:['report_composer','self_learning_dispatch']
 };
 function _curStageKey(){
-  if(cur===0||cur===1) return 'G1';
-  if(cur>=2 && cur<=5) return 'G'+cur;
-  return null;
+  if(cur<0||cur>5) return null;
+  return 'G'+(cur+1);  // cur=0→G1, cur=1→G2, ..., cur=5→G6
 }
 function _curAgentFlow(){
   const k=_curStageKey();
@@ -355,6 +369,73 @@ function _curMilestoneIdx(){
   if(!flow.length||!ca) return -1;
   return flow.indexOf(ca);
 }
+// HJ 2026-06-10 — 단계별 동적 로딩 메시지 6개씩. 10초마다 순환. 각 단계의 실제 작업 내용을 반영.
+const STAGE_LOAD_MSGS={
+  0:[  // 1단계 (G1 — 데이터 파악)
+    '데이터의 도메인을 파악하는 중입니다',
+    '스키마와 데이터 품질을 검증하고 있습니다',
+    'AI가 컬럼 의미를 해석하는 중입니다',
+    '카테고리와 타겟을 자동 판정하는 중입니다',
+    '분석 방향 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  1:[  // 2단계 (G2 — EDA·방법론)
+    'EDA 통계와 분포를 분석하는 중입니다',
+    '컬럼 간 상관관계를 살피고 있습니다',
+    'AI가 적합한 방법론을 평가하는 중입니다',
+    '카테고리별 방법론 후보를 비교 중입니다',
+    '방법론 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  2:[  // 3단계 (G3 — 전처리·피처)
+    '전처리 전략을 수립하는 중입니다',
+    '피처 엔지니어링 후보를 탐색 중입니다',
+    '결측치·이상치 처리 방안을 검토 중입니다',
+    'AI가 최적 피처 조합을 평가하는 중입니다',
+    '모델 전략 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  3:[  // 4단계 (G4 — 모델 학습)
+    '후보 모델을 선정하는 중입니다',
+    '하이퍼파라미터를 튜닝하는 중입니다',
+    'AI가 모델을 학습시키는 중입니다',
+    '학습 모니터링과 지표를 집계 중입니다',
+    '최적 모델 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  4:[  // 5단계 (G5 — 평가·인사이트)
+    '파인튜닝을 진행하는 중입니다',
+    '모델 평가를 진행하는 중입니다',
+    '설명가능성 분석을 진행 중입니다',
+    'AI가 인사이트를 생성하는 중입니다',
+    '산출물 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  5:[  // 6단계 (G6 — 리포트 생성)
+    '리포트를 합성하는 중입니다',
+    '시각화 자료를 생성하는 중입니다',
+    'AI가 최종 결과를 정리하는 중입니다',
+    '학습 데이터를 자동 업데이트 중입니다',
+    '결과 페이지를 준비하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ]
+};
+let _loadMsgIdx=0;
+setInterval(function(){ _loadMsgIdx=_loadMsgIdx+1; }, 10000);  // 누적값, 모듈러로 인덱싱
+function loadMsg(){
+  const msgs=STAGE_LOAD_MSGS[cur]||STAGE_LOAD_MSGS[0];
+  return msgs[_loadMsgIdx%msgs.length];
+}
+// 모래시계 SVG (재사용 가능 HTML 문자열). CSS .hg-svg / .hg-sand-top / .hg-sand-bot / .hg-stream 가 애니메이션 처리.
+const HOURGLASS_HTML='<svg class="hg-svg" viewBox="0 0 32 48" xmlns="http://www.w3.org/2000/svg">'
+  +'<defs><clipPath id="hgClipTop"><polygon points="4,4 28,4 16,22"/></clipPath><clipPath id="hgClipBot"><polygon points="4,44 28,44 16,26"/></clipPath></defs>'
+  +'<rect class="hg-sand-top" x="0" y="0" width="32" height="20" fill="#e0a850" clip-path="url(#hgClipTop)"/>'
+  +'<rect class="hg-sand-bot" x="0" y="28" width="32" height="20" fill="#e0a850" clip-path="url(#hgClipBot)"/>'
+  +'<line class="hg-stream" x1="16" y1="22" x2="16" y2="26" stroke="#e0a850" stroke-width="1.4" stroke-linecap="round"/>'
+  +'<g stroke="#5a4a2a" stroke-width="2" fill="none" stroke-linecap="round">'
+  +'<line x1="4" y1="4" x2="28" y2="4"/><line x1="4" y1="44" x2="28" y2="44"/>'
+  +'<line x1="4" y1="4" x2="16" y2="22"/><line x1="28" y1="4" x2="16" y2="22"/>'
+  +'<line x1="16" y1="26" x2="4" y2="44"/><line x1="16" y1="26" x2="28" y2="44"/></g></svg>';
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 // 숫자 표시 헬퍼 — 부동소수점은 소수점 3자리, 정수는 그대로, 문자열은 원본
@@ -553,7 +634,9 @@ async function doResume(){
     Object.keys(gateCache).forEach(function(k){
       if(parseInt(k.slice(1),10)>_tgNum) delete gateCache[k];
     });
-    cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
+    // HJ 2026-06-10 — cur 그대로 유지. 각 단계 N 화면에서 진행 누르면 그 자리에서 G(N+1) 분석 모달이 뜨고,
+    // 다음 gate 의 proposals 가 도착하면 frontier 추적으로 자연스럽게 cur=N+1 로 advance.
+    // (이전엔 cur=cur+1 즉시 점프 → "단계 2 분석"이 단계 3 화면에서 표시되는 오프셋 발생)
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
     _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;  // gate 제출 직후 리셋
     saveState();
@@ -588,16 +671,12 @@ async function poll(){
   // (정상 뒤로가기: frontier=현재게이트 ≥ maxReached 이므로 클램프 안 됨)
   if(maxReached > frontier) maxReached=frontier;
   maxReached=Math.max(maxReached,frontier);
-  // Phase 1 (2026-06-04 수정) — G1 데이터 파악 완료 신호만으로 cur 전환.
-  // 백엔드가 G2 게이트 도달했는데 proposals 가 비어 있는 경우(LLM 응답 직전·직렬화 실패 등)에도
-  // 클라이언트가 stuck 되지 않도록 proposals 조건 제거. G2 화면에서 contentGate 가 자체적으로
-  // loading→옵션 전환을 처리한다. _shownPct 는 100 으로 보존하여 시각 단절 방지.
-  // HJ 2026-06-09 G1 단축 Z' — schema_validator 가 g2_pending 신호 보내면
-  // 진행률 무관하게 G2 화면 진입 (gate_direction 백그라운드 대기).
-  if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
-    cur=1; follow=true; _progressKey='G2';
-    if(_shownPct < 99) _shownPct = Math.max(_shownPct, 10); // Z' 진입은 진행률 보존, 100% 강제 안 함
-    else _shownPct=100;
+  // HJ 2026-06-10 — Z' 단축 제거. cur=1 은 G2 proposals (=실제 추천 카드) 도착 시점에만 전환.
+  // doUpload 가 follow=false 로 시작하므로, cur=0→1 자동 전환 안전망이 필요. proposals 진짜 도착하면
+  // follow 강제 true + cur=1 로 올려 단계 2 화면을 띄움. g2_pending 조기 신호는 사용 안 함.
+  if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2'){
+    const _g1Done=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+    if(_g1Done){ cur=1; follow=true; }
   }
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
@@ -625,22 +704,22 @@ async function poll(){
 }
 function startPolling(){ if(polling){ render(); return; } polling=true; clearTimeout(pollTimer); poll(); }
 
-// 0.5초 틱 — 진행률 보간 + G1→G2 자동 전환 안전망(polling 멈춤 후에도 보간 완료 시 cur 전환).
+// 0.5초 틱 — 진행률 보간용 render 트리거 (현재 agent 변경에 따라 마일스톤 갱신).
+// HJ 2026-06-10 — Z' 단축 제거 + cur=0→1 안전망. polling 일시 멈춤 사이에 proposals 도착 시
+// poll() 다음 cycle 까지 기다리지 않고 즉시 화면 전환.
 setInterval(function(){
   if(paused) return;
-  // G1→G2 자동 전환: polling 이 멈춘 케이스에 대비해 매 500ms 도 조건 재확인.
-  // HJ 2026-06-09 G1 단축 Z' — g2_pending=true 면 진행률 무관하게 전환 (schema_validator 직후).
-  if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
-    cur=1; follow=true;
-    // _progressKey/_shownPct 를 여기서 세팅하지 않음 — _stageProgress() 가 key 불일치 감지 후
-    // 자연스럽게 _shownPct=0 으로 리셋. G2 로딩 중에 100% 고정되는 버그 방지.
-    saveState();
-    render(); // 전환 직후 즉시 G2 화면 갱신 — 없으면 다음 poll(2.5s)까지 G1 stuck
-    if(!polling) startPolling();
-    return;
+  if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2'){
+    const _p=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+    if(_p){
+      cur=1; follow=true;
+      saveState();
+      render();
+      if(!polling) startPolling();
+      return;
+    }
   }
-  // jobId 없는 업로드 대기 화면에서는 타이머 렌더 생략 — textarea 포커스 보호
-  if(!jobId && cur===0) return;
+  if(!jobId && cur===0) return;  // 업로드 대기 화면 — textarea 포커스 보호
   if(analyzing() || _shownPct < 100 || (cur===0 && jobId)) render();
 }, 500);
 
@@ -757,7 +836,7 @@ function loadingBlock(){
       +(gateData._state_error?('<br><b>state 오류:</b> '+esc(gateData._state_error)):'')
       +'</div>';
   }
-  return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine+diag+'</div>';
+  return '<div class="loadwrap"><div class="loadtxt">'+HOURGLASS_HTML+esc(loadMsg())+'…</div>'+agentLine+diag+'</div>';
 }
 // 현재 게이트 화면이 로딩 중인지 여부 (proposals 없는 상태)
 function isGateLoading(){
@@ -775,9 +854,9 @@ function isGateLoading(){
 // 메타: "진행 N% · 경과 Y" — ETA(예상 남은 시간) 표시 제거 (사용자 요구).
 function progressBar(){
   if(isFailed()) return '';
-  if(cur===LAST) return '';                                       // G7 완료 페이지
-  if(cur===0 && !jobId) return '';                                // 업로드 전
-  if(cur>=1 && cur<=5 && !isGateLoading()) return '';             // proposals 표시 중
+  if(cur===LAST && isCompleted()) return '';                       // G7 완료 페이지 (결과 표시) — 바 숨김
+  if(cur===0 && !jobId) return '';                                 // 업로드 전
+  if(cur>=1 && cur<=5 && !isGateLoading()) return '';              // proposals 표시 중
   const p=_stageProgress();
   const stageEl=_stageStart?((Date.now()-_stageStart)/1000):0;
   const isRunning=analyzing()||isGateLoading();
@@ -912,14 +991,20 @@ function inModalLoading(){
     if(_p0.length && curGate()==='G2') return false;
     return true;
   }
-  if(cur===1){               // G2 대기 — proposals 도착 전까지 표시
-    const tg='G2';
+  // HJ 2026-06-10 — cur=1~5 는 선택 상태 vs 분석 상태 구분:
+  //   선택 상태: G(cur+1) proposals 표시 중. lastSubmittedGate ≠ 'G(cur+1)'. → 모달 없음 (옵션 카드 보임)
+  //   분석 상태: 진행 버튼 누른 직후. lastSubmittedGate === 'G(cur+1)'. 다음 gate G(cur+2) proposals 도착 전까지 모달.
+  if(cur>=1 && cur<=5){
+    const currentGate='G'+(cur+1);
+    const nextGate='G'+(cur+2);
+    const submittedHere=(lastSubmittedGate===currentGate);
+    if(!submittedHere) return false;  // 선택 화면 — 모달 없음
     const ag=curGate();
-    const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
-    const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
+    const d=(ag===nextGate)?gateData:(gateCache[nextGate]||{});
     const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
     return !llmProps.length;
   }
+  // cur=6 (단계 7 — 완료) — 분석 없음. 결과 표시. 모달 안 띄움.
   return false;
 }
 // 모달 전용 주제 영역 — g2TopicArea 의 2배 사이즈 버전. 사용자 요구 (글씨 2x).
@@ -950,35 +1035,44 @@ function modalTopicArea(d){
 }
 // 모달 내부 컨텐츠 — 큰 타이틀 + modalTopicArea + 단계별 안내. 진행바는 카드 본문에 그대로 두고 모달에서 제외(사용자 요구).
 function modalHtml(){
-  const tg='G2';
-  const ag=curGate();
-  const d=(cur===0||ag===tg)?gateData:(gateCache[tg]||{});
-  const topic=modalTopicArea(d);
+  // 단계별 안내 — 단계 N 화면에서 진행 누르면 그 자리에서 단계 N 분석 진행 (cur 그대로 유지).
+  //   cur=0 (1단계 업로드)  → G1 분석 → 다음: 분석 방향 카드
+  //   cur=1 (2단계 분석방향) → G2 분석 → 다음: 방법론 카드
+  //   cur=2 (3단계 방법론)   → G3 분석 → 다음: 모델 전략 카드
+  //   cur=3 (4단계 모델전략) → G4 분석 → 다음: 최적 모델 카드
+  //   cur=4 (5단계 모델선택) → G5 분석 → 다음: 산출물 카드
+  //   cur=5 (6단계 산출물)   → G6 분석 → 다음: 최종 결과
+  const NEXT_CARD={0:'분석 방향',1:'방법론',2:'모델 전략',3:'최적 모델',4:'산출물',5:'최종 결과'};
+  const STAGE_DESC={
+    0:'데이터 출처·스키마·도메인·품질 점검 등을 진행하고 있습니다.',
+    1:'EDA 분석 + 방법론 후보를 산출하고 있습니다.',
+    2:'전처리·피처 엔지니어링 전략을 수립하고 있습니다.',
+    3:'모델 선택·하이퍼파라미터 튜닝·학습을 진행하고 있습니다.',
+    4:'파인튜닝·평가·설명·인사이트를 생성하고 있습니다.',
+    5:'리포트를 합성하고 학습 결과를 저장하고 있습니다.'
+  };
+  const stepNum=cur+1;
+  const nextCardName=NEXT_CARD[cur]||'다음 단계';
   let body='';
   if(errMsg) body+='<div class="err">⚠ '+esc(errMsg)+'</div>';
-  body+='<div class="modal-title">데이터를 분석하고 있습니다</div>';
-  body+='<div class="modal-en">Analyzing your data…</div>';
-  if(topic){
-    body+=topic;
-  } else {
-    body+='<div class="modal-placeholder">📊 데이터 도메인을 분석하는 중입니다…</div>';
-  }
-  // 단계별 진행 안내
+  body+='<div class="modal-title">'+stepNum+'단계 분석 중</div>';
+  body+='<div class="modal-en">Stage '+stepNum+' analysis in progress…</div>';
+  // 도메인 정보 — 1단계(G1) 만 표시 (이후 단계는 마일스톤 + 진행 메타로 충분)
   if(cur===0){
-    const ca=gateData.current_agent;
-    const lab=ca?(AGENT_KO[ca]||ca):'';
-    if(lab){
-      body+='<div class="modal-pending"><div class="t">🔄 현재 작업: '+esc(lab)+'</div>'
-        +'<div class="s">데이터 출처·스키마·도메인·품질 점검 등을 진행하고 있습니다.</div></div>';
-    } else {
-      body+='<div class="modal-pending"><div class="t">🔄 데이터 파악 진행 중…</div>'
-        +'<div class="s">곧 도메인 분석 결과가 표시됩니다.</div></div>';
-    }
-  } else {
-    body+='<div class="modal-pending"><div class="t">🔄 분석 방향 카드 생성 중…</div>'
-      +'<div class="s">잠시만 기다려 주세요. 추천 카드가 곧 표시됩니다.</div></div>';
+    const topic=modalTopicArea(gateData);
+    if(topic) body+=topic;
+    else body+='<div class="modal-placeholder">📊 데이터 도메인을 분석하는 중입니다…</div>';
   }
-  // 사용자 요청 — 진행바는 모달 내부에 그대로 유지 (이슈 4 수정 안 함).
+  // 진행 안내 — 순환 로딩 메시지 (10초마다 6개 중 하나) + 모래시계 애니메이션, 그리고 현재 agent/다음 카드 정보
+  const ca=gateData.current_agent;
+  const lab=ca?(AGENT_KO[ca]||ca):'';
+  const desc=STAGE_DESC[cur]||(esc(nextCardName)+' 카드를 만들고 있습니다.');
+  const subInfo=lab
+    ? (desc+' &nbsp;·&nbsp; 현재 작업: <b>'+esc(lab)+'</b> &nbsp;·&nbsp; 곧 <b>'+esc(nextCardName)+'</b> 카드가 표시됩니다.')
+    : (desc+' &nbsp;·&nbsp; 곧 <b>'+esc(nextCardName)+'</b> 카드가 표시됩니다.');
+  body+='<div class="modal-pending"><div class="t">'+HOURGLASS_HTML+esc(loadMsg())+'…</div>'
+    +'<div class="s">'+subInfo+'</div></div>';
+  // 진행바 (마일스톤 세그먼트 바 + 경과 시간) — 모달 안에 유지
   body+=progressBar();
   return body;
 }
