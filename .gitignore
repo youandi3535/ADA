@@ -75,3 +75,6 @@ catboost_info/
 _bashprobe_*.py
 _probe_*
 .env.vps
+
+# env backups (do not commit secrets)
+.env.bak*
