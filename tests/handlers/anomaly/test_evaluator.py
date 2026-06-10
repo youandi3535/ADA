@@ -276,3 +276,55 @@ def test_warning_when_y_true_none(state_without_y_true):
     assert result["pr_at_10"] is None
     assert result["auc"] is None
     assert result["f1"] is None
+
+
+# === ★ V4 (2026-06-10): 앙상블 재활성화 + threshold 검증 ===========
+
+
+def test_v4_keys_present_with_legacy_4tuple_mock(state_with_day6_result):
+    """#14 ★ V4 — 구 4-튜플 mock 하위호환: 신규 키는 None 으로 존재."""
+    from agents.handlers.anomaly.evaluator import evaluate
+
+    result = evaluate(state_with_day6_result)
+    for key in ("best_f1_threshold", "ensemble_method", "ensemble_models_used", "threshold_meta"):
+        assert key in result
+    # 4-튜플 mock → info 없음 → ensemble_method None, sweep 존재 → best_f1_threshold 산출
+    assert result["ensemble_method"] is None
+    assert result["best_f1_threshold"] is not None
+
+
+def test_v4_info_passthrough_with_5tuple(anomaly_state, monkeypatch):
+    """#15 ★ V4 — 5-튜플(_generate_scores info) → eval dict 로 전달."""
+    from copy import deepcopy
+
+    from agents.handlers.anomaly import evaluator
+
+    state = deepcopy(anomaly_state)
+    state.best_model = {"model_name": "IsolationForest", "params_used": {}}
+    state.job_id = "test_v4_info"
+
+    rng = np.random.default_rng(1)
+    scores = rng.uniform(0, 1, 200)
+    predicted = (scores > 0.8).astype(int)
+    info = {
+        "ensemble_method": "rank_weighted_ensemble",
+        "ensemble_models_used": ["IsolationForest", "ECOD"],
+        "ensemble_model_errors": {},
+        "threshold_meta": {"method": "otsu", "reason": "within range"},
+    }
+    monkeypatch.setattr(evaluator, "_generate_scores", lambda s: (scores, predicted, 0.8, None, info))
+
+    result = evaluator.evaluate(state)
+    assert result["ensemble_method"] == "rank_weighted_ensemble"
+    assert result["ensemble_models_used"] == ["IsolationForest", "ECOD"]
+    assert result["threshold_meta"]["method"] == "otsu"
+
+
+def test_v4_generate_scores_ensemble_constants():
+    """#16 ★ V4 — 앙상블 상수 계약: max 3 (top3 정합) + DL 제외."""
+    from agents.handlers.anomaly import evaluator
+
+    assert evaluator.ENSEMBLE_MAX_MODELS == 3
+    assert "TranAD" in evaluator._ENSEMBLE_EXCLUDE
+    assert "AnomalyTransformer" in evaluator._ENSEMBLE_EXCLUDE
+    assert "AutoEncoder" in evaluator._ENSEMBLE_EXCLUDE

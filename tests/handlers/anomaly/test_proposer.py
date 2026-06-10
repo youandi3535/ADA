@@ -124,14 +124,23 @@ def test_g2_includes_transformers_when_time_column(state_with_time_column):
 
 
 def test_g2_excludes_transformers_when_no_time(state_no_time):
-    """#6 — D1: no time → TranAD·AT 제외. COPOD 정식 배선 후 base 5 종(IForest/LOF/OCSVM/AutoEncoder/COPOD)."""
+    """#6 — D1: no time → TranAD·AT 제외. ★ V4: base 7 종 (IForest/LOF/OCSVM/AE/COPOD/ECOD/HBOS)."""
     from agents.handlers.anomaly.proposer import g2
 
     result = g2(state_no_time)
     titles = {c["title"] for c in result}
     assert "TranAD" not in titles
     assert "AnomalyTransformer" not in titles
-    assert len(result) == 5
+    assert len(result) == 7
+
+
+def test_g2_includes_ecod_hbos(state_no_time):
+    """#6-b ★ V4 — ECOD·HBOS 카드 포함 (PyOD 내장, 의존성 추가 없음)."""
+    from agents.handlers.anomaly.proposer import g2
+
+    titles = {c["title"] for c in g2(state_no_time)}
+    assert "ECOD" in titles
+    assert "HBOS" in titles
 
 
 # === E. 엣지 ======================================================
