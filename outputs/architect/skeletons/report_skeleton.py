@@ -365,6 +365,10 @@ def _ko_metric(name: str) -> str:
     return prefix + (base or name)
 
 
+# Public alias — carriers/ 등 외부 모듈에서 한국어 지표 변환 시 동일 사전 재사용 (DRY).
+ko_metric = _ko_metric
+
+
 def _feat_label(ctx: ReportContext, name: str) -> str:
     """변수명 → 한국어. glossary > 내장 사전 > 토큰 휴리스틱 > 원본 (틀린 번역보다 원본)."""
     raw = str(name or "")
@@ -667,7 +671,8 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
     elif high_miss:
         miss_txt = f"{', '.join(map(str, high_miss[:3]))} 등은 결측이 20%를 넘어 대치·제외 검토가 필요하다"
     else:
-        pass  # top = miss_cols[0] — miss_txt 미사용
+        top = miss_cols[0]
+        miss_txt = f"{top[0]} {_pct(top[1])} 등 경미해 대치로 처리 가능하다"
 
     # 고카디널리티 (인코딩 주의)
     card = ds.cardinality or {}
@@ -901,7 +906,9 @@ def _build_method(ctx: ReportContext) -> Optional[SectionSpec]:
             mr = "F1·PR-AUC 와 운영 임계값을 함께 보아 포착-정밀도 균형을 평가한다."
         else:
             mr = "검증 성능 지표로 타당성을 평가한다."
-        blocks.append(["평가 지표", f"'{pm_name}'를 주지표로, {mr}" if pm_name else mr])
+        # raw 키 그대로가 아니라 한국어 지표명으로 노출 (val_roc_auc → 검증 AUC)
+        _pm_ko = _ko_metric(pm_name) if pm_name else ""
+        blocks.append(["평가 지표", f"'{_pm_ko}'{_josa(_pm_ko, 'obj')} 주지표로, {mr}" if _pm_ko else mr])
 
     if not blocks:
         return None
@@ -1296,125 +1303,6 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
         prose_blocks=[["", body_text]] if body_text else [],
     )
     return make_section("key_insights", "핵심 인사이트와 해석", "evidence", [slide])
-
-
-def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
-    """§7 비즈니스 함의 및 권고 — 임팩트·실행 권고·리스크 (인사이트 → 액션)."""
-    ev = ctx.evaluation
-    lims = ctx.limitations
-    ms = ctx.model_selection
-    chosen = (ms.chosen or {}).get("name", "-") if ms else "-"
-    pm = (ev.primary_metric or {}) if ev else {}
-    pm_txt = f"{pm.get('name', '주요지표')} {_fv(pm.get('value'))}" if pm else "-"
-    body: list[str] = []
-    flags = _task_flags(ctx)
-
-    # 기대 효과 — business_kpi
-    for k in (ev.business_kpi or [])[:3] if ev else []:
-        name = getattr(k, "name", "") or (k.get("name", "") if isinstance(k, dict) else "")
-        unit = getattr(k, "unit", "") or (k.get("unit", "") if isinstance(k, dict) else "")
-        val = getattr(k, "estimated_value", None)
-        if val is None and isinstance(k, dict):
-            val = k.get("estimated_value")
-        if name:
-            body.append(f"기대 효과 — {name}: {_fv(val)} {unit}".strip())
-
-    # 표적 개입 원칙 — 전수 X, 고위험 × 고가치 선별 (분류 과제 일반 — 개입 비용 대비 효과)
-    if flags["is_clf"] and chosen and chosen != "-":
-        seg = ""
-        for s in (ev.per_segment or []) if ev else []:
-            seg = _txt_from(s, ("segment", "name", "group"))
-            if seg:
-                break
-        body.append(
-            "표적 개입: 전수가 아니라 모델이 지목한 고위험 상위군을 선별하고, 그중 고가치 고객을 우선한다"
-            + (f" (예: {seg})." if seg else ".")
-        )
-
-    # 실행 권고
-    if chosen and chosen != "-":
-        body.append(f"권고: '{chosen}' 모델을 {pm_txt} 기준으로 운영 적용, 정기 재학습으로 분포 변화 대응")
-
-    # 리스크·한계
-    for cav in (getattr(lims, "model_caveats", None) or [])[:2] if lims else []:
-        if cav:
-            body.append(f"한계: {cav}")
-    for g in (getattr(lims, "data_gaps", None) or [])[:1] if lims else []:
-        desc = getattr(g, "description", "") or (g.get("description", "") if isinstance(g, dict) else "")
-        if desc:
-            body.append(f"리스크: {desc}")
-
-    if not body:
-        return None
-    slide = SlideSpec(
-        id="implications",
-        section_id="implications",
-        layout="one_message",
-        role="action",
-        so_what="분석 인사이트를 운영 액션으로 연결한다",
-        title_ko="비즈니스 함의 및 권고",
-        body_outline=body[: _MAX_BODY + 2],
-    )
-    return make_section("implications", "비즈니스 함의 및 권고", "recommendation", [slide])
-
-
-def _build_conclusion(ctx: ReportContext) -> SectionSpec:
-    """§8 결론 — §1 핵심 질문에 대한 '답'. 라벨 없는 시니어 흐름(결론→근거→실행→단서)."""
-    flags = _task_flags(ctx)
-    ms = ctx.model_selection
-    ev = ctx.evaluation
-    chosen = (ms.chosen or {}).get("name", "-") if ms else "-"
-    pm = (ev.primary_metric or {}) if ev else {}
-    pmval = pm.get("value")
-    pmname_l = str(pm.get("name") or "").lower()
-    verb = _CAT_VERB.get(ctx.meta.category or "", "분석")
-    target = ctx.dataset.detected_target or "타깃"
-    drivers_txt = ", ".join(_driver_labels(ctx, 2))
-    maj = flags["maj"]
-    judgment = _perf_judgment(flags, pmval, pmname_l, maj)
-    if pmval is None:
-        mphrase = "검증 성능"
-    elif "acc" in pmname_l and isinstance(pmval, (int, float)) and pmval <= 1:
-        mphrase = f"정확도 {pmval * 100:.1f}%"
-    elif "auc" in pmname_l:
-        mphrase = f"AUC {_fv(pmval)}"
-    elif "f1" in pmname_l:
-        mphrase = f"F1 {_fv(pmval)}"
-    else:
-        mphrase = f"{pm.get('name')} {_fv(pmval)}"
-    has_model = bool(chosen and chosen != "-" and pmval is not None)
-
-    # 답 (lead — §1 핵펀치에 대한 응답)
-    if has_model and drivers_txt:
-        lead = f"{drivers_txt}가 '{target}'{_josa(target, 'obj')} 가르며, 그 신호만으로 {mphrase}까지 {verb}할 수 있다."
-    elif has_model:
-        lead = f"'{target}'{_josa(target, 'obj')} {mphrase}로 {verb}할 수 있다."
-    else:
-        lead = f"현재 데이터로는 '{target}' {verb} 가능성만 확인했다."
-    if has_model and judgment:
-        lead += f" 다만 {judgment}."
-    # 근거 → 실행 (라벨 없는 흐름, 판단은 lead에)
-    rest: list[str] = []
-    if has_model and flags["is_clf"] and maj is not None:
-        rest.append(f"단순 추측 {_pct(maj)}{_josa(_pct(maj), 'obj')} 넘어 운영에 쓸 수준이다.")
-    if has_model and drivers_txt:
-        rest.append(f"{drivers_txt} 중심으로 즉시 적용하고, 분포 변화에 대비해 정기 재검증을 둔다.")
-    elif has_model:
-        rest.append(f"{chosen}{_josa(chosen, 'obj')} 적용하고 정기 재검증을 둔다.")
-    else:
-        rest.append("데이터를 보강한 뒤 재분석한다.")
-    body_text = " ".join(rest)
-
-    slide = SlideSpec(
-        id="conclusion",
-        section_id="conclusion",
-        layout="one_message",
-        role="action",
-        so_what=lead,
-        title_ko="결론 — 핵심 질문에 대한 답",
-        prose_blocks=[["", body_text]] if body_text else [],
-    )
-    return make_section("conclusion", "결론", "recommendation", [slide])
 
 
 def _build_appendix(ctx: ReportContext) -> Optional[SectionSpec]:
