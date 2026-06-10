@@ -1,4 +1,4 @@
-# ADA Docker 관련 명령어 (PowerShell)
+﻿# ADA Docker 관련 명령어 (PowerShell)
 # VS Code 터미널에서 로드: . .\scripts\ada.ps1
 
 $ADA_ROOT = "C:\IT\workspace_python\ADA"
@@ -14,18 +14,24 @@ if (Test-Path $_venv) {
 }
 
 
+# 로컬 개발용 compose 파일 목록 (HTTP-only nginx 오버라이드 포함)
+$COMPOSE = @(
+    "-f", "$ADA_ROOT\docker\docker-compose.yml",
+    "-f", "$ADA_ROOT\docker\docker-compose.dev.yml"
+)
+
 function ada-up {
     Write-Host "[ADA] 컨테이너 시작 (core + ml)..." -ForegroundColor Cyan
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml up -d --pull never
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" --profile core --profile ml up -d --pull never
 }
 
 function ada-down {
     Write-Host "[ADA] 컨테이너 중지 (core + ml)..." -ForegroundColor Yellow
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml down
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" --profile core --profile ml down
 }
 
 function ada-ps {
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" ps
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" ps
 }
 
 function ada-logs {
@@ -33,36 +39,36 @@ function ada-logs {
         [string]$Service = ""
     )
     if ($Service -ne "") {
-        docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" logs -f $Service
+        docker compose @COMPOSE --env-file "$ADA_ROOT\.env" logs -f $Service
     } else {
-        docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" logs -f
+        docker compose @COMPOSE --env-file "$ADA_ROOT\.env" logs -f
     }
 }
 
 function ada-build {
     Write-Host "[ADA] 이미지 빌드 중 (core + ml)..." -ForegroundColor Cyan
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" --profile core --profile ml build
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" --profile core --profile ml build
 }
 
 function ada-mlflow-init {
     Write-Host "[ADA] MLflow 실험 초기화..." -ForegroundColor Cyan
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm worker-pipeline python scripts/mlflow_init.py
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" run --rm worker-pipeline python scripts/mlflow_init.py
 }
 
 function ada-migrate {
     Write-Host "[ADA] DB 마이그레이션 적용 (alembic upgrade head)..." -ForegroundColor Cyan
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic upgrade head
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" run --rm api alembic upgrade head
 }
 
 function ada-migrate-down {
     Write-Host "[ADA] 최근 마이그레이션 1건 롤백 (alembic downgrade -1)..." -ForegroundColor Yellow
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic downgrade -1
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" run --rm api alembic downgrade -1
 }
 
 function ada-migrate-status {
     Write-Host "[ADA] 현재 상태 + 히스토리..." -ForegroundColor Cyan
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic current
-    docker compose -f "$ADA_ROOT\docker\docker-compose.yml" --env-file "$ADA_ROOT\.env" run --rm api alembic history
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" run --rm api alembic current
+    docker compose @COMPOSE --env-file "$ADA_ROOT\.env" run --rm api alembic history
 }
 
 function ada-help {

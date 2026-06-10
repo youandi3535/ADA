@@ -174,8 +174,16 @@ else
 fi
 
 # ─── Step 6: push ───
-echo "▶ 6/6 push (--force-with-lease)"
-git push --force-with-lease origin "$BRANCH"
+# fetch 직후라도 --force-with-lease 단독 사용 시 "stale info" 오류 발생 가능.
+# fetch로 얻은 remote SHA를 명시적으로 지정해 lease를 안전하게 검증.
+echo "▶ 6/6 push (--force-with-lease, remote SHA 명시)"
+REMOTE_SHA=$(git rev-parse "origin/$BRANCH" 2>/dev/null || true)
+if [ -n "$REMOTE_SHA" ]; then
+    git push --force-with-lease="$BRANCH:$REMOTE_SHA" origin "$BRANCH"
+else
+    # 원격 브랜치가 아직 없으면 일반 push
+    git push origin "$BRANCH"
+fi
 echo ""
 
 # ─── 완료 안내 ───

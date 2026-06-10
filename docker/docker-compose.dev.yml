@@ -1,0 +1,7 @@
+# 로컬 개발 전용 오버라이드 (Windows)
+# ada.ps1 에서 자동 적용 — VPS 프로덕션 배포에는 사용하지 않음
+# nginx.conf(SSL) 대신 nginx.dev.conf(HTTP only)로 교체
+services:
+  nginx:
+    volumes:
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
