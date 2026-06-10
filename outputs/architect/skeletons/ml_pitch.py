@@ -49,9 +49,58 @@ from outputs.architect.plan import (
     SlideSpec,
     VisualSpec,
 )
+from outputs.architect.substitution_manifest import (
+    TechStackItem,
+    VerdictTone,
+    check_required_ctx_fields,
+    is_metric_compatible,
+    resolve_slide,
+    resolve_tech_stack,
+    resolve_verdict_tone,
+)
 from outputs.context.schema import ReportContext
+from outputs.style.text_budget import (
+    TextBudget,
+    char_budget,
+    fit_text,
+    format_delta,
+    format_metric,
+)
 
 SKELETON_NAME = "ML Pitch"
+
+
+# ==============================================================
+# 공통 헬퍼 — verdict / 자동 도메인 라벨
+# 본 헬퍼는 ml_pitch 외의 skeleton (dl/ts/anomaly) 에서도 동일 패턴으로 사용 예정.
+# ==============================================================
+
+
+def _get_verdict_tone(ctx: ReportContext) -> VerdictTone:
+    """ctx.evaluation.verdict → VerdictTone (미정/미지원 시 adopt 폴백)."""
+    v = getattr(ctx.evaluation, "verdict", "") or ""
+    return resolve_verdict_tone(v)
+
+
+def _is_auto_domain(ctx: ReportContext) -> bool:
+    """도메인 해석이 *자동 추론* 인지 여부 — True 면 [auto-inferred] 라벨 부착."""
+    src = getattr(ctx.domain, "domain_source", "auto") or "auto"
+    return src.strip().lower() == "auto"
+
+
+def _auto_label(text: str, ctx: ReportContext) -> str:
+    """자동 추론 도메인 텍스트에 ``[auto-inferred]`` 마커 부착 (인용 면제 표시).
+
+    이미 마커가 있으면 중복 부착하지 않음. 사용자 입력 도메인이면 그대로.
+    """
+    if not text:
+        return text
+    if not _is_auto_domain(ctx):
+        return text
+    marker = "[auto-inferred]"
+    if marker in text:
+        return text
+    return f"{text} {marker}"
 
 
 # ==============================================================
