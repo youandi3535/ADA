@@ -183,6 +183,17 @@ _FLOW_HTML = """
   .modal-pending .t{font-weight:700;color:#92400e;margin-bottom:8px;font-size:28px;}
   .modal-pending .s{font-size:22px;color:#7c5012;line-height:1.4;}
   .modal-placeholder{text-align:center;padding:36px 0;color:#52647d;font-size:26px;}
+  /* HJ 2026-06-10 — 마일스톤 세그먼트 바. 각 segment = 단계의 한 agent. 완료/현재/대기 색상 구분. */
+  .ms-bar{display:flex;width:100%;height:48px;background:#eef2f8;border-radius:12px;overflow:hidden;border:1px solid #d8e3f2;max-width:760px;margin:0 auto;}
+  .ms-seg{flex:1;display:flex;align-items:center;justify-content:center;padding:0 10px;font-size:14px;font-weight:600;color:#7e98ba;border-right:1px solid rgba(255,255,255,.6);transition:background .35s,color .35s;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;min-width:0;line-height:1.2;}
+  .ms-seg:last-child{border-right:none;}
+  .ms-seg-icon{margin-right:6px;font-weight:800;}
+  .ms-seg.done{background:#1f7a52;color:#fff;}
+  .ms-seg.active{background:linear-gradient(90deg,#1f3e5c,#2c5783);color:#fff;animation:msPulse 1.6s ease-in-out infinite;}
+  .ms-seg.pending{background:#f7faff;color:#8aa0bd;}
+  @keyframes msPulse{0%,100%{box-shadow:inset 0 0 0 0 rgba(255,255,255,0);}50%{box-shadow:inset 0 0 0 100px rgba(255,255,255,.10);}}
+  .modal-card .ms-bar{height:64px;border-radius:14px;max-width:none;}
+  .modal-card .ms-seg{font-size:18px;padding:0 16px;}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
   <!-- 랜딩 오버레이 — G1 이전 단계 클릭 시 표시. 원본 Python 랜딩과 동일한 스타일 -->
@@ -318,6 +329,32 @@ function resetAll(){
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
   G2:'분석 방향 제안 완료',G3:'방법론 제안 완료',G4:'모델 전략 제안 완료',G5:'최적 모델 선정 완료',G6:'산출물 선택 완료',
   error_recovery:'오류 복구 중',self_learning_dispatch:'학습 결과 저장 중'};
+// HJ 2026-06-10 — 마일스톤 진행률용 단계별 agent 흐름. orchestrator/runner.py STAGE_AGENTS 와 동기.
+// cur(UI 인덱스) → 실제 backend stage:
+//   cur=0,1 → G1 (cur=1 은 Z' 단축으로 UI 만 먼저 전환, backend 는 gate_direction 마무리 중)
+//   cur=2~5 → G2~G5 (cur=N 의 loading 은 backend stage G(N) agents 실행 중)
+const STAGE_AGENT_FLOW={
+  G1:['supervisor','intent_elicitor','data_profiler','schema_validator','gate_direction'],
+  G2:['eda_agent','gate_methodology'],
+  G3:['preprocessing_strategist','feature_engineer','preprocessing_choice','gate_model_strategy'],
+  G4:['model_selection','hyperparameter_tuner','training_executor','training_monitor','metrics_aggregator','gate_best_model'],
+  G5:['fine_tune_executor','eval_agent','explainability','insight','gate_outputs']
+};
+function _curStageKey(){
+  if(cur===0||cur===1) return 'G1';
+  if(cur>=2 && cur<=5) return 'G'+cur;
+  return null;
+}
+function _curAgentFlow(){
+  const k=_curStageKey();
+  return k?(STAGE_AGENT_FLOW[k]||[]):[];
+}
+function _curMilestoneIdx(){
+  const flow=_curAgentFlow();
+  const ca=gateData.current_agent;
+  if(!flow.length||!ca) return -1;
+  return flow.indexOf(ca);
+}
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 // 숫자 표시 헬퍼 — 부동소수점은 소수점 3자리, 정수는 그대로, 문자열은 원본
@@ -663,29 +700,16 @@ function _stageProgress(){
     return Math.round(_shownPct);
   }
 
-  // HJ 2026-06-10 — 적응형 진행률. 하드코딩 ETA 폐기 (데이터마다 분석 시간 다 다름).
-  // 백엔드 progress_pct 신호가 truth source. 시간 추정은 _stageEta() 가 실측 elapsed/pct 비율로 역산.
-  // 동작:
-  //   (1) 백엔드 progress_pct (전체 0~100) 를 단계 범위 STAGE_RANGE[cur] 안의 0~95% 로 매핑.
-  //   (2) 신호 공백 시 매우 약한 alive creep (0.05%/s, 최대 +3%) — "멈춤 같은 느낌"만 방지.
-  //   (3) 마지막 5% 는 _completing 신호 도착 시에만 채워짐 (proposals 도착 = 단계 종료).
-  const rawP=gateData.progress_pct;
-  if(rawP!=null&&Number.isFinite(Number(rawP))){
-    const bp=Math.max(0,Math.min(100,Number(rawP)));
-    const rng=STAGE_RANGE[cur]||[0,100];
-    // 단계 범위 [a,b] 안의 위치를 0~95% 로 매핑. 마지막 5% 는 _completing 신호용.
-    const mapped=Math.max(0,Math.min(95,(bp-rng[0])*100/Math.max(1,rng[1]-rng[0])));
-    if(mapped!==_lastSignalPct){ _lastSignalAt=Date.now(); _lastSignalPct=mapped; }
-    if(mapped>_shownPct) _shownPct=mapped;
-  }
-
-  // 백엔드 신호 공백 구간: alive creep — "분석 멈춘 듯한 인상" 방지 정도로 매우 약하게.
-  // 마지막 신호값 위로 최대 +3% (60초 정도에 도달), 1초당 0.05%. 95% 이하에서만.
-  if(_lastSignalAt!=null && _shownPct < 95){
-    const silentSec=(Date.now()-_lastSignalAt)/1000;
-    const aliveCreep=Math.min(3, silentSec*0.05);
-    const ceil=Math.min(95, (_lastSignalPct||0)+aliveCreep);
-    if(ceil>_shownPct) _shownPct=Math.min(ceil, _shownPct+0.03);
+  // HJ 2026-06-10 — 마일스톤 기반 진행률 (사용자 요구).
+  // 현재 backend가 보고하는 current_agent 가 단계의 agent 리스트에서 몇 번째인지로 % 산출.
+  // 예) G1 (5 agents): supervisor 실행 중 = 0%, intent 실행 중 = 20%, profiler = 40%,
+  //                    schema = 60%, gate_direction = 80%. proposals 도착 = 100% (위 _completing 블록).
+  // 데이터마다 분석 시간이 달라도 항상 정확. 시간 예측 일체 안 함.
+  const flow=_curAgentFlow();
+  const idx=_curMilestoneIdx();
+  if(flow.length && idx>=0){
+    const milestone=Math.round(idx*100/flow.length);
+    if(milestone>_shownPct) _shownPct=milestone;
   }
 
   _barFlowPct=Math.max(_barFlowPct,_shownPct);
@@ -746,42 +770,46 @@ function isGateLoading(){
   const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
   return !llmProps.length;
 }
-// 공통 진행바 — 분석 대기 로딩 중에만 표시. 옵션 선택·완료 화면에서는 숨김.
+// HJ 2026-06-10 — 마일스톤 세그먼트 바 (기존 .lbar 진행바를 대체).
+// 단계의 agent 마다 segment 하나. 완료=초록, 현재=파랑 펄스, 대기=회색.
+// 메타: "진행 N% · 경과 Y" — ETA(예상 남은 시간) 표시 제거 (사용자 요구).
 function progressBar(){
   if(isFailed()) return '';
-  if(cur===LAST) return '';  // G7 완료 페이지
-  if(cur===0 && !jobId) return '';  // 업로드 전 초기 화면 → 진행바 숨김
-  if(cur>=1 && cur<=5 && !isGateLoading()) return '';  // proposals 표시 중 → 숨김
+  if(cur===LAST) return '';                                       // G7 완료 페이지
+  if(cur===0 && !jobId) return '';                                // 업로드 전
+  if(cur>=1 && cur<=5 && !isGateLoading()) return '';             // proposals 표시 중
   const p=_stageProgress();
-  // 게이지 "바"의 실제 채움 폭 — 정확한 표시 수치(p)와 별개로 _barFlowPct(자기 진행, 항상 전진)를 사용.
-  // 완료 시에는 표시 수치와 함께 100% 로 맞춘다.
-  const barP=(p>=100)?100:Math.round(_barFlowPct);
-  // 단계별 elapsed — _stageStart 부터의 시간. 분석 전체 elapsed(analyzeStart)가 아님.
-  // 사용자 요구: 각 단계를 독립 0~100% / 0~ETA 로 표시.
-  const stageEl = _stageStart ? ((Date.now()-_stageStart)/1000) : 0;
-  const isRunning = analyzing() || isGateLoading();
-  let etaStr='';
-  if(p>=100){ etaStr='완료'; }
-  else if(isRunning){
-    if(_stageStart==null) etaStr='추정 중…';
-    else if(p>=99) etaStr='마무리 중…';
-    else {
-      const eta = _stageEta(p);
-      if(eta==null) etaStr='추정 중…';
-      else if(eta<=3) etaStr='마무리 중…';
-      else etaStr='약 '+fmtTime(eta);
-    }
+  const stageEl=_stageStart?((Date.now()-_stageStart)/1000):0;
+  const isRunning=analyzing()||isGateLoading();
+
+  // 마일스톤 세그먼트 — 단계의 agent 리스트가 곧 바의 구조.
+  const flow=_curAgentFlow();
+  let activeIdx=_curMilestoneIdx();
+  if(_completing||p>=100) activeIdx=flow.length;  // 완료 시 모든 칸 done
+  let barHtml='';
+  if(flow.length){
+    const segs=flow.map(function(ag,i){
+      let cls='ms-seg';
+      let icon;
+      if(i<activeIdx){ cls+=' done'; icon='✓'; }
+      else if(i===activeIdx){ cls+=' active'; icon='●'; }
+      else { cls+=' pending'; icon=(i+1)+'.'; }
+      const name=esc(AGENT_KO[ag]||ag);
+      return '<div class="'+cls+'" title="'+name+'"><span class="ms-seg-icon">'+icon+'</span>'+name+'</div>';
+    }).join('');
+    barHtml='<div class="ms-bar">'+segs+'</div>';
   }
-  const showMeta = isRunning || p>=100;
-  let meta='';
-  if(showMeta){
-    meta='<div class="lmeta">진행 <b>'+p+'%</b>'
-      +(isRunning?(' · 이 단계 시간 <b>'+fmtTime(stageEl)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'):(p>=100?' · <b>'+etaStr+'</b>':''))
-      +'</div>';
+
+  // 메타 — 진행 % + 경과 시간. ETA 제거.
+  let meta;
+  if(isRunning){
+    meta='<div class="lmeta">진행 <b>'+p+'%</b> · 경과 <b>'+fmtTime(stageEl)+'</b></div>';
+  } else if(p>=100){
+    meta='<div class="lmeta">진행 <b>'+p+'%</b> · <b>완료</b></div>';
   } else {
     meta='<div class="lmeta">진행 <b>'+p+'%</b></div>';
   }
-  return '<div class="progbox"><div class="lbar"><div class="lfill" style="width:'+barP+'%"></div></div>'+meta+'</div>';
+  return '<div class="progbox">'+barHtml+meta+'</div>';
 }
 function gateHeader(g){
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
