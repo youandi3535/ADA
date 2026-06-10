@@ -203,7 +203,9 @@
       "Bash(sed -n '270,295p' frontend/app.py)",
       "Bash(sed -n '377,395p' frontend/app.py)",
       "Bash(sed -n '922,960p' frontend/app.py)",
-      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"C:\\\\IT\\\\workspace_python\\\\ADA\\\\scripts\\\\ada.ps1\"\\); \"First 4 bytes: \" + \\($bytes[0..3] -join ','\\))"
+      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"C:\\\\IT\\\\workspace_python\\\\ADA\\\\scripts\\\\ada.ps1\"\\); \"First 4 bytes: \" + \\($bytes[0..3] -join ','\\))",
+      "Bash(PowerShell -Command \"\\(Get-Item 'frontend/app_clean.py'\\).Length, \\(Get-Item 'frontend/app.py'\\).Length\")",
+      "Bash(git config *)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"
