@@ -58,6 +58,59 @@ def _save_g2_screen_ready(state: PipelineState) -> None:
         # G1 critical path 안전 — Redis 실패해도 정상 진행
         pass
 
+    # CS 2026-06-10 — 백그라운드 prefetch 제거. race condition 원인.
+    # propose_topics 는 AnalysisProposerAgent.__call__ 에서 메인 흐름으로 호출됨.
+    # (gate_direction 노드의 실제 작업으로 → 마일스톤 sync 정합 + 스키마 검증 완료 후 팝업)
+
+
+async def _prefetch_topic_proposals(state: PipelineState) -> None:
+    """G2 Sub-1 주제 5개 백그라운드 생성. 30초 timeout + 실패 시 fallback patch.
+
+    CS 2026-06-10 — 무한 대기 방지:
+      - LLM 호출 30초 안에 응답 없으면 TimeoutError 발생 → fallback 으로 patch
+      - 어떤 예외가 나도 _TOPIC_FALLBACK_DEFAULTS 정적 5개를 Redis 에 patch
+      - 결과 : 사용자가 30초 이상 영원히 "주제 후보 준비 중…" 보지 않음
+    """
+    import asyncio as _asyncio
+
+    try:
+        from agents.gates.analysis_proposer import AnalysisProposerAgent  # noqa: WPS433
+
+        agent = AnalysisProposerAgent()
+        topics = await _asyncio.wait_for(agent.propose_topics(state), timeout=30.0)
+        _patch_gate_data(state.job_id, {"topic_proposals": topics})
+    except Exception:  # noqa: BLE001
+        # 실패·timeout → fallback 즉시 patch (무한 대기 방지)
+        try:
+            from agents.gates.analysis_proposer import _TOPIC_FALLBACK_DEFAULTS  # noqa: WPS433
+
+            _patch_gate_data(
+                state.job_id,
+                {"topic_proposals": [dict(t) for t in _TOPIC_FALLBACK_DEFAULTS]},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _patch_gate_data(job_id: str, patch: dict[str, Any]) -> None:
+    """기존 ada:gate_data:{job_id} 의 키 보존 + patch 만 덮어쓰기."""
+    try:
+        import redis as _redis  # noqa: WPS433
+
+        from ada.core.config import settings as _s  # noqa: WPS433
+
+        r = _redis.Redis.from_url(_s.redis_url)
+        raw = r.get(f"ada:gate_data:{job_id}")
+        gd = _json.loads(raw) if raw else {}
+        gd.update(patch)
+        r.set(
+            f"ada:gate_data:{job_id}",
+            _json.dumps(gd, ensure_ascii=False, default=str),
+            ex=86400,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
 
 # v2 4 카테고리만
 CATEGORY_RULES: dict[str, dict[str, Any]] = {
