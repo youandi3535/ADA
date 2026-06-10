@@ -301,9 +301,10 @@ const STAGE_RANGE=[
   [98, 100], // G6: report_composer → self_learning_dispatch
 ];
 const GATE_TITLE={G2:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G3:['어떤 방법론으로 진행할까요?','Choose your methodology'],G4:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G5:['어떤 모델을 채택할까요?','Pick the best model'],G6:['어떤 산출물을 만들까요?','Choose your outputs']};
-// CS 2026-06-10 — 게이트 전환 구간 (사용자가 진행 누른 후 다음 카드 도착 전) 사용자 친화 설명.
-// cur 2~5 만 매핑. cur=1 (G2 분석 방향 단계) 은 항상 정적 "어떤 방식으로 분석할까요?" 유지.
+// CS 2026-06-10 — 게이트 전환 구간 (proposals 도착 전) 사용자 친화 설명.
+// 카드 보일 때 (proposals 도착) = 정적 GATE_TITLE. 그 외 로딩 = 동적.
 const STAGE_TRANSITION_DESC={
+  1:{ko:'분석 방향 카드를 준비 중입니다',en:'Preparing analysis direction cards'},
   2:{ko:'EDA를 분석 중입니다',en:'Running EDA analysis'},
   3:{ko:'전처리·피처 엔지니어링 중입니다',en:'Running preprocessing & feature engineering'},
   4:{ko:'모델 학습 중입니다',en:'Training models'},
