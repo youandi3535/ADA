@@ -281,45 +281,16 @@ def build_agenda(sections_titles: list[str]) -> SlideSpec:
 
 
 def build_tech_stack_slide(ctx: ReportContext) -> SlideSpec:
-    """기술스택 슬라이드 — ML 카테고리 대표 라이브러리 강조."""
-    env = ctx.code.environment if ctx.code else {}
-    env = env or {}
-    key_pkgs: dict[str, str] = env.get("key_packages", {}) or {}
-    py_ver = env.get("python", "3.x")
+    """슬라이드 10 — EDA · 주요 변수 3 (ctx.eda.charts Top 3).
 
-    # ML 카테고리 대표 라이브러리
-    ml_libs = ["scikit-learn", "xgboost", "lightgbm", "catboost"]
-    spotlight = []
-    for p in ml_libs:
-        if p in key_pkgs:
-            spotlight.append(f"{p} {key_pkgs[p]}")
-        else:
-            spotlight.append(p)
-
-    lines = [
-        f"언어 · 런타임 : Python {py_ver}",
-        f"분석 라이브러리 : {', '.join(spotlight)}",
-        f"데이터 · 실험 : pandas {key_pkgs.get('pandas', '')}, numpy {key_pkgs.get('numpy', '')}, MLflow",
-        "인프라 : Docker · PostgreSQL · MinIO · Celery · LangGraph",
-        "품질 · 관측 : MLflow run + Langfuse trace + Alembic migration",
-        "보안 : R-103 PII 마스킹 · code_redactor · Fernet 암호화",
-    ]
-    return SlideSpec(
-        id="tech_stack",
-        section_id="solution",
-        layout="comparison_table",
-        role="evidence",
-        so_what=f"본 분석은 Python {py_ver} 기반 ADA 자동화 스택으로 재현 가능합니다",
-        title_ko="기술 스택",
-        body_outline=lines,
-        visual_spec=VisualSpec(
-            type="table_feature_matrix",
-            title="기술 스택 구성",
-            caption="ML 대표 라이브러리 + 공통 인프라 + 품질·관측 도구",
-            spec={"layers": ["언어/런타임", "분석", "데이터", "인프라", "품질·관측"]},
-        ),
-        speaker_notes_hint="청중이 분석가가 아니어도, 재현 가능성·신뢰성 어필 핵심 슬라이드.",
-    )
+    [재구성] '기술 스택' → 'EDA 주요 변수 3'. Tech Stack 책임은 S6 (_build_pain_points)
+    에서 substitution_manifest 기반으로 처리. 본 함수는 EDA-3 로 변경.
+    함수 이름·ID 유지 (build() / 다른 skeleton 의 공통 헬퍼 import 호환).
+    """
+    charts = _select_top_eda_charts(ctx, n=3)
+    if len(charts) >= 3:
+        return _build_eda_slide_from_chart(charts[2], "tech_stack", 3, ctx, "eda_main_3")
+    return _build_eda_placeholder("tech_stack", 3, ctx, "eda_main_3")
 
 
 # ==============================================================
@@ -1082,105 +1053,197 @@ def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
     )
 
 
-def _build_solution_overview(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 8 — 솔루션 개요 (gear)."""
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
-    body = [
-        f"01 · 모델 · {chosen} — baseline 대비 우수 성능 + 해석 가능",
-        "02 · 자동화 · ADA 파이프라인 — G1~G6 + 산출 7단계",
-        "03 · 재현성 · MLflow + 데이터 SHA256 + 환경 lockfile",
-        "04 · 해석 · SHAP + Feature Importance 자동 생성",
-    ]
+def _select_top_eda_charts(ctx: ReportContext, n: int = 3) -> list[Any]:
+    """Top N EDAChart 선정 — severity → finding 길이 → 입력 순서."""
+    charts = list(ctx.eda.charts or [])
+    if not charts:
+        return []
+    sev_order = {"critical": 0, "important": 1, "info": 2}
+    indexed = [(i, c) for i, c in enumerate(charts)]
+    indexed.sort(key=lambda t: (
+        sev_order.get(getattr(t[1], "severity", "info"), 2),
+        -len(getattr(t[1], "finding", "") or ""),
+        t[0],
+    ))
+    return [c for _, c in indexed[:n]]
+
+
+def _eda_key_insights(chart: Any, ctx: ReportContext) -> list[str]:
+    """EDAChart 의 callouts·numbers·finding 을 KEY INSIGHTS 5줄로 정리.
+
+    포맷 '사실 → 그래서 알 수 있는 것' 페어 — callouts.text 에 \n 으로 페어
+    들어있으면 그대로, 아니면 finding 을 마지막 인사이트로 부착.
+    """
+    insights: list[str] = []
+    for callout in (getattr(chart, "callouts", None) or [])[:5]:
+        if isinstance(callout, dict):
+            text = callout.get("text", "") or ""
+        else:
+            text = str(callout)
+        if text:
+            insights.append(_auto_label(text, ctx))
+    if not insights:
+        for num in (getattr(chart, "numbers", None) or [])[:5]:
+            if isinstance(num, dict):
+                name = num.get("name", "")
+                val = num.get("value", "")
+                if name or val:
+                    insights.append(f"{name} {val}")
+    finding = getattr(chart, "finding", "") or ""
+    if finding and finding not in insights:
+        insights.append(_auto_label(finding, ctx))
+    return insights[:5]
+
+
+def _build_eda_slide_from_chart(
+    chart: Any,
+    slide_id: str,
+    slide_index: int,
+    ctx: ReportContext,
+    role_key: str,
+) -> SlideSpec:
+    """단일 EDAChart → chart_callout SlideSpec.
+
+    substitution_manifest.resolve_slide(role_key, category) 로 title 변형 적응.
+    """
+    category = ctx.meta.category or "tabular_ml"
+    variant = resolve_slide(role_key, category)
+
+    feature = getattr(chart, "x", None) or getattr(chart, "title_ko", "") or f"Feature {slide_index}"
+    title_ko = (variant.title_ko if variant else None) or getattr(chart, "title_ko", "") or f"EDA · {feature}"
+    finding = getattr(chart, "finding", "") or ""
+    so_what = _auto_label(finding, ctx) if finding else f"{feature} 의 핵심 분포·패턴 발견"
+
+    insights = _eda_key_insights(chart, ctx)
+    body = insights if insights else [f"{feature} — 분석 결과 적립 후 채워짐"]
+
+    chart_type = getattr(chart, "chart_type", "") or (
+        variant.visual_type if variant else "chart_annotated_bar"
+    )
+    ref_id = getattr(chart, "ref_id", None)
+
     return SlideSpec(
-        id="method_model",
+        id=slide_id,
         section_id="solution",
-        layout="process_flow",
-        role="claim",
-        so_what=f"본 솔루션 한 줄: {chosen} 모델로 자동화된 분석·보고서 생성 — 재현·해석 가능",
-        title_ko="솔루션 개요",
+        layout=(variant.layout if variant else "chart_callout"),
+        role="evidence",
+        so_what=so_what,
+        title_ko=title_ko,
         body_outline=body,
         parent_message_id="solution_root",
-        speaker_notes_hint="솔루션 1줄 정의 + 4가지 핵심 축 — 모델·자동화·재현성·해석.",
+        required_refs=[ref_id] if ref_id else [],
+        visual_spec=VisualSpec(
+            type=chart_type,
+            title=title_ko,
+            spec={
+                "chart_path": getattr(chart, "path", "") or "",
+                "x": getattr(chart, "x", None),
+                "y": getattr(chart, "y", None),
+                "numbers": list(getattr(chart, "numbers", None) or []),
+                "callouts": list(getattr(chart, "callouts", None) or []),
+                "severity": getattr(chart, "severity", "info"),
+            },
+        ),
+        speaker_notes_hint=(
+            f"EDA #{slide_index} — {feature}. finding: {finding[:80]}. "
+            "KEY INSIGHTS 는 callouts → numbers → finding 순서로 자동 채워짐."
+        ),
     )
+
+
+def _build_eda_placeholder(
+    slide_id: str,
+    slide_index: int,
+    ctx: ReportContext,
+    role_key: str,
+) -> SlideSpec:
+    """ctx.eda.charts 가 빈 경우의 placeholder — 골격은 유지하되 내용 비움 안내."""
+    category = ctx.meta.category or "tabular_ml"
+    variant = resolve_slide(role_key, category)
+    title_ko = (variant.title_ko if variant else f"EDA · 슬라이드 {slide_index}")
+    return SlideSpec(
+        id=slide_id,
+        section_id="solution",
+        layout=(variant.layout if variant else "chart_callout"),
+        role="evidence",
+        so_what=f"EDA {slide_index} — 분석 결과 적립 후 채워짐",
+        title_ko=title_ko,
+        body_outline=["분석 결과 적립 후 채워짐"],
+        parent_message_id="solution_root",
+        visual_spec=VisualSpec(
+            type=(variant.visual_type if variant else "chart_annotated_bar"),
+            title=title_ko,
+            spec={"chart_path": "", "placeholder": True},
+        ),
+        speaker_notes_hint=f"EDA #{slide_index} placeholder — ctx.eda.charts 적립 시 자동 채워짐.",
+    )
+
+
+def _build_solution_overview(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 8 — EDA · 주요 변수 1 (ctx.eda.charts Top 1).
+
+    [재구성] 영업 톤 '솔루션 개요' → 분석 보고서 톤 'EDA 주요 변수 1'.
+    함수 이름·슬라이드 ID 는 유지 (build() / message_tree 미수정).
+    """
+    charts = _select_top_eda_charts(ctx, n=3)
+    if charts:
+        return _build_eda_slide_from_chart(charts[0], "method_model", 1, ctx, "eda_main_1")
+    return _build_eda_placeholder("method_model", 1, ctx, "eda_main_1")
 
 
 def _build_tech_architecture_with_lineage(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 9 — 기술 아키텍처 + 데이터 lineage (보강 F).
+    """슬라이드 9 — EDA · 주요 변수 2 (ctx.eda.charts Top 2).
 
-    파이프라인 7단계 + 데이터 출처·기간·표본·PII 정보 동시 표시.
+    [재구성] '기술 아키텍처 + lineage' → 'EDA 주요 변수 2'.
+    함수 이름·ID 유지. 데이터 lineage 는 ctx.meta / dataset 다른 슬라이드에서 처리.
     """
-    pipeline_steps = [
-        "01 · 데이터 업로드 (G1)",
-        "02 · Data Profiler (PII + 카테고리 + 도메인)",
-        "03 · 전처리 (Preprocessing Strategist)",
-        "04 · EDA + 피처 엔지니어링",
-        "05 · 모델 선정 (G4) + 학습",
-        "06 · 평가 (G6) + 해석 (SHAP)",
-        "07 · 산출 (5종 carrier)",
-    ]
-    # 보강 F — 데이터 lineage
-    lineage = ctx.dataset.lineage if hasattr(ctx.dataset, "lineage") else {}
-    src_system = lineage.get("source_system", "내부 데이터") if isinstance(lineage, dict) else "내부 데이터"
-    window = lineage.get("window", "지정 기간") if isinstance(lineage, dict) else "지정 기간"
-    excl = lineage.get("exclusion", "결측·이상치 제거") if isinstance(lineage, dict) else "결측·이상치 제거"
-    pii = "PII 마스킹 적용 (R-103)"
-
-    body = pipeline_steps + [
-        "─ 데이터 Lineage ─",
-        f"원천 · {src_system}",
-        f"기간 · {window}",
-        f"표본 · {ctx.dataset.shape.get('rows', 0):,} 행 ({excl})",
-        f"보안 · {pii}",
-    ]
-    return SlideSpec(
-        id="tech_architecture",
-        section_id="solution",
-        layout="process_flow",
-        role="evidence",
-        so_what="본 분석은 7단계 파이프라인 + 명시적 데이터 lineage 로 자동·재현 가능합니다",
-        title_ko="기술 아키텍처 + 데이터 Lineage",
-        body_outline=body,
-        visual_spec=VisualSpec(
-            type="diagram_process_linear",
-            title="ADA 파이프라인 + 데이터 흐름",
-            caption="좌→우 7단계 + 하단 데이터 출처·기간·PII 명시",
-            spec={
-                "steps": pipeline_steps,
-                "lineage": {
-                    "source_system": src_system,
-                    "window": window,
-                    "rows": ctx.dataset.shape.get("rows", 0),
-                    "exclusion": excl,
-                    "pii_treatment": pii,
-                },
-            },
-        ),
-        parent_message_id="solution_root",
-        speaker_notes_hint=(
-            "기술 아키텍처 + 데이터 lineage 통합 슬라이드. "
-            "감사·규제 청중 시 lineage 강조. 분석가 청중 시 파이프라인 강조."
-        ),
-    )
+    charts = _select_top_eda_charts(ctx, n=3)
+    if len(charts) >= 2:
+        return _build_eda_slide_from_chart(charts[1], "tech_architecture", 2, ctx, "eda_main_2")
+    return _build_eda_placeholder("tech_architecture", 2, ctx, "eda_main_2")
 
 
 def _build_differentiation(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 11 — 차별화 (strategy_4)."""
-    body = [
-        "PRODUCT · 자동화 · 분석 → 보고서 G1~G6 완전 자동",
-        "QUALITY · 재현성 · MLflow + 데이터 해시 + 코드 lockfile",
-        "SCALE · 4 카테고리 · 정형ML/DL/시계열/이상탐지 통합",
-        "TRUST · 해석 · SHAP + 인용 (R-501) + PII 마스킹",
-    ]
+    """슬라이드 11 — EDA · 변수 간 상관 / 데이터 품질 보조.
+
+    [재구성] '차별화 (PRODUCT/QUALITY/SCALE/TRUST)' 영업 톤 → EDA Extra.
+    4번째 EDAChart 가 있으면 그것을, 없으면 데이터 품질 이슈 요약으로.
+    """
+    charts = _select_top_eda_charts(ctx, n=4)
+    if len(charts) >= 4:
+        return _build_eda_slide_from_chart(charts[3], "s3_differentiation", 4, ctx, "eda_extra")
+    # 4번째 차트 없음 — 데이터 품질·결측 분포로 채움
+    category = ctx.meta.category or "tabular_ml"
+    variant = resolve_slide("eda_extra", category)
+    title_ko = (variant.title_ko if variant else "EDA · 변수 간 상관 / 품질")
+
+    missing = ctx.dataset.missing_rate or {}
+    top_missing = sorted(missing.items(), key=lambda kv: -kv[1])[:5]
+    body: list[str] = []
+    if top_missing:
+        for col, rate in top_missing:
+            body.append(f"{col} 결측 {rate*100:.1f}%" if rate <= 1 else f"{col} 결측 {rate:.1f}%")
+    else:
+        body = ["결측 없음 — 추가 EDA 차트 적립 시 변경됨"]
+
     return SlideSpec(
         id="s3_differentiation",
         section_id="solution",
-        layout="2x2_matrix",
-        role="claim",
-        so_what="기존 대비 4축 차별화 — 자동화·재현성·확장성·신뢰성 모두 강화",
-        title_ko="차별화 포인트",
-        body_outline=body,
+        layout=(variant.layout if variant else "chart_callout"),
+        role="evidence",
+        so_what="결측·이상치 패턴 — 전처리 결정의 근거",
+        title_ko=title_ko,
+        body_outline=body[:5],
         parent_message_id="solution_root",
-        speaker_notes_hint="2×2 매트릭스 4축 — 대체재 대비 우위 시각화.",
+        visual_spec=VisualSpec(
+            type=(variant.visual_type if variant else "chart_corr_heatmap"),
+            title=title_ko,
+            spec={"missing": dict(top_missing)},
+        ),
+        speaker_notes_hint=(
+            "EDA Extra — 4번째 차트가 있으면 그것을 사용, 없으면 결측률 Top 5 요약. "
+            "이후 슬라이드의 전처리 결정 근거."
+        ),
     )
 
 
