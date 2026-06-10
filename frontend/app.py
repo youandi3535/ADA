@@ -662,8 +662,41 @@ function _twTick(){
       if(c._cmVis!==false){ c._cmVis=false; c.style.opacity='0'; c.style.visibility='hidden'; }
     }
   }
+  // [twrow visibility] 2~6단계 모달의 label row 등 — 내부 twSpan 의 shown>0 이면 행 reveal.
+  // 사용자 요구: "2단계도 1단계 방식과 같이" — 행 단위로 등장.
+  var twrows=document.querySelectorAll('.twrow');
+  for(var t=0;t<twrows.length;t++){
+    var rw=twrows[t];
+    var rspans=rw.querySelectorAll('span.tw[data-tw]');
+    var anyStarted=false;
+    for(var u=0;u<rspans.length;u++){
+      var rk=rspans[u].getAttribute('data-twk');
+      var rst=_twState[rk];
+      if(rst && rst.shown>0){ anyStarted=true; break; }
+    }
+    if(anyStarted){
+      if(rw._twrVis!==true){ rw._twrVis=true; rw.style.opacity='1'; rw.style.visibility='visible'; }
+    } else {
+      if(rw._twrVis!==false){ rw._twrVis=false; rw.style.opacity='0'; rw.style.visibility='hidden'; }
+    }
+  }
 }
 function _twStart(){ if(_twTimer) return; _twTimer=setInterval(_twTick,_TW_STEP_MS); }
+// HJ 2026-06-10 — 모달 내 모든 타자기 요소가 완료됐는지 확인. 분석 완료여도 타이핑 끝나기 전엔 다음 단계로 못 넘어가도록.
+function _twAllDone(){
+  var els=document.querySelectorAll('span.tw[data-tw]');
+  if(!els.length) return false;  // 아직 요소 자체가 안 만들어짐(데이터 미도착) → 미완료로 간주
+  for(var i=0;i<els.length;i++){
+    var key=els[i].getAttribute('data-twk');
+    var full=els[i].getAttribute('data-tw')||'';
+    var st=_twState[key];
+    if(!st || st.shown<full.length) return false;
+  }
+  // 9+ 컬럼 케이스: 점 3개 정지(_TW_DOTS_PAUSE_MS) 도 지나야 완료로 인정
+  var dotsEl=document.querySelector('.cmdots');
+  if(dotsEl && _twDotsShownAt>0 && (Date.now()-_twDotsShownAt)<_TW_DOTS_PAUSE_MS) return false;
+  return true;
+}
 // 숫자 표시 헬퍼 — 부동소수점은 소수점 3자리, 정수는 그대로, 문자열은 원본
 function fmtNum(v){
   if(v==null) return '';
@@ -907,7 +940,8 @@ async function poll(){
     const _g1Done=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
     // CS 2026-06-10 — Sub-1 흐름: topic_proposals 도착도 G1 종료 신호로 인정
     const _topicReady=(gateData.topic_proposals||[]).length;
-    if(_g1Done || _topicReady){ cur=1; follow=true; }
+    // HJ 2026-06-10 — proposals 도착해도 모달 타자기 끝까지 안 적혔으면 자동 cur 전환 차단.
+    if((_g1Done || _topicReady) && _twAllDone()){ cur=1; follow=true; }
   }
   // follow=true 여도 cur 는 절대 자동 regress 안 함. 사용자 prev 버튼 클릭 으로만 내려갈 수 있음.
   if(follow) cur=Math.max(cur, frontier);
@@ -944,7 +978,8 @@ setInterval(function(){
   if(paused) return;
   if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2'){
     const _p=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
-    if(_p){
+    // HJ 2026-06-10 — proposals 도착해도 모달 타자기 끝까지 안 적혔으면 자동 cur 전환 차단.
+    if(_p && _twAllDone()){
       cur=1; follow=true;
       saveState();
       render();
@@ -1295,11 +1330,16 @@ function inModalLoading(){
   // HJ 2026-06-10 — 사용자가 ✕ 로 모달 닫음. 같은 cur 동안만 유효, cur 변경 시 자동 해제.
   if(modalDismissed && _modalDismissedCur===cur) return false;
   if(modalDismissed && _modalDismissedCur!==cur){ modalDismissed=false; }
+  // HJ 2026-06-10 — 1~6단계(cur=0~5) 모달은 진행률 41% 이상에서만 노출. 초반 40% 까지는 본문 카드 표시.
+  // _stageProgress() 는 단계 전환 시 0 으로 리셋되므로 매 단계 0→41 도달 후 모달 등장.
+  // (_shownPct 는 _stageProgress() 결과 캐시. 재귀 회피용으로 _stageProgress() 직접 호출 안 함.)
+  if(cur>=0 && cur<=5 && _shownPct<41) return false;
   if(cur===0){
-    // 도메인 데이터 도착 시부터 팝업. proposals 이미 도착했으면 false — 완료 오표시 방지.
+    // 도메인 데이터 도착 시부터 팝업. proposals 이미 도착해도 타자기 미완료 → 모달 유지.
     if(!g2TopicArea(gateData)) return false;
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
-    if(_p0.length && curGate()==='G2') return false;
+    // HJ 2026-06-10 — proposals 도착해도 타자기 끝까지 안 적혔으면 모달 유지 → 사용자 못 넘어감.
+    if(_p0.length && curGate()==='G2' && _twAllDone()) return false;
     return true;
   }
   // HJ 2026-06-10 — cur=1~5 는 선택 상태 vs 분석 상태 구분:
@@ -1313,7 +1353,9 @@ function inModalLoading(){
     const ag=curGate();
     const d=(ag===nextGate)?gateData:(gateCache[nextGate]||{});
     const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
-    return !llmProps.length;
+    // HJ 2026-06-10 — proposals 도착해도 타자기 끝까지 안 적혔으면 모달 유지.
+    if(llmProps.length && _twAllDone()) return false;
+    return true;
   }
   // cur=6 (단계 7 — 완료) — 분석 없음. 결과 표시. 모달 안 띄움.
   return false;
@@ -1339,7 +1381,7 @@ function modalTopicArea(d){
     const _card=function(k,row,sec){return '<div class="cmcard" data-cmrow="'+row+'" data-cmsec="'+sec+'" style="background:#fff;padding:14px 18px;border-radius:8px;border:1px solid #e2e8f0;opacity:0;visibility:hidden;transition:opacity .35s ease"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+twSpan(String(cm[k]),'g1-cm-'+k)+'</span></div>';};
     const _grid='display:grid;grid-template-columns:repeat(2,1fr);gap:12px;font-size:22px';
     const _dots='<div class="cmdots" style="display:flex;flex-direction:column;align-items:center;gap:6px;margin:20px 0;color:#94a3b8;font-size:34px;line-height:1;font-weight:800;opacity:0;visibility:hidden;transition:opacity .4s ease"><span>·</span><span>·</span><span>·</span></div>';
-    const _label='<div style="font-size:22px;opacity:.7;margin-bottom:12px">'+twSpan('컬럼 의미 ('+cmAllKeys.length+')','g1-cmlabel')+'</div>';
+    const _label='<div class="twrow" style="font-size:22px;margin-bottom:12px;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">'+twSpan('컬럼 의미 ('+cmAllKeys.length+')','g1-cmlabel')+'</span></div>';
     if(cmAllKeys.length<=8){
       cmHtml='<div style="margin-top:22px">'+_label+'<div style="'+_grid+'">'
         +cmAllKeys.map(function(k,i){return _card(k,Math.floor(i/2),'all');}).join('')
@@ -1365,9 +1407,9 @@ function modalTopicArea(d){
     }
   }
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
-    +(domain?'<div style="font-size:28px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+twSpan(domain,'g1-domain')+'</b></div>':'')
-    +(summary?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">데이터셋</span> &nbsp;'+twSpan(summary,'g1-summary')+'</div>':'')
-    +(tInsight?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+twSpan(tInsight,'g1-tinsight')+'</div>':'')
+    +(domain?'<div class="twrow" style="font-size:28px;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">도메인</span> &nbsp;<b>'+twSpan(domain,'g1-domain')+'</b></div>':'')
+    +(summary?'<div class="twrow" style="margin-top:14px;font-size:26px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">데이터셋</span> &nbsp;'+twSpan(summary,'g1-summary')+'</div>':'')
+    +(tInsight?'<div class="twrow" style="margin-top:14px;font-size:26px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+twSpan(tInsight,'g1-tinsight')+'</div>':'')
     +cmHtml
     +'</div>';
 }
@@ -1441,10 +1483,11 @@ function modalSubstepProgress(){
 function _labelRow(label, value, opts){
   if(value==null||value==='') return '';
   opts=opts||{};
-  // HJ 2026-06-10 — 값 부분만 타자기. 라벨은 즉시 표시(폼 라벨 + 타이핑되는 응답 패턴).
+  // HJ 2026-06-10 — 1단계 방식 통일: 행 전체 hidden → 차례에 reveal + 값 타이핑.
+  //   라벨(span opacity:.7) 은 row 가 reveal 될 때 함께 등장.
   var key=opts.twk||('lr-'+cur+'-'+label);
   var v=twSpan(String(value),key);
-  return '<div style="margin-top:'+(opts.mt==null?14:opts.mt)+'px;font-size:'+(opts.fs||26)+'px;line-height:1.5">'
+  return '<div class="twrow" style="margin-top:'+(opts.mt==null?14:opts.mt)+'px;font-size:'+(opts.fs||26)+'px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease">'
     +'<span style="opacity:.7">'+esc(label)+'</span> &nbsp;'
     +(opts.bold?('<b>'+v+'</b>'):v)
     +'</div>';
@@ -1453,8 +1496,9 @@ function _labelRow(label, value, opts){
 function _stageBox(titleEmoji, titleText, rows){
   const body=(rows||[]).filter(function(s){return !!s;}).join('');
   if(!body) return '';
+  // HJ 2026-06-10 — 박스 제목도 twrow + twSpan 으로 — 가장 먼저 등장+타이핑되고 그 다음 row 들이 순차 reveal.
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
-    +'<div style="font-weight:700;color:#0f172a;margin-bottom:6px;font-size:32px">'+titleEmoji+' '+esc(titleText)+'</div>'
+    +'<div class="twrow" style="font-weight:700;color:#0f172a;margin-bottom:6px;font-size:32px;opacity:0;visibility:hidden;transition:opacity .3s ease">'+titleEmoji+' '+twSpan(titleText,'sbtitle-'+cur+'-'+titleText)+'</div>'
     +body+'</div>';
 }
 function modalInsightArea(d){
@@ -1464,6 +1508,9 @@ function modalInsightArea(d){
   }
   const dp=(d&&d.data_profile)||{};
   // 2단계 (G2 — EDA·방법론 분석)
+  // HJ 2026-06-10 — 사용자 요구: "1단계처럼 실시간 분석 내용이 들어가야". 상태 메시지(▶ ...) 위주에서
+  // 백엔드 eda_agent 가 publish 하는 stage_partial.eda_insights (결측·상관·클래스·skew 자연어 분석 4종)
+  // + methodology_candidates[].rationale (각 방법론의 3줄 글머리 설명) 을 본격 노출.
   if(cur===1){
     const r=[];
     if(dp.rows&&dp.cols) r.push(_labelRow('데이터 크기', dp.rows.toLocaleString()+'행 × '+dp.cols+'컬럼', {mt:8,bold:true}));
@@ -1474,18 +1521,32 @@ function modalInsightArea(d){
       const cd=dp.class_distribution, ks=Object.keys(cd).slice(0,4);
       if(ks.length) r.push(_labelRow('클래스 분포', ks.map(function(k){return k+': '+cd[k];}).join(', ')));
     }
-    // HJ 2026-06-10 — stage_partial 라이브 피드 (eda_agent + methodology_proposer)
     const sp=(d&&d.stage_partial)||{};
-    if(sp.eda_status) r.push(_labelRow('▶ EDA 진행', sp.eda_status, {fs:22}));
-    if(sp.eda_rows&&sp.eda_cols) r.push(_labelRow('▶ 분석 대상', sp.eda_rows.toLocaleString()+'행 × '+sp.eda_cols+'컬럼'));
-    if(sp.eda_charts_count!=null) r.push(_labelRow('▶ 차트 생성', sp.eda_charts_count+'종', {bold:true}));
-    if(sp.methodology_status) r.push(_labelRow('▶ 방법론', sp.methodology_status, {fs:22}));
-    if(Array.isArray(sp.methodology_candidates)&&sp.methodology_candidates.length){
-      const cand=sp.methodology_candidates.map(function(c){var s=(c.score!=null?' ('+c.score+')':'');return c.id+'. '+(c.title||'')+s;}).join(' / ');
-      r.push(_labelRow('▶ 방법론 후보', cand, {fs:22}));
+    // 🔍 EDA 인사이트 — 실시간 분석 결과 (결측치·상관관계·클래스 분포·분포 비대칭). 각 인사이트의 prefix(":" 앞) 를 라벨로 분리.
+    if(Array.isArray(sp.eda_insights)&&sp.eda_insights.length){
+      sp.eda_insights.forEach(function(ins,i){
+        var s=String(ins);
+        var ci=s.indexOf(':');
+        var lab, val;
+        if(ci>0 && ci<30){ lab='🔍 '+s.slice(0,ci).trim(); val=s.slice(ci+1).trim(); }
+        else { lab='🔍 EDA 인사이트 '+(i+1); val=s; }
+        r.push(_labelRow(lab, val, {fs:22, mt:14, twk:'eda-ins-'+i}));
+      });
     }
-    if(d.eda_summary) r.push(_labelRow('EDA 요약', typeof d.eda_summary==='string'?d.eda_summary:JSON.stringify(d.eda_summary).slice(0,200), {fs:22}));
-    if(Array.isArray(d.eda_charts)&&d.eda_charts.length) r.push(_labelRow('생성 차트', d.eda_charts.length+'종', {bold:true}));
+    // 진행 상태 (인사이트 도착 전 라이브 피드용 — 도착 후엔 보조 정보)
+    if(sp.eda_status && (!Array.isArray(sp.eda_insights)||!sp.eda_insights.length)) r.push(_labelRow('▶ EDA 진행', sp.eda_status, {fs:22}));
+    if(sp.eda_charts_count!=null) r.push(_labelRow('▶ 차트 생성', sp.eda_charts_count+'종', {bold:true}));
+    // 🧪 방법론 후보 — 각 후보의 제목 + LLM rationale (3줄 설명) 노출
+    if(Array.isArray(sp.methodology_candidates)&&sp.methodology_candidates.length){
+      sp.methodology_candidates.forEach(function(c,i){
+        var titleLine=(c.id||(i+1))+'. '+(c.title||'')+(c.score!=null?' (점수: '+c.score+')':'');
+        r.push(_labelRow('🧪 방법론 후보 '+(i+1), titleLine, {bold:true, mt:18, twk:'meth-title-'+i}));
+        if(c.rationale) r.push(_labelRow('   └ 설명', String(c.rationale), {fs:22, mt:6, twk:'meth-rat-'+i}));
+      });
+    } else if(sp.methodology_status){
+      r.push(_labelRow('▶ 방법론', sp.methodology_status, {fs:22}));
+    }
+    if(d.eda_summary) r.push(_labelRow('EDA 요약', typeof d.eda_summary==='string'?d.eda_summary:JSON.stringify(d.eda_summary).slice(0,200), {fs:22, mt:18}));
     return _stageBox('📊','EDA · 방법론 분석', r);
   }
   // 3단계 (G3 — 전처리·피처 분석)

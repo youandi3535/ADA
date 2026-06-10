@@ -267,7 +267,7 @@ class MethodologyProposerAgent(BaseGate):
         user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:4000]
         _emit(
             {
-                "methodology_status": f"Claude Sonnet 4.6 로 방법론 후보 LLM 호출 중… ({state.category})",
+                "methodology_status": f"카테고리 '{state.category}' 에 적합한 방법론 후보를 분석하고 있습니다…",
                 "methodology_phase": "llm",
             }
         )
