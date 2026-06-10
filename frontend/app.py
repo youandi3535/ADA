@@ -69,7 +69,7 @@ _FLOW_HTML = """
   body{min-height:100%;background:linear-gradient(160deg,#2b4a6b 0%,#243f5c 58%,#1c3450 100%);
     font-family:'Pretendard','Inter',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--ink);}
   .shell{width:100%;max-width:1440px;margin:0 auto;padding:34px 40px 48px;min-height:100%;
-    display:flex;flex-direction:column;justify-content:center;}
+    display:flex;flex-direction:column;justify-content:center;zoom:1.25;}
   .brand{display:flex;align-items:center;gap:18px;color:#bcd2ec;margin-bottom:26px;}
   .brand .globe{font-size:38px;}
   .brand .nm{font-size:21px;letter-spacing:.26em;font-weight:700;}
@@ -171,6 +171,18 @@ _FLOW_HTML = """
     background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
     padding:7px 18px;margin-left:14px;white-space:nowrap;}
   .btn-home:hover{background:rgba(255,255,255,.20);}
+  /* HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 진입부터 G2 proposals 도착 전까지 표시. 모달 2배+. */
+  .modal-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(20,30,50,.42);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
+  .modal-card{position:relative;background:#fff;border-radius:32px;padding:56px 76px 48px;width:min(1300px,95%);max-height:88vh;overflow-y:auto;box-shadow:0 40px 100px rgba(0,0,0,.55);animation:modalIn .42s cubic-bezier(.2,.85,.25,1.2);}
+  @keyframes modalIn{0%{transform:scale(.82) translateY(20px);opacity:0;}100%{transform:scale(1) translateY(0);opacity:1;}}
+  .modal-title{font-size:60px;font-weight:800;color:var(--ink);text-align:center;margin:0 0 10px;line-height:1.1;}
+  .modal-en{font-size:32px;color:#8aa0bd;font-style:italic;text-align:center;margin:0 0 32px;}
+  .modal-card .progbox{margin-top:30px;}
+  .modal-card .lbar{box-shadow:0 0 0 2px rgba(31,62,92,.10);}
+  .modal-pending{background:#fffbeb;border:1px solid #fde68a;border-radius:16px;padding:22px 28px;margin-top:18px;}
+  .modal-pending .t{font-weight:700;color:#92400e;margin-bottom:8px;font-size:28px;}
+  .modal-pending .s{font-size:22px;color:#7c5012;line-height:1.4;}
+  .modal-placeholder{text-align:center;padding:36px 0;color:#52647d;font-size:26px;}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
   <!-- 랜딩 오버레이 — G1 이전 단계 클릭 시 표시. 원본 Python 랜딩과 동일한 스타일 -->
@@ -207,6 +219,10 @@ _FLOW_HTML = """
       </div>
     </div>
   </div>
+  <!-- HJ 2026-06-10 G1→G2 전환 팝업 모달 — render() 가 inModalLoading() 기반으로 표시·숨김 제어. 배경 자동 blur. -->
+  <div id="modalOverlay" class="modal-overlay" style="display:none">
+    <div class="modal-card" id="modalCard"></div>
+  </div>
 <!-- HJ 2026-06-09 G1 단축 Phase 4 — client-side 파일 파싱 (PapaParse: CSV, SheetJS: XLSX) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -229,6 +245,7 @@ const STAGE_RANGE=[
 const GATE_TITLE={G2:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G3:['어떤 방법론으로 진행할까요?','Choose your methodology'],G4:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G5:['어떤 모델을 채택할까요?','Pick the best model'],G6:['어떤 산출물을 만들까요?','Choose your outputs']};
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
+let _suppressG1Advance=false; // 사용자가 뒤로가기로 G1 으로 이동했을 때 자동 G1→G2 전환 억제
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
 // HJ 2026-06-09 G1 단축 Phase 4 — θ-B prefetch state.
 // 파일 선택 시점에 client-side 파싱 → 백엔드 /upload/prefetch → 카테고리 LLM 미리 시작.
@@ -354,7 +371,10 @@ async function startPrefetch(file){
     let columns=[], sample=[], dtypes={};
     if(ext==='csv'||ext==='tsv'){
       // PapaParse: 첫 100행만 파싱 (Worker 모드 비활성, sync 짧음)
-      const text=await file.slice(0, 1024*256).text();  // 256KB 만 (헤더+sample 충분)
+      const buf=await file.slice(0, 1024*256).arrayBuffer();
+      let text=new TextDecoder('utf-8',{fatal:false}).decode(buf);
+      if(text.includes('�')){try{text=new TextDecoder('euc-kr',{fatal:false}).decode(buf);}catch(e){}}
+      // 256KB 만 (헤더+sample 충분)
       const parsed=Papa.parse(text, {header:true, skipEmptyLines:true, preview:100});
       if(parsed.errors && parsed.errors.length) console.warn('PapaParse warn', parsed.errors);
       const rows=parsed.data||[];
@@ -384,7 +404,9 @@ async function startPrefetch(file){
         });
       }
     } else if(ext==='json'){
-      const text=await file.slice(0, 1024*256).text();
+      const _jbuf=await file.slice(0, 1024*256).arrayBuffer();
+      let text=new TextDecoder('utf-8',{fatal:false}).decode(_jbuf);
+      if(text.includes('�')){try{text=new TextDecoder('euc-kr',{fatal:false}).decode(_jbuf);}catch(e){}}
       try{
         const obj=JSON.parse(text);
         const rows=Array.isArray(obj)?obj:(Array.isArray(obj.data)?obj.data:[]);
@@ -535,7 +557,7 @@ async function poll(){
   // loading→옵션 전환을 처리한다. _shownPct 는 100 으로 보존하여 시각 단절 방지.
   // HJ 2026-06-09 G1 단축 Z' — schema_validator 가 g2_pending 신호 보내면
   // 진행률 무관하게 G2 화면 진입 (gate_direction 백그라운드 대기).
-  if(cur===0 && jobId && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
+  if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
     cur=1; follow=true; _progressKey='G2';
     if(_shownPct < 99) _shownPct = Math.max(_shownPct, 10); // Z' 진입은 진행률 보존, 100% 강제 안 함
     else _shownPct=100;
@@ -571,7 +593,7 @@ setInterval(function(){
   if(paused) return;
   // G1→G2 자동 전환: polling 이 멈춘 케이스에 대비해 매 500ms 도 조건 재확인.
   // HJ 2026-06-09 G1 단축 Z' — g2_pending=true 면 진행률 무관하게 전환 (schema_validator 직후).
-  if(cur===0 && jobId && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
+  if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
     cur=1; follow=true;
     // _progressKey/_shownPct 를 여기서 세팅하지 않음 — _stageProgress() 가 key 불일치 감지 후
     // 자연스럽게 _shownPct=0 으로 리셋. G2 로딩 중에 100% 고정되는 버그 방지.
@@ -596,104 +618,91 @@ setInterval(function(){
 //   - cur=6 (완료)   : 항상 100%
 let _shownPct=0;
 let _progressKey=null;
-let _stageStart=null;  // 현재 단계 진입 시각(ms). _progressKey 변경 시 리셋
-// 게이지 "바" 전용 시각 흐름값 — 표시 수치(_shownPct, 백엔드 progress_pct 기반 정확값)와는
-// 별개로, 단계 시작부터 끝까지 절대 멈추지 않고 점근적으로 전진한다("자기 진행").
-// 실측치가 이를 앞지르면 즉시 따라잡아 거짓 진행을 보이지 않는다.
+let _stageStart=null;
 let _barFlowPct=0;
-// 게이지 "바" 전용 — 표시 수치(_shownPct)와 별개로 절대 멈추지 않고 점근적으로 전진.
-// 시작(elapsed=0)엔 0, 시간이 지날수록 99%에 점근(asymptote)하며 계속 흐른다.
-// 실측치(_shownPct)가 이를 앞지르면 즉시 따라잡아 — 바가 진실보다 뒤처져 보이지 않게 한다.
-function _advanceBarFlow(ceilPct){
-  const stageEl = _stageStart ? (Date.now()-_stageStart)/1000 : 0;
-  // 폴백 creep — baseline 없을 때 45초 기준 지수 점근
-  let creep = ceilPct * (1 - Math.exp(-stageEl/45));
-  // baseline ETA (백엔드 publish, DB 실측 또는 폴백) 가 있으면 그 시간에 정확히 비례해 흐른다.
-  // 백엔드 progress_pct 신호가 끊겨도 게이지는 baseline 만큼 자기 진행으로 흐름 → 멈춤 없음.
-  const beSec = (gateData.eta_sec!=null && Number.isFinite(Number(gateData.eta_sec)))
-                  ? Number(gateData.eta_sec) : null;
-  if(beSec!=null && beSec > 0){
-    const timeProgress = Math.min(ceilPct, stageEl / beSec * 100);
-    creep = Math.max(creep, timeProgress);
-  }
-  _barFlowPct = Math.max(_barFlowPct, creep, _shownPct);
-  if(_barFlowPct > ceilPct) _barFlowPct = ceilPct;
-  return _barFlowPct;
-}
+let _lastSignalAt=null;      // 마지막 백엔드 신호 수신 시각(ms)
+let _lastSignalPct=null;     // 마지막으로 수신한 단계 내 진행률
+let _estimatedTotal=null;    // 예상 총 소요 시간(초) — eta_sec 전용, pct 역산 금지
+let _completing=false;       // 완료 신호 수신 → 100% 애니메이션 중
+let _estimatedFromEta=false; // eta_sec 로 _estimatedTotal 설정됐으면 true (pct override 방지)
+
 function _stageProgress(){
   const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+(cur+1));
-  // 단계 전환 — 진행률·시작시각·바흐름값 리셋 (각 단계 0% 부터 시작)
   if(_progressKey!==key){
     _progressKey=key;
-    _shownPct=0;
-    _stageStart=Date.now();
-    _barFlowPct=0;
+    _shownPct=0; _stageStart=Date.now(); _barFlowPct=0;
+    _lastSignalAt=null; _lastSignalPct=null;
+    _estimatedTotal=null; _completing=false; _estimatedFromEta=false;
   }
   if(isFailed()){ _barFlowPct=0; return 0; }
   if(isCompleted()||cur===LAST){ _shownPct=100; _barFlowPct=100; return 100; }
-  if(cur===0 && !jobId){ _shownPct=0; _stageStart=null; _barFlowPct=0; return 0; }
+  if(cur===0&&!jobId){ _shownPct=0; _stageStart=null; _barFlowPct=0; return 0; }
+  // jobId 도착(G1 분석 시작) 시 stageStart 기산점 — 항상 클라이언트 Date.now() 사용
+  // (eta_base_ts 는 서버 시간 → 시계 차이로 elapsed 왜곡 발생 → 사용 금지)
+  if(_stageStart==null&&cur===0&&jobId){ _stageStart=Date.now(); }
 
-  // 끝 신호 우선 — proposals 도착이면 즉시 100% 스냅 (기존 동작 유지)
-  if(cur===0){
-    const g1Reached = curGate()==='G2' && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
-    if(g1Reached){ _shownPct=100; _barFlowPct=100; return 100; }
-  } else {
-    const tg='G'+(cur+1);
-    const ag=curGate();
-    const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
-    const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
-    const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
-    if(ps.length && !(lastSubmittedGate===tg && !ag)){ _shownPct=100; _barFlowPct=100; return 100; }
+  // 완료 신호 감지 (즉시 100% 아님 — 아래 애니메이션 블록에서 부드럽게 처리)
+  if(!_completing){
+    if(cur===0){
+      const g1Reached=curGate()==='G2'&&(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+      if(g1Reached) _completing=true;
+    } else {
+      const tg='G'+(cur+1); const ag=curGate();
+      const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+      const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
+      const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
+      if(ps.length&&!(lastSubmittedGate===tg&&!ag)) _completing=true;
+    }
+  }
+  if(_completing){
+    // 팝업 로딩 중(proposals 미도착) → 99% 억제. proposals 도착 시 modal 닫히고 그 때 100%.
+    // 완료 = 2단계로 실제 전환되는 시점. modal 닫힌 후에만 100%/'완료' 표시.
+    const _cap=inModalLoading()?99:100;
+    _shownPct=Math.min(_cap,_shownPct+10);
+    _barFlowPct=_shownPct;
+    return Math.round(_shownPct);
   }
 
-  // 백엔드 progress_pct 가 진실의 소스 — 시간 기반 추정 금지.
-  // 백엔드 신호가 아직 없으면 표시 수치는 현재 값 유지(가짜 진행 표시 금지).
-  const rawP = gateData.progress_pct;
-  const backendP = (rawP!=null && Number.isFinite(Number(rawP)))
-                     ? Math.max(0, Math.min(100, Number(rawP)))
-                     : null;
-  // 단계 내 0~100% 정규화 — 백엔드 글로벌 % 를 현재 단계의 % 범위로 매핑.
-  // 예: G1 범위 [0,18] 에서 backend=14 면 단계 내 (14-0)/18 ≈ 77.8% 로 표시.
-  // 이렇게 해야 "G1 인데 14% 천장" 같은 혼란이 사라지고 각 단계가 0~100% 로 흐른다.
-  let stageTarget;
-  if(backendP==null){
-    stageTarget = _shownPct;
-  } else {
-    const rng = STAGE_RANGE[cur] || [0, 100];
-    const lo = rng[0], hi = rng[1];
-    const span = Math.max(1, hi - lo);
-    // backend 가 이 단계 범위 밖이면 0 또는 99 로 clamp (단계 진입 직전/직후 잡음 흡수)
-    stageTarget = Math.max(0, Math.min(99, Math.round((backendP - lo) * 100 / span)));
+  // HJ 2026-06-10 — 적응형 진행률. 하드코딩 ETA 폐기 (데이터마다 분석 시간 다 다름).
+  // 백엔드 progress_pct 신호가 truth source. 시간 추정은 _stageEta() 가 실측 elapsed/pct 비율로 역산.
+  // 동작:
+  //   (1) 백엔드 progress_pct (전체 0~100) 를 단계 범위 STAGE_RANGE[cur] 안의 0~95% 로 매핑.
+  //   (2) 신호 공백 시 매우 약한 alive creep (0.05%/s, 최대 +3%) — "멈춤 같은 느낌"만 방지.
+  //   (3) 마지막 5% 는 _completing 신호 도착 시에만 채워짐 (proposals 도착 = 단계 종료).
+  const rawP=gateData.progress_pct;
+  if(rawP!=null&&Number.isFinite(Number(rawP))){
+    const bp=Math.max(0,Math.min(100,Number(rawP)));
+    const rng=STAGE_RANGE[cur]||[0,100];
+    // 단계 범위 [a,b] 안의 위치를 0~95% 로 매핑. 마지막 5% 는 _completing 신호용.
+    const mapped=Math.max(0,Math.min(95,(bp-rng[0])*100/Math.max(1,rng[1]-rng[0])));
+    if(mapped!==_lastSignalPct){ _lastSignalAt=Date.now(); _lastSignalPct=mapped; }
+    if(mapped>_shownPct) _shownPct=mapped;
   }
 
-  // 점프 보간 (기존 패턴 유지) — 거꾸로 가지 않음. 표시 수치(_shownPct)는 정확성 우선.
-  if(stageTarget>_shownPct){
-    const diff=stageTarget-_shownPct;
-    const step=Math.max(2, Math.ceil(diff/4));
-    _shownPct=Math.min(stageTarget, _shownPct+step);
+  // 백엔드 신호 공백 구간: alive creep — "분석 멈춘 듯한 인상" 방지 정도로 매우 약하게.
+  // 마지막 신호값 위로 최대 +3% (60초 정도에 도달), 1초당 0.05%. 95% 이하에서만.
+  if(_lastSignalAt!=null && _shownPct < 95){
+    const silentSec=(Date.now()-_lastSignalAt)/1000;
+    const aliveCreep=Math.min(3, silentSec*0.05);
+    const ceil=Math.min(95, (_lastSignalPct||0)+aliveCreep);
+    if(ceil>_shownPct) _shownPct=Math.min(ceil, _shownPct+0.03);
   }
-  // 바 흐름값은 표시 수치와 별개로 — 실측 신호 정체 여부와 무관하게 항상 전진한다.
-  _advanceBarFlow(99);
+
+  _barFlowPct=Math.max(_barFlowPct,_shownPct);
+  _shownPct=_barFlowPct;
   return Math.round(_shownPct);
 }
 
-// 단계 단위 ETA — 게이지 바(_barFlowPct)에서 직접 역산한다.
-// _barFlowPct 는 시간 기반 creep 와 실측 _shownPct 의 max 라 이미 종합 추정치이며,
-// 이를 ETA의 단일 진실의 소스로 삼으면 바와 ETA가 같은 모델에서 파생되어
-// "게이지 100% 도달 = ETA 0" 이 항상 보장된다 (baseline 과 실측이 따로 노는 불일치 제거).
+// ETA — 실측 elapsed/pct 비율로 역산 (적응형). 백엔드 estimate 의존 없음.
+// rate(%/s) = 현재 pct / 경과 시간 → 남은 시간 = (100 - pct) / rate.
+// 너무 이른 시점(elapsed<5s 이거나 pct<5)에서는 rate 가 불안정해 null 반환.
 function _stageEta(p){
-  if(_stageStart==null) return null;
-  const stageEl = (Date.now() - _stageStart)/1000;
-
-  // 게이지 바 진행률을 ETA의 단일 진실의 소스로 사용.
-  // _barFlowPct 는 시간 기반 creep + 실측 _shownPct 의 max 라 이미 종합 추정치이며,
-  // 여기서 역산하면 게이지 바와 ETA가 같은 모델에서 파생되어 100% 도달 = ETA 0 보장.
-  if(_barFlowPct >= 5 && stageEl >= 3){
-    const projectedTotal = stageEl * (100 / _barFlowPct);
-    return Math.max(0, projectedTotal - stageEl);
-  }
-  // 초반(게이지 5% 미만 또는 3초 미만)에는 추정 들쭉날쭉 방지로 null → "추정 중…"
-  return null;
+  if(_stageStart==null||p<5) return null;
+  const elSec=(Date.now()-_stageStart)/1000;
+  if(elSec<5) return null;
+  const rate=p/elSec;
+  if(rate<=0) return null;
+  return Math.max(0,(100-p)/rate);
 }
 
 function failureBlock(){
@@ -737,7 +746,7 @@ function isGateLoading(){
   const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
   return !llmProps.length;
 }
-// 공통 진행바 — 분析 대기 로딩 중에만 표시. 옵션 선택·완료 화면에서는 숨김.
+// 공통 진행바 — 분석 대기 로딩 중에만 표시. 옵션 선택·완료 화면에서는 숨김.
 function progressBar(){
   if(isFailed()) return '';
   if(cur===LAST) return '';  // G7 완료 페이지
@@ -750,11 +759,11 @@ function progressBar(){
   // 단계별 elapsed — _stageStart 부터의 시간. 분석 전체 elapsed(analyzeStart)가 아님.
   // 사용자 요구: 각 단계를 독립 0~100% / 0~ETA 로 표시.
   const stageEl = _stageStart ? ((Date.now()-_stageStart)/1000) : 0;
+  const isRunning = analyzing() || isGateLoading();
   let etaStr='';
   if(p>=100){ etaStr='완료'; }
-  else if(analyzing()){
-    const haveBackend = (gateData.progress_pct!=null && Number.isFinite(Number(gateData.progress_pct)));
-    if(!haveBackend) etaStr='추정 중…';        // 백엔드 신호 없음 — 가짜 ETA 금지
+  else if(isRunning){
+    if(_stageStart==null) etaStr='추정 중…';
     else if(p>=99) etaStr='마무리 중…';
     else {
       const eta = _stageEta(p);
@@ -763,11 +772,11 @@ function progressBar(){
       else etaStr='약 '+fmtTime(eta);
     }
   }
-  const showMeta=analyzing() || p>=100;
+  const showMeta = isRunning || p>=100;
   let meta='';
   if(showMeta){
     meta='<div class="lmeta">진행 <b>'+p+'%</b>'
-      +(analyzing()?(' · 이 단계 시간 <b>'+fmtTime(stageEl)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'):(p>=100?' · <b>'+etaStr+'</b>':''))
+      +(isRunning?(' · 이 단계 시간 <b>'+fmtTime(stageEl)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'):(p>=100?' · <b>'+etaStr+'</b>':''))
       +'</div>';
   } else {
     meta='<div class="lmeta">진행 <b>'+p+'%</b></div>';
@@ -848,23 +857,108 @@ function g2TopicArea(d){
   let cmHtml='';
   const cmKeys=Object.keys(cm).slice(0,12);
   if(cmKeys.length){
-    cmHtml='<div style="margin-top:10px"><div style="font-size:11px;opacity:.7;margin-bottom:6px">컬럼 의미 ('+cmKeys.length+(Object.keys(cm).length>12?'/'+Object.keys(cm).length:'')+')</div>'
-      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:12px">'
+    cmHtml='<div style="margin-top:10px"><div style="font-size:18px;opacity:.7;margin-bottom:6px">컬럼 의미 ('+cmKeys.length+(Object.keys(cm).length>12?'/'+Object.keys(cm).length:'')+')</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:6px;font-size:18px">'
       +cmKeys.map(function(k){return '<div style="background:#fff;padding:6px 8px;border-radius:4px;border:1px solid #e2e8f0"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+esc(String(cm[k]))+'</span></div>';}).join('')
       +'</div></div>';
   }
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:14px">'
-    +'<div style="font-weight:600;color:#0f172a;margin-bottom:8px">📌 주제 선정 — 데이터 도메인</div>'
-    +(domain?'<div style="font-size:14px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(domain)+'</b></div>':'')
-    +(summary?'<div style="margin-top:6px;font-size:13px"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(summary)+'</div>':'')
-    +(tInsight?'<div style="margin-top:6px;font-size:13px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
+    +'<div style="font-size:25px;font-weight:600;color:#0f172a;margin-bottom:8px">📌 주제 선정 — 데이터 도메인</div>'
+    +(domain?'<div style="font-size:18px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(domain)+'</b></div>':'')
+    +(summary?'<div style="margin-top:6px;font-size:18px"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(summary)+'</div>':'')
+    +(tInsight?'<div style="margin-top:6px;font-size:18px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
     +cmHtml
     +'</div>';
 }
 
+// HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 시작(jobId 셋)부터 G2 proposals 도착 전까지 모달 유지.
+// 진행 단계와 무관하게 분석 내용 표시 시점부터(=업로드 직후) 노출. 모달이 본문 내용을 대체.
+function inModalLoading(){
+  if(!jobId) return false;
+  if(isFailed()) return false;
+  if(isCompleted()) return false;
+  if(cur===0){
+    // 도메인 데이터 도착 시부터 팝업. proposals 이미 도착했으면 false — 완료 오표시 방지.
+    if(!g2TopicArea(gateData)) return false;
+    const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
+    if(_p0.length && curGate()==='G2') return false;
+    return true;
+  }
+  if(cur===1){               // G2 대기 — proposals 도착 전까지 표시
+    const tg='G2';
+    const ag=curGate();
+    const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+    const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
+    const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
+    return !llmProps.length;
+  }
+  return false;
+}
+// 모달 전용 주제 영역 — g2TopicArea 의 2배 사이즈 버전. 사용자 요구 (글씨 2x).
+function modalTopicArea(d){
+  const dp=(d&&d.data_profile)||{};
+  const da=dp.domain_analysis||{};
+  const dpart=(d&&d.domain_partial)||{};
+  const domain=da.domain||dpart.domain||'';
+  const summary=da.dataset_summary||dpart.dataset_summary||'';
+  const tInsight=da.target_insight||dpart.target_insight||'';
+  const cm=da.column_meanings||{};
+  if(!domain && !summary && !Object.keys(cm).length) return '';
+  let cmHtml='';
+  const cmKeys=Object.keys(cm).slice(0,12);
+  if(cmKeys.length){
+    cmHtml='<div style="margin-top:22px"><div style="font-size:22px;opacity:.7;margin-bottom:12px">컬럼 의미 ('+cmKeys.length+(Object.keys(cm).length>12?'/'+Object.keys(cm).length:'')+')</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px;font-size:22px">'
+      +cmKeys.map(function(k){return '<div style="background:#fff;padding:14px 18px;border-radius:8px;border:1px solid #e2e8f0"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+esc(String(cm[k]))+'</span></div>';}).join('')
+      +'</div></div>';
+  }
+  return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
+    +'<div style="font-weight:700;color:#0f172a;margin-bottom:18px;font-size:32px">📌 주제 선정 — 데이터 도메인</div>'
+    +(domain?'<div style="font-size:28px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(domain)+'</b></div>':'')
+    +(summary?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(summary)+'</div>':'')
+    +(tInsight?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
+    +cmHtml
+    +'</div>';
+}
+// 모달 내부 컨텐츠 — 큰 타이틀 + modalTopicArea + 단계별 안내. 진행바는 카드 본문에 그대로 두고 모달에서 제외(사용자 요구).
+function modalHtml(){
+  const tg='G2';
+  const ag=curGate();
+  const d=(cur===0||ag===tg)?gateData:(gateCache[tg]||{});
+  const topic=modalTopicArea(d);
+  let body='';
+  if(errMsg) body+='<div class="err">⚠ '+esc(errMsg)+'</div>';
+  body+='<div class="modal-title">데이터를 분석하고 있습니다</div>';
+  body+='<div class="modal-en">Analyzing your data…</div>';
+  if(topic){
+    body+=topic;
+  } else {
+    body+='<div class="modal-placeholder">📊 데이터 도메인을 분석하는 중입니다…</div>';
+  }
+  // 단계별 진행 안내
+  if(cur===0){
+    const ca=gateData.current_agent;
+    const lab=ca?(AGENT_KO[ca]||ca):'';
+    if(lab){
+      body+='<div class="modal-pending"><div class="t">🔄 현재 작업: '+esc(lab)+'</div>'
+        +'<div class="s">데이터 출처·스키마·도메인·품질 점검 등을 진행하고 있습니다.</div></div>';
+    } else {
+      body+='<div class="modal-pending"><div class="t">🔄 데이터 파악 진행 중…</div>'
+        +'<div class="s">곧 도메인 분석 결과가 표시됩니다.</div></div>';
+    }
+  } else {
+    body+='<div class="modal-pending"><div class="t">🔄 분석 방향 카드 생성 중…</div>'
+      +'<div class="s">잠시만 기다려 주세요. 추천 카드가 곧 표시됩니다.</div></div>';
+  }
+  // 사용자 요청 — 진행바는 모달 내부에 그대로 유지 (이슈 4 수정 안 함).
+  body+=progressBar();
+  return body;
+}
 function contentGate(){
   const tg='G'+(cur+1);           // 사용자가 보고 싶은 게이트 (cur 기준). cur=1→G2 ... cur=5→G6
   const ag=curGate();             // 백엔드 현재 게이트
+  // HJ 2026-06-10 — 모달 활성 시 카드 본문은 헤더만. 모달이 분석 내용을 보여주므로 중복 제거.
+  if(inModalLoading()) return gateHeader(tg);
   // 방금 제출한 게이트이고 다음 게이트 미도착(분석 중) → 캐시 proposals 재표시 방지
   if(lastSubmittedGate===tg && !ag){ return gateHeader(tg)+loadingBlock(); }
   // 실시간: ag===tg면 gateData, 뒤로가기 등 이전 단계: 캐시 사용
@@ -876,11 +970,13 @@ function contentGate(){
   // HJ 2026-06-09 G1 단축 Z' — G2 에서 proposals 없을 때 (gate_direction 진행 중)
   // "주제 선정" 영역 먼저 표시 + 분석 방향 영역엔 spinner.
   if(g==='G2' && !props.length && d.g2_pending){
+    // 팝업(inModalLoading)이 활성일 때는 팝업에서만 표시 — 인라인 중복 제거
+    if(inModalLoading()) return gateHeader(g)+loadingBlock();
     const topic=g2TopicArea(d);
     return gateHeader(g)+topic
       +'<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:10px">'
-      +'<div style="font-weight:600;color:#92400e;margin-bottom:6px">🔄 분석 방향 카드 생성 중…</div>'
-      +'<div style="font-size:13px;opacity:.8">위 도메인 정보를 보면서 어떤 분석을 원하시는지 떠올려 보세요. 곧 추천 카드가 표시됩니다.</div>'
+      +'<div style="font-size:18px;font-weight:600;color:#92400e;margin-bottom:6px">🔄 분석 방향 카드 생성 중…</div>'
+      +'<div style="font-size:18px;opacity:.8">위 도메인 정보를 보면서 어떤 분석을 원하시는지 떠올려 보세요. 곧 추천 카드가 표시됩니다.</div>'
       +'</div>'
       +loadingBlock();
   }
@@ -943,6 +1039,12 @@ function content(i){
     //   (b) jobId 있음 + 분석 중 → 데이터 파악 진행 화면(15단계 백엔드 작업).
     //       이 화면을 끝까지 보여주다 G2 proposals 도착 시 poll() 이 cur=1 로 전환.
     if(jobId){
+      // HJ 2026-06-10 — 모달 활성 시 카드 본문은 헤더만 (모달이 partial domain·loadingBlock 모두 표시).
+      if(inModalLoading()){
+        return '<div class="ahdr" style="opacity:.55"><h2>데이터를 파악하는 중입니다</h2>'
+          +'<div class="en">G1 — Data Understanding</div></div>';
+      }
+      // 모달 미활성 (실패 등 폴백) — 기존 인라인 표시 유지
       // HJ 2026-06-09 G1 단축 γ — partial domain 점진 표시.
       // 도메인 LLM 의 streaming 콜백이 첫 필드 도착 시점부터 partial 값을 보냄.
       // 사용자가 71초를 빈 화면으로 보내지 않고 "도메인: 이커머스 ★" 같이 점진 확인.
@@ -954,8 +1056,8 @@ function content(i){
         if(dp.dataset_summary) lines.push('<div style="margin-top:6px"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(dp.dataset_summary)+'</div>');
         if(dp.target_insight) lines.push('<div style="margin-top:6px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(dp.target_insight)+'</div>');
         if(dp.column_meanings_count) lines.push('<div style="margin-top:6px;opacity:.7">컬럼 의미 분석 중 ('+dp.column_meanings_count+'개 도착)</div>');
-        partialHtml='<div style="background:#f1f5f9;border-left:3px solid #10b981;padding:10px 14px;margin:12px 0;border-radius:4px;font-size:13px">'
-          +'<div style="font-weight:600;color:#10b981;font-size:11px;margin-bottom:6px">🟢 실시간 분석 결과</div>'
+        partialHtml='<div style="background:#f1f5f9;border-left:3px solid #10b981;padding:10px 14px;margin:12px 0;border-radius:4px;font-size:18px">'
+          +'<div style="font-weight:600;color:#10b981;font-size:18px;margin-bottom:6px">🟢 실시간 분석 결과</div>'
           +lines.join('')+'</div>';
       }
       return '<div class="ahdr"><h2>데이터를 파악하는 중입니다</h2>'
@@ -971,7 +1073,7 @@ function content(i){
     let prefetchUi='';
     if(has && prefetchPreview){
       let pvHtml='';
-      pvHtml+='<div style="margin-top:6px;font-size:12px;opacity:.85">컬럼 <b>'+prefetchPreview.cols+'개</b>';
+      pvHtml+='<div style="margin-top:8px;font-size:23px;opacity:.85">컬럼 <b>'+prefetchPreview.cols+'개</b>';
       if(prefetchPreview.columns && prefetchPreview.columns.length){
         pvHtml+=' &nbsp;·&nbsp; '+prefetchPreview.columns.slice(0,6).map(esc).join(', ');
         if(prefetchPreview.cols>6) pvHtml+=' …';
@@ -979,20 +1081,20 @@ function content(i){
       pvHtml+='</div>';
       let resultHtml='';
       if(prefetchResult && prefetchResult.category){
-        resultHtml+='<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;font-size:12px">';
-        resultHtml+='<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px"><b>추정 카테고리</b> '+esc(prefetchResult.category)+'</span>';
+        resultHtml+='<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;font-size:23px">';
+        resultHtml+='<span style="background:#dcfce7;color:#15803d;padding:5px 12px;border-radius:4px"><b>추정 카테고리</b> '+esc(prefetchResult.category)+'</span>';
         if(prefetchResult.target_column){
-          resultHtml+='<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:4px"><b>추정 타겟</b> '+esc(prefetchResult.target_column)+'</span>';
+          resultHtml+='<span style="background:#dbeafe;color:#1d4ed8;padding:5px 12px;border-radius:4px"><b>추정 타겟</b> '+esc(prefetchResult.target_column)+'</span>';
         }
         resultHtml+='</div>';
         if(prefetchResult.auto_intent && !intentText.trim()){
-          resultHtml+='<div style="margin-top:6px;font-size:12px;color:#6b7280">💡 자동 추천 의도: <i>'+esc(prefetchResult.auto_intent)+'</i> &nbsp;<span style="opacity:.7">(의도란에 자유롭게 수정해 입력하세요)</span></div>';
+          resultHtml+='<div style="margin-top:8px;font-size:18px;color:#6b7280">💡 자동 추천 의도: <i>'+esc(prefetchResult.auto_intent)+'</i> &nbsp;<span style="opacity:.7">(의도란에 자유롭게 수정해 입력하세요)</span></div>';
         }
       } else if(prefetchSig){
-        resultHtml='<div style="margin-top:6px;font-size:12px;color:#10b981">🟢 사전 분석 중… (의도를 입력하시는 동안 진행됩니다)</div>';
+        resultHtml='<div style="margin-top:8px;font-size:18px;color:#10b981">🟢 사전 분석 중… (의도를 입력하시는 동안 진행됩니다)</div>';
       }
-      prefetchUi='<div style="background:#f0fdf4;border-left:3px solid #10b981;padding:10px 14px;margin:10px 0;border-radius:4px">'
-        +'<div style="font-weight:600;color:#065f46;font-size:12px">📊 파일 사전 분석</div>'
+      prefetchUi='<div style="background:#f0fdf4;border-left:4px solid #10b981;padding:14px 18px;margin:10px 0;border-radius:6px">'
+        +'<div style="font-weight:700;color:#065f46;font-size:23px">📊 파일 사전 분석</div>'
         +pvHtml+resultHtml+'</div>';
     }
     return '<div class="ahdr"><h2>데이터 업로드</h2></div><p class="desc">파일을 올리면 ADA가 데이터를 분석해 방향을 제안합니다.</p>'
@@ -1029,7 +1131,8 @@ function render(){
   sc.innerHTML=html;
   sc.querySelectorAll('.step.reachable').forEach(function(el){ el.onclick=function(){ cur=+el.dataset.i; if(cur<frontier) follow=false; paused=false; render(); }; });
 
-  // 1~7 모든 단계 공통: 본문 + 진행바 (실패 시 진행바 생략 → progressBar() 내부에서 빈 문자열 반환).
+  // 1~7 모든 단계 공통: 본문 + 진행바 (실패 시 progressBar() 내부에서 빈 문자열 반환).
+  // 사용자 요구로 진행바 변경은 일체 손대지 않음 — 모달 안/밖 모두 기존 동작 유지.
   document.getElementById('content').innerHTML=
     (errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur)+progressBar();
   document.getElementById('curName').textContent=steps[cur].label;
@@ -1095,6 +1198,17 @@ function render(){
   else if(cur===0) prim.disabled=(!selectedFile || !!jobId);
   else if(cur===LAST) prim.disabled=true;
   else prim.disabled=!atGate||!g5ok;
+  // HJ 2026-06-10 G1→G2 전환 팝업 토글 — inModalLoading() 동안 modal 표시, 끝나면 자동 숨김.
+  // backdrop-filter:blur 로 배경 카드·스텝 자동 흐림. 모달 내부 progressBar 만 선명.
+  const _modalOv=document.getElementById('modalOverlay');
+  if(_modalOv){
+    if(inModalLoading()){
+      document.getElementById('modalCard').innerHTML=modalHtml();
+      _modalOv.style.display='flex';
+    } else {
+      _modalOv.style.display='none';
+    }
+  }
 }
 document.getElementById('prevBtn').onclick=function(){
   if(cur===0){
@@ -1106,22 +1220,20 @@ document.getElementById('prevBtn').onclick=function(){
   }
   if(cur>0){
     const goTo=cur-1;
-    // G2~G5 구간에서 되돌아갈 때 이후 작업 무효화 경고
+    if(goTo===0) _suppressG1Advance=true;  // G1 화면에서 자동 G2 전환 억제
     if(goTo>=1 && goTo<=4 && maxReached>goTo){
-      // 실패 상태에서는 confirm 없이 즉시 — 이미 분析이 실패했으므로 경고 불필요
-      if(!isFailed() && !window.confirm(steps[goTo].label+' 단계로 돌아가면 이후 분석 결과가 초기화됩니다.\\n다른 옵션으로 재분석하려면 확인을 누르세요.')) return;
       Object.keys(gateCache).forEach(function(k){ if(parseInt(k.slice(1),10)>goTo+1) delete gateCache[k]; });
       maxReached=goTo; frontier=goTo;
     }
     cur=goTo; follow=false; render();
   }
 };
-document.getElementById('nextBtn').onclick=function(){ if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
+document.getElementById('nextBtn').onclick=function(){ _suppressG1Advance=false; if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
 document.getElementById('stopBtn').onclick=function(){ paused=true; if(pollTimer) clearTimeout(pollTimer); polling=false; render(); };
 document.getElementById('primaryBtn').onclick=function(){
   if(busy) return;
   if(paused){ paused=false; render(); if(analyzing()) startPolling(); return; }
-  if(cur===0){ doUpload(); return; }
+  if(cur===0){ _suppressG1Advance=false; doUpload(); return; }
   if(cur>=1 && cur<=5){ doResume(); return; }
 };
 // ── F5 복원: localStorage 에 저장된 jobId 있으면 현재 단계 유지, API 폴링 재개 ──
