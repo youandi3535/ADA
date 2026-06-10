@@ -895,30 +895,190 @@ def _build_pain_points(ctx: ReportContext) -> SlideSpec:
     )
 
 
-def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 7 — 기존 솔루션 한계 (chevron_5)."""
-    cands = ctx.model_selection.candidates or []
-    body = []
-    for i, c in enumerate(cands[:5]):
-        body.append(f"STRATEGY 0{i + 1} · {c.name} · {c.why_tried[:60] if c.why_tried else '-'}")
-    if not body:
-        body = [
-            "STRATEGY 01 · 룰 기반 · 도메인 지식 필요·유지보수 어려움",
-            "STRATEGY 02 · 단순 통계 · 비선형 패턴 포착 불가",
-            "STRATEGY 03 · 로지스틱 회귀 · 베이스라인이나 성능 한계",
-            "STRATEGY 04 · 의사결정나무 · 단일 트리 안정성 부족",
-            "STRATEGY 05 · 수작업 분석 · 확장성 0, 재현 불가",
+def _build_method_steps(ctx: ReportContext) -> list[dict[str, str]]:
+    """분석 방법 흐름의 5 단계 — 좌측 미니 흐름도 입력.
+
+    각 step: {label, kind} — kind 는 "preprocessing" / "feature" / "model" / "training" / "evaluation"
+    """
+    steps: list[dict[str, str]] = []
+    pp_steps = list(ctx.preprocessing.applied_steps or [])
+    if pp_steps:
+        steps.append({"label": f"전처리 ({len(pp_steps)}단계)", "kind": "preprocessing"})
+    feats = list(ctx.features.created or [])
+    if feats:
+        steps.append({"label": f"신규 피처 {len(feats)}개", "kind": "feature"})
+    chosen_name = (ctx.model_selection.chosen or {}).get("name") or ""
+    if chosen_name:
+        steps.append({"label": f"모델 {chosen_name}", "kind": "model"})
+    if ctx.training.runs:
+        steps.append({"label": "학습 · 튜닝", "kind": "training"})
+    if ctx.evaluation.primary_metric:
+        steps.append({"label": "평가 · 검증", "kind": "evaluation"})
+    # 폴백 — ctx 가 빈 경우 (이른 파이프라인 단계) 기본 5 단계
+    if not steps:
+        steps = [
+            {"label": "1 · 전처리", "kind": "preprocessing"},
+            {"label": "2 · 피처 엔지니어링", "kind": "feature"},
+            {"label": "3 · 모델 선정", "kind": "model"},
+            {"label": "4 · 학습", "kind": "training"},
+            {"label": "5 · 평가", "kind": "evaluation"},
         ]
+    return steps[:5]
+
+
+def _build_method_whys(ctx: ReportContext) -> list[dict[str, str]]:
+    """우측 WHY 카드 4개 — (header, what, why, result).
+
+    header: "단계 N · {라벨}"
+    what:   *선택 결과* (큰 글씨)
+    why:    *왜 그렇게 했나* (rationale / justification)
+    result: *정량 결과* (해당 단계의 결과)
+    """
+    cards: list[dict[str, str]] = []
+
+    # ① 전처리 — 가장 큰 영향 step 1개
+    for ps in (ctx.preprocessing.applied_steps or [])[:1]:
+        op = getattr(ps, "op", "") or "전처리"
+        scope = ", ".join(getattr(ps, "scope", []) or [])
+        rationale = getattr(ps, "rationale", "") or ""
+        before = getattr(ps, "before_stats", {}) or {}
+        after = getattr(ps, "after_stats", {}) or {}
+        what = f"{op}" + (f" · {scope}" if scope else "")
+        result = ""
+        # 결측률 / 표준편차 변화 추출 (best-effort)
+        for key in ("missing_rate", "missing", "std", "mean"):
+            if key in before and key in after:
+                result = f"{key}: {before[key]} → {after[key]}"
+                break
+        if not result:
+            result = "before / after 통계 적립 완료"
+        cards.append({
+            "header": f"단계 1 · {op}",
+            "what": what,
+            "why": rationale or "데이터 분포 보강 — 모델 학습 안정성 향상",
+            "result": result,
+        })
+
+    # ② 피처 엔지니어링
+    feats = list(ctx.features.created or [])
+    if feats:
+        top = feats[:3]
+        names = " · ".join(getattr(f, "name", "") or "" for f in top)
+        rationale = next(
+            (getattr(f, "rationale", "") for f in top if getattr(f, "rationale", "")),
+            "",
+        )
+        cards.append({
+            "header": f"단계 2 · 신규 피처 {len(feats)}개",
+            "what": names or f"피처 {len(feats)}개 추가",
+            "why": rationale or "비선형·상호작용 신호 포착 — 단일 변수로 못 잡는 패턴",
+            "result": f"최종 피처 수 {ctx.features.final_feature_count or len(feats)}",
+        })
+
+    # ③ 모델 선정
+    chosen = ctx.model_selection.chosen or {}
+    chosen_name = chosen.get("name") or ""
+    if chosen_name:
+        justification = chosen.get("justification") or ""
+        candidates = ctx.model_selection.candidates or []
+        result_lines: list[str] = []
+        for c in candidates[:2]:
+            c_name = getattr(c, "name", "")
+            c_score = getattr(c, "score", None)
+            if c_name and c_score is not None:
+                result_lines.append(f"{c_name} {c_score:.3f}")
+        result = " / ".join(result_lines) if result_lines else (
+            f"후보 {len(candidates)}개 비교 후 선택"
+        )
+        cards.append({
+            "header": "단계 3 · 모델 선정",
+            "what": chosen_name,
+            "why": justification or "후보 모델 비교 — 본 데이터 특성에 가장 적합",
+            "result": result,
+        })
+
+    # ④ 검증 방식
+    runs = ctx.training.runs or []
+    baseline = ctx.model_selection.baselines.naive or {}
+    pm = ctx.evaluation.primary_metric or {}
+    if runs or pm or baseline:
+        split = "80/20 hold-out + Baseline 직접 비교"
+        if runs:
+            hp = getattr(runs[0], "hyperparameters", {}) or {}
+            split = str(hp.get("split", split))
+        result = ""
+        if baseline and pm:
+            b_score = baseline.get("score")
+            p_val = pm.get("value")
+            if b_score is not None and p_val is not None:
+                try:
+                    delta = float(p_val) - float(b_score)
+                    result = (
+                        f"룰 {format_metric(float(b_score), pm.get('name', ''))} → "
+                        f"모델 {format_metric(float(p_val), pm.get('name', ''))} "
+                        f"({format_delta(delta * 100 if abs(delta) <= 1.5 else delta, unit='%p')})"
+                    )
+                except (TypeError, ValueError):
+                    pass
+        cards.append({
+            "header": "단계 4 · 검증 방식",
+            "what": split,
+            "why": "모델의 *추가 가치* 정량화 — Baseline 직접 비교로 향상폭 측정",
+            "result": result or "Baseline 비교 완료",
+        })
+
+    # 폴백 4개
+    while len(cards) < 4:
+        i = len(cards) + 1
+        cards.append({
+            "header": f"단계 {i} · 추가 분석",
+            "what": "ctx 적립 후 채워짐",
+            "why": "분석 결과 기록 진행 중",
+            "result": "-",
+        })
+    return cards[:4]
+
+
+def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 7 — 분석 방법 흐름 + WHY 패널 (Option C).
+
+    이전 '기존 솔루션 한계' (영업 톤) 을 분석 방법 흐름도로 재구성:
+    - 좌측: 5 단계 미니 흐름도 (preprocessing → feature → model → training → eval)
+    - 우측: 4 WHY 카드 (header / WHAT / WHY / 결과) — Option C 구조
+
+    카드의 *WHY* 는 rationale / justification 필드에서 추출 — 단순 *방법* 이 아닌
+    *왜 그 방법인가* 를 명시하여 데이터·도메인 의사결정 트레이스 보존.
+    """
+    steps = _build_method_steps(ctx)
+    whys = _build_method_whys(ctx)
+
+    # body_outline — legacy carrier 호환 (5 단계 라벨)
+    body = [f"단계 {i+1} · {s['label']}" for i, s in enumerate(steps)]
+
     return SlideSpec(
         id="p3_alt_limits",
         section_id="limits",
-        layout="comparison_table",
-        role="caveat",
-        so_what="기존 솔루션 5종 대비 본 접근의 차별성 — 정확도·자동화·재현성 3축에서 우수",
-        title_ko="기존 솔루션 한계",
+        layout="method_flow_with_why",
+        role="evidence",
+        so_what=(
+            f"5단계 분석 방법 — 각 단계의 *선택 이유* 와 *정량 결과* 를 함께 추적, "
+            "재현 가능성 + 의사결정 트레이스 보존"
+        ),
+        title_ko="분석 방법",
         body_outline=body[:5],
         parent_message_id="problem_root",
-        speaker_notes_hint="대체재 분석 — 왜 ML 이 답인가 (반론 대비 미리 답변).",
+        visual_spec=VisualSpec(
+            type="v28_method_flow",
+            title="분석 방법 흐름 · WHY",
+            spec={
+                "steps": steps,
+                "whys": whys,
+            },
+        ),
+        speaker_notes_hint=(
+            "좌측 흐름도로 *전체 단계* 인지, 우측 WHY 카드로 *각 선택의 근거* 설명. "
+            "WHY 는 ctx 의 rationale·justification 필드에서 자동 추출 — 빈 필드면 폴백 문구."
+        ),
     )
 
 
