@@ -1670,38 +1670,110 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_risk_mitigation(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 18 — Risk & Mitigation + Drift (보강 C).
+    """슬라이드 18 — SWOT + Drift (ctx 기반 분석 결과 자체에서 도출).
 
-    SWOT 4분면. W·T 에 데이터 드리프트·콘셉트 드리프트 항목 명시.
+    [재구성] 영업 톤 'ADA 자동화 강점' 제거. 각 분면을 ctx 에서 동적으로:
+    - S (강점) : 모델의 잘 작동하는 영역 — top feature / 균형 metric / 강건 세그먼트
+    - W (약점) : limitations.data_gaps / per_segment 의 약한 세그먼트
+    - O (기회) : revalidation_window 내 보강 가능성 / 추가 신호
+    - T (위협) : distribution_shift_risk / generalization_risk / out_of_scope
     """
+    pm = ctx.evaluation.primary_metric or {}
+    pm_value_str = _format_pm_value(pm)
+    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+
+    # === S (강점) ===
+    strengths: list[str] = []
+    if ctx.interpretation.global_importance:
+        top_feat = ctx.interpretation.global_importance[0].feature
+        strengths.append(f"강한 신호 · {top_feat} 등 핵심 변수 식별")
+    if pm.get("value") is not None:
+        strengths.append(f"임계 통과 · {chosen} {pm_value_str}")
+    # 균형 잡힌 세그먼트 (격차 작음)
+    segs = ctx.evaluation.per_segment or []
+    if len(segs) >= 2:
+        vals = [s.get("value") for s in segs if isinstance(s, dict) and isinstance(s.get("value"), (int, float))]
+        if vals and max(vals) - min(vals) <= 0.1:
+            strengths.append("세그먼트 균형 · 격차 0.1 이하")
+    if not strengths:
+        strengths.append("강점 적립 후 채워짐")
+
+    # === W (약점) ===
+    weaknesses: list[str] = []
+    for g in (ctx.limitations.data_gaps or [])[:2]:
+        desc = getattr(g, "description", "") or "데이터 결함"
+        impact = getattr(g, "impact", "") or ""
+        weaknesses.append(f"{desc}" + (f" ({impact})" if impact else ""))
+    # 약한 세그먼트
+    if segs:
+        weak = min(
+            (s for s in segs if isinstance(s, dict) and isinstance(s.get("value"), (int, float))),
+            key=lambda s: s["value"], default=None,
+        )
+        if weak and weak.get("value") is not None:
+            name = weak.get("segment") or weak.get("name") or "?"
+            weaknesses.append(f"세그먼트 {name} 성능 낮음 · {weak.get('metric', '')} {format_metric(float(weak['value']), str(weak.get('metric', '')))}")
+    if not weaknesses:
+        weaknesses.append("약점 식별 안 됨")
+
+    # === O (기회) ===
+    opportunities: list[str] = []
+    rev = ctx.limitations.revalidation_window
+    if rev:
+        opportunities.append(f"{rev} 후 재검증 시 신규 데이터 반영")
+    for g in (ctx.limitations.generalization_risk or [])[:2]:
+        mit = getattr(g, "mitigation", None)
+        if mit:
+            opportunities.append(f"보강 · {mit}")
+    if not opportunities:
+        opportunities.append("추가 분석 시 발견 예정")
+
+    # === T (위협) ===
+    threats: list[str] = []
+    shift = ctx.limitations.distribution_shift_risk or {}
+    if shift.get("detected"):
+        ev = shift.get("evidence") or "분포 변화 감지"
+        threats.append(f"데이터 드리프트 · {ev}")
+    for c in (ctx.limitations.model_caveats or [])[:2]:
+        threats.append(f"모델 한계 · {c}")
+    for o in (ctx.limitations.out_of_scope or [])[:1]:
+        threats.append(f"범위 밖 · {o}")
+    if not threats:
+        threats.append("위협 추적 중")
+
+    # body — 라벨 + 첫 항목
     body = [
-        "S · 강점 · ADA 자동화 + SHAP 해석 + 4 카테고리 통합",
-        "W · 약점 · 신규 세그먼트 데이터 부족 — AUC 0.71 (슬라이드 14)",
-        "W · 약점 · 데이터 드리프트 가능성 — 분포 변화 시 성능 저하",
-        "O · 기회 · 멀티 카테고리 확장 + 도메인 룰 결합",
-        "T · 위협 · 콘셉트 드리프트 (타겟 정의 변경)",
-        "T · 위협 · 규제 변경 (GDPR / PII 정책)",
-        "→ Mitigation · 월간 drift 감지 + 분기별 재학습 + 임계 KPI 알람",
+        f"S · {strengths[0]}",
+        f"W · {weaknesses[0]}",
+        f"O · {opportunities[0]}",
+        f"T · {threats[0]}",
+        "Mitigation · 정기 재평가 + drift 모니터링",
     ]
+
     return SlideSpec(
         id="risk_mitigation",
         section_id="plan",
-        layout="2x2_matrix",
+        layout="swot_2x2",
         role="caveat",
-        so_what="주요 리스크 4종 (강점·약점·기회·위협) + 데이터·콘셉트 드리프트 명시적 대응책",
-        title_ko="Risk & Mitigation + Drift",
-        body_outline=body,
+        so_what="강점·약점·기회·위협 4분면 — ctx 기반 분석 결과 자체에서 도출",
+        title_ko="SWOT · Drift",
+        body_outline=body[:5],
         parent_message_id="plan_root",
         visual_spec=VisualSpec(
-            type="custom",
-            title="SWOT + Drift",
-            caption="운영 ML 의 90% 이슈 = drift. SWOT 의 W/T 에 명시 강제.",
-            spec={"layout": "swot_with_drift"},
+            type="v28_swot_reach",
+            title="SWOT · Drift",
+            spec={
+                "strengths": strengths[:3],
+                "weaknesses": weaknesses[:3],
+                "opportunities": opportunities[:3],
+                "threats": threats[:3],
+                "revalidation_window": rev or "",
+            },
             severity="important",
         ),
         speaker_notes_hint=(
-            "운영 ML 의 90% 이슈가 drift — SWOT 의 W/T 에 명시. "
-            "데이터 드리프트 (분포 변화) + 콘셉트 드리프트 (타겟 정의 변경) 둘 다 다룸."
+            "SWOT 4 분면을 *분석 결과 자체* 에서 도출. interpretation / per_segment / limitations "
+            "의 모든 정보가 SWOT 로 정리됨. ADA 영업 표현 (자동화 강점·재현성 등) 제거."
         ),
     )
 
@@ -1768,20 +1840,51 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_closing_qna(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 20 — Thank You + Q&A."""
+    """슬라이드 20 — 분석 결과 요약 + Q&A 안내.
+
+    [재구성] 'ADA v2' 영업 표현 제거. 분석 보고서 본연의 마무리:
+    - 본 보고서가 다룬 분석 주제 (ctx.meta.user_intent)
+    - 핵심 결과 (verdict 별 어조)
+    - Q&A 안내
+    """
+    pm = ctx.evaluation.primary_metric or {}
+    pm_value = _format_pm_value(pm)
+    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+    tone = _get_verdict_tone(ctx)
+    verdict = (ctx.evaluation.verdict or "").lower() or "adopt"
+
+    if verdict == "adopt":
+        result_line = f"결론 · {chosen} {pm.get('name', '')} {pm_value} — 도입 가능"
+    elif verdict == "iterate":
+        result_line = f"결론 · {chosen} {pm.get('name', '')} {pm_value} — 보강 후 재검토"
+    else:  # reject
+        result_line = f"결론 · {chosen} {pm.get('name', '')} {pm_value} — 현 모델 도입 불가"
+
+    body = [
+        f"본 보고서 · {ctx.meta.user_intent or '데이터 분석'}",
+        result_line,
+        "Q&A — 데이터 / 모델 / 운영 정책",
+    ]
     return SlideSpec(
         id="closing",
         section_id="closing",
         layout="closing",
         role="meta",
-        so_what="감사합니다 — 질문 받겠습니다",
-        title_ko="Thank You",
-        body_outline=[
-            f"본 보고서 · {ctx.meta.user_intent or '분석'}",
-            f"생성 · {ctx.meta.generated_at or ''} · ADA v2",
-            "Q&A — 핵심 결론·운영 적용·확장 가능성",
-        ],
-        speaker_notes_hint="새 정보 금지 — Executive Summary 재인용. Q&A 유도.",
+        so_what=f"본 분석 마무리 — 판정: {verdict}",
+        title_ko="감사합니다",
+        body_outline=body,
+        visual_spec=VisualSpec(
+            type="closing_simple",
+            title="감사합니다",
+            spec={
+                "verdict": verdict,
+                "tone_accent": tone.accent,
+            },
+        ),
+        speaker_notes_hint=(
+            "새 정보 금지 — Executive Summary 재인용. Q&A 유도. "
+            "verdict 에 따라 결론 어조 분기."
+        ),
     )
 
 
@@ -1791,10 +1894,23 @@ def _build_closing_qna(ctx: ReportContext) -> SlideSpec:
 
 
 def _build_message_tree(ctx: ReportContext) -> list[MessageNode]:
-    """Pyramid Principle — root(답) → 6 섹션 근거 → 슬라이드별 메시지 노드."""
+    """Pyramid Principle — root(답) → 6 섹션 근거 → 슬라이드별 메시지 노드.
+
+    root_msg 의 결론부는 ctx.evaluation.verdict 에 따라 분기 (adopt/iterate/reject).
+    """
     chosen = (ctx.model_selection.chosen or {}).get("name", "ML 모델")
     pm = ctx.evaluation.primary_metric or {}
-    root_msg = f"{chosen} 모델로 {pm.get('name', 'primary')} {pm.get('value', '-')} 달성 — 운영 도입 권장"
+    verdict = (ctx.evaluation.verdict or "").lower()
+    if verdict == "iterate":
+        conclusion = "보강 후 재학습 권장"
+    elif verdict == "reject":
+        conclusion = "현 모델 도입 불가"
+    else:
+        conclusion = "운영 도입 권장"
+    root_msg = (
+        f"{chosen} 모델로 {pm.get('name', 'primary')} {pm.get('value', '-')} "
+        f"달성 — {conclusion}"
+    )
     return [
         MessageNode(
             id="root",
