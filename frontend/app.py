@@ -69,7 +69,7 @@ _FLOW_HTML = """
   body{min-height:100%;background:linear-gradient(160deg,#2b4a6b 0%,#243f5c 58%,#1c3450 100%);
     font-family:'Pretendard','Inter',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--ink);}
   .shell{width:100%;max-width:1440px;margin:0 auto;padding:34px 40px 48px;min-height:100%;
-    display:flex;flex-direction:column;justify-content:center;}
+    display:flex;flex-direction:column;justify-content:center;zoom:1.25;}
   .brand{display:flex;align-items:center;gap:18px;color:#bcd2ec;margin-bottom:26px;}
   .brand .globe{font-size:38px;}
   .brand .nm{font-size:21px;letter-spacing:.26em;font-weight:700;}
@@ -171,6 +171,38 @@ _FLOW_HTML = """
     background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
     padding:7px 18px;margin-left:14px;white-space:nowrap;}
   .btn-home:hover{background:rgba(255,255,255,.20);}
+  /* HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 진입부터 G2 proposals 도착 전까지 표시. 모달 2배+. */
+  .modal-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(20,30,50,.42);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
+  .modal-card{position:relative;background:#fff;border-radius:32px;padding:56px 76px 48px;width:min(1300px,95%);max-height:88vh;overflow-y:auto;box-shadow:0 40px 100px rgba(0,0,0,.55);animation:modalIn .42s cubic-bezier(.2,.85,.25,1.2);}
+  @keyframes modalIn{0%{transform:scale(.82) translateY(20px);opacity:0;}100%{transform:scale(1) translateY(0);opacity:1;}}
+  .modal-title{font-size:60px;font-weight:800;color:var(--ink);text-align:center;margin:0 0 10px;line-height:1.1;}
+  .modal-en{font-size:32px;color:#8aa0bd;font-style:italic;text-align:center;margin:0 0 32px;}
+  .modal-card .progbox{margin-top:30px;}
+  .modal-card .lbar{box-shadow:0 0 0 2px rgba(31,62,92,.10);}
+  .modal-pending{background:#fffbeb;border:1px solid #fde68a;border-radius:16px;padding:22px 28px;margin-top:18px;}
+  .modal-pending .t{font-weight:700;color:#92400e;margin-bottom:8px;font-size:28px;}
+  .modal-pending .s{font-size:22px;color:#7c5012;line-height:1.4;}
+  .modal-placeholder{text-align:center;padding:36px 0;color:#52647d;font-size:26px;}
+  /* HJ 2026-06-10 — 모래시계 SVG (2배 크기). 모래가 위→아래로 떨어진 후 뒤집히고 반복. 6초 사이클. */
+  .hg-svg{display:inline-block;vertical-align:middle;margin-right:8px;width:36px;height:54px;animation:hgFlip 6s ease-in-out infinite;transform-origin:50% 50%;}
+  .hg-sand-top{animation:hgTopAnim 6s ease-in-out infinite;}
+  .hg-sand-bot{transform:translateY(20px);animation:hgBotAnim 6s ease-in-out infinite;}
+  .hg-stream{animation:hgStream 6s ease-in-out infinite;}
+  @keyframes hgFlip{0%,44%{transform:rotate(0deg);}50%,94%{transform:rotate(180deg);}100%{transform:rotate(360deg);}}
+  @keyframes hgTopAnim{0%{transform:translateY(0);}44%{transform:translateY(20px);}50%{transform:translateY(20px);}94%{transform:translateY(0);}100%{transform:translateY(0);}}
+  @keyframes hgBotAnim{0%{transform:translateY(20px);}44%{transform:translateY(0);}50%{transform:translateY(0);}94%{transform:translateY(20px);}100%{transform:translateY(20px);}}
+  @keyframes hgStream{0%,3%{opacity:0;}6%,42%{opacity:1;}46%,56%{opacity:0;}60%,92%{opacity:1;}96%,100%{opacity:0;}}
+  /* HJ 2026-06-10 — 마일스톤 세그먼트 바. 각 segment = 단계의 한 agent. 완료/현재/대기 색상 구분. */
+  .ms-bar{display:flex;width:100%;height:48px;background:#eef2f8;border-radius:12px;overflow:hidden;border:1px solid #d8e3f2;max-width:760px;margin:0 auto;}
+  .ms-seg{flex:1;display:flex;align-items:center;justify-content:center;padding:0 10px;font-size:14px;font-weight:600;color:#7e98ba;border-right:1px solid rgba(255,255,255,.6);transition:background .35s,color .35s;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;min-width:0;line-height:1.2;}
+  .ms-seg:last-child{border-right:none;}
+  .ms-seg-icon{margin-right:6px;font-weight:800;}
+  .ms-seg.done{background:#1f7a52;color:#fff;}
+  .ms-seg.active{background:linear-gradient(90deg,#1f3e5c,#2c5783);color:#fff;animation:msPulse 1.6s ease-in-out infinite;}
+  .ms-seg.pending{background:#f7faff;color:#8aa0bd;}
+  @keyframes msPulse{0%,100%{box-shadow:inset 0 0 0 0 rgba(255,255,255,0);}50%{box-shadow:inset 0 0 0 100px rgba(255,255,255,.10);}}
+  .modal-card .ms-bar{height:64px;border-radius:14px;max-width:none;}
+  .modal-card .ms-seg{font-size:18px;padding:0 16px;}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
   <!-- 랜딩 오버레이 — G1 이전 단계 클릭 시 표시. 원본 Python 랜딩과 동일한 스타일 -->
@@ -207,6 +239,10 @@ _FLOW_HTML = """
       </div>
     </div>
   </div>
+  <!-- HJ 2026-06-10 G1→G2 전환 팝업 모달 — render() 가 inModalLoading() 기반으로 표시·숨김 제어. 배경 자동 blur. -->
+  <div id="modalOverlay" class="modal-overlay" style="display:none">
+    <div class="modal-card" id="modalCard"></div>
+  </div>
 <!-- HJ 2026-06-09 G1 단축 Phase 4 — client-side 파일 파싱 (PapaParse: CSV, SheetJS: XLSX) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -229,6 +265,7 @@ const STAGE_RANGE=[
 const GATE_TITLE={G2:['어떤 방식으로 분석할까요?','Choose your analysis direction'],G3:['어떤 방법론으로 진행할까요?','Choose your methodology'],G4:['어떤 모델 전략을 쓸까요?','Choose your model strategy'],G5:['어떤 모델을 채택할까요?','Pick the best model'],G6:['어떤 산출물을 만들까요?','Choose your outputs']};
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
+let _suppressG1Advance=false; // 사용자가 뒤로가기로 G1 으로 이동했을 때 자동 G1→G2 전환 억제
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
 // HJ 2026-06-09 G1 단축 Phase 4 — θ-B prefetch state.
 // 파일 선택 시점에 client-side 파싱 → 백엔드 /upload/prefetch → 카테고리 LLM 미리 시작.
@@ -301,6 +338,104 @@ function resetAll(){
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
   G2:'분석 방향 제안 완료',G3:'방법론 제안 완료',G4:'모델 전략 제안 완료',G5:'최적 모델 선정 완료',G6:'산출물 선택 완료',
   error_recovery:'오류 복구 중',self_learning_dispatch:'학습 결과 저장 중'};
+// HJ 2026-06-10 — 마일스톤 진행률용 단계별 agent 흐름. orchestrator/runner.py STAGE_AGENTS 와 동기.
+// 사용자 멘탈 모델: 각 단계 N 화면에서 진행 누르면 그 자리에서 단계 N 분석 (= G(N) backend stage) 진행.
+//   화면 단계 1 (cur=0): G1 — 데이터 파악 (supervisor → ... → gate_direction)        — 5 agents
+//   화면 단계 2 (cur=1): G2 — EDA·방법론 (eda_agent → gate_methodology)              — 2 agents
+//   화면 단계 3 (cur=2): G3 — 전처리·피처 (preprocessing → gate_model_strategy)      — 4 agents
+//   화면 단계 4 (cur=3): G4 — 모델 학습 (model_selection → gate_best_model)          — 6 agents
+//   화면 단계 5 (cur=4): G5 — 평가·인사이트 (fine_tune → gate_outputs)               — 5 agents
+//   화면 단계 6 (cur=5): G6 — 리포트 생성 (report_composer → self_learning_dispatch) — 2 agents
+//   화면 단계 7 (cur=6): 완료 — 분석 없음 (결과 표시만)
+const STAGE_AGENT_FLOW={
+  G1:['supervisor','intent_elicitor','data_profiler','schema_validator','gate_direction'],
+  G2:['eda_agent','gate_methodology'],
+  G3:['preprocessing_strategist','feature_engineer','preprocessing_choice','gate_model_strategy'],
+  G4:['model_selection','hyperparameter_tuner','training_executor','training_monitor','metrics_aggregator','gate_best_model'],
+  G5:['fine_tune_executor','eval_agent','explainability','insight','gate_outputs'],
+  G6:['report_composer','self_learning_dispatch']
+};
+function _curStageKey(){
+  if(cur<0||cur>5) return null;
+  return 'G'+(cur+1);  // cur=0→G1, cur=1→G2, ..., cur=5→G6
+}
+function _curAgentFlow(){
+  const k=_curStageKey();
+  return k?(STAGE_AGENT_FLOW[k]||[]):[];
+}
+function _curMilestoneIdx(){
+  const flow=_curAgentFlow();
+  const ca=gateData.current_agent;
+  if(!flow.length||!ca) return -1;
+  return flow.indexOf(ca);
+}
+// HJ 2026-06-10 — 단계별 동적 로딩 메시지 6개씩. 10초마다 순환. 각 단계의 실제 작업 내용을 반영.
+const STAGE_LOAD_MSGS={
+  0:[  // 1단계 (G1 — 데이터 파악)
+    '데이터의 도메인을 파악하는 중입니다',
+    '스키마와 데이터 품질을 검증하고 있습니다',
+    'AI가 컬럼 의미를 해석하는 중입니다',
+    '카테고리와 타겟을 자동 판정하는 중입니다',
+    '분석 방향 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  1:[  // 2단계 (G2 — EDA·방법론)
+    'EDA 통계와 분포를 분석하는 중입니다',
+    '컬럼 간 상관관계를 살피고 있습니다',
+    'AI가 적합한 방법론을 평가하는 중입니다',
+    '카테고리별 방법론 후보를 비교 중입니다',
+    '방법론 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  2:[  // 3단계 (G3 — 전처리·피처)
+    '전처리 전략을 수립하는 중입니다',
+    '피처 엔지니어링 후보를 탐색 중입니다',
+    '결측치·이상치 처리 방안을 검토 중입니다',
+    'AI가 최적 피처 조합을 평가하는 중입니다',
+    '모델 전략 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  3:[  // 4단계 (G4 — 모델 학습)
+    '후보 모델을 선정하는 중입니다',
+    '하이퍼파라미터를 튜닝하는 중입니다',
+    'AI가 모델을 학습시키는 중입니다',
+    '학습 모니터링과 지표를 집계 중입니다',
+    '최적 모델 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  4:[  // 5단계 (G5 — 평가·인사이트)
+    '파인튜닝을 진행하는 중입니다',
+    '모델 평가를 진행하는 중입니다',
+    '설명가능성 분석을 진행 중입니다',
+    'AI가 인사이트를 생성하는 중입니다',
+    '산출물 카드를 생성하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ],
+  5:[  // 6단계 (G6 — 리포트 생성)
+    '리포트를 합성하는 중입니다',
+    '시각화 자료를 생성하는 중입니다',
+    'AI가 최종 결과를 정리하는 중입니다',
+    '학습 데이터를 자동 업데이트 중입니다',
+    '결과 페이지를 준비하는 중입니다',
+    '거의 다 왔습니다. 잠시만 기다려 주세요'
+  ]
+};
+let _loadMsgIdx=0;
+setInterval(function(){ _loadMsgIdx=_loadMsgIdx+1; }, 10000);  // 누적값, 모듈러로 인덱싱
+function loadMsg(){
+  const msgs=STAGE_LOAD_MSGS[cur]||STAGE_LOAD_MSGS[0];
+  return msgs[_loadMsgIdx%msgs.length];
+}
+// 모래시계 SVG (재사용 가능 HTML 문자열). CSS .hg-svg / .hg-sand-top / .hg-sand-bot / .hg-stream 가 애니메이션 처리.
+const HOURGLASS_HTML='<svg class="hg-svg" viewBox="0 0 32 48" xmlns="http://www.w3.org/2000/svg">'
+  +'<defs><clipPath id="hgClipTop"><polygon points="4,4 28,4 16,22"/></clipPath><clipPath id="hgClipBot"><polygon points="4,44 28,44 16,26"/></clipPath></defs>'
+  +'<rect class="hg-sand-top" x="0" y="0" width="32" height="20" fill="#e0a850" clip-path="url(#hgClipTop)"/>'
+  +'<rect class="hg-sand-bot" x="0" y="28" width="32" height="20" fill="#e0a850" clip-path="url(#hgClipBot)"/>'
+  +'<line class="hg-stream" x1="16" y1="22" x2="16" y2="26" stroke="#e0a850" stroke-width="1.4" stroke-linecap="round"/>'
+  +'<g stroke="#5a4a2a" stroke-width="2" fill="none" stroke-linecap="round">'
+  +'<line x1="4" y1="4" x2="28" y2="4"/><line x1="4" y1="44" x2="28" y2="44"/>'
+  +'<line x1="4" y1="4" x2="16" y2="22"/><line x1="28" y1="4" x2="16" y2="22"/>'
+  +'<line x1="16" y1="26" x2="4" y2="44"/><line x1="16" y1="26" x2="28" y2="44"/></g></svg>';
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 // 숫자 표시 헬퍼 — 부동소수점은 소수점 3자리, 정수는 그대로, 문자열은 원본
@@ -354,7 +489,10 @@ async function startPrefetch(file){
     let columns=[], sample=[], dtypes={};
     if(ext==='csv'||ext==='tsv'){
       // PapaParse: 첫 100행만 파싱 (Worker 모드 비활성, sync 짧음)
-      const text=await file.slice(0, 1024*256).text();  // 256KB 만 (헤더+sample 충분)
+      const buf=await file.slice(0, 1024*256).arrayBuffer();
+      let text=new TextDecoder('utf-8',{fatal:false}).decode(buf);
+      if(text.includes('�')){try{text=new TextDecoder('euc-kr',{fatal:false}).decode(buf);}catch(e){}}
+      // 256KB 만 (헤더+sample 충분)
       const parsed=Papa.parse(text, {header:true, skipEmptyLines:true, preview:100});
       if(parsed.errors && parsed.errors.length) console.warn('PapaParse warn', parsed.errors);
       const rows=parsed.data||[];
@@ -384,7 +522,9 @@ async function startPrefetch(file){
         });
       }
     } else if(ext==='json'){
-      const text=await file.slice(0, 1024*256).text();
+      const _jbuf=await file.slice(0, 1024*256).arrayBuffer();
+      let text=new TextDecoder('utf-8',{fatal:false}).decode(_jbuf);
+      if(text.includes('�')){try{text=new TextDecoder('euc-kr',{fatal:false}).decode(_jbuf);}catch(e){}}
       try{
         const obj=JSON.parse(text);
         const rows=Array.isArray(obj)?obj:(Array.isArray(obj.data)?obj.data:[]);
@@ -494,7 +634,9 @@ async function doResume(){
     Object.keys(gateCache).forEach(function(k){
       if(parseInt(k.slice(1),10)>_tgNum) delete gateCache[k];
     });
-    cur=cur+1; maxReached=cur; frontier=cur;  // 다음 로딩 화면으로 즉시 이동
+    // HJ 2026-06-10 — cur 그대로 유지. 각 단계 N 화면에서 진행 누르면 그 자리에서 G(N+1) 분석 모달이 뜨고,
+    // 다음 gate 의 proposals 가 도착하면 frontier 추적으로 자연스럽게 cur=N+1 로 advance.
+    // (이전엔 cur=cur+1 즉시 점프 → "단계 2 분석"이 단계 3 화면에서 표시되는 오프셋 발생)
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
     _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;  // gate 제출 직후 리셋
     saveState();
@@ -529,16 +671,12 @@ async function poll(){
   // (정상 뒤로가기: frontier=현재게이트 ≥ maxReached 이므로 클램프 안 됨)
   if(maxReached > frontier) maxReached=frontier;
   maxReached=Math.max(maxReached,frontier);
-  // Phase 1 (2026-06-04 수정) — G1 데이터 파악 완료 신호만으로 cur 전환.
-  // 백엔드가 G2 게이트 도달했는데 proposals 가 비어 있는 경우(LLM 응답 직전·직렬화 실패 등)에도
-  // 클라이언트가 stuck 되지 않도록 proposals 조건 제거. G2 화면에서 contentGate 가 자체적으로
-  // loading→옵션 전환을 처리한다. _shownPct 는 100 으로 보존하여 시각 단절 방지.
-  // HJ 2026-06-09 G1 단축 Z' — schema_validator 가 g2_pending 신호 보내면
-  // 진행률 무관하게 G2 화면 진입 (gate_direction 백그라운드 대기).
-  if(cur===0 && jobId && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
-    cur=1; follow=true; _progressKey='G2';
-    if(_shownPct < 99) _shownPct = Math.max(_shownPct, 10); // Z' 진입은 진행률 보존, 100% 강제 안 함
-    else _shownPct=100;
+  // HJ 2026-06-10 — Z' 단축 제거. cur=1 은 G2 proposals (=실제 추천 카드) 도착 시점에만 전환.
+  // doUpload 가 follow=false 로 시작하므로, cur=0→1 자동 전환 안전망이 필요. proposals 진짜 도착하면
+  // follow 강제 true + cur=1 로 올려 단계 2 화면을 띄움. g2_pending 조기 신호는 사용 안 함.
+  if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2'){
+    const _g1Done=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+    if(_g1Done){ cur=1; follow=true; }
   }
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
@@ -566,22 +704,22 @@ async function poll(){
 }
 function startPolling(){ if(polling){ render(); return; } polling=true; clearTimeout(pollTimer); poll(); }
 
-// 0.5초 틱 — 진행률 보간 + G1→G2 자동 전환 안전망(polling 멈춤 후에도 보간 완료 시 cur 전환).
+// 0.5초 틱 — 진행률 보간용 render 트리거 (현재 agent 변경에 따라 마일스톤 갱신).
+// HJ 2026-06-10 — Z' 단축 제거 + cur=0→1 안전망. polling 일시 멈춤 사이에 proposals 도착 시
+// poll() 다음 cycle 까지 기다리지 않고 즉시 화면 전환.
 setInterval(function(){
   if(paused) return;
-  // G1→G2 자동 전환: polling 이 멈춘 케이스에 대비해 매 500ms 도 조건 재확인.
-  // HJ 2026-06-09 G1 단축 Z' — g2_pending=true 면 진행률 무관하게 전환 (schema_validator 직후).
-  if(cur===0 && jobId && curGate()==='G2' && (_shownPct >= 99 || gateData.g2_pending===true)){
-    cur=1; follow=true;
-    // _progressKey/_shownPct 를 여기서 세팅하지 않음 — _stageProgress() 가 key 불일치 감지 후
-    // 자연스럽게 _shownPct=0 으로 리셋. G2 로딩 중에 100% 고정되는 버그 방지.
-    saveState();
-    render(); // 전환 직후 즉시 G2 화면 갱신 — 없으면 다음 poll(2.5s)까지 G1 stuck
-    if(!polling) startPolling();
-    return;
+  if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2'){
+    const _p=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+    if(_p){
+      cur=1; follow=true;
+      saveState();
+      render();
+      if(!polling) startPolling();
+      return;
+    }
   }
-  // jobId 없는 업로드 대기 화면에서는 타이머 렌더 생략 — textarea 포커스 보호
-  if(!jobId && cur===0) return;
+  if(!jobId && cur===0) return;  // 업로드 대기 화면 — textarea 포커스 보호
   if(analyzing() || _shownPct < 100 || (cur===0 && jobId)) render();
 }, 500);
 
@@ -596,104 +734,78 @@ setInterval(function(){
 //   - cur=6 (완료)   : 항상 100%
 let _shownPct=0;
 let _progressKey=null;
-let _stageStart=null;  // 현재 단계 진입 시각(ms). _progressKey 변경 시 리셋
-// 게이지 "바" 전용 시각 흐름값 — 표시 수치(_shownPct, 백엔드 progress_pct 기반 정확값)와는
-// 별개로, 단계 시작부터 끝까지 절대 멈추지 않고 점근적으로 전진한다("자기 진행").
-// 실측치가 이를 앞지르면 즉시 따라잡아 거짓 진행을 보이지 않는다.
+let _stageStart=null;
 let _barFlowPct=0;
-// 게이지 "바" 전용 — 표시 수치(_shownPct)와 별개로 절대 멈추지 않고 점근적으로 전진.
-// 시작(elapsed=0)엔 0, 시간이 지날수록 99%에 점근(asymptote)하며 계속 흐른다.
-// 실측치(_shownPct)가 이를 앞지르면 즉시 따라잡아 — 바가 진실보다 뒤처져 보이지 않게 한다.
-function _advanceBarFlow(ceilPct){
-  const stageEl = _stageStart ? (Date.now()-_stageStart)/1000 : 0;
-  // 폴백 creep — baseline 없을 때 45초 기준 지수 점근
-  let creep = ceilPct * (1 - Math.exp(-stageEl/45));
-  // baseline ETA (백엔드 publish, DB 실측 또는 폴백) 가 있으면 그 시간에 정확히 비례해 흐른다.
-  // 백엔드 progress_pct 신호가 끊겨도 게이지는 baseline 만큼 자기 진행으로 흐름 → 멈춤 없음.
-  const beSec = (gateData.eta_sec!=null && Number.isFinite(Number(gateData.eta_sec)))
-                  ? Number(gateData.eta_sec) : null;
-  if(beSec!=null && beSec > 0){
-    const timeProgress = Math.min(ceilPct, stageEl / beSec * 100);
-    creep = Math.max(creep, timeProgress);
-  }
-  _barFlowPct = Math.max(_barFlowPct, creep, _shownPct);
-  if(_barFlowPct > ceilPct) _barFlowPct = ceilPct;
-  return _barFlowPct;
-}
+let _lastSignalAt=null;      // 마지막 백엔드 신호 수신 시각(ms)
+let _lastSignalPct=null;     // 마지막으로 수신한 단계 내 진행률
+let _estimatedTotal=null;    // 예상 총 소요 시간(초) — eta_sec 전용, pct 역산 금지
+let _completing=false;       // 완료 신호 수신 → 100% 애니메이션 중
+let _estimatedFromEta=false; // eta_sec 로 _estimatedTotal 설정됐으면 true (pct override 방지)
+
 function _stageProgress(){
   const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+(cur+1));
-  // 단계 전환 — 진행률·시작시각·바흐름값 리셋 (각 단계 0% 부터 시작)
   if(_progressKey!==key){
     _progressKey=key;
-    _shownPct=0;
-    _stageStart=Date.now();
-    _barFlowPct=0;
+    _shownPct=0; _stageStart=Date.now(); _barFlowPct=0;
+    _lastSignalAt=null; _lastSignalPct=null;
+    _estimatedTotal=null; _completing=false; _estimatedFromEta=false;
   }
   if(isFailed()){ _barFlowPct=0; return 0; }
   if(isCompleted()||cur===LAST){ _shownPct=100; _barFlowPct=100; return 100; }
-  if(cur===0 && !jobId){ _shownPct=0; _stageStart=null; _barFlowPct=0; return 0; }
+  if(cur===0&&!jobId){ _shownPct=0; _stageStart=null; _barFlowPct=0; return 0; }
+  // jobId 도착(G1 분석 시작) 시 stageStart 기산점 — 항상 클라이언트 Date.now() 사용
+  // (eta_base_ts 는 서버 시간 → 시계 차이로 elapsed 왜곡 발생 → 사용 금지)
+  if(_stageStart==null&&cur===0&&jobId){ _stageStart=Date.now(); }
 
-  // 끝 신호 우선 — proposals 도착이면 즉시 100% 스냅 (기존 동작 유지)
-  if(cur===0){
-    const g1Reached = curGate()==='G2' && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
-    if(g1Reached){ _shownPct=100; _barFlowPct=100; return 100; }
-  } else {
-    const tg='G'+(cur+1);
-    const ag=curGate();
-    const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
-    const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
-    const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
-    if(ps.length && !(lastSubmittedGate===tg && !ag)){ _shownPct=100; _barFlowPct=100; return 100; }
+  // 완료 신호 감지 (즉시 100% 아님 — 아래 애니메이션 블록에서 부드럽게 처리)
+  if(!_completing){
+    if(cur===0){
+      const g1Reached=curGate()==='G2'&&(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+      if(g1Reached) _completing=true;
+    } else {
+      const tg='G'+(cur+1); const ag=curGate();
+      const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+      const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
+      const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
+      if(ps.length&&!(lastSubmittedGate===tg&&!ag)) _completing=true;
+    }
+  }
+  if(_completing){
+    // 팝업 로딩 중(proposals 미도착) → 99% 억제. proposals 도착 시 modal 닫히고 그 때 100%.
+    // 완료 = 2단계로 실제 전환되는 시점. modal 닫힌 후에만 100%/'완료' 표시.
+    const _cap=inModalLoading()?99:100;
+    _shownPct=Math.min(_cap,_shownPct+10);
+    _barFlowPct=_shownPct;
+    return Math.round(_shownPct);
   }
 
-  // 백엔드 progress_pct 가 진실의 소스 — 시간 기반 추정 금지.
-  // 백엔드 신호가 아직 없으면 표시 수치는 현재 값 유지(가짜 진행 표시 금지).
-  const rawP = gateData.progress_pct;
-  const backendP = (rawP!=null && Number.isFinite(Number(rawP)))
-                     ? Math.max(0, Math.min(100, Number(rawP)))
-                     : null;
-  // 단계 내 0~100% 정규화 — 백엔드 글로벌 % 를 현재 단계의 % 범위로 매핑.
-  // 예: G1 범위 [0,18] 에서 backend=14 면 단계 내 (14-0)/18 ≈ 77.8% 로 표시.
-  // 이렇게 해야 "G1 인데 14% 천장" 같은 혼란이 사라지고 각 단계가 0~100% 로 흐른다.
-  let stageTarget;
-  if(backendP==null){
-    stageTarget = _shownPct;
-  } else {
-    const rng = STAGE_RANGE[cur] || [0, 100];
-    const lo = rng[0], hi = rng[1];
-    const span = Math.max(1, hi - lo);
-    // backend 가 이 단계 범위 밖이면 0 또는 99 로 clamp (단계 진입 직전/직후 잡음 흡수)
-    stageTarget = Math.max(0, Math.min(99, Math.round((backendP - lo) * 100 / span)));
+  // HJ 2026-06-10 — 마일스톤 기반 진행률 (사용자 요구).
+  // 현재 backend가 보고하는 current_agent 가 단계의 agent 리스트에서 몇 번째인지로 % 산출.
+  // 예) G1 (5 agents): supervisor 실행 중 = 0%, intent 실행 중 = 20%, profiler = 40%,
+  //                    schema = 60%, gate_direction = 80%. proposals 도착 = 100% (위 _completing 블록).
+  // 데이터마다 분석 시간이 달라도 항상 정확. 시간 예측 일체 안 함.
+  const flow=_curAgentFlow();
+  const idx=_curMilestoneIdx();
+  if(flow.length && idx>=0){
+    const milestone=Math.round(idx*100/flow.length);
+    if(milestone>_shownPct) _shownPct=milestone;
   }
 
-  // 점프 보간 (기존 패턴 유지) — 거꾸로 가지 않음. 표시 수치(_shownPct)는 정확성 우선.
-  if(stageTarget>_shownPct){
-    const diff=stageTarget-_shownPct;
-    const step=Math.max(2, Math.ceil(diff/4));
-    _shownPct=Math.min(stageTarget, _shownPct+step);
-  }
-  // 바 흐름값은 표시 수치와 별개로 — 실측 신호 정체 여부와 무관하게 항상 전진한다.
-  _advanceBarFlow(99);
+  _barFlowPct=Math.max(_barFlowPct,_shownPct);
+  _shownPct=_barFlowPct;
   return Math.round(_shownPct);
 }
 
-// 단계 단위 ETA — 게이지 바(_barFlowPct)에서 직접 역산한다.
-// _barFlowPct 는 시간 기반 creep 와 실측 _shownPct 의 max 라 이미 종합 추정치이며,
-// 이를 ETA의 단일 진실의 소스로 삼으면 바와 ETA가 같은 모델에서 파생되어
-// "게이지 100% 도달 = ETA 0" 이 항상 보장된다 (baseline 과 실측이 따로 노는 불일치 제거).
+// ETA — 실측 elapsed/pct 비율로 역산 (적응형). 백엔드 estimate 의존 없음.
+// rate(%/s) = 현재 pct / 경과 시간 → 남은 시간 = (100 - pct) / rate.
+// 너무 이른 시점(elapsed<5s 이거나 pct<5)에서는 rate 가 불안정해 null 반환.
 function _stageEta(p){
-  if(_stageStart==null) return null;
-  const stageEl = (Date.now() - _stageStart)/1000;
-
-  // 게이지 바 진행률을 ETA의 단일 진실의 소스로 사용.
-  // _barFlowPct 는 시간 기반 creep + 실측 _shownPct 의 max 라 이미 종합 추정치이며,
-  // 여기서 역산하면 게이지 바와 ETA가 같은 모델에서 파생되어 100% 도달 = ETA 0 보장.
-  if(_barFlowPct >= 5 && stageEl >= 3){
-    const projectedTotal = stageEl * (100 / _barFlowPct);
-    return Math.max(0, projectedTotal - stageEl);
-  }
-  // 초반(게이지 5% 미만 또는 3초 미만)에는 추정 들쭉날쭉 방지로 null → "추정 중…"
-  return null;
+  if(_stageStart==null||p<5) return null;
+  const elSec=(Date.now()-_stageStart)/1000;
+  if(elSec<5) return null;
+  const rate=p/elSec;
+  if(rate<=0) return null;
+  return Math.max(0,(100-p)/rate);
 }
 
 function failureBlock(){
@@ -724,7 +836,7 @@ function loadingBlock(){
       +(gateData._state_error?('<br><b>state 오류:</b> '+esc(gateData._state_error)):'')
       +'</div>';
   }
-  return '<div class="loadwrap"><div class="loadtxt">🔄 데이터를 분석해 추천을 생성하는 중입니다…</div>'+agentLine+diag+'</div>';
+  return '<div class="loadwrap"><div class="loadtxt">'+HOURGLASS_HTML+esc(loadMsg())+'…</div>'+agentLine+diag+'</div>';
 }
 // 현재 게이트 화면이 로딩 중인지 여부 (proposals 없는 상태)
 function isGateLoading(){
@@ -737,42 +849,46 @@ function isGateLoading(){
   const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
   return !llmProps.length;
 }
-// 공통 진행바 — 분析 대기 로딩 중에만 표시. 옵션 선택·완료 화면에서는 숨김.
+// HJ 2026-06-10 — 마일스톤 세그먼트 바 (기존 .lbar 진행바를 대체).
+// 단계의 agent 마다 segment 하나. 완료=초록, 현재=파랑 펄스, 대기=회색.
+// 메타: "진행 N% · 경과 Y" — ETA(예상 남은 시간) 표시 제거 (사용자 요구).
 function progressBar(){
   if(isFailed()) return '';
-  if(cur===LAST) return '';  // G7 완료 페이지
-  if(cur===0 && !jobId) return '';  // 업로드 전 초기 화면 → 진행바 숨김
-  if(cur>=1 && cur<=5 && !isGateLoading()) return '';  // proposals 표시 중 → 숨김
+  if(cur===LAST && isCompleted()) return '';                       // G7 완료 페이지 (결과 표시) — 바 숨김
+  if(cur===0 && !jobId) return '';                                 // 업로드 전
+  if(cur>=1 && cur<=5 && !isGateLoading()) return '';              // proposals 표시 중
   const p=_stageProgress();
-  // 게이지 "바"의 실제 채움 폭 — 정확한 표시 수치(p)와 별개로 _barFlowPct(자기 진행, 항상 전진)를 사용.
-  // 완료 시에는 표시 수치와 함께 100% 로 맞춘다.
-  const barP=(p>=100)?100:Math.round(_barFlowPct);
-  // 단계별 elapsed — _stageStart 부터의 시간. 분석 전체 elapsed(analyzeStart)가 아님.
-  // 사용자 요구: 각 단계를 독립 0~100% / 0~ETA 로 표시.
-  const stageEl = _stageStart ? ((Date.now()-_stageStart)/1000) : 0;
-  let etaStr='';
-  if(p>=100){ etaStr='완료'; }
-  else if(analyzing()){
-    const haveBackend = (gateData.progress_pct!=null && Number.isFinite(Number(gateData.progress_pct)));
-    if(!haveBackend) etaStr='추정 중…';        // 백엔드 신호 없음 — 가짜 ETA 금지
-    else if(p>=99) etaStr='마무리 중…';
-    else {
-      const eta = _stageEta(p);
-      if(eta==null) etaStr='추정 중…';
-      else if(eta<=3) etaStr='마무리 중…';
-      else etaStr='약 '+fmtTime(eta);
-    }
+  const stageEl=_stageStart?((Date.now()-_stageStart)/1000):0;
+  const isRunning=analyzing()||isGateLoading();
+
+  // 마일스톤 세그먼트 — 단계의 agent 리스트가 곧 바의 구조.
+  const flow=_curAgentFlow();
+  let activeIdx=_curMilestoneIdx();
+  if(_completing||p>=100) activeIdx=flow.length;  // 완료 시 모든 칸 done
+  let barHtml='';
+  if(flow.length){
+    const segs=flow.map(function(ag,i){
+      let cls='ms-seg';
+      let icon;
+      if(i<activeIdx){ cls+=' done'; icon='✓'; }
+      else if(i===activeIdx){ cls+=' active'; icon='●'; }
+      else { cls+=' pending'; icon=(i+1)+'.'; }
+      const name=esc(AGENT_KO[ag]||ag);
+      return '<div class="'+cls+'" title="'+name+'"><span class="ms-seg-icon">'+icon+'</span>'+name+'</div>';
+    }).join('');
+    barHtml='<div class="ms-bar">'+segs+'</div>';
   }
-  const showMeta=analyzing() || p>=100;
-  let meta='';
-  if(showMeta){
-    meta='<div class="lmeta">진행 <b>'+p+'%</b>'
-      +(analyzing()?(' · 이 단계 시간 <b>'+fmtTime(stageEl)+'</b> · 예상 남은 시간 <b>'+etaStr+'</b>'):(p>=100?' · <b>'+etaStr+'</b>':''))
-      +'</div>';
+
+  // 메타 — 진행 % + 경과 시간. ETA 제거.
+  let meta;
+  if(isRunning){
+    meta='<div class="lmeta">진행 <b>'+p+'%</b> · 경과 <b>'+fmtTime(stageEl)+'</b></div>';
+  } else if(p>=100){
+    meta='<div class="lmeta">진행 <b>'+p+'%</b> · <b>완료</b></div>';
   } else {
     meta='<div class="lmeta">진행 <b>'+p+'%</b></div>';
   }
-  return '<div class="progbox"><div class="lbar"><div class="lfill" style="width:'+barP+'%"></div></div>'+meta+'</div>';
+  return '<div class="progbox">'+barHtml+meta+'</div>';
 }
 function gateHeader(g){
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
@@ -848,23 +964,123 @@ function g2TopicArea(d){
   let cmHtml='';
   const cmKeys=Object.keys(cm).slice(0,12);
   if(cmKeys.length){
-    cmHtml='<div style="margin-top:10px"><div style="font-size:11px;opacity:.7;margin-bottom:6px">컬럼 의미 ('+cmKeys.length+(Object.keys(cm).length>12?'/'+Object.keys(cm).length:'')+')</div>'
-      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:12px">'
+    cmHtml='<div style="margin-top:10px"><div style="font-size:18px;opacity:.7;margin-bottom:6px">컬럼 의미 ('+cmKeys.length+(Object.keys(cm).length>12?'/'+Object.keys(cm).length:'')+')</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:6px;font-size:18px">'
       +cmKeys.map(function(k){return '<div style="background:#fff;padding:6px 8px;border-radius:4px;border:1px solid #e2e8f0"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+esc(String(cm[k]))+'</span></div>';}).join('')
       +'</div></div>';
   }
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:14px">'
-    +'<div style="font-weight:600;color:#0f172a;margin-bottom:8px">📌 주제 선정 — 데이터 도메인</div>'
-    +(domain?'<div style="font-size:14px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(domain)+'</b></div>':'')
-    +(summary?'<div style="margin-top:6px;font-size:13px"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(summary)+'</div>':'')
-    +(tInsight?'<div style="margin-top:6px;font-size:13px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
+    +'<div style="font-size:25px;font-weight:600;color:#0f172a;margin-bottom:8px">📌 주제 선정 — 데이터 도메인</div>'
+    +(domain?'<div style="font-size:18px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(domain)+'</b></div>':'')
+    +(summary?'<div style="margin-top:6px;font-size:18px"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(summary)+'</div>':'')
+    +(tInsight?'<div style="margin-top:6px;font-size:18px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
     +cmHtml
     +'</div>';
 }
 
+// HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 시작(jobId 셋)부터 G2 proposals 도착 전까지 모달 유지.
+// 진행 단계와 무관하게 분석 내용 표시 시점부터(=업로드 직후) 노출. 모달이 본문 내용을 대체.
+function inModalLoading(){
+  if(!jobId) return false;
+  if(isFailed()) return false;
+  if(isCompleted()) return false;
+  if(cur===0){
+    // 도메인 데이터 도착 시부터 팝업. proposals 이미 도착했으면 false — 완료 오표시 방지.
+    if(!g2TopicArea(gateData)) return false;
+    const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
+    if(_p0.length && curGate()==='G2') return false;
+    return true;
+  }
+  // HJ 2026-06-10 — cur=1~5 는 선택 상태 vs 분석 상태 구분:
+  //   선택 상태: G(cur+1) proposals 표시 중. lastSubmittedGate ≠ 'G(cur+1)'. → 모달 없음 (옵션 카드 보임)
+  //   분석 상태: 진행 버튼 누른 직후. lastSubmittedGate === 'G(cur+1)'. 다음 gate G(cur+2) proposals 도착 전까지 모달.
+  if(cur>=1 && cur<=5){
+    const currentGate='G'+(cur+1);
+    const nextGate='G'+(cur+2);
+    const submittedHere=(lastSubmittedGate===currentGate);
+    if(!submittedHere) return false;  // 선택 화면 — 모달 없음
+    const ag=curGate();
+    const d=(ag===nextGate)?gateData:(gateCache[nextGate]||{});
+    const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
+    return !llmProps.length;
+  }
+  // cur=6 (단계 7 — 완료) — 분석 없음. 결과 표시. 모달 안 띄움.
+  return false;
+}
+// 모달 전용 주제 영역 — g2TopicArea 의 2배 사이즈 버전. 사용자 요구 (글씨 2x).
+function modalTopicArea(d){
+  const dp=(d&&d.data_profile)||{};
+  const da=dp.domain_analysis||{};
+  const dpart=(d&&d.domain_partial)||{};
+  const domain=da.domain||dpart.domain||'';
+  const summary=da.dataset_summary||dpart.dataset_summary||'';
+  const tInsight=da.target_insight||dpart.target_insight||'';
+  const cm=da.column_meanings||{};
+  if(!domain && !summary && !Object.keys(cm).length) return '';
+  let cmHtml='';
+  const cmKeys=Object.keys(cm).slice(0,12);
+  if(cmKeys.length){
+    cmHtml='<div style="margin-top:22px"><div style="font-size:22px;opacity:.7;margin-bottom:12px">컬럼 의미 ('+cmKeys.length+(Object.keys(cm).length>12?'/'+Object.keys(cm).length:'')+')</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px;font-size:22px">'
+      +cmKeys.map(function(k){return '<div style="background:#fff;padding:14px 18px;border-radius:8px;border:1px solid #e2e8f0"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+esc(String(cm[k]))+'</span></div>';}).join('')
+      +'</div></div>';
+  }
+  return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
+    +'<div style="font-weight:700;color:#0f172a;margin-bottom:18px;font-size:32px">📌 주제 선정 — 데이터 도메인</div>'
+    +(domain?'<div style="font-size:28px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(domain)+'</b></div>':'')
+    +(summary?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(summary)+'</div>':'')
+    +(tInsight?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
+    +cmHtml
+    +'</div>';
+}
+// 모달 내부 컨텐츠 — 큰 타이틀 + modalTopicArea + 단계별 안내. 진행바는 카드 본문에 그대로 두고 모달에서 제외(사용자 요구).
+function modalHtml(){
+  // 단계별 안내 — 단계 N 화면에서 진행 누르면 그 자리에서 단계 N 분석 진행 (cur 그대로 유지).
+  //   cur=0 (1단계 업로드)  → G1 분석 → 다음: 분석 방향 카드
+  //   cur=1 (2단계 분석방향) → G2 분석 → 다음: 방법론 카드
+  //   cur=2 (3단계 방법론)   → G3 분석 → 다음: 모델 전략 카드
+  //   cur=3 (4단계 모델전략) → G4 분석 → 다음: 최적 모델 카드
+  //   cur=4 (5단계 모델선택) → G5 분석 → 다음: 산출물 카드
+  //   cur=5 (6단계 산출물)   → G6 분석 → 다음: 최종 결과
+  const NEXT_CARD={0:'분석 방향',1:'방법론',2:'모델 전략',3:'최적 모델',4:'산출물',5:'최종 결과'};
+  const STAGE_DESC={
+    0:'데이터 출처·스키마·도메인·품질 점검 등을 진행하고 있습니다.',
+    1:'EDA 분석 + 방법론 후보를 산출하고 있습니다.',
+    2:'전처리·피처 엔지니어링 전략을 수립하고 있습니다.',
+    3:'모델 선택·하이퍼파라미터 튜닝·학습을 진행하고 있습니다.',
+    4:'파인튜닝·평가·설명·인사이트를 생성하고 있습니다.',
+    5:'리포트를 합성하고 학습 결과를 저장하고 있습니다.'
+  };
+  const stepNum=cur+1;
+  const nextCardName=NEXT_CARD[cur]||'다음 단계';
+  let body='';
+  if(errMsg) body+='<div class="err">⚠ '+esc(errMsg)+'</div>';
+  body+='<div class="modal-title">'+stepNum+'단계 분석 중</div>';
+  body+='<div class="modal-en">Stage '+stepNum+' analysis in progress…</div>';
+  // 도메인 정보 — 1단계(G1) 만 표시 (이후 단계는 마일스톤 + 진행 메타로 충분)
+  if(cur===0){
+    const topic=modalTopicArea(gateData);
+    if(topic) body+=topic;
+    else body+='<div class="modal-placeholder">📊 데이터 도메인을 분석하는 중입니다…</div>';
+  }
+  // 진행 안내 — 순환 로딩 메시지 (10초마다 6개 중 하나) + 모래시계 애니메이션, 그리고 현재 agent/다음 카드 정보
+  const ca=gateData.current_agent;
+  const lab=ca?(AGENT_KO[ca]||ca):'';
+  const desc=STAGE_DESC[cur]||(esc(nextCardName)+' 카드를 만들고 있습니다.');
+  const subInfo=lab
+    ? (desc+' &nbsp;·&nbsp; 현재 작업: <b>'+esc(lab)+'</b> &nbsp;·&nbsp; 곧 <b>'+esc(nextCardName)+'</b> 카드가 표시됩니다.')
+    : (desc+' &nbsp;·&nbsp; 곧 <b>'+esc(nextCardName)+'</b> 카드가 표시됩니다.');
+  body+='<div class="modal-pending"><div class="t">'+HOURGLASS_HTML+esc(loadMsg())+'…</div>'
+    +'<div class="s">'+subInfo+'</div></div>';
+  // 진행바 (마일스톤 세그먼트 바 + 경과 시간) — 모달 안에 유지
+  body+=progressBar();
+  return body;
+}
 function contentGate(){
   const tg='G'+(cur+1);           // 사용자가 보고 싶은 게이트 (cur 기준). cur=1→G2 ... cur=5→G6
   const ag=curGate();             // 백엔드 현재 게이트
+  // HJ 2026-06-10 — 모달 활성 시 카드 본문은 헤더만. 모달이 분석 내용을 보여주므로 중복 제거.
+  if(inModalLoading()) return gateHeader(tg);
   // 방금 제출한 게이트이고 다음 게이트 미도착(분석 중) → 캐시 proposals 재표시 방지
   if(lastSubmittedGate===tg && !ag){ return gateHeader(tg)+loadingBlock(); }
   // 실시간: ag===tg면 gateData, 뒤로가기 등 이전 단계: 캐시 사용
@@ -876,11 +1092,13 @@ function contentGate(){
   // HJ 2026-06-09 G1 단축 Z' — G2 에서 proposals 없을 때 (gate_direction 진행 중)
   // "주제 선정" 영역 먼저 표시 + 분석 방향 영역엔 spinner.
   if(g==='G2' && !props.length && d.g2_pending){
+    // 팝업(inModalLoading)이 활성일 때는 팝업에서만 표시 — 인라인 중복 제거
+    if(inModalLoading()) return gateHeader(g)+loadingBlock();
     const topic=g2TopicArea(d);
     return gateHeader(g)+topic
       +'<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:10px">'
-      +'<div style="font-weight:600;color:#92400e;margin-bottom:6px">🔄 분석 방향 카드 생성 중…</div>'
-      +'<div style="font-size:13px;opacity:.8">위 도메인 정보를 보면서 어떤 분석을 원하시는지 떠올려 보세요. 곧 추천 카드가 표시됩니다.</div>'
+      +'<div style="font-size:18px;font-weight:600;color:#92400e;margin-bottom:6px">🔄 분석 방향 카드 생성 중…</div>'
+      +'<div style="font-size:18px;opacity:.8">위 도메인 정보를 보면서 어떤 분석을 원하시는지 떠올려 보세요. 곧 추천 카드가 표시됩니다.</div>'
       +'</div>'
       +loadingBlock();
   }
@@ -943,6 +1161,12 @@ function content(i){
     //   (b) jobId 있음 + 분석 중 → 데이터 파악 진행 화면(15단계 백엔드 작업).
     //       이 화면을 끝까지 보여주다 G2 proposals 도착 시 poll() 이 cur=1 로 전환.
     if(jobId){
+      // HJ 2026-06-10 — 모달 활성 시 카드 본문은 헤더만 (모달이 partial domain·loadingBlock 모두 표시).
+      if(inModalLoading()){
+        return '<div class="ahdr" style="opacity:.55"><h2>데이터를 파악하는 중입니다</h2>'
+          +'<div class="en">G1 — Data Understanding</div></div>';
+      }
+      // 모달 미활성 (실패 등 폴백) — 기존 인라인 표시 유지
       // HJ 2026-06-09 G1 단축 γ — partial domain 점진 표시.
       // 도메인 LLM 의 streaming 콜백이 첫 필드 도착 시점부터 partial 값을 보냄.
       // 사용자가 71초를 빈 화면으로 보내지 않고 "도메인: 이커머스 ★" 같이 점진 확인.
@@ -954,8 +1178,8 @@ function content(i){
         if(dp.dataset_summary) lines.push('<div style="margin-top:6px"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(dp.dataset_summary)+'</div>');
         if(dp.target_insight) lines.push('<div style="margin-top:6px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(dp.target_insight)+'</div>');
         if(dp.column_meanings_count) lines.push('<div style="margin-top:6px;opacity:.7">컬럼 의미 분석 중 ('+dp.column_meanings_count+'개 도착)</div>');
-        partialHtml='<div style="background:#f1f5f9;border-left:3px solid #10b981;padding:10px 14px;margin:12px 0;border-radius:4px;font-size:13px">'
-          +'<div style="font-weight:600;color:#10b981;font-size:11px;margin-bottom:6px">🟢 실시간 분석 결과</div>'
+        partialHtml='<div style="background:#f1f5f9;border-left:3px solid #10b981;padding:10px 14px;margin:12px 0;border-radius:4px;font-size:18px">'
+          +'<div style="font-weight:600;color:#10b981;font-size:18px;margin-bottom:6px">🟢 실시간 분석 결과</div>'
           +lines.join('')+'</div>';
       }
       return '<div class="ahdr"><h2>데이터를 파악하는 중입니다</h2>'
@@ -971,7 +1195,7 @@ function content(i){
     let prefetchUi='';
     if(has && prefetchPreview){
       let pvHtml='';
-      pvHtml+='<div style="margin-top:6px;font-size:12px;opacity:.85">컬럼 <b>'+prefetchPreview.cols+'개</b>';
+      pvHtml+='<div style="margin-top:8px;font-size:23px;opacity:.85">컬럼 <b>'+prefetchPreview.cols+'개</b>';
       if(prefetchPreview.columns && prefetchPreview.columns.length){
         pvHtml+=' &nbsp;·&nbsp; '+prefetchPreview.columns.slice(0,6).map(esc).join(', ');
         if(prefetchPreview.cols>6) pvHtml+=' …';
@@ -979,20 +1203,20 @@ function content(i){
       pvHtml+='</div>';
       let resultHtml='';
       if(prefetchResult && prefetchResult.category){
-        resultHtml+='<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;font-size:12px">';
-        resultHtml+='<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px"><b>추정 카테고리</b> '+esc(prefetchResult.category)+'</span>';
+        resultHtml+='<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;font-size:23px">';
+        resultHtml+='<span style="background:#dcfce7;color:#15803d;padding:5px 12px;border-radius:4px"><b>추정 카테고리</b> '+esc(prefetchResult.category)+'</span>';
         if(prefetchResult.target_column){
-          resultHtml+='<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:4px"><b>추정 타겟</b> '+esc(prefetchResult.target_column)+'</span>';
+          resultHtml+='<span style="background:#dbeafe;color:#1d4ed8;padding:5px 12px;border-radius:4px"><b>추정 타겟</b> '+esc(prefetchResult.target_column)+'</span>';
         }
         resultHtml+='</div>';
         if(prefetchResult.auto_intent && !intentText.trim()){
-          resultHtml+='<div style="margin-top:6px;font-size:12px;color:#6b7280">💡 자동 추천 의도: <i>'+esc(prefetchResult.auto_intent)+'</i> &nbsp;<span style="opacity:.7">(의도란에 자유롭게 수정해 입력하세요)</span></div>';
+          resultHtml+='<div style="margin-top:8px;font-size:18px;color:#6b7280">💡 자동 추천 의도: <i>'+esc(prefetchResult.auto_intent)+'</i> &nbsp;<span style="opacity:.7">(의도란에 자유롭게 수정해 입력하세요)</span></div>';
         }
       } else if(prefetchSig){
-        resultHtml='<div style="margin-top:6px;font-size:12px;color:#10b981">🟢 사전 분석 중… (의도를 입력하시는 동안 진행됩니다)</div>';
+        resultHtml='<div style="margin-top:8px;font-size:18px;color:#10b981">🟢 사전 분석 중… (의도를 입력하시는 동안 진행됩니다)</div>';
       }
-      prefetchUi='<div style="background:#f0fdf4;border-left:3px solid #10b981;padding:10px 14px;margin:10px 0;border-radius:4px">'
-        +'<div style="font-weight:600;color:#065f46;font-size:12px">📊 파일 사전 분석</div>'
+      prefetchUi='<div style="background:#f0fdf4;border-left:4px solid #10b981;padding:14px 18px;margin:10px 0;border-radius:6px">'
+        +'<div style="font-weight:700;color:#065f46;font-size:23px">📊 파일 사전 분석</div>'
         +pvHtml+resultHtml+'</div>';
     }
     return '<div class="ahdr"><h2>데이터 업로드</h2></div><p class="desc">파일을 올리면 ADA가 데이터를 분석해 방향을 제안합니다.</p>'
@@ -1029,7 +1253,8 @@ function render(){
   sc.innerHTML=html;
   sc.querySelectorAll('.step.reachable').forEach(function(el){ el.onclick=function(){ cur=+el.dataset.i; if(cur<frontier) follow=false; paused=false; render(); }; });
 
-  // 1~7 모든 단계 공통: 본문 + 진행바 (실패 시 진행바 생략 → progressBar() 내부에서 빈 문자열 반환).
+  // 1~7 모든 단계 공통: 본문 + 진행바 (실패 시 progressBar() 내부에서 빈 문자열 반환).
+  // 사용자 요구로 진행바 변경은 일체 손대지 않음 — 모달 안/밖 모두 기존 동작 유지.
   document.getElementById('content').innerHTML=
     (errMsg?('<div class="err">⚠ '+esc(errMsg)+'</div>'):'')+content(cur)+progressBar();
   document.getElementById('curName').textContent=steps[cur].label;
@@ -1095,6 +1320,17 @@ function render(){
   else if(cur===0) prim.disabled=(!selectedFile || !!jobId);
   else if(cur===LAST) prim.disabled=true;
   else prim.disabled=!atGate||!g5ok;
+  // HJ 2026-06-10 G1→G2 전환 팝업 토글 — inModalLoading() 동안 modal 표시, 끝나면 자동 숨김.
+  // backdrop-filter:blur 로 배경 카드·스텝 자동 흐림. 모달 내부 progressBar 만 선명.
+  const _modalOv=document.getElementById('modalOverlay');
+  if(_modalOv){
+    if(inModalLoading()){
+      document.getElementById('modalCard').innerHTML=modalHtml();
+      _modalOv.style.display='flex';
+    } else {
+      _modalOv.style.display='none';
+    }
+  }
 }
 document.getElementById('prevBtn').onclick=function(){
   if(cur===0){
@@ -1106,22 +1342,20 @@ document.getElementById('prevBtn').onclick=function(){
   }
   if(cur>0){
     const goTo=cur-1;
-    // G2~G5 구간에서 되돌아갈 때 이후 작업 무효화 경고
+    if(goTo===0) _suppressG1Advance=true;  // G1 화면에서 자동 G2 전환 억제
     if(goTo>=1 && goTo<=4 && maxReached>goTo){
-      // 실패 상태에서는 confirm 없이 즉시 — 이미 분析이 실패했으므로 경고 불필요
-      if(!isFailed() && !window.confirm(steps[goTo].label+' 단계로 돌아가면 이후 분석 결과가 초기화됩니다.\\n다른 옵션으로 재분석하려면 확인을 누르세요.')) return;
       Object.keys(gateCache).forEach(function(k){ if(parseInt(k.slice(1),10)>goTo+1) delete gateCache[k]; });
       maxReached=goTo; frontier=goTo;
     }
     cur=goTo; follow=false; render();
   }
 };
-document.getElementById('nextBtn').onclick=function(){ if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
+document.getElementById('nextBtn').onclick=function(){ _suppressG1Advance=false; if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
 document.getElementById('stopBtn').onclick=function(){ paused=true; if(pollTimer) clearTimeout(pollTimer); polling=false; render(); };
 document.getElementById('primaryBtn').onclick=function(){
   if(busy) return;
   if(paused){ paused=false; render(); if(analyzing()) startPolling(); return; }
-  if(cur===0){ doUpload(); return; }
+  if(cur===0){ _suppressG1Advance=false; doUpload(); return; }
   if(cur>=1 && cur<=5){ doResume(); return; }
 };
 // ── F5 복원: localStorage 에 저장된 jobId 있으면 현재 단계 유지, API 폴링 재개 ──

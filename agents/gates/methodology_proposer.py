@@ -246,7 +246,9 @@ class MethodologyProposerAgent(BaseGate):
             "data_profile": state.data_profile,
             "user_intent": state.user_intent,
         }
-        user_payload = json.dumps(payload, ensure_ascii=False)[:4000]
+        # default=str — state.data_profile 에 numpy.int64·pandas.Timestamp 등 JSON 직렬화 불가능
+        # 타입이 섞여 있으면 TypeError → _base_gate 가 'LLM 실패로 fallback' 으로 잡아버리는 버그 방지.
+        user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
