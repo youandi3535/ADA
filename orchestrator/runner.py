@@ -330,6 +330,39 @@ def estimate_stage_eta(
     return 60
 
 
+def publish_stage_partial(job_id: str, partial: dict[str, Any]) -> None:
+    """HJ 2026-06-10 — 단계 2~6 의 long-phase agent 가 인크리멘털 결과를 publish 하는 헬퍼.
+
+    1단계 G1 의 ``ada:domain_partial:{job_id}`` 와 동일한 구조 — 단, 모든 후행 단계가 공용 사용.
+    Redis 키: ``ada:stage_partial:{job_id}`` (TTL 600s).
+    저장 형식: 누적 dict — 호출 시 기존 값과 머지.
+
+    예) eda_agent: ``{"eda_status": "차트 생성 중", "eda_progress": 1}``
+        methodology_proposer: ``{"methodology_status": "LLM 호출 중", "candidates_partial": [...]}``
+
+    누수 방지: Redis 실패 시에도 본 agent 흐름에 영향 없음 (try/except 외부 격리는 호출자 책임).
+    """
+    if not job_id or not isinstance(partial, dict) or not partial:
+        return
+    try:
+        r = _get_redis()
+        existing: dict[str, Any] = {}
+        try:
+            raw = r.get(f"ada:stage_partial:{job_id}")
+            if raw:
+                existing = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            existing = {}
+        existing.update(partial)
+        r.setex(
+            f"ada:stage_partial:{job_id}",
+            600,
+            json.dumps(existing, ensure_ascii=False, default=str),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def publish_progress(
     job_id: str,
     current_agent: str,

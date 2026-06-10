@@ -317,6 +317,14 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                 data["domain_partial"] = _json.loads(raw_partial)
         except Exception:  # noqa: BLE001
             pass
+        # HJ 2026-06-10 — stage 2~6 의 long-phase agent 가 publish 한 인크리멘털 상태.
+        # eda_agent / methodology_proposer / ... 의 _emit 가 ada:stage_partial:{job_id} 에 누적.
+        try:
+            raw_sp = rc.get(f"ada:stage_partial:{job_id}")
+            if raw_sp:
+                data["stage_partial"] = _json.loads(raw_sp)
+        except Exception:  # noqa: BLE001
+            pass
     except Exception:  # noqa: BLE001
         pass
 

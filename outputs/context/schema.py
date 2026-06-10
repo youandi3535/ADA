@@ -232,6 +232,11 @@ class DomainContext:
     glossary: dict[str, str] = field(default_factory=dict)
     domain_benchmarks: list[dict[str, Any]] = field(default_factory=list)
     audience_inference: AudienceInference = field(default_factory=AudienceInference)
+    # 도메인 해석 출처 — "user" (사용자 입력) / "auto" (자동 추론) / "mixed"
+    # auto 의 경우 산출 PPT 에서 [auto-inferred] 라벨 부착 + 인용 면제.
+    domain_source: str = "auto"
+    # 자동 추론된 도메인 해석 텍스트 — 슬라이드 14·17 등에서 사용.
+    inferred_interpretation: Optional[str] = None
 
 
 @dataclass
@@ -300,6 +305,10 @@ class Evaluation:
     business_kpi: list[BusinessKPI] = field(default_factory=list)
     gate_passed: bool = False
     gate_rationale: str = ""
+    # 도입 판정 — 산출 PPT S2·S17·S19 가 어조 분기에 사용.
+    # "adopt" (도입 권장) / "iterate" (보강 후 재시도) / "reject" (현 모델 폐기) / "" (미판정)
+    verdict: str = ""
+    verdict_rationale: str = ""
 
 
 @dataclass
