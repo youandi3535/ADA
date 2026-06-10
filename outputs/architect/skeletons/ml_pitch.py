@@ -1199,16 +1199,111 @@ def _build_tech_architecture_with_lineage(ctx: ReportContext) -> SlideSpec:
     return _build_eda_placeholder("tech_architecture", 2, ctx, "eda_main_2")
 
 
-def _build_differentiation(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 11 — EDA · 변수 간 상관 / 데이터 품질 보조.
+def _derived_features_richness(ctx: ReportContext) -> int:
+    """파생 피처의 *정보 풍부도* 점수.
 
-    [재구성] '차별화 (PRODUCT/QUALITY/SCALE/TRUST)' 영업 톤 → EDA Extra.
-    4번째 EDAChart 가 있으면 그것을, 없으면 데이터 품질 이슈 요약으로.
+    name 만 있으면 1점, rationale 있으면 +2, formula 있으면 +2, importance 있으면 +1.
+    임계 5 이상이면 S11 EDA-Extra 를 파생 피처 슬라이드로 우선 사용.
     """
+    feats = list(ctx.features.created or [])
+    if not feats:
+        return 0
+    score = 0
+    for f in feats:
+        score += 1
+        if getattr(f, "rationale", "") or "":
+            score += 2
+        if getattr(f, "formula", "") or "":
+            score += 2
+        if getattr(f, "importance", None) is not None:
+            score += 1
+    return score
+
+
+def _build_derived_features_slide(ctx: ReportContext, slide_id: str) -> SlideSpec:
+    """파생 피처 표 슬라이드 — name / formula / rationale / importance.
+
+    S11 EDA-Extra 가 본 슬라이드로 전환되는 경로.
+    """
+    feats = list(ctx.features.created or [])[:6]
+    items: list[dict[str, Any]] = []
+    body: list[str] = []
+    for f in feats:
+        name = getattr(f, "name", "") or "?"
+        formula = getattr(f, "formula", "") or ""
+        rationale = getattr(f, "rationale", "") or ""
+        importance = getattr(f, "importance", None)
+        items.append({
+            "name": name,
+            "formula": formula,
+            "rationale": rationale,
+            "importance": importance,
+        })
+        # body — 카드 안 2단 위계
+        imp_str = ""
+        if importance is not None:
+            try:
+                imp_str = f" · {format_metric(float(importance), 'shap', as_percent=False, decimals=2)}"
+            except (TypeError, ValueError):
+                pass
+        body.append(f"{name}{imp_str}" + (f" · {rationale}" if rationale else ""))
+
+    dropped = list(ctx.features.dropped or [])[:3]
+    dropped_items: list[dict[str, str]] = []
+    for d in dropped:
+        if isinstance(d, dict):
+            dropped_items.append({
+                "name": str(d.get("name", "")),
+                "reason": str(d.get("reason", "")),
+            })
+
+    return SlideSpec(
+        id=slide_id,
+        section_id="solution",
+        layout="derived_features_table",
+        role="evidence",
+        so_what=(
+            f"파생 피처 {len(items)}개 — 각 피처의 *공식·근거·중요도* 트레이스"
+            + (f" (시도 후 폐기 {len(dropped_items)}개)" if dropped_items else "")
+        ),
+        title_ko="파생 피처 엔지니어링",
+        body_outline=body[:5],
+        parent_message_id="solution_root",
+        visual_spec=VisualSpec(
+            type="v28_derived_features",
+            title="파생 피처 엔지니어링",
+            spec={
+                "features": items,
+                "dropped": dropped_items,
+                "selection_method": ctx.features.selection_method or "",
+                "final_count": ctx.features.final_feature_count or len(items),
+            },
+        ),
+        speaker_notes_hint=(
+            "파생 피처 표 — name / formula / rationale / importance. "
+            "S11 EDA-Extra 가 파생 피처 풍부도 점수 ≥ 5 이면 본 슬라이드로 전환."
+        ),
+    )
+
+
+def _build_differentiation(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 11 — EDA Extra (파생 피처 우선 / 4번째 chart / 결측 분포).
+
+    우선순위 변경:
+      1) 파생 피처 풍부도 점수 ≥ 5 → 파생 피처 표 슬라이드
+      2) 4번째 EDAChart → chart_callout
+      3) 결측률 Top 5 → 폴백
+    """
+    # ① 파생 피처가 충분히 풍부하면 — 파생 피처 표가 EDA Extra 슬롯 차지
+    if _derived_features_richness(ctx) >= 5:
+        return _build_derived_features_slide(ctx, "s3_differentiation")
+
+    # ② 4번째 EDAChart
     charts = _select_top_eda_charts(ctx, n=4)
     if len(charts) >= 4:
         return _build_eda_slide_from_chart(charts[3], "s3_differentiation", 4, ctx, "eda_extra")
-    # 4번째 차트 없음 — 데이터 품질·결측 분포로 채움
+
+    # ③ 폴백 — 결측 분포
     category = ctx.meta.category or "tabular_ml"
     variant = resolve_slide("eda_extra", category)
     title_ko = (variant.title_ko if variant else "EDA · 변수 간 상관 / 품질")
@@ -1237,8 +1332,7 @@ def _build_differentiation(ctx: ReportContext) -> SlideSpec:
             spec={"missing": dict(top_missing)},
         ),
         speaker_notes_hint=(
-            "EDA Extra — 4번째 차트가 있으면 그것을 사용, 없으면 결측률 Top 5 요약. "
-            "이후 슬라이드의 전처리 결정 근거."
+            "EDA Extra 우선순위 — 파생 피처 풍부도 ≥ 5 / 4번째 EDA chart / 결측률 Top 5."
         ),
     )
 
@@ -1351,20 +1445,28 @@ def _build_eda_findings(ctx: ReportContext) -> SlideSpec:
     title_ko = (variant.title_ko if variant else "SHAP Global Importance · Top 5")
 
     imps = list(ctx.interpretation.global_importance or [])[:5]
+    # 파생 피처 이름 집합 — (파생)/(원본) 라벨 부착에 사용
+    derived_names = {
+        getattr(f, "name", "") for f in (ctx.features.created or []) if getattr(f, "name", "")
+    }
     items: list[dict[str, Any]] = []
     refs: list[str] = []
     for it in imps:
+        feat = getattr(it, "feature", "")
+        is_derived = feat in derived_names
         items.append({
-            "feature": getattr(it, "feature", ""),
+            "feature": feat,
             "importance": getattr(it, "importance", 0.0),
             "method": getattr(it, "method", "shap"),
+            "kind": "derived" if is_derived else "original",
         })
         rid = getattr(it, "ref_id", None)
         if rid:
             refs.append(rid)
 
     body = [
-        f"{i+1}순위 · {it['feature']} · {format_metric(float(it['importance']), 'shap', as_percent=False, decimals=2)}"
+        f"{i+1}순위 · {it['feature']} ({'파생' if it['kind'] == 'derived' else '원본'}) · "
+        f"{format_metric(float(it['importance']), 'shap', as_percent=False, decimals=2)}"
         for i, it in enumerate(items)
     ]
     if not body:
