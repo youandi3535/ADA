@@ -23,6 +23,51 @@ class PDFReportGenerator(OutputGenerator):
     output_code = "OUT-02"
     extension = "pdf"
 
+    def _try_report_v2(self, *, state: Any) -> str | None:
+        """신형 보고서 경로 — report_context 가 실내용이면 report_skeleton→pdf_carrier 로 렌더.
+
+        OUT-01(PPT) V2 와 동일 철학: state 에 분석 컨텍스트가 쌓여 있으면 신형 엔진으로
+        '데이터 분석 종합 보고서' 를 생성하고, 없거나 실패하면 None 을 반환해 호출부가
+        구형(legacy) reportlab 렌더로 폴백한다 (silent-safe).
+        """
+        if state is None:
+            return None
+        try:
+            from outputs.context.builder import build_report_context
+
+            ctx = build_report_context(state)
+            # [임시 디버그] 실제 ReportContext 덤프 — 검증용, 확인 후 제거.
+            # outputs/ 디렉터리에 기록한다(=compose 의 ../outputs:/app/outputs 마운트 → 호스트에서 바로 보임).
+            # 과거엔 repo 루트(/app)에 썼는데 /app 은 마운트 안 돼 호스트에서 안 보였음.
+            try:
+                import json as _json
+                import os as _os
+
+                _dump = _os.path.join(_os.path.dirname(__file__), "report_context_dump.json")
+                with open(_dump, "w", encoding="utf-8") as _f:
+                    _json.dump(ctx.to_dict(), _f, ensure_ascii=False, indent=1)
+            except Exception:  # noqa: BLE001
+                pass
+            # 실질 내용이 있을 때만 신형 가동 — 얇은 state(테스트 등)는 구형 폴백 유지.
+            has_content = bool(ctx.dataset.dtypes) or bool(ctx.evaluation.metrics) or bool(ctx.eda.charts)
+            if not has_content:
+                return None
+            from outputs.architect.skeletons import report_skeleton
+            from outputs.carriers.pdf_carrier import generate_pdf
+
+            plan = report_skeleton.build(ctx)
+            local = self._tmp()
+            generate_pdf(plan, ctx, local)
+            return self._upload(local)
+        except Exception as e:  # noqa: BLE001
+            try:
+                from ada.core.logger import get_logger
+
+                get_logger("PDFReportGenerator").warning("pdf_v2_report_failed", error=str(e))
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
     def generate(
         self,
         *,
@@ -39,6 +84,11 @@ class PDFReportGenerator(OutputGenerator):
         user_intent = reattach_pii(state, user_intent)
         if eval_result:
             eval_result = {**eval_result, "rationale": reattach_pii(state, eval_result.get("rationale"))}
+
+        # ── 신형 보고서 경로 (OUT-02 V2) — report_context 있으면 종합보고서, 없으면 구형 폴백
+        _v2 = self._try_report_v2(state=state)
+        if _v2 is not None:
+            return _v2
 
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4

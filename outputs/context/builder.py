@@ -135,8 +135,20 @@ def _augment_dataset(ctx: ReportContext, state: PipelineState) -> None:
                         k: float(info[k]) for k in ("min", "max", "mean") if isinstance(info.get(k), (int, float))
                     }
 
+        # 사람이 읽을 데이터셋명 우선 — 없으면 file_id(UUID) 폴백 (carrier/skeleton 가 추가 방어)
+        human_name = (
+            identity.get("dataset_name")
+            or identity.get("name")
+            or identity.get("filename")
+            or identity.get("title")
+            or (profile.get("dataset_name") if isinstance(profile, dict) else None)
+            or identity.get("source_hint")
+            or state.file_id
+            or ""
+        )
+
         ctx.dataset = DatasetProfile(
-            dataset_name=state.file_id or "",
+            dataset_name=str(human_name),
             dataset_hash=str(repro.get("data_hash_sample", "")),
             shape={"rows": rows, "cols": cols},
             dtypes=dtypes,
