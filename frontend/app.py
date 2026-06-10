@@ -244,6 +244,10 @@ _FLOW_HTML = """
   @keyframes hgFill{0%{transform:scaleY(0);}76%,100%{transform:scaleY(1);}}
   @keyframes hgStream{0%,3%{opacity:0;}6%,72%{opacity:1;}76%,100%{opacity:0;}}
   @keyframes cmIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+  /* HJ 2026-06-10 — 모달 텍스트 타자기 효과. 글자 단위 reveal. 분석 시간 흡수용. */
+  .tw{display:inline;white-space:pre-wrap;}
+  .tw-caret{display:inline-block;width:2px;height:1em;background:#1f3e5c;margin-left:2px;vertical-align:-2px;animation:twBlink 0.85s steps(2,start) infinite;opacity:.85;}
+  @keyframes twBlink{to{visibility:hidden;}}
   /* HJ 2026-06-10 — 마일스톤 세그먼트 바. 각 segment = 단계의 한 agent. 완료/현재/대기 색상 구분. */
   .ms-bar{display:flex;width:100%;min-height:48px;background:#eef2f8;border-radius:12px;overflow:hidden;border:1px solid #d8e3f2;max-width:760px;margin:0 auto;}
   .ms-seg{flex:1;display:flex;align-items:center;justify-content:center;padding:6px 8px;font-size:13px;font-weight:600;color:#7e98ba;border-right:1px solid rgba(255,255,255,.6);transition:background .35s,color .35s;min-width:0;line-height:1.35;text-align:center;word-break:keep-all;overflow-wrap:break-word;}
@@ -567,6 +571,99 @@ const HOURGLASS_HTML='<svg class="hg-svg" width="30" height="46" viewBox="0 0 32
   +'</g></svg>';
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// HJ 2026-06-10 — 모달 텍스트 타자기 효과. 사용자 요구: "한 글자 한 글자, 천천히 — 분석 시간은 충분".
+// 사용법: twSpan(text, stableKey) 로 placeholder span 생성 → _twTick 이 글자 단위로 채움.
+// stableKey 가 같으면 innerHTML 재설정되어도 진행 상태(_twState) 유지 → 스트리밍 데이터 추가에 안전.
+function attrEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function twSpan(text, key){
+  if(text==null||text==='') return '';
+  return '<span class="tw" data-tw="'+attrEsc(String(text))+'" data-twk="'+attrEsc(String(key))+'"></span>';
+}
+var _twState={};        // key -> {shown:N, target:'...'}
+var _twTimer=null;
+var _TW_STEP_MS=95;     // 글자당 ms. 약 10자/초 = 사람 타이핑 속도. 사용자 요구로 의도적으로 느리게.
+var _twDotsShownAt=0;   // 점 3개(⋮) 등장 시각 — 등장 후 ~800ms 정지하여 사용자가 점을 인지하게 함.
+var _TW_DOTS_PAUSE_MS=800;
+// HJ 2026-06-10 — 순차(sequential) 진행. DOM 순서대로 한 요소가 끝나야 다음 요소가 시작.
+// 추가: 카드 도형 자체도 행(row) 단위로 등장. 그 행 카드의 타이핑이 시작될 때 도형 reveal.
+// 사용자 요구: "한 줄 한 줄 사람이 직접 쓰듯 — 위에서 아래로 순서대로. 도형도 미리 안 보이고 글자랑 같이 등장".
+function _twTick(){
+  var els=document.querySelectorAll('span.tw[data-tw]');
+  // [1차 패스] 상태 동기화 + 섹션 진행 분석 (상단 완료 / 하단 시작 여부)
+  var hasTop=false, hasBot=false, topComplete=true, anyBotStarted=false;
+  for(var i=0;i<els.length;i++){
+    var el=els[i];
+    var key=el.getAttribute('data-twk');
+    var full=el.getAttribute('data-tw')||'';
+    var st=_twState[key];
+    if(!st){ st={shown:0,target:full}; _twState[key]=st; }
+    if(st.target!==full){ st.target=full; if(st.shown>full.length) st.shown=full.length; }
+    var card=el.closest?el.closest('.cmcard'):null;
+    if(card){
+      var sec=card.getAttribute('data-cmsec')||'';
+      if(sec==='top'){ hasTop=true; if(st.shown<full.length) topComplete=false; }
+      if(sec==='bot'){ hasBot=true; if(st.shown>0) anyBotStarted=true; }
+    }
+  }
+  // [점 3개 visibility] 상단 완료 시점에 등장 → ~800ms 정지 후 하단 시작
+  var shouldShowDots=hasTop && hasBot && topComplete;
+  var dotsEl=document.querySelector('.cmdots');
+  if(dotsEl){
+    if(shouldShowDots){
+      if(dotsEl._cmVis!==true){ dotsEl._cmVis=true; dotsEl.style.opacity='1'; dotsEl.style.visibility='visible'; if(!_twDotsShownAt) _twDotsShownAt=Date.now(); }
+    } else {
+      if(dotsEl._cmVis!==false){ dotsEl._cmVis=false; dotsEl.style.opacity='0'; dotsEl.style.visibility='hidden'; }
+    }
+  }
+  var pauseActive=(shouldShowDots && !anyBotStarted && _twDotsShownAt>0 && (Date.now()-_twDotsShownAt)<_TW_DOTS_PAUSE_MS);
+  // [2차 패스] 첫 미완료 요소 1글자 전진 + DOM 동기화 + 카드 행 visibility
+  var advanced=false, maxStartedRow=-1;
+  for(var j=0;j<els.length;j++){
+    var el2=els[j];
+    var key2=el2.getAttribute('data-twk');
+    var full2=el2.getAttribute('data-tw')||'';
+    var st2=_twState[key2];
+    var card2=el2.closest?el2.closest('.cmcard'):null;
+    var sec2='', row2=-1;
+    if(card2){ sec2=card2.getAttribute('data-cmsec')||''; row2=parseInt(card2.getAttribute('data-cmrow')||'-1',10); }
+    // 정지 중에는 하단 첫 카드 시작 차단 (상단 완료 후 ~800ms 점 노출)
+    if(!advanced && st2.shown<full2.length){
+      if(pauseActive && sec2==='bot' && st2.shown===0){
+        /* skip — 정지 */
+      } else {
+        st2.shown++;
+        advanced=true;
+      }
+    }
+    if(card2 && row2>=0 && st2.shown>0 && row2>maxStartedRow) maxStartedRow=row2;
+    var sig;
+    if(st2.shown===0){
+      sig='e';
+      if(el2._twLast!==sig){ el2._twLast=sig; el2.innerHTML=''; }
+    } else if(st2.shown<full2.length){
+      sig='p:'+st2.shown+':'+full2.length;
+      if(el2._twLast!==sig){ el2._twLast=sig; el2.innerHTML=esc(full2.slice(0,st2.shown))+'<span class="tw-caret"></span>'; }
+    } else {
+      sig='d:'+full2;
+      if(el2._twLast!==sig){ el2._twLast=sig; el2.innerHTML=esc(full2); }
+    }
+  }
+  // [카드 visibility] 행 인덱스 <= maxStartedRow 인 카드만 노출.
+  // 하단 시작 시 상단은 모두 보이도록 보정 (anyBotStarted → 상단 카드도 강제 visible).
+  var cards=document.querySelectorAll('.cmcard');
+  for(var k=0;k<cards.length;k++){
+    var c=cards[k];
+    var r=parseInt(c.getAttribute('data-cmrow')||'-1',10);
+    var s=c.getAttribute('data-cmsec')||'';
+    var show=(r>=0 && r<=maxStartedRow) || (s==='top' && anyBotStarted);
+    if(show){
+      if(c._cmVis!==true){ c._cmVis=true; c.style.opacity='1'; c.style.visibility='visible'; }
+    } else {
+      if(c._cmVis!==false){ c._cmVis=false; c.style.opacity='0'; c.style.visibility='hidden'; }
+    }
+  }
+}
+function _twStart(){ if(_twTimer) return; _twTimer=setInterval(_twTick,_TW_STEP_MS); }
 // 숫자 표시 헬퍼 — 부동소수점은 소수점 3자리, 정수는 그대로, 문자열은 원본
 function fmtNum(v){
   if(v==null) return '';
@@ -1232,17 +1329,45 @@ function modalTopicArea(d){
   const cm=da.column_meanings||{};
   if(!domain && !summary && !Object.keys(cm).length) return '';
   let cmHtml='';
-  const cmKeys=Object.keys(cm).slice(0,12);
-  if(cmKeys.length){
-    cmHtml='<div style="margin-top:22px"><div style="font-size:22px;opacity:.7;margin-bottom:12px">컬럼 의미 ('+cmKeys.length+(Object.keys(cm).length>12?'/'+Object.keys(cm).length:'')+')</div>'
-      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px;font-size:22px">'
-      +cmKeys.map(function(k,i){return '<div style="background:#fff;padding:14px 18px;border-radius:8px;border:1px solid #e2e8f0;opacity:0;animation:cmIn 0.4s ease forwards;animation-delay:'+(i*0.15).toFixed(2)+'s"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+esc(String(cm[k]))+'</span></div>';}).join('')
-      +'</div></div>';
+  const cmAllKeys=Object.keys(cm);
+  if(cmAllKeys.length){
+    // HJ 2026-06-10 — 컬럼 개수별 레이아웃 + 행 단위 순차 reveal:
+    //   8개 이하: 전부 2x2 그리드. 각 행은 그 행 카드의 타이핑이 시작될 때 등장.
+    //   9개 이상: 상단 4(첫 3 비타깃 + 타깃) — 중단 ⋮ — 하단 4. 도형도 행 단위로 순차 등장.
+    // 카드는 초기 opacity:0;visibility:hidden 으로 숨김 → _twTick 이 data-cmrow 기반으로 reveal.
+    // 점 3개(⋮)는 상단 4 카드의 타이핑이 모두 완료되어야 등장. ~800ms 정지 후 하단 시작.
+    const _card=function(k,row,sec){return '<div class="cmcard" data-cmrow="'+row+'" data-cmsec="'+sec+'" style="background:#fff;padding:14px 18px;border-radius:8px;border:1px solid #e2e8f0;opacity:0;visibility:hidden;transition:opacity .35s ease"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+twSpan(String(cm[k]),'g1-cm-'+k)+'</span></div>';};
+    const _grid='display:grid;grid-template-columns:repeat(2,1fr);gap:12px;font-size:22px';
+    const _dots='<div class="cmdots" style="display:flex;flex-direction:column;align-items:center;gap:6px;margin:20px 0;color:#94a3b8;font-size:34px;line-height:1;font-weight:800;opacity:0;visibility:hidden;transition:opacity .4s ease"><span>·</span><span>·</span><span>·</span></div>';
+    const _label='<div style="font-size:22px;opacity:.7;margin-bottom:12px">'+twSpan('컬럼 의미 ('+cmAllKeys.length+')','g1-cmlabel')+'</div>';
+    if(cmAllKeys.length<=8){
+      cmHtml='<div style="margin-top:22px">'+_label+'<div style="'+_grid+'">'
+        +cmAllKeys.map(function(k,i){return _card(k,Math.floor(i/2),'all');}).join('')
+        +'</div></div>';
+    } else {
+      const target=(d&&d.target_column)||'';
+      const hasTarget=target && cmAllKeys.indexOf(target)>=0;
+      let topKeys;
+      if(hasTarget){
+        const first3=cmAllKeys.filter(function(k){return k!==target;}).slice(0,3);
+        topKeys=first3.concat([target]);
+      } else {
+        topKeys=cmAllKeys.slice(0,4);
+      }
+      const topSet={}; topKeys.forEach(function(k){topSet[k]=1;});
+      const remaining=cmAllKeys.filter(function(k){return !topSet[k];});
+      const botKeys=remaining.slice(-4);
+      cmHtml='<div style="margin-top:22px">'+_label
+        +'<div style="'+_grid+'">'+topKeys.map(function(k,i){return _card(k,Math.floor(i/2),'top');}).join('')+'</div>'
+        +_dots
+        +'<div style="'+_grid+'">'+botKeys.map(function(k,i){return _card(k,Math.floor(i/2)+2,'bot');}).join('')+'</div>'
+        +'</div>';
+    }
   }
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
-    +(domain?'<div style="font-size:28px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+esc(domain)+'</b></div>':'')
-    +(summary?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">데이터셋</span> &nbsp;'+esc(summary)+'</div>':'')
-    +(tInsight?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
+    +(domain?'<div style="font-size:28px"><span style="opacity:.7">도메인</span> &nbsp;<b>'+twSpan(domain,'g1-domain')+'</b></div>':'')
+    +(summary?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">데이터셋</span> &nbsp;'+twSpan(summary,'g1-summary')+'</div>':'')
+    +(tInsight?'<div style="margin-top:14px;font-size:26px;line-height:1.5"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+twSpan(tInsight,'g1-tinsight')+'</div>':'')
     +cmHtml
     +'</div>';
 }
@@ -1316,9 +1441,12 @@ function modalSubstepProgress(){
 function _labelRow(label, value, opts){
   if(value==null||value==='') return '';
   opts=opts||{};
+  // HJ 2026-06-10 — 값 부분만 타자기. 라벨은 즉시 표시(폼 라벨 + 타이핑되는 응답 패턴).
+  var key=opts.twk||('lr-'+cur+'-'+label);
+  var v=twSpan(String(value),key);
   return '<div style="margin-top:'+(opts.mt==null?14:opts.mt)+'px;font-size:'+(opts.fs||26)+'px;line-height:1.5">'
     +'<span style="opacity:.7">'+esc(label)+'</span> &nbsp;'
-    +(opts.bold?('<b>'+esc(String(value))+'</b>'):esc(String(value)))
+    +(opts.bold?('<b>'+v+'</b>'):v)
     +'</div>';
 }
 // 한 단계의 모달 박스 — G1 modalTopicArea 와 동일한 구조 (제목 + 라벨링된 row 들).
@@ -1767,7 +1895,9 @@ function render(){
       document.getElementById('modal-pb').innerHTML=progressBar();
       // [3] insight 영역: insightHtml 변경 시만 재설정 (모래시계와 완전 분리)
       var _miEl=document.getElementById('modal-insight');
-      if(_miEl){var _iHtml=modalInsightArea(gateData)||(cur===0?'<div class="modal-placeholder">📊 데이터 도메인을 분석하는 중입니다…</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;}}
+      if(_miEl){var _iHtml=modalInsightArea(gateData)||(cur===0?'<div class="modal-placeholder">📊 데이터 도메인을 분석하는 중입니다…</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();/* innerHTML 교체 후 즉시 1 tick → 진행 상태(_twState) 복원, blank flicker 방지 */}}
+      // [3.5] 타자기 엔진 시작 (idempotent — 모달 노출 동안 계속 run)
+      _twStart();
       // [4] 모래시계 pending 블록: 최초 1회만 초기화 → SVG 애니메이션 영구 유지
       var _mpEl=document.getElementById('modal-pending-wrap');
       if(_mpEl&&!_mpEl._init){_mpEl._init=true;_mpEl.innerHTML='<div class="modal-pending"><div class="t">'+HOURGLASS_HTML+'<span id="mlmsg"></span></div><div class="s" id="msubinfo"></div></div>';}
@@ -1778,6 +1908,8 @@ function render(){
       _modalOv.style.display='flex';
     } else {
       _modalOv.style.display='none';
+      // HJ 2026-06-10 — 모달 닫힘 시 타자기 상태 리셋. 다음 잡(job)에서 처음부터 다시 타이핑.
+      _twState={}; _twDotsShownAt=0;
     }
   }
 }

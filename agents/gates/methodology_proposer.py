@@ -231,6 +231,15 @@ class MethodologyProposerAgent(BaseGate):
     n_proposals = 2  # LLM generates 2; option 3 is always _CUSTOM_OPTION
 
     async def _propose(self, state: PipelineState) -> list[dict[str, Any]]:
+        # HJ 2026-06-10 — stage_partial publish (단계 2 long-phase 라이브 피드백)
+        def _emit(partial: dict) -> None:
+            try:
+                from orchestrator.runner import publish_stage_partial as _psp
+
+                _psp(state.job_id, partial)
+            except Exception:  # noqa: BLE001
+                pass
+
         # G2 선택 제목을 추출 — adopted_rank 숫자 대신 실제 방향 텍스트를 LLM 에 전달
         g1_resp = (state.gate_responses or {}).get("G2", {})
         g1_uc = g1_resp.get("user_choice") or {}
@@ -239,6 +248,13 @@ class MethodologyProposerAgent(BaseGate):
         g1_chosen = next(
             (p for p in g1_props if isinstance(p, dict) and p.get("id") == g1_rank),
             None,
+        )
+        _emit(
+            {
+                "methodology_status": f"G2 선택 분석: {(g1_chosen or {}).get('title', '미정')[:80]}",
+                "methodology_phase": "context",
+                "methodology_locked_category": state.category,
+            }
         )
         payload = {
             "locked_category": state.category,
@@ -249,6 +265,12 @@ class MethodologyProposerAgent(BaseGate):
         # default=str — state.data_profile 에 numpy.int64·pandas.Timestamp 등 JSON 직렬화 불가능
         # 타입이 섞여 있으면 TypeError → _base_gate 가 'LLM 실패로 fallback' 으로 잡아버리는 버그 방지.
         user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:4000]
+        _emit(
+            {
+                "methodology_status": f"Claude Sonnet 4.6 로 방법론 후보 LLM 호출 중… ({state.category})",
+                "methodology_phase": "llm",
+            }
+        )
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
@@ -284,13 +306,46 @@ class MethodologyProposerAgent(BaseGate):
                 llm_opts = arr[: self.n_proposals]
                 for i, opt in enumerate(llm_opts, start=1):
                     opt["id"] = i
+                # 부분 후보를 stage_partial 에도 노출 — 프론트 모달이 곧바로 표시
+                _emit(
+                    {
+                        "methodology_status": f"방법론 후보 {len(llm_opts)}개 확정",
+                        "methodology_phase": "done",
+                        "methodology_candidates": [
+                            {
+                                "id": o.get("id"),
+                                "title": str(o.get("title", ""))[:160],
+                                "score": o.get("score"),
+                                # rationale — LLM 이 생성한 3줄 글머리 설명 (방식·이유·결과). 모달에서 인사이트로 표시.
+                                "rationale": str(o.get("rationale", ""))[:600],
+                            }
+                            for o in llm_opts
+                        ],
+                    }
+                )
                 return llm_opts + [_CUSTOM_OPTION]
         except Exception as e:
             self.logger.warning("g3_llm_failed", error=str(e))
+            _emit({"methodology_status": f"LLM 실패 — fallback 사용: {str(e)[:120]}", "methodology_phase": "fallback"})
 
         base = _FALLBACK_DEFAULTS.get(
             state.category,
             [{"id": 1, "title": "기본 분석", "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
+        )
+        _emit(
+            {
+                "methodology_status": f"폴백 방법론 {len(base)}개 적용",
+                "methodology_phase": "fallback_applied",
+                "methodology_candidates": [
+                    {
+                        "id": o.get("id"),
+                        "title": str(o.get("title", ""))[:160],
+                        "score": o.get("score"),
+                        "rationale": str(o.get("rationale", ""))[:600],
+                    }
+                    for o in base
+                ],
+            }
         )
         return list(base) + [_CUSTOM_OPTION]
 
