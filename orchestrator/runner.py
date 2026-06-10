@@ -607,9 +607,24 @@ def _save_gate_data(job_id: str, final_dict: dict) -> None:
     gate_entry = gr.get(gate) or {}
     try:
         r = _get_redis()
+        # CS 2026-06-10 — schema_validator 가 미리 저장한 topic_proposals / g2_pending 보존.
+        # 백그라운드 prefetch task 가 patch 한 값을 _save_gate_data 가 덮어쓰지 않도록 기존 값 읽음.
+        _prev: dict = {}
+        try:
+            _raw_prev = r.get(f"ada:gate_data:{job_id}")
+            if _raw_prev:
+                _prev = json.loads(_raw_prev) or {}
+        except Exception:  # noqa: BLE001
+            _prev = {}
         payload = {
             "gate": gate,
             "proposals": gate_entry.get("proposals") or [],
+            # 보존 필드 — schema_validator 백그라운드 task 가 patch 한 값 보존
+            # CS 2026-06-10 — G2 흐름 재설계: AnalysisProposerAgent.__call__ 이
+            # state.gate_responses[G2].topic_proposals 에 저장 → 여기서 forward.
+            # _prev (Redis) 는 백그라운드 prefetch 시절 fallback (제거됨).
+            "topic_proposals": gate_entry.get("topic_proposals") or _prev.get("topic_proposals"),
+            "g2_pending": _prev.get("g2_pending"),
             "category": final_dict.get("category"),
             "target_column": final_dict.get("target_column"),
             "insights": final_dict.get("insights"),

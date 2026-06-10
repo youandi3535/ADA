@@ -134,6 +134,11 @@ _FLOW_HTML = """
   .opt .rec{display:inline-block;margin-left:9px;font-size:13px;font-weight:700;color:#1f7a52;background:#e6f7ef;border:1px solid #b7e6cf;border-radius:999px;padding:3px 11px;vertical-align:middle;}
   .opt h3{font-size:25px;font-weight:800;color:var(--ink);margin:14px 0 8px;}
   .opt p{font-size:18px;color:#52647d;line-height:1.5;margin:0 0 14px;}
+  /* CS 2026-06-10 — 글머리표 위·아래 간격 가독성 */
+  .opt .ratbody{margin:0 0 14px;}
+  .opt .ratline{font-size:18px;color:#52647d;line-height:1.55;margin:10px 0;padding:2px 0;}
+  .opt .ratline:first-child{margin-top:0;}
+  .opt .ratline:last-child{margin-bottom:0;}
   .opt .hint{font-size:15px;color:#1f7a52;background:#f0faf4;border-radius:9px;padding:8px 12px;margin:0 0 12px;}
   .opt .en2{font-size:17px;color:#8aa0bd;margin-bottom:14px;}
   .opt .time{margin-top:auto;font-size:16px;color:#8aa0bd;}
@@ -154,6 +159,39 @@ _FLOW_HTML = """
   .dlbtn:hover{background:#284e74;}
   .dlbtn.unavail{background:#c0cfe0;cursor:not-allowed;pointer-events:none;}
   .err{background:#fbeaea;border:1px solid #e7b7b7;color:#a33;border-radius:14px;padding:15px 20px;font-size:19px;margin:0 0 20px;}
+  /* CS 2026-06-10 — G2 Sub-1 (주제 선정) 팝업 모달 */
+  .topicmodal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,30,50,.45);display:flex;align-items:center;justify-content:center;z-index:9000;padding:20px;}
+  .topicmodal-inner{background:#fff;border-radius:24px;max-width:1100px;width:100%;max-height:90vh;overflow-y:auto;padding:40px;box-shadow:0 24px 64px rgba(0,0,0,.3);}
+  .topichdr{text-align:center;}
+  .topichdr h2{font-size:32px;font-weight:800;margin:0;color:var(--ink);}
+  .topichdr .en{font-size:20px;color:#8aa0bd;font-style:italic;margin:4px 0 0;}
+  .topichdr .stepline{margin-top:14px;display:inline-block;}
+  .topichdr .stepchip{font-size:14px;color:#6b7c95;background:#f0f4fa;border-radius:999px;padding:4px 12px;vertical-align:middle;}
+  .topichdr .desc{font-size:15px;color:#6b7c95;opacity:.85;margin-left:8px;white-space:nowrap;vertical-align:middle;}
+  .topicwrap{display:grid;grid-template-columns:1.6fr 1fr;gap:22px;margin-top:28px;}
+  @media(max-width:1100px){.topicwrap{grid-template-columns:1fr;}}
+  .topicrec{display:flex;flex-direction:column;gap:12px;}
+  .topiccust{display:flex;flex-direction:column;}
+  .topicrec .topicopt, .topiccust .topicopt{padding:20px 22px;}
+  .topiccust .topicopt h3{margin-top:10px;}
+  .topiccust textarea{width:100%;border:1px solid var(--line);border-radius:11px;padding:13px 15px;font-size:17px;font-family:inherit;color:var(--ink);min-height:200px;resize:vertical;margin-top:10px;}
+  /* CS 2026-06-10 — 팝업 박스 2개 (OPTION 1 + OPTION 2) + 라디오 input */
+  .topicbox{border:2px solid #e3ecf7;border-radius:20px;background:#fff;padding:24px 26px;display:flex;flex-direction:column;}
+  .topicbox.box-active{border-color:#1f3e5c;box-shadow:0 14px 34px rgba(31,62,92,.14);}
+  .topicbox .onum{font-size:13px;letter-spacing:.13em;color:#9aa9bd;font-weight:700;}
+  .topicbox h3{font-size:20px;font-weight:800;color:var(--ink);margin:8px 0 16px;}
+  .topicradios{display:flex;flex-direction:column;gap:8px;}
+  .topicradio{display:flex;align-items:flex-start;gap:11px;padding:11px 13px;border-radius:11px;cursor:pointer;transition:.12s;border:1px solid transparent;}
+  .topicradio:hover{background:#f5f8fc;}
+  .topicradio input[type=radio]{margin-top:5px;width:18px;height:18px;cursor:pointer;flex:none;accent-color:#1f3e5c;}
+  .topicradio .trtext{font-size:16px;color:var(--ink);flex:1;line-height:1.4;}
+  .topicradio .rec{display:inline-block;margin-left:8px;font-size:12px;font-weight:700;color:#1f7a52;background:#e6f7ef;border:1px solid #b7e6cf;border-radius:999px;padding:2px 9px;}
+  .topicradio-custom{align-items:stretch;padding:0;flex:1;}
+  .topicradio-custom input[type=radio]{margin-top:18px;margin-left:13px;}
+  .topicradio-custom textarea{flex:1;border:1px solid var(--line);border-radius:11px;padding:13px 15px;font-size:15px;font-family:inherit;color:var(--ink);min-height:180px;resize:vertical;margin:8px;}
+  .topicfoot{display:flex;justify-content:flex-end;margin-top:28px;}
+  .topicbtn{display:inline-flex;align-items:center;gap:8px;background:#1f3e5c;color:#fff;border:none;border-radius:999px;padding:11px 26px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer;box-shadow:0 8px 18px rgba(31,62,92,.26);}
+  .topicbtn:disabled{opacity:.45;cursor:default;box-shadow:none;}
   .footer{display:flex;align-items:center;gap:16px;margin-top:28px;padding-top:24px;border-top:1px solid #eef2f8;}
   .spacer{flex:1;}
   .btn{font-family:inherit;font-weight:600;border-radius:999px;cursor:pointer;font-size:24px;white-space:nowrap;display:inline-flex;align-items:center;gap:10px;}
@@ -275,6 +313,12 @@ let prefetchResult=null;               // {category, target_column, auto_intent,
 let prefetchPolling=false;             // /prefetch/{sig} polling 중복 방지
 let prefetchPreview=null;              // {rows, cols, columns} — UI 즉시 표시용
 let gateData={}, selId=null, selGate=null, customText='', analyzeStart=null, animatedGate=null;
+// CS 2026-06-10 — G2 Sub-1 (주제 선정 팝업) 상태 변수
+let g2SubStage='topic';          // 'topic' (디폴트) → 'direction' (선택 완료 후)
+let selectedTopic={id:1};        // {id:1~5} 또는 {custom:"text"}
+let topicCustomText='';          // 직접 입력 textarea 값
+let g2DirectionsBusy=false;      // endpoint 호출 중 표시용
+let g2DirectionsReady=false;     // endpoint 응답 받았는지 (resume 가드)
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
 let gateCache={};  // {G2: gateData, G3: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
@@ -297,7 +341,9 @@ function _stateRead(){
 function saveState(){
   if(!jobId) return;
   if(isFailed()){ clearState(); return; }  // 완료 시엔 유지 — F5 새로고침 후 결과 화면 복원
-  var d=JSON.stringify({jobId:jobId,fileId:fileId,cur:cur,maxReached:maxReached});
+  // CS 2026-06-10 — G2 Sub-1 (주제 팝업) 상태도 보존 (F5 새로고침 시 복원)
+  var d=JSON.stringify({jobId:jobId,fileId:fileId,cur:cur,maxReached:maxReached,
+    g2SubStage:g2SubStage,selectedTopic:selectedTopic,topicCustomText:topicCustomText,g2DirectionsReady:g2DirectionsReady});
   try{
     var u=window.parent.location;
     window.parent.history.replaceState({}, '', u.pathname+u.search+'#ada='+encodeURIComponent(d));
@@ -335,7 +381,7 @@ function resetAll(){
   _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;
   render();
 }
-const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
+const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'주제 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
   G2:'분석 방향 제안 완료',G3:'방법론 제안 완료',G4:'모델 전략 제안 완료',G5:'최적 모델 선정 완료',G6:'산출물 선택 완료',
   error_recovery:'오류 복구 중',self_learning_dispatch:'학습 결과 저장 중'};
 // HJ 2026-06-10 — 마일스톤 진행률용 단계별 agent 흐름. orchestrator/runner.py STAGE_AGENTS 와 동기.
@@ -608,6 +654,11 @@ async function doUpload(){
 }
 async function doResume(){
   const tg='G'+(cur+1);  // cur(화면 인덱스) → 백엔드 게이트 코드. cur=1(분석방향)=G2 ... cur=5(산출물)=G6
+  // CS 2026-06-10 — G2 가드: 사용자가 endpoint(주제 선택) 거치지 않고 resume 시도하면 차단
+  if(tg==='G2' && !g2DirectionsReady){
+    errMsg='주제를 먼저 선택하고 "선택 완료 ▶" 를 눌러주세요.';
+    render(); return;
+  }
   const ag=curGate();
   // cur 기준으로 올바른 proposals 선택 (이전 단계 재진행 시 캐시 사용)
   const d=(ag===tg)?gateData:(gateCache[tg]||{});
@@ -623,6 +674,8 @@ async function doResume(){
     choice={adopted_rank:0, custom_intent:customText};
   } else if(selId!=null){ choice={adopted_rank:selId}; }
   else { choice={adopted_rank:(props[0]&&props[0].id)||1}; }
+  // CS 2026-06-10 — G2 일 때 선택된 주제도 choice 에 포함
+  if(tg==='G2' && window._g2_selectedTopicText){ choice.topic=window._g2_selectedTopicText; }
   const gate=tg;  // curGate() 대신 cur 기준 게이트 코드 사용
   errMsg=''; busy=true; render();
   try{
@@ -676,7 +729,9 @@ async function poll(){
   // follow 강제 true + cur=1 로 올려 단계 2 화면을 띄움. g2_pending 조기 신호는 사용 안 함.
   if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2'){
     const _g1Done=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
-    if(_g1Done){ cur=1; follow=true; }
+    // CS 2026-06-10 — Sub-1 흐름: topic_proposals 도착도 G1 종료 신호로 인정
+    const _topicReady=(gateData.topic_proposals||[]).length;
+    if(_g1Done || _topicReady){ cur=1; follow=true; }
   }
   if(follow) cur=frontier;
   cur=Math.max(0,Math.min(cur,frontier));
@@ -857,6 +912,8 @@ function progressBar(){
   if(cur===LAST && isCompleted()) return '';                       // G7 완료 페이지 (결과 표시) — 바 숨김
   if(cur===0 && !jobId) return '';                                 // 업로드 전
   if(cur>=1 && cur<=5 && !isGateLoading()) return '';              // proposals 표시 중
+  // CS 2026-06-10 — 본인 명시 "팝업에는 무조건 주제만". 팝업 활성 시 진행률 바 숨김.
+  if(cur===1 && g2SubStage==='topic' && (gateData.topic_proposals||[]).length) return '';
   const p=_stageProgress();
   const stageEl=_stageStart?((Date.now()-_stageStart)/1000):0;
   const isRunning=analyzing()||isGateLoading();
@@ -907,8 +964,10 @@ function propCard(p, idx, recId){
   else if(p.metrics && typeof p.metrics==='object'){ const ks=Object.keys(p.metrics).slice(0,3); if(ks.length) extra='<div class="hint">📊 '+ks.map(function(k){return esc(k)+' '+esc(fmtNum(p.metrics[k]));}).join(' · ')+'</div>'; }
   else if(p.outputs && p.outputs.length){ var OL={'OUT-01':'PPT','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'}; extra='<div class="hint">📦 '+p.outputs.map(function(o){return esc(OL[o]||o);}).join(' · ')+'</div>'; }
   const score=(p.score!=null)?('<div class="time">⭐ 추천도 '+Math.round(p.score*100)+'%</div>'):'';
-  const rat=esc(p.rationale||'').replace(/\\n/g,'<br><br>');
-  return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><p>'+rat+'</p>'+extra+score+'</div>';
+  // CS 2026-06-10 — 글머리표 가독성: <br><br> → div 래핑 + margin (위·아래 간격)
+  const ratLines = esc(p.rationale||'').split('\\n').filter(function(s){return s.trim();});
+  const rat = ratLines.map(function(line){return '<div class="ratline">'+line+'</div>';}).join('');
+  return '<div class="opt'+sel+'" data-pid="'+esc(p.id)+'"><div class="ck">✓</div><div class="onum">OPTION 0'+(idx+1)+rec+'</div><h3>'+esc(p.title||('제안 '+p.id))+'</h3><div class="ratbody">'+rat+'</div>'+extra+score+'</div>';
 }
 function customCard(n){
   const sel=(selId==='custom')?' sel':'';
@@ -976,6 +1035,63 @@ function g2TopicArea(d){
     +(tInsight?'<div style="margin-top:6px;font-size:18px"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+esc(tInsight)+'</div>':'')
     +cmHtml
     +'</div>';
+}
+
+// CS 2026-06-10 — G2 Sub-1 (주제 선정) 팝업 모달 본문.
+// gateData.topic_proposals (백엔드 schema_validator 가 prefetch 한 5개) 렌더링.
+// 사용자가 카드 선택 후 "선택 완료" 클릭 → POST /pipeline/gate/G2/directions/{job_id}
+// 호출되어 분석 방향 LLM 이 호출되고 g2SubStage='direction' 으로 전환.
+function g2TopicCards(d){
+  const tps = (d && d.topic_proposals) || [];
+  if(!tps.length){
+    return '<div class="topicmodal"><div class="topicmodal-inner">'
+      +'<div class="topichdr"><h2>🎯 주제 선정</h2><div class="en">Choose your topic</div></div>'
+      +'<div style="text-align:center;padding:40px;font-size:18px;color:#8aa0bd">🔄 주제 후보 준비 중…</div>'
+      +'</div></div>';
+  }
+  // CS 2026-06-10 — 박스 2개 구조 (OPTION 1 = 5 라디오 그룹 / OPTION 2 = textarea).
+  // 표준 <input type=radio> 사용 → 브라우저 기본 클릭·키보드 동작 보장.
+  const customSelected = (selectedTopic && selectedTopic.custom !== undefined);
+  const radios = tps.slice(0, 5).map(function(t, i){
+    const checked = (!customSelected && selectedTopic && selectedTopic.id === t.id) ? ' checked' : '';
+    const rec = (i === 0) ? '<span class="rec">추천</span>' : '';
+    return '<label class="topicradio">'
+      +'<input type="radio" name="topicchoice" value="'+esc(t.id)+'"'+checked+'>'
+      +'<div class="trtext"><b>'+esc(t.title)+'</b>'+rec+'</div>'
+      +'</label>';
+  }).join('');
+  const customChecked = customSelected ? ' checked' : '';
+  const btnDisabled = g2DirectionsBusy
+    || (customSelected && !topicCustomText.trim());
+  const btnLabel = g2DirectionsBusy ? '… 분석 방향 생성 중' : '선택 완료 ▶';
+  return '<div class="topicmodal"><div class="topicmodal-inner">'
+    +'<div class="topichdr">'
+    +'<h2>🎯 주제 선정</h2>'
+    +'<div class="en">Choose your topic</div>'
+    +'<div class="stepline">'
+    +'<span class="stepchip">1/2</span>'
+    +'<span class="desc">발표 자료(PPT) 표지 제목으로 사용할 주제를 선택해주세요</span>'
+    +'</div>'
+    +'</div>'
+    +'<div class="topicwrap">'
+    +'<div class="topicbox '+(customSelected?'':'box-active')+'">'
+      +'<div class="onum">OPTION 1</div>'
+      +'<h3>추천 주제</h3>'
+      +'<div class="topicradios">'+radios+'</div>'
+    +'</div>'
+    +'<div class="topicbox '+(customSelected?'box-active':'')+'">'
+      +'<div class="onum">OPTION 2</div>'
+      +'<h3>직접 입력</h3>'
+      +'<label class="topicradio topicradio-custom">'
+        +'<input type="radio" name="topicchoice" value="custom"'+customChecked+'>'
+        +'<textarea id="topiccust-ta" placeholder="원하는 주제를 입력하세요"></textarea>'
+      +'</label>'
+    +'</div>'
+    +'</div>'
+    +'<div class="topicfoot">'
+    +'<button class="topicbtn" id="topicSubmitBtn"'+(btnDisabled?' disabled':'')+'>'+btnLabel+'</button>'
+    +'</div>'
+    +'</div></div>';
 }
 
 // HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 시작(jobId 셋)부터 G2 proposals 도착 전까지 모달 유지.
@@ -1089,12 +1205,20 @@ function contentGate(){
   const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
   const g=tg;
   const props=(d.proposals)||[];
+  // CS 2026-06-10 — G2 Sub-1 (주제 선정 팝업).
+  // g2SubStage='topic' + topic_proposals 도착했을 때만 팝업 모달 표시.
+  // topic_proposals 없으면 (백그라운드 prefetch 미완료) → G1 모달 / 로딩 유지.
+  if(g==='G2' && g2SubStage==='topic' && (d.topic_proposals||[]).length){
+    // CS 2026-06-10 — 본인 명시 "팝업에는 무조건 주제만". gateHeader 제외.
+    return g2TopicCards(d);
+  }
   // HJ 2026-06-09 G1 단축 Z' — G2 에서 proposals 없을 때 (gate_direction 진행 중)
   // "주제 선정" 영역 먼저 표시 + 분석 방향 영역엔 spinner.
   if(g==='G2' && !props.length && d.g2_pending){
     // 팝업(inModalLoading)이 활성일 때는 팝업에서만 표시 — 인라인 중복 제거
     if(inModalLoading()) return gateHeader(g)+loadingBlock();
     const topic=g2TopicArea(d);
+    // CS 2026-06-10 — G1→G2 분석 중 지점에 시간·진행률 표시 복구 (progressBar 추가)
     return gateHeader(g)+topic
       +'<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:10px">'
       +'<div style="font-size:18px;font-weight:600;color:#92400e;margin-bottom:6px">🔄 분석 방향 카드 생성 중…</div>'
@@ -1239,6 +1363,18 @@ function primaryLabel(){
   return '진행 ▸';
 }
 function render(){
+  // CS 2026-06-10 — 모든 textarea/input 포커스 보존 (polling render 시 포커스·커서 잃지 않게)
+  // 주제 팝업 textarea (topiccust-ta), 분석 방향 직접 입력 (cust), G1 의도 입력 (intentInput) 등
+  const _activeEl = document.activeElement;
+  const _activeId = (_activeEl && _activeEl.id) || null;
+  const _activeTag = (_activeEl && _activeEl.tagName) || null;
+  let _selStart = 0, _selEnd = 0;
+  try{
+    if(_activeEl && _activeEl.selectionStart !== undefined){
+      _selStart = _activeEl.selectionStart;
+      _selEnd = _activeEl.selectionEnd;
+    }
+  }catch(e){}
   const sc=document.getElementById('steps');
   const fillPct=(frontier/(N-1))*100;
   let html='<div class="line"></div><div class="fill" style="width:calc((100% - 68px) * '+(fillPct/100)+')"></div>';
@@ -1296,6 +1432,61 @@ function render(){
     if(tc){ tc.value=customText; tc.onclick=function(e){ e.stopPropagation(); };
       tc.onfocus=function(){ selId='custom'; document.querySelectorAll('.opt').forEach(function(el){ el.classList.toggle('sel', el.dataset.pid==='custom'); }); };
       tc.oninput=function(){ customText=tc.value; }; }
+  }
+  // CS 2026-06-10 — 주제 팝업 표준 라디오 onchange 핸들러
+  document.querySelectorAll('input[type=radio][name=topicchoice]').forEach(function(r){
+    r.onchange=function(){
+      if(r.value==='custom'){ selectedTopic={custom:topicCustomText}; }
+      else { selectedTopic={id:+r.value}; }
+      saveState(); render();
+    };
+  });
+  var tta=document.getElementById('topiccust-ta');
+  if(tta){
+    tta.value=topicCustomText;
+    tta.onfocus=function(){
+      var r=document.querySelector('input[type=radio][value=custom]');
+      if(r) r.checked=true;
+      selectedTopic={custom:topicCustomText};
+      saveState();
+    };
+    tta.oninput=function(){
+      topicCustomText=tta.value;
+      if(selectedTopic && selectedTopic.custom!==undefined){
+        selectedTopic.custom=topicCustomText;
+        var b=document.getElementById('topicSubmitBtn'); if(b) b.disabled=!topicCustomText.trim();
+      }
+    };
+  }
+  var sb=document.getElementById('topicSubmitBtn');
+  if(sb){
+    sb.onclick=async function(){
+      if(sb.disabled) return;
+      var d=gateData; var tps=(d&&d.topic_proposals)||[];
+      var topicText='';
+      if(selectedTopic.custom!==undefined){ topicText=topicCustomText.trim(); }
+      else { var t=tps.find(function(x){return x.id===selectedTopic.id;}); topicText=(t&&t.title)||''; }
+      if(!topicText){ return; }
+      g2DirectionsBusy=true; render();
+      try{
+        await api('/pipeline/gate/G2/directions/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:topicText})});
+        window._g2_selectedTopicText=topicText;
+        g2DirectionsReady=true;
+        g2SubStage='direction';
+        saveState();
+      }catch(e){ errMsg='분석 방향 생성 실패 — '+e.message; }
+      finally{ g2DirectionsBusy=false; render(); }
+    };
+  }
+
+  // CS 2026-06-10 — 활성 textarea/input 포커스 + 커서 위치 복원 (render 후)
+  // generic: id 있는 모든 textarea/input 에 적용
+  if(_activeId && (_activeTag === 'TEXTAREA' || _activeTag === 'INPUT')){
+    const _newEl = document.getElementById(_activeId);
+    if(_newEl && _newEl !== _activeEl){
+      try{ _newEl.focus(); }catch(e){}
+      try{ _newEl.setSelectionRange(_selStart, _selEnd); }catch(e){}
+    }
   }
 
   const prev=document.getElementById('prevBtn'), next=document.getElementById('nextBtn'),
@@ -1373,6 +1564,11 @@ document.getElementById('primaryBtn').onclick=function(){
     if(s && s.jobId){
       jobId=s.jobId; fileId=s.fileId||null;
       cur=s.cur||1; maxReached=s.maxReached||cur; frontier=cur;
+      // CS 2026-06-10 — G2 Sub-1 (주제 팝업) 상태 복원
+      if(s.g2SubStage) g2SubStage=s.g2SubStage;
+      if(s.selectedTopic) selectedTopic=s.selectedTopic;
+      if(typeof s.topicCustomText==='string') topicCustomText=s.topicCustomText;
+      if(s.g2DirectionsReady) g2DirectionsReady=s.g2DirectionsReady;
       render();  // 폴링 완료 전에 로딩 상태 즉시 렌더링
       startPolling(); return;
     }
@@ -1472,7 +1668,7 @@ if not st.session_state.get("studio_started"):
     with _bc[1]:
         if st.button("✦  시작", type="primary", use_container_width=True):
             st.session_state["studio_started"] = True
-            st.session_state["_fresh_start"] = True  # localStorage 초기화 후 업로드 화면으로
+            st.session_state["_fresh_start"] = True
             st.query_params["flow"] = "1"
             st.rerun()
 else:

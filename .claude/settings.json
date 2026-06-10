@@ -202,7 +202,8 @@
       "Bash(sed -n '225,260p' frontend/app.py)",
       "Bash(sed -n '270,295p' frontend/app.py)",
       "Bash(sed -n '377,395p' frontend/app.py)",
-      "Bash(sed -n '922,960p' frontend/app.py)"
+      "Bash(sed -n '922,960p' frontend/app.py)",
+      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"C:\\\\IT\\\\workspace_python\\\\ADA\\\\scripts\\\\ada.ps1\"\\); \"First 4 bytes: \" + \\($bytes[0..3] -join ','\\))"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"

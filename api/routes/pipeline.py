@@ -267,6 +267,7 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                 "eda_summary",
                 "eval_result",
                 "g2_pending",
+                "topic_proposals",  # CS 2026-06-10 — G2 Sub-1 주제 후보 forward
             ):
                 v = _gd.get(k)
                 if v is not None:
@@ -381,3 +382,104 @@ async def download_output(job_id: str, output_code: str) -> None:
         media_type=ct,
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# CS 2026-06-10 — G2 Sub-1 주제 선정 후 분석 방향 LLM 재호출
+# ---------------------------------------------------------------------------
+@router.post("/gate/G2/directions/{job_id}")
+async def propose_directions_for_topic(job_id: str, req: dict) -> dict:
+    """G2 Sub-1 주제 선택 후 분석 방향 LLM 호출.
+
+    Body: {"topic": "선택된 주제 텍스트"}
+    Response: {"proposals": [{id,title,rationale,...}], "topic": "..."}
+
+    동작:
+      1) Redis full_state 로드 → PipelineState 복원
+      2) AnalysisProposerAgent.propose_directions_with_topic(state, topic) 호출
+      3) Redis ada:gate_data 의 proposals 갱신 + g2_pending=False
+      4) Redis ada:full_state 의 gate_responses[G2] 갱신 (proposals + topic)
+      5) graph.aupdate_state 호출 → LangGraph checkpointer 도 동기화 (결함 1)
+      6) 응답 반환
+    """
+    import json as _json
+
+    import redis as _redis
+
+    from ada.core.state import PipelineState
+    from agents.gates.analysis_proposer import AnalysisProposerAgent
+
+    topic = ((req or {}).get("topic") or "").strip()
+    if not topic:
+        raise HTTPException(400, "topic required")
+
+    r = _redis.Redis.from_url(settings.redis_url)
+
+    raw_fs = r.get(f"ada:full_state:{job_id}")
+    if not raw_fs:
+        raise HTTPException(404, "state not found")
+    try:
+        state_dict = _json.loads(raw_fs)
+        state = PipelineState(**state_dict)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"state reconstruction failed: {e}") from e
+
+    agent = AnalysisProposerAgent()
+    try:
+        new_proposals = await agent.propose_directions_with_topic(state, topic)
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_directions_endpoint_failed", error=str(e))
+        raise HTTPException(500, "direction generation failed") from e
+
+    new_gate_responses = dict(state_dict.get("gate_responses") or {})
+    new_gate_responses["G2"] = {
+        **(new_gate_responses.get("G2") or {}),
+        "proposals": new_proposals,
+        "topic": topic,
+        "awaiting_decision": True,
+    }
+
+    # 1) Redis gate_data 갱신
+    try:
+        raw_gd = r.get(f"ada:gate_data:{job_id}")
+        gd = _json.loads(raw_gd) if raw_gd else {}
+        gd["proposals"] = new_proposals
+        gd["g2_pending"] = False
+        r.set(
+            f"ada:gate_data:{job_id}",
+            _json.dumps(gd, ensure_ascii=False, default=str),
+            ex=86400,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_gate_data_patch_failed", error=str(e))
+
+    # 2) Redis full_state 갱신
+    try:
+        state_dict["gate_responses"] = new_gate_responses
+        r.set(
+            f"ada:full_state:{job_id}",
+            _json.dumps(state_dict, ensure_ascii=False, default=str),
+            ex=86400,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_full_state_patch_failed", error=str(e))
+
+    # 3) LangGraph checkpointer 동기화 (결함 1) — snap 우선 머지 회피
+    try:
+        from orchestrator.checkpoint import CompatMemorySaver, load_checkpoint, save_checkpoint
+        from orchestrator.graph import build_graph
+
+        checkpointer = CompatMemorySaver()
+        load_checkpoint(checkpointer, job_id)
+        graph = build_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": job_id}}
+        await graph.aupdate_state(
+            config,
+            {"gate_responses": new_gate_responses},
+        )
+        save_checkpoint(checkpointer, job_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_aupdate_state_failed", error=str(e))
+        # aupdate_state 실패해도 Redis full_state 는 갱신됐으므로 일부 fallback 동작
+
+    return {"proposals": new_proposals, "topic": topic}
