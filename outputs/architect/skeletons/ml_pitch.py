@@ -702,54 +702,196 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
     )
 
 
+def _summarize_dtypes(ctx: ReportContext) -> str:
+    """dataset.dtypes 의 numeric/categorical/text 카운트 요약."""
+    dtypes = ctx.dataset.dtypes or {}
+    if not dtypes:
+        return "타입 정보 없음"
+    num_count = sum(1 for v in dtypes.values() if str(v).lower() in {"int", "int64", "float", "float64", "number", "numeric"})
+    cat_count = sum(1 for v in dtypes.values() if str(v).lower() in {"object", "category", "categorical", "str", "string"})
+    other = len(dtypes) - num_count - cat_count
+    parts = []
+    if num_count:
+        parts.append(f"수치 {num_count}")
+    if cat_count:
+        parts.append(f"범주 {cat_count}")
+    if other:
+        parts.append(f"기타 {other}")
+    return " · ".join(parts)
+
+
+def _summarize_target(ctx: ReportContext) -> str:
+    """dataset.detected_target 의 분포 요약.
+
+    분류 — categorical_top[target] 의 클래스별 비율 (Top 3).
+    회귀 — numeric_stats[target] 의 mean / std.
+    """
+    target = ctx.dataset.detected_target
+    if not target:
+        return "타겟 미감지"
+    # 분류 — categorical_top 우선
+    cat_top = (ctx.dataset.categorical_top or {}).get(target, [])
+    if cat_top:
+        # 각 항목: {"value": ..., "count": ...} 또는 (value, count) tuple 가정
+        total = sum(_safe_count(it) for it in cat_top) or 1
+        parts: list[str] = []
+        for it in cat_top[:3]:
+            val = _safe_value(it)
+            cnt = _safe_count(it)
+            parts.append(f"{val} {cnt/total*100:.1f}%")
+        return " · ".join(parts) if parts else f"{target} (분포 미산출)"
+    # 회귀 — numeric_stats
+    num_stats = (ctx.dataset.numeric_stats or {}).get(target, {})
+    if num_stats:
+        mean = num_stats.get("mean")
+        std = num_stats.get("std")
+        if mean is not None and std is not None:
+            return f"{target} 평균 {mean:.2f} ± {std:.2f}"
+    return f"타겟 {target}"
+
+
+def _safe_value(item: Any) -> str:
+    """categorical_top 항목에서 value 안전 추출."""
+    if isinstance(item, dict):
+        return str(item.get("value", item.get("name", "?")))
+    if isinstance(item, (list, tuple)) and len(item) >= 1:
+        return str(item[0])
+    return str(item)
+
+
+def _safe_count(item: Any) -> int:
+    """categorical_top 항목에서 count 안전 추출."""
+    if isinstance(item, dict):
+        try:
+            return int(item.get("count", item.get("freq", 0)) or 0)
+        except (TypeError, ValueError):
+            return 0
+    if isinstance(item, (list, tuple)) and len(item) >= 2:
+        try:
+            return int(item[1])
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
 def _build_market_context(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 5 — 시장·맥락 (numbered_rows). ★ 도메인 적응."""
-    profile = _get_domain_profile(ctx)
-    industry = ctx.domain.inferred_industry or "타겟 산업"
-    use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "대상 과제"
-    body = [
-        f"01 · 산업 영역 · {industry}",
-        f"02 · 과제 정의 · {profile['label_ko']} — {use_case}",
-        f"03 · 도메인 컨텍스트 · {profile['market_context']}",
-        f"04 · 데이터 규모 · {ctx.dataset.shape.get('rows', 0):,} 행 × {ctx.dataset.shape.get('cols', 0)} 열",
-        f"05 · 분석 범위 · {ctx.meta.category} 카테고리",
+    """슬라이드 5 — 데이터 개요 + 품질 (통합).
+
+    이전 '시장·맥락' (영업 톤) 을 분석 보고서 톤으로 재구성:
+    상단 = 데이터 개요 (행·열·타입·타겟), 하단 = 데이터 품질 이슈 Top 3.
+    v28_data_combined layout 가정 — 신규 carrier 가 두 영역으로 분리 렌더.
+    """
+    rows = ctx.dataset.shape.get("rows", 0)
+    cols = ctx.dataset.shape.get("cols", 0)
+    dtypes_summary = _summarize_dtypes(ctx)
+    target_summary = _summarize_target(ctx)
+
+    overview_items: list[tuple[str, str]] = [
+        ("규모", f"{rows:,} 행 × {cols} 열"),
+        ("변수 타입", dtypes_summary),
+        ("타겟 분포", target_summary),
     ]
+
+    # 데이터 품질 이슈 Top 3
+    issues = list(ctx.eda.data_quality_issues or [])[:3]
+    quality_items: list[tuple[str, str]] = []
+    for it in issues:
+        title = it.get("issue") or it.get("name") or "이슈"
+        severity = it.get("severity", "medium")
+        scope = it.get("scope", "")
+        desc = f"심각도 {severity}" + (f" · 범위 {scope}" if scope else "")
+        quality_items.append((str(title), desc))
+    while len(quality_items) < 3:
+        quality_items.append(("품질 확인", "추가 이슈 없음"))
+
+    # body_outline — legacy carrier 호환 (5 lines)
+    body = [
+        f"규모 · {overview_items[0][1]}",
+        f"변수 타입 · {dtypes_summary}",
+        f"타겟 분포 · {target_summary}",
+        f"품질 이슈 1 · {quality_items[0][0]} ({quality_items[0][1]})",
+        f"품질 이슈 2 · {quality_items[1][0]} ({quality_items[1][1]})",
+    ]
+
+    use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
     return SlideSpec(
         id="p1_market",
         section_id="problem",
-        layout="one_message",
+        layout="data_overview_quality_combined",
         role="evidence",
-        so_what=f"{profile['label_ko']} 도메인 — {industry} 산업에서 본 과제의 중요성",
-        title_ko="시장·맥락",
+        so_what=f"{rows:,} 행 × {cols} 열 데이터 — {use_case} 분석에 충분한 규모와 품질 확보",
+        title_ko="데이터 개요 · 품질",
         body_outline=body,
         parent_message_id="problem_root",
-        speaker_notes_hint=(f"도메인 = {profile['label_ko']}. 청중에게 '왜 이 분석을 지금 하는가' 의 외부 맥락 제시."),
+        visual_spec=VisualSpec(
+            type="v28_data_combined",
+            title="데이터 개요 · 품질",
+            spec={
+                "overview_items": overview_items,
+                "quality_items": quality_items,
+            },
+        ),
+        speaker_notes_hint=(
+            "데이터 *규모/타입/타겟* 을 한눈에. 하단은 *발견한 품질 이슈* — "
+            "이후 슬라이드에서 어떻게 처리했는지 (전처리·결측 보강) 의 도입부."
+        ),
     )
 
 
 def _build_pain_points(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 6 — 현행 방식의 한계 (linked_circles)."""
-    issues = ctx.eda.data_quality_issues or []
-    pain_lines = [
-        f"01 · {it.get('issue', '데이터 품질 이슈')} (영향: {it.get('severity', 'medium')})" for it in issues[:3]
-    ]
-    if not pain_lines:
-        pain_lines = [
-            "01 · 수작업 분석 — 분석가 1인당 주 3~5일 소요",
-            "02 · 재현 불가 — 분석마다 결과 편차 발생",
-            "03 · 운영 자동화 부재 — 모니터링·재학습 수동",
-        ]
+    """슬라이드 6 — 기술 스택 (카테고리 자동 적응).
+
+    이전 '현행 방식의 한계' 슬라이드 위치를 *Tech Stack* 으로 재구성.
+    substitution_manifest.resolve_tech_stack(category) 호출 — tabular_ml/dl/ts/anomaly
+    각각의 표준 도구 4종 자동 채움. 2단 위계 (도구 이름 + 역할 1줄).
+    """
+    category = ctx.meta.category or "tabular_ml"
+    items: list[TechStackItem] = resolve_tech_stack(category)
+
+    # ctx.code.environment 의 실제 패키지 정보가 있으면 역할 뒤에 버전 부착
+    env_pkgs: dict[str, str] = {}
+    if ctx.code and getattr(ctx.code, "environment", None):
+        env_pkgs = ctx.code.environment.get("key_packages", {}) or {}
+
+    stack_items: list[tuple[str, str]] = []
+    for it in items:
+        role = it.role
+        # 정확 매치되는 패키지 버전이 있으면 표시
+        first_token = it.name.split("/")[0].strip().split(" ")[0].strip().lower()
+        for pkg, ver in env_pkgs.items():
+            if pkg.lower() == first_token and ver:
+                role = f"{role} · v{ver}"
+                break
+        stack_items.append((it.name, role))
+
+    # body_outline — legacy carrier 호환
+    body = [f"{name} · {role}" for name, role in stack_items]
+
+    py_ver = (env_pkgs.get("python") or
+              (ctx.code.environment.get("python") if ctx.code and ctx.code.environment else "") or "3.x")
+
     return SlideSpec(
         id="p2_pain",
         section_id="problem",
-        layout="kpi_cards_4",
-        role="caveat",
-        so_what="현행 방식의 핵심 한계 3가지를 식별 — 정량적 비용 손실 발생 중",
-        title_ko="현행 방식의 한계",
-        body_outline=pain_lines,
-        thread_part="conflict",
+        layout="tech_stack_grid",
+        role="evidence",
+        so_what=f"본 분석은 {category} 표준 스택 ({len(stack_items)}개 도구) 으로 재현 가능 — Python {py_ver}",
+        title_ko="기술 스택",
+        body_outline=body,
         parent_message_id="problem_root",
-        speaker_notes_hint="현재 운영에서 발생하는 구체 손실 — 시간·비용·재현성·의사결정 지연.",
+        visual_spec=VisualSpec(
+            type="v28_tech_stack",
+            title="기술 스택",
+            spec={
+                "stack_items": stack_items,
+                "category": category,
+                "python_version": py_ver,
+            },
+        ),
+        speaker_notes_hint=(
+            "재현 가능성·신뢰성 어필. 카테고리 (tabular_ml/dl/timeseries/anomaly) 에 따라 "
+            "표준 스택이 자동 적응 — 매니페스트 단일 진실원 (substitution_manifest)."
+        ),
     )
 
 
