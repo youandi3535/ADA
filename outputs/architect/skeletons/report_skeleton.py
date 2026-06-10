@@ -497,7 +497,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
 
     # 타깃 분포 (분류 여부 + 다수 클래스 비율)
     _f = _task_flags(ctx)
-    n_classes, maj = _f["n_classes"], _f["maj"]
+    maj = _f["maj"]
     is_clf, is_ts, is_anom = _f["is_clf"], _f["is_ts"], _f["is_anom"]
     is_reg, is_imbal, is_multiclass = _f["is_reg"], _f["is_imbal"], _f["is_multiclass"]
 
@@ -667,8 +667,7 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
     elif high_miss:
         miss_txt = f"{', '.join(map(str, high_miss[:3]))} 등은 결측이 20%를 넘어 대치·제외 검토가 필요하다"
     else:
-        top = miss_cols[0]
-        miss_txt = f"결측은 {top[0]} {_pct(top[1])} 등 경미해 대치로 처리 가능하다"
+        pass  # top = miss_cols[0] — miss_txt 미사용
 
     # 고카디널리티 (인코딩 주의)
     card = ds.cardinality or {}
@@ -811,7 +810,7 @@ def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
             if res:
                 syn.append(f"{nm} 결과 {res}로 통계적으로 유의했다.")
     if syn:
-        syn.append(f"이 발견들이 핵심 인사이트에서 정량적 개입 레버로 이어진다.")
+        syn.append("이 발견들이 핵심 인사이트에서 정량적 개입 레버로 이어진다.")
         slides.append(
             SlideSpec(
                 id="eda_findings",
@@ -1536,8 +1535,6 @@ def build(
     # ── Executive Summary (컨설팅식: 핵심 메세지 → 문제 → 원인 → 해결 → 대응)
     # 원칙: 짧게·단정조·측정가능·추측조 금지. 원인은 데이터(핵심 동인)에서, 결과는 기준선 대비.
     name = _human_dataset_name(ctx)
-    n_cols = shape.get("cols", 0)
-    n_feat = max(n_cols - 1, 0)
     verb = _CAT_VERB.get(ctx.meta.category or "", "분석")
     flags = _task_flags(ctx)
     maj = flags["maj"]
