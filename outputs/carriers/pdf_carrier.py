@@ -7,6 +7,7 @@ import re as _re
 from pathlib import Path
 
 from outputs.architect.plan import ReportPlan
+from outputs.architect.skeletons.report_skeleton import ko_metric as _ko_metric
 from outputs.context.schema import ReportContext
 
 _FONT_OK = False
@@ -332,7 +333,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             flow.append(Paragraph("핵심 지표", h2))
             data = [["지표", "값"]]
             for k, m in list(ctx.evaluation.metrics.items())[:6]:
-                data.append([k, _fv(m.get("value"))])
+                # raw metric key('val_roc_auc' 등)를 한국어로 ('검증 AUC') — 모르는 키는 원본 유지
+                data.append([_ko_metric(k), _fv(m.get("value"))])
             t = Table(data, colWidths=[8 * cm, 4 * cm])
             t.setStyle(
                 TableStyle(
