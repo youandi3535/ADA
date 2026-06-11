@@ -332,6 +332,26 @@ const STAGE_TRANSITION_DESC={
   4:{ko:'모델 학습 중입니다',en:'Training models'},
   5:{ko:'평가·인사이트 분석 중입니다',en:'Running evaluation & insight analysis'}
 };
+// CS 2026-06-10 — 카테고리별 헤더 매핑 (h2 + en + desc).
+// 우선 G2 정적(cur=1) + G2→G3 로딩(cur=2) 만 적용. 나머지 게이트는 본인 확인 후 일괄.
+const GATE_HEADER_BY_CATEGORY={
+  static:{
+    1:{
+      tabular_ml:{h2:'어떤 정형 데이터의 분석 방향으로 진행할까요?',en:'Choose your tabular data analysis direction',desc:'정형 ML 데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 분석 방향으로 진행할까요?',en:'Choose your tabular DL data analysis direction',desc:'정형 DL 데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'},
+      timeseries:{h2:'어떤 시계열 데이터의 분석 방향으로 진행할까요?',en:'Choose your time series data analysis direction',desc:'시계열 ML 데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 분석 방향으로 진행할까요?',en:'Choose your anomaly detection data analysis direction',desc:'이상탐지 ML 데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'}
+    }
+  },
+  loading:{
+    2:{
+      tabular_ml:{h2:'정형 데이터의 EDA 작업 중입니다',en:'G2 — Tabular Data EDA',desc:'정형 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 EDA 작업 중입니다',en:'G2 — Tabular DL Data EDA',desc:'정형 DL 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      timeseries:{h2:'시계열 데이터의 EDA 작업 중입니다',en:'G2 — Time Series Data EDA',desc:'시계열 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 EDA 작업 중입니다',en:'G2 — Anomaly Detection Data EDA',desc:'이상탐지 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'}
+    }
+  }
+};
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 let _suppressG1Advance=false; // 사용자가 뒤로가기로 G1 으로 이동했을 때 자동 G1→G2 전환 억제
@@ -1184,24 +1204,26 @@ function progressBar(){
   return '<div class="progbox">'+barHtml+meta+'</div>';
 }
 function gateHeader(g){
-  // CS 2026-06-10 — 동적 헤더: 단계 전환 구간엔 사용자 친화 설명.
-  //   proposals 도착 = 정적 제목 (사용자 결정 시점)
-  //   proposals 없음 + cur 2~5 = STAGE_TRANSITION_DESC[cur] 의 단계 친화 표현
+  // CS 2026-06-10 — 동적 헤더 + 카테고리별 매핑.
+  //   1) GATE_HEADER_BY_CATEGORY[mode][cur][category] 우선 (G2/G2→G3 적용)
+  //   2) 매핑 없으면 GATE_TITLE / STAGE_TRANSITION_DESC 폴백
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
   const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
   const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
   const props=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
   const stage=STAGE_TRANSITION_DESC[cur];
+  const catKey=gateData.category;
   let h2, en, desc;
   if(props.length){
-    // proposals 도착 = 사용자 결정 시점 → 정적 제목
-    h2=tt[0]; en=tt[1];
-    desc='업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.';
+    // proposals 도착 = 사용자 결정 시점
+    const byCat=(GATE_HEADER_BY_CATEGORY.static[cur]||{})[catKey];
+    if(byCat){ h2=byCat.h2; en=byCat.en; desc=byCat.desc||'업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.'; }
+    else { h2=tt[0]; en=tt[1]; desc='업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.'; }
   } else if(stage){
-    // 전환 구간 = 단계 친화 설명 (agent 이름 X)
-    h2=stage.ko;
-    en=stage.en;
-    desc='곧 "'+esc(tt[0])+'" 화면이 표시됩니다.';
+    // 로딩 구간 = 카테고리별 헤더 우선, 없으면 단계 친화 폴백
+    const byCat=(GATE_HEADER_BY_CATEGORY.loading[cur]||{})[catKey];
+    if(byCat){ h2=byCat.h2; en=byCat.en; desc=byCat.desc||('곧 "'+esc(tt[0])+'" 화면이 표시됩니다.'); }
+    else { h2=stage.ko; en=stage.en; desc='곧 "'+esc(tt[0])+'" 화면이 표시됩니다.'; }
   } else {
     // 폴링 대기·미정 → 기본
     h2=tt[0]; en=tt[1];
