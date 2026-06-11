@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TARGETS = [
     REPO_ROOT / "outputs/architect/skeletons/report_skeleton.py",
