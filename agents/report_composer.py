@@ -121,6 +121,7 @@ class ReportComposerAgent(BaseAgent):
                     f"종합: 요청 {len(requested)}종 중 {len(results)}종 생성 완료 "
                     f"({(len(results) / max(len(requested), 1) * 100):.0f}%)"
                 )
+                _g6_insights = await self._dynamic_insights(_g6_insights, backend="claude", context="G6 산출물 합성")
                 _safe_publish_stage_partial(
                     state.job_id,
                     {

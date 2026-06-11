@@ -27,6 +27,7 @@ def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
     except Exception:  # noqa: BLE001
         pass
 
+
 _SEARCH_SPACE_MODULES: dict[str, str] = {
     "tabular_ml": "pipelines.tabular_ml.search_space",
     "tabular_dl": "pipelines.tabular_dl.search_space",
@@ -121,6 +122,9 @@ class HyperparameterTunerAgent(BaseAgent):
                 except Exception:  # noqa: BLE001
                     pass
             # 튜닝 완료 publish — frontend 모달이 best_params 받기 전 미리 안내.
+            _g4_hpo_insights = await self._dynamic_insights(
+                _g4_hpo_insights, backend="claude", context="G4 하이퍼파라미터 튜닝"
+            )
             _safe_publish_stage_partial(
                 state.job_id,
                 {

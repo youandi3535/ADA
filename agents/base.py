@@ -275,6 +275,7 @@ class BaseAgent(abc.ABC):
         model_name: Optional[str] = None,
         json_mode: bool = False,
         on_partial: Any = None,  # Callable[[str], None] — Ollama streaming 시만 활용
+        force_backend: Optional[str] = None,  # "ollama"|"anthropic" 강제 (None=기본 라우팅)
     ) -> str:
         prefix = f"{self.persona}\n\n" if self.persona else ""
         full_system = prefix + system_prompt
@@ -299,8 +300,14 @@ class BaseAgent(abc.ABC):
         #   2. use_ollama_for_analysis=True 면 Ollama (qwen2.5:7b 기본 — 서버 성능 한계)
         #   3. anthropic_api_key 있으면 Anthropic API
         #   4. fallback: Claude CLI
-        force_anthropic = self.use_anthropic_api and bool(settings.anthropic_api_key)
-        use_ollama = getattr(settings, "use_ollama_for_analysis", False) and not force_anthropic
+        # HJ 2026-06-11 — force_backend 로 단계별 백엔드 강제 (G1~3 Ollama / G4~6 Claude).
+        if force_backend == "ollama":
+            use_ollama = True
+        elif force_backend == "anthropic":
+            use_ollama = False
+        else:
+            force_anthropic = self.use_anthropic_api and bool(settings.anthropic_api_key)
+            use_ollama = getattr(settings, "use_ollama_for_analysis", False) and not force_anthropic
         try:
             if use_ollama:
                 # HJ 2026-06-09 G1 단축 γ — on_partial 콜백이 있으면 streaming 사용
@@ -757,3 +764,113 @@ class BaseAgent(abc.ABC):
             return json.loads(text)
         except Exception:
             return None
+
+    async def _dynamic_insights(
+        self,
+        lines: list[str],
+        *,
+        backend: str = "ollama",
+        context: str = "",
+        timeout_s: float = 15.0,
+    ) -> list[str]:
+        """규칙 기반 인사이트 문장들을 LLM 으로 '항목별 동적 해석' 재작성 (HJ 2026-06-11).
+
+        각 line 의 사실 헤더(라벨·컬럼·수치)는 보존하고, 항목마다 서로 다른 구체적
+        해석 한 문장을 LLM 으로 생성해 ``"{헤더} — {해석}"`` 형태로 돌려준다.
+        ``" — "`` 가 이미 있으면 기존 해석부를 교체, 없으면 해석부를 새로 덧붙인다.
+
+        사용자 라우팅 규약: G1~G3 → ``backend="ollama"`` (qwen2.5:7b),
+        G4~G6 → ``backend="claude"`` (Anthropic). 백엔드 미가용·타임아웃·파싱불가 등
+        모든 실패는 해당 항목을 원본 그대로 두어 파이프라인을 막지 않는다(무중단).
+
+        Args:
+            lines: 발행 직전의 인사이트 문장 리스트.
+            backend: ``"ollama"`` 또는 ``"claude"``/``"anthropic"``.
+            context: 단계 식별용 짧은 맥락 문자열(프롬프트 힌트).
+            timeout_s: LLM 호출 상한(초). 초과 시 원본 반환.
+
+        Returns:
+            같은 길이의 새 리스트(항상 안전). 입력이 비었거나 비정상이면 그대로 반환.
+        """
+        if not lines or not isinstance(lines, list):
+            return lines
+        sep = " — "
+        headers: list[str] = []
+        items: list[dict] = []
+        for i, ln in enumerate(lines):
+            s = ln if isinstance(ln, str) else str(ln)
+            head = s.split(sep, 1)[0] if sep in s else s
+            old = s.split(sep, 1)[1] if sep in s else ""
+            headers.append(head)
+            items.append({"i": i, "사실": head, "기존해석": old})
+        if not items:
+            return lines
+
+        system_prompt = (
+            "당신은 머신러닝 데이터·모델 분석을 한국어로 해설하는 전문가입니다. "
+            "각 항목의 '사실'(라벨·컬럼·수치)에 근거해, 모델링에 도움이 되는 "
+            "구체적 해석/권장 한 문장을 항목마다 새로 작성하세요.\n"
+            "규칙:\n"
+            "1) 출력은 입력 항목과 같은 개수의 JSON 배열, 각 원소는 "
+            '{"i": <정수 인덱스>, "text": "<해석문>"}.\n'
+            "2) '사실'에 있는 수치를 새로 지어내거나 바꾸지 말 것(그대로 인용은 허용).\n"
+            "3) 항목마다 표현과 권장 조치가 서로 겹치지 않게 작성(복붙 금지).\n"
+            "4) 한 문장 90자 이내, 자연스러운 한국어.\n"
+            "5) JSON 외 텍스트·마크다운·코드펜스 금지."
+        )
+        user_prompt = json.dumps(
+            {"분석맥락": context or "ML 파이프라인 단계 인사이트", "항목들": items},
+            ensure_ascii=False,
+        )
+        fb = "anthropic" if backend in ("claude", "anthropic") else "ollama"
+        try:
+            raw = await asyncio.wait_for(
+                self._call_llm(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    max_tokens=max(256, min(1400, len(items) * 110)),
+                    temperature=0.6,
+                    json_mode=True,
+                    force_backend=fb,
+                ),
+                timeout=timeout_s,
+            )
+        except Exception as e:  # noqa: BLE001 — 타임아웃·호출실패 모두 원본 폴백
+            try:
+                self.logger.warning("dynamic_insights_llm_failed", error=str(e)[:200], backend=fb, n=len(items))
+            except Exception:
+                pass
+            return lines
+
+        parsed = self._parse_json(raw)
+        new_tails: dict[int, str] = {}
+        if isinstance(parsed, list):
+            for el in parsed:
+                if isinstance(el, dict) and "i" in el and "text" in el:
+                    try:
+                        idx = int(el["i"])
+                    except (TypeError, ValueError):
+                        continue
+                    txt = str(el.get("text") or "").strip()
+                    if txt:
+                        new_tails[idx] = txt
+            # 일부 모델은 {i,text} 대신 문자열 배열만 반환 — 순서 매핑 폴백
+            if not new_tails and len(parsed) == len(items) and all(isinstance(el, str) for el in parsed):
+                for k, el in enumerate(parsed):
+                    txt = str(el).strip()
+                    if txt:
+                        new_tails[k] = txt
+
+        if not new_tails:
+            return lines  # 아무것도 못 받음 → 전체 원본 유지
+
+        out: list[str] = []
+        for i, ln in enumerate(lines):
+            t = new_tails.get(i, "").strip()
+            if len(t) < 4:
+                out.append(ln)  # 항목 누락/부실 → 원본 유지(항목 단위 폴백)
+                continue
+            if len(t) > 160:
+                t = t[:158] + "…"
+            out.append(headers[i] + sep + t)
+        return out

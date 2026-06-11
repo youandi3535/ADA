@@ -65,6 +65,9 @@ class ExplainabilityAgent(BaseAgent):
                 elif artifacts.get("decomposition_path") or artifacts.get("seasonality_period"):
                     period = artifacts.get("seasonality_period")
                     _g5_shap_insights.append(f"시계열 분해: 계절성 주기 {period} (추세·계절·잔차 분해 완료)")
+                _g5_shap_insights = await self._dynamic_insights(
+                    _g5_shap_insights, backend="claude", context="G5 설명가능성(SHAP)"
+                )
                 _safe_publish_stage_partial(
                     state.job_id,
                     {
