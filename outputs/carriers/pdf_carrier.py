@@ -249,7 +249,6 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
 
     # 글씨는 모두 검은색 — 표 헤더(파란 배경+흰 글씨)만 예외로 유지.
     black = colors.black
-    title = PS("T", fontName=_KG, fontSize=26, leading=34, textColor=black, spaceAfter=10)  # [B28] title 26pt
     h1 = PS("H1", fontName=_KG, fontSize=22, leading=30, textColor=black, spaceBefore=14, spaceAfter=8)  # [B28] h1 22pt
     # h1_toc: h1 과 모양 동일하되 목차 페이지 추적 대상(afterFlowable 가 style.name 으로 식별)
     h1_toc = PS("H1TOC", fontName=_KG, fontSize=22, leading=30, textColor=black, spaceBefore=14, spaceAfter=8)

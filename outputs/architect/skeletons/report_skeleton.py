@@ -137,7 +137,6 @@ from __future__ import annotations
 import re as _re
 from typing import Any, Optional
 
-from outputs.architect.skeletons._rules import card as _label_card
 from outputs.architect.plan import (
     NarrativeThread,
     ReportPlan,
@@ -145,6 +144,7 @@ from outputs.architect.plan import (
     SlideSpec,
     VisualSpec,
 )
+from outputs.architect.skeletons._rules import card as _label_card
 from outputs.context.schema import ReportContext
 
 SKELETON_NAME = "Report"
@@ -767,7 +767,6 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         base_impact = f"정확한 '{target}' 판정을 자동화해 고위험·고우선 대상의 선별과 처리의 일관성·속도를 확보한다."
     impact_parts.append(base_impact)
     impact_parts.append("핵심 변수를 근거로 데이터 수집 우선순위와 프로세스 개선까지 후속 액션으로 연결한다.")
-    impact = " ".join(impact_parts)
 
     driving = _driving_question(_f, target)  # 핵펀치 — 진짜 알고 싶은 것 한 줄
     slide = SlideSpec(
@@ -1404,7 +1403,7 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
     _pm_val = _pm.get("value")
     _bench_bits: list[str] = []
     if _pm_val is not None and ("auc" in _pm_name):
-        _bench_bits.append(f"무작위: 0.5000")
+        _bench_bits.append("무작위: 0.5000")
         if _maj is not None:
             _bench_bits.append(f"단순 룰(다수 클래스): {_maj:.4f}")
         _bench_bits.append(f"<b>본 모델: {_fv(_pm_val)}</b>")

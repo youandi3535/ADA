@@ -582,7 +582,7 @@ def _render_risk_matrix(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -
     for idx, item in enumerate(items[:8], 1):
         if not isinstance(item, (list, tuple)) or len(item) < 3:
             continue
-        label, prob, impact = str(item[0]), float(item[1]), float(item[2])
+        _label, prob, impact = str(item[0]), float(item[1]), float(item[2])
         # 점
         ax.scatter([prob], [impact], s=550, color="#185FA5", edgecolor="white", linewidth=2.5, zorder=4)
         ax.text(prob, impact, str(idx), ha="center", va="center", fontsize=14, color="white", fontweight="bold", zorder=5)

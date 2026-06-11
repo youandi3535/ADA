@@ -20,6 +20,7 @@
 
 도커스트링/주석 안의 ❌ ✅ 예시는 의도된 위반 표시이므로 제외합니다.
 """
+
 from __future__ import annotations
 
 import re
