@@ -119,6 +119,32 @@ def _train_one_model(model_name: str, X_train: np.ndarray, params: dict[str, Any
             pass
         return m
 
+    if model_name == "ECOD":
+        # ★ V4: ECOD (Li et al., 2022, IEEE TKDE) — 차원별 경험적 CDF 꼬리확률.
+        #   파라미터-프리·O(n·d)·해석 가능. ADBench(Han et al., NeurIPS 2022) 평균 상위권.
+        from pyod.models.ecod import ECOD
+
+        m = ECOD(**params)
+        m.fit(X_train)
+        try:
+            m._ada_backend = "pyod"
+        except Exception:
+            pass
+        return m
+
+    if model_name == "HBOS":
+        # ★ V4: HBOS (Goldstein & Dengel, 2012, KI) — 차원별 히스토그램 밀도.
+        #   선형 시간 — 대용량(n≥10k) 1차 스크리닝에 최적.
+        from pyod.models.hbos import HBOS
+
+        m = HBOS(**params)
+        m.fit(X_train)
+        try:
+            m._ada_backend = "pyod"
+        except Exception:
+            pass
+        return m
+
     if model_name in ("TranAD", "AnomalyTransformer"):
         return _train_torch_ts_model(model_name, X_train, params)
 
@@ -328,6 +354,38 @@ NORMALIZE_CLIP_LOW = 0.05  # ★ A-3 (옵션 B)
 NORMALIZE_CLIP_HIGH = 0.95  # ★ A-3 (옵션 B)
 
 
+def _normalize_scores_rank(scores: np.ndarray) -> np.ndarray:
+    """★ V4: rank 기반 정규화 [0, 1] — 이종 detector 점수 결합용.
+
+    근거: 스케일이 다른 detector 점수의 min-max 결합은 극단값 1개가
+    전체 분포를 압축해 ensemble 을 왜곡 (Kriegel et al., SDM 2011
+    "Interpreting and Unifying Outlier Scores"; Aggarwal & Sathe, 2015
+    "Theoretical Foundations and Algorithms for Outlier Ensembles").
+    rank 는 단조변환에 불변 → detector 간 스케일 차이를 구조적으로 제거.
+    동점은 평균 rank (scipy 없이 구현, 결정적).
+    """
+    n = len(scores)
+    if n == 0:
+        return np.asarray(scores, dtype=float)
+    if n == 1:
+        return np.array([0.5])
+    order = np.argsort(scores, kind="stable")
+    ranks = np.empty(n, dtype=float)
+    ranks[order] = np.arange(n, dtype=float)
+    # 동점 평균 rank
+    sorted_vals = np.asarray(scores, dtype=float)[order]
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and sorted_vals[j + 1] == sorted_vals[i]:
+            j += 1
+        if j > i:
+            avg = (i + j) / 2.0
+            ranks[order[i : j + 1]] = avg
+        i = j + 1
+    return ranks / (n - 1)
+
+
 def _normalize_scores(scores: np.ndarray) -> np.ndarray:
     """min-max 정규화 [0, 1] + outlier 클리핑 [0.05, 0.95] (★ A-3).
 
@@ -418,6 +476,8 @@ class AnomalyPipeline(BasePipeline):
         "OneClassSVM",
         "AutoEncoder",
         "COPOD",
+        "ECOD",  # ★ V4 (Li et al., 2022 TKDE)
+        "HBOS",  # ★ V4 (Goldstein & Dengel, 2012)
         "TranAD",
         "AnomalyTransformer",
     )
@@ -507,6 +567,11 @@ class AnomalyPipeline(BasePipeline):
     @staticmethod
     def normalize_scores(scores: np.ndarray) -> np.ndarray:
         return _normalize_scores(scores)
+
+    @staticmethod
+    def normalize_scores_rank(scores: np.ndarray) -> np.ndarray:
+        """★ V4: 이종 detector 결합용 rank 정규화 (Day 7 ensemble 이 소비)."""
+        return _normalize_scores_rank(scores)
 
     @staticmethod
     def ensemble_voting(
