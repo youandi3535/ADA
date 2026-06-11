@@ -194,7 +194,11 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
 def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: str, secondary: str):
     # HJ 2026-06-08 — Stock photo background 시도 → 실패 시 기존 grad 디자인 폴백
     user_intent = getattr(ctx.meta, "user_intent", "") or ""
-    cover_photo = get_cover_image("cover", user_intent) if _VISUAL_TOOLS_AVAILABLE else None
+    # Step 7-2 — LLM 의 photo_keyword 가 user_intent 보다 우선.
+    # LLMDesigner 가 데이터 신호 (도메인/카테고리/verdict) 보고 뽑은 영문 검색어를
+    # Unsplash/Pexels 키워드로 사용. 힌트 없으면 user_intent 폴백.
+    photo_kw = photo_keyword(sl, fallback=user_intent)
+    cover_photo = get_cover_image("cover", photo_kw) if _VISUAL_TOOLS_AVAILABLE else None
 
     if cover_photo and cover_photo.exists():
         # 풀블리드 사진 + 좌측 그라데이션 overlay (반투명 primary→secondary)
