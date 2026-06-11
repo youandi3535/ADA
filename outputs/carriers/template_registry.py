@@ -86,6 +86,63 @@ class TemplateRegistry:
         out.sort(key=lambda x: -x[1])
         return out
 
+    def candidates_for(
+        self,
+        slide,
+        ctx,
+        top_n: int = 7,
+        min_score: Optional[float] = None,
+    ) -> list[TemplateSpec]:
+        """LLM 디자인 선택을 위한 *적합 후보 N개* 반환.
+
+        ``best_for`` 는 점수 매겨 1개만 반환 — 단조로움.
+        ``candidates_for`` 는 *상위 N개* 를 반환해 LLM 이 데이터·분석방향 보고
+        그 중 1개를 *판단* 으로 선택하도록.
+
+        선정 기준:
+            1. 각 spec 의 ``min_score`` 필터 (기본) — 완전 부적합한 건 제외
+            2. (옵션) 추가 ``min_score`` 인자로 더 엄격하게 컷
+            3. 점수 내림차순으로 상위 ``top_n`` 개만 반환
+            4. ``slide.preferred_template`` 오버라이드 있으면 *최상위로 강제 포함*
+
+        반환:
+            ``TemplateSpec`` 리스트 — LLM 프롬프트에 *이름 + tags + 점수* 형태로 전달 가능
+
+        Examples:
+            >>> candidates = REGISTRY.candidates_for(slide, ctx, top_n=5)
+            >>> for spec in candidates:
+            ...     print(spec.name, spec.tags)
+        """
+        # Manual override — 1순위로 보장 (LLM 도 보고 인지)
+        override = getattr(slide, "preferred_template", None)
+        forced: Optional[TemplateSpec] = None
+        if override and override in self._specs:
+            forced = self._specs[override]
+
+        # 모든 spec 점수 계산 + 자체 min_score + 추가 min_score 필터
+        scored: list[tuple[float, TemplateSpec]] = []
+        for spec in self._specs.values():
+            try:
+                score = float(spec.fit(slide, ctx))
+            except Exception:
+                continue
+            if score < spec.min_score:
+                continue
+            if min_score is not None and score < min_score:
+                continue
+            scored.append((score, spec))
+
+        # 점수 내림차순 정렬 후 상위 N개
+        scored.sort(key=lambda t: -t[0])
+        top = [spec for _, spec in scored[:top_n]]
+
+        # 강제 포함 항목이 Top N 에 없으면 맨 앞에 추가
+        if forced is not None and forced not in top:
+            top.insert(0, forced)
+            top = top[:top_n]
+
+        return top
+
 
 # Global default registry
 REGISTRY = TemplateRegistry()
