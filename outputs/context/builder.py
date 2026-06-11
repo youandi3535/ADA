@@ -282,6 +282,7 @@ def _augment_evaluation(ctx: ReportContext, state: PipelineState) -> None:
     """state.best_model.metrics + eval_result 로 Evaluation 보강."""
     try:
         if ctx.evaluation.metrics or ctx.evaluation.primary_metric:
+            _ensure_verdict(ctx, state)
             return
         bm = state.best_model or {}
         metrics_raw = bm.get("metrics") or {}
@@ -322,6 +323,34 @@ def _augment_evaluation(ctx: ReportContext, state: PipelineState) -> None:
             gate_passed=bool(eval_res.get("passed", False)),
             gate_rationale=str(eval_res.get("rationale", "")),
         )
+        _ensure_verdict(ctx, state)
+    except Exception:
+        pass
+
+
+def _ensure_verdict(ctx: ReportContext, state: PipelineState) -> None:
+    """Evaluation.verdict 도출 — 스키마 필드만 있고 생산자가 없던 배관 연결.
+
+    (jh 2026-06-11, HJ 구두 협의 — verdict-aware skeleton 분기가 '미정' 으로
+    방치되던 원인. eval_result 의 명시 verdict > gate 휴리스틱 순.)
+
+    규칙:
+        - eval_result["verdict"] ∈ {adopt, iterate, reject} 명시 시 그대로
+        - gate 통과 → adopt / 메트릭 있으나 미통과 → iterate / 평가 전 → "" 유지
+    """
+    try:
+        if ctx.evaluation.verdict:
+            return
+        eval_res = state.eval_result or {}
+        explicit = str(eval_res.get("verdict", "") or "").strip().lower()
+        if explicit in ("adopt", "iterate", "reject"):
+            ctx.evaluation.verdict = explicit
+            ctx.evaluation.verdict_rationale = str(eval_res.get("rationale", ""))
+            return
+        if not (ctx.evaluation.metrics or ctx.evaluation.primary_metric):
+            return  # 평가 전 — 미정 유지가 정직함
+        ctx.evaluation.verdict = "adopt" if ctx.evaluation.gate_passed else "iterate"
+        ctx.evaluation.verdict_rationale = ctx.evaluation.gate_rationale or ""
     except Exception:
         pass
 

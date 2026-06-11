@@ -70,6 +70,14 @@ class LLMDesigner(BaseAgent):
     model_name = "claude-haiku-4-5-20251001"  # 빠르고 저렴 — 디자인 선택은 가벼운 판단
     use_anthropic_api = True
 
+    async def __call__(self, state: Any) -> Any:  # pragma: no cover — 그래프 노드 아님
+        """LLMDesigner 는 파이프라인 노드가 아님 — ``pick_design`` 전용 유틸 에이전트.
+
+        BaseAgent 의 abstract ``__call__`` 충족용. state 를 변경 없이 반환.
+        (2026-06-11 운영 사고: 미구현 → 인스턴스화 TypeError → 조용히 룰 폴백)
+        """
+        return state
+
     async def pick_design(
         self,
         slide: SlideSpec,
@@ -118,7 +126,9 @@ class LLMDesigner(BaseAgent):
             raw = await self._call_llm(
                 system_prompt=_SYSTEM_PROMPT,
                 user_prompt=json.dumps(payload, ensure_ascii=False),
-                max_tokens=400,
+                # 2026-06-11 — 400 에서 실전 페이로드 (후보 7 + 한국어 fallback_reason)
+                # 응답이 중간 절단 → 18/18 JSON 파싱 실패. 여유 있게 상향.
+                max_tokens=800,
                 temperature=0.3,
                 json_mode=True,
             )
@@ -126,8 +136,14 @@ class LLMDesigner(BaseAgent):
             self.logger.warning("designer_llm_failed", error=str(e), slide_id=slide.id)
             return self._fallback(candidates, reason=f"llm_call_failed: {e}")
 
-        parsed = self._parse_json(raw)
+        parsed = self._parse_json_lenient(raw)
         if not isinstance(parsed, dict):
+            # 원문 머리를 남겨야 다음 진단이 즉시 가능 (2026-06-11 침묵 사고 교훈)
+            self.logger.warning(
+                "designer_llm_unparsable",
+                slide_id=slide.id,
+                raw_head=(raw or "")[:200],
+            )
             return self._fallback(candidates, reason="llm_returned_invalid_json")
 
         chosen = str(parsed.get("chosen_template", "")).strip()
@@ -202,6 +218,34 @@ class LLMDesigner(BaseAgent):
                 for c in candidates
             ],
         }
+
+    def _parse_json_lenient(self, text: str) -> Any:
+        """JSON 앞뒤 잡설·코드펜스가 섞여도 첫 번째 균형 잡힌 {...} 블록을 추출.
+
+        한국어 가드가 system prompt 에 자동 부착되면서 모델이 JSON 앞에
+        한국어 설명을 붙이는 케이스 방어 (2026-06-11).
+        """
+        parsed = self._parse_json(text)
+        if isinstance(parsed, dict):
+            return parsed
+        if not text:
+            return None
+        start = text.find("{")
+        while start != -1:
+            depth = 0
+            for i in range(start, len(text)):
+                ch = text[i]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(text[start : i + 1])
+                        except Exception:
+                            break
+            start = text.find("{", start + 1)
+        return None
 
     def _fallback(self, candidates: list[Any], reason: str) -> dict[str, Any]:
         """LLM 실패 시 휴리스틱 1위 사용."""

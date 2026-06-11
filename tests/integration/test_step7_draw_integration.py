@@ -27,7 +27,7 @@ def test_draw_slide_calls_palette_override_at_entry():
     """_draw_slide 진입부에서 palette_override 호출하는지 정적 확인."""
     from outputs.carriers import pptx_designer as m
 
-    src = open(m.__file__).read()
+    src = open(m.__file__, encoding="utf-8").read()
     # _draw_slide 본문 내부에 palette_override 호출
     assert "_overridden = palette_override(" in src, \
         "palette_override 호출이 _draw_slide 진입부에 없음"
@@ -44,7 +44,7 @@ def test_draw_cover_uses_photo_keyword_with_user_intent_fallback():
     """_draw_cover 가 photo_keyword(sl, fallback=user_intent) 호출하는지."""
     from outputs.carriers import pptx_designer as m
 
-    src = open(m.__file__).read()
+    src = open(m.__file__, encoding="utf-8").read()
     assert "photo_keyword(sl, fallback=user_intent)" in src, \
         "_draw_cover 에 photo_keyword 통합 누락"
     # get_cover_image 가 photo_kw 사용
@@ -111,3 +111,51 @@ class TestPaletteOverrideRuntime:
         sl = SlideSpec(id="x", layout="", role="", title_ko="", body_outline=[])
         default = {"primary": "#0F172A", "accent": "#0EA5E9", "secondary": "#1E293B"}
         assert palette_override(sl, default) == default
+
+
+# ==============================================================
+# 2026-06-11 운영 사고 회귀 — LLMDesigner 인스턴스화 가능 여부
+# ==============================================================
+
+
+class TestLLMDesignerInstantiable:
+    """LLMDesigner 가 실제로 인스턴스화돼야 함.
+
+    사고 경위: BaseAgent 의 abstract ``__call__`` 미구현 → ``LLMDesigner()`` 가
+    TypeError → ``generate_pptx_designed`` 의 except 가 삼킴 → 무로그 룰 폴백.
+    기존 회귀 75개가 전부 정적 확인·헬퍼 단위라 인스턴스화를 한 번도 안 해서 놓침.
+    """
+
+    def test_designer_instantiates(self):
+        from outputs.carriers.llm_designer import LLMDesigner
+
+        designer = LLMDesigner()  # abstract 미구현이면 여기서 TypeError
+        assert designer.model_name
+        assert designer.use_anthropic_api is True
+
+    def test_call_is_passthrough(self):
+        """__call__ 은 그래프 노드가 아니므로 state 를 변경 없이 반환."""
+        import asyncio
+
+        from outputs.carriers.llm_designer import LLMDesigner
+
+        designer = LLMDesigner()
+        sentinel = object()
+        assert asyncio.run(designer(sentinel)) is sentinel
+
+    def test_parse_json_lenient_extracts_wrapped_json(self):
+        """한국어 가드로 인한 'JSON 앞뒤 잡설' 케이스에서 JSON 블록 추출."""
+        from outputs.carriers.llm_designer import LLMDesigner
+
+        d = LLMDesigner()
+        wrapped = '다음과 같이 선택했습니다.\n{"chosen_template": "kpi_cards", "nested": {"a": 1}}\n이상입니다.'
+        parsed = d._parse_json_lenient(wrapped)
+        assert parsed == {"chosen_template": "kpi_cards", "nested": {"a": 1}}
+
+    def test_parse_json_lenient_truncated_returns_none(self):
+        """max_tokens 절단으로 닫히지 않은 JSON 은 None (폴백 경로)."""
+        from outputs.carriers.llm_designer import LLMDesigner
+
+        d = LLMDesigner()
+        assert d._parse_json_lenient('{"chosen_template": "kpi_cards", "palette') is None
+        assert d._parse_json_lenient("") is None

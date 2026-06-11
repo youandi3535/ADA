@@ -212,7 +212,10 @@ class ModelStrategyProposerAgent(BaseGate):
         chosen: dict[str, Any] | None = None
         if isinstance(custom, str) and custom.strip():
             chosen = {"title": custom.strip(), "models": [], "is_custom": True}
-            updates["user_intent"] = f"{(state.user_intent or '').strip()} (모델 전략: {custom.strip()})".strip()
+            # HJ 2026-06-11 (jh 대행) — 멱등 부착 (resume 누적 오염 수정)
+            from agents.gates._intent import append_intent_tag
+
+            updates["user_intent"] = append_intent_tag(state.user_intent, "모델 전략", custom)
             self.logger.info("g4_custom_intent_applied", intent=custom.strip()[:120])
         else:
             rank = uc.get("adopted_rank")
@@ -223,7 +226,9 @@ class ModelStrategyProposerAgent(BaseGate):
             if chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
                 strategy = chosen["title"].strip()
                 base = (state.user_intent or "").strip()
-                updates["user_intent"] = f"{base} (모델 전략: {strategy})" if base else f"모델 전략: {strategy}"
+                from agents.gates._intent import append_intent_tag
+
+                updates["user_intent"] = append_intent_tag(base, "모델 전략", strategy)
                 self.logger.info(
                     "g4_proposal_adopted",
                     rank=rank,

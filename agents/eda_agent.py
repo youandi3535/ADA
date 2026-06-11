@@ -57,10 +57,18 @@ class EDAAgent(BaseAgent):
                 },
             )
 
+            charts_meta: list[dict] = []
             handler = get_handler(state.category, "charts")
             if handler is not None:
                 try:
-                    charts = handler(df, state) or []
+                    result = handler(df, state) or []
+                    # HJ 2026-06-11 (jh 대행) — (paths, meta) 튜플 반환 허용.
+                    # meta: list[dict] (EDAChart 필드 — x/finding/numbers/title_ko 등).
+                    # 기존 핸들러 (paths 만 반환) 는 그대로 호환.
+                    if isinstance(result, tuple) and len(result) == 2:
+                        charts, charts_meta = list(result[0] or []), list(result[1] or [])
+                    else:
+                        charts = list(result)
                 except Exception as e:
                     self.logger.warning("eda_handler_failed", category=state.category, error=str(e))
                     _safe_publish_stage_partial(
@@ -202,9 +210,10 @@ class EDAAgent(BaseAgent):
             )
 
             # Phase 1.4 — ReportContext ⑤ eda 적립.
-            # MinIO 경로만 받으므로 chart_type/finding 은 unknown. ChartAnnotator(Phase 3)
-            # 가 메타를 보강. severity 는 info 기본.
+            # HJ 2026-06-11 (jh 대행) — 핸들러가 meta 를 주면 그대로 사용 (path 기준 매칭),
+            # 없으면 기존처럼 빈 메타. (구주석의 ChartAnnotator 는 미구현 — meta 채널로 대체)
             try:
+                _meta_by_path = {str(m.get("path", "")): m for m in charts_meta if isinstance(m, dict)}
                 eda_charts_meta = [
                     {
                         "path": str(p),
@@ -212,6 +221,7 @@ class EDAAgent(BaseAgent):
                         "title_ko": "",
                         "finding": "",
                         "severity": "info",
+                        **{k: v for k, v in _meta_by_path.get(str(p), {}).items() if k != "path"},
                     }
                     for p in charts
                 ]

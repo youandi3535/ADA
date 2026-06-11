@@ -1198,9 +1198,14 @@ class TestEdaEnhancement:
             "y": rng.randint(0, 2, size=100),
         })
         # MinIO 없는 단위 환경 → save 가 실패하면 None 이 paths 에 안 들어감.
-        # 함수는 예외 없이 list 반환만 보장.
+        # 2026-06-11 — charts() 는 (paths, meta) 튜플 반환 (EDAChart 메타 채널).
         result = charts(df, self._state())
-        assert isinstance(result, list)
+        assert isinstance(result, tuple) and len(result) == 2
+        paths, meta = result
+        assert isinstance(paths, list)
+        assert isinstance(meta, list)
+        # meta 는 path 가 있는 차트에만 1:1 — path 없으면 빈 리스트
+        assert all(isinstance(m, dict) and m.get("path") in set(paths) for m in meta)
 
 
 # ---------------------------------------------------------------------------
