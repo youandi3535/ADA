@@ -256,6 +256,9 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             data["proposals"] = _gd.get("proposals") or []
             # 직전 단계 결과 필드 전부를 게이트 화면에 노출 (eda_summary/eval_result 추가)
             # HJ 2026-06-09 G1 단축 Z' — g2_pending 추가 (gate_direction 진행 중 신호)
+            # HJ 2026-06-11 — G3~G6 풍부 데이터 forward 확장. PipelineState 에 있던 필드들이
+            #   응답에 누락되어 frontend 가 undefined 만 받던 문제 해결.
+            #   사용자가 강조: "G1·G2 처럼 G3~G6 도 실시간 분석 내용 받아와야 함" → 같은 forward 패턴 적용.
             for k in (
                 "category",
                 "target_column",
@@ -268,6 +271,15 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                 "eval_result",
                 "g2_pending",
                 "topic_proposals",  # CS 2026-06-10 — G2 Sub-1 주제 후보 forward
+                # HJ 2026-06-11 — G3~G6 모달 콘텐츠용 풍부 필드 추가:
+                "chosen_recipe",          # G2 선택 결과 = G3 모달 첫 행
+                "user_intent",            # G1 사용자 의도 = G2 이후 화면 컨텍스트
+                "preprocessing_strategy", # G3 strategist 결과 = G4 모달
+                "feature_engineering",    # G3 strategist 결과 = G4 모달
+                "preprocessing_plan",     # G3 plan steps
+                "candidate_models",       # G4 model_selection 결과 = G5 모달
+                "best_params",            # G4 tuner 결과 = G5 모달
+                "explainability",         # G5 결과 = G6 모달
             ):
                 v = _gd.get(k)
                 if v is not None:

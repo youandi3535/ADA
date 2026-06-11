@@ -251,3 +251,63 @@ def test_base_models_score_sign_auc_above_080():
 
 # #11 (predicted_anomalies dtype) — ★ X-3/X-6 이전: per-row predicted_anomalies 는
 #   Day 7 evaluator 가 생성(state.eval_result). 검증은 ny-day7-test_evaluator.md 로 이전됨.
+
+
+# === ★ V4 (2026-06-10): ECOD·HBOS + rank 정규화 ====================
+
+
+def test_ecod_hbos_in_supported_models():
+    """#16 ★ V4 — ECOD·HBOS 가 SUPPORTED_MODELS 에 포함."""
+    from pipelines.anomaly.pipeline import AnomalyPipeline
+
+    assert "ECOD" in AnomalyPipeline.SUPPORTED_MODELS
+    assert "HBOS" in AnomalyPipeline.SUPPORTED_MODELS
+
+
+def test_ecod_hbos_score_sign_auc_above_080():
+    """#17 ★ V4 — ECOD·HBOS 점수 부호 회귀 (test#15 와 동일 방법론).
+
+    부호가 올바르면 AUC≈1.0 — global shift 이상치는 ECDF/히스토그램 꼬리에 잡힘.
+    """
+    pytest.importorskip("pyod")
+    from sklearn.metrics import roc_auc_score
+
+    from pipelines.anomaly.pipeline import AnomalyPipeline
+
+    rng = np.random.default_rng(0)
+    n_normal, n_anom, n_feat = 950, 50, 4
+    X_normal = rng.normal(0, 1, (n_normal, n_feat))
+    X_anomaly = rng.normal(0, 1, (n_anom, n_feat)) + rng.choice([-8, 8], size=(n_anom, n_feat))
+    X = np.vstack([X_normal, X_anomaly])
+    y = np.concatenate([np.zeros(n_normal), np.ones(n_anom)])
+    idx = rng.permutation(n_normal + n_anom)
+    X, y = X[idx], y[idx]
+
+    pipe = AnomalyPipeline()
+    for model_name in ("ECOD", "HBOS"):
+        model = pipe.train(X, y, model_name, {})
+        scores = np.asarray(pipe.predict(model, X))
+        auc = roc_auc_score(y, scores)
+        assert auc > 0.8, f"{model_name} AUC={auc:.4f} < 0.8 (점수 부호 버그 의심)"
+
+
+def test_normalize_scores_rank_properties():
+    """#18 ★ V4 — rank 정규화: [0,1] 범위 + 단조성 보존 + 동점 평균 rank."""
+    from pipelines.anomaly.pipeline import _normalize_scores_rank
+
+    scores = np.array([3.0, 1.0, 2.0, 2.0, 10.0])
+    r = _normalize_scores_rank(scores)
+    assert float(r.min()) == 0.0 and float(r.max()) == 1.0
+    # 단조성: 원점수 순서가 rank 순서로 보존
+    assert r[1] < r[2] == r[3] < r[0] < r[4]
+    # 극단값(10.0)이 min-max 처럼 분포를 압축하지 않음 — rank 간격 균등
+    assert abs((r[4] - r[0]) - 0.25) < 1e-9
+
+
+def test_normalize_scores_rank_edge_cases():
+    """#19 ★ V4 — rank 정규화 엣지: 빈 배열·단일 원소."""
+    from pipelines.anomaly.pipeline import _normalize_scores_rank
+
+    assert len(_normalize_scores_rank(np.array([]))) == 0
+    single = _normalize_scores_rank(np.array([7.0]))
+    assert len(single) == 1 and single[0] == 0.5

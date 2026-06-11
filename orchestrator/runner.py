@@ -671,6 +671,17 @@ def _save_gate_data(job_id: str, final_dict: dict) -> None:
             # G6/G7 산출물 영역을 즉시 표시
             "requested_outputs": final_dict.get("requested_outputs") or [],
             "output_paths": final_dict.get("output_paths") or {},
+            # HJ 2026-06-11 — G3~G6 모달의 풍부한 분석 데이터 forward.
+            # PipelineState 에 이미 채워진 필드들을 frontend 가 받지 못하던 문제 해결.
+            # 사용자가 게이트 화면에서 직전 단계 분석 결과를 라이브로 확인 가능.
+            "chosen_recipe": final_dict.get("chosen_recipe"),         # G2 선택 = G3 화면 표시
+            "user_intent": final_dict.get("user_intent"),             # G1 사용자 의도 — G2 이후 모든 화면
+            "preprocessing_strategy": final_dict.get("preprocessing_strategy"),  # G3 결과 = G4 화면 표시
+            "feature_engineering": final_dict.get("feature_engineering"),       # G3 결과 = G4 화면 표시
+            "preprocessing_plan": final_dict.get("preprocessing_plan"),         # G3 plan steps
+            "candidate_models": final_dict.get("candidate_models"),             # G4 결과 = G5 화면 표시
+            "best_params": final_dict.get("best_params"),                       # G4 튜닝 결과 = G5 화면 표시
+            "explainability": final_dict.get("explainability"),                 # G5 결과 = G6 화면 표시
         }
         r.set(f"ada:gate_data:{job_id}", json.dumps(payload, ensure_ascii=False, default=str), ex=86400)
     except Exception:  # noqa: BLE001

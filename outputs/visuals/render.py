@@ -19,6 +19,9 @@ from outputs.style.palette import get_palette
 
 _MPL_READY = False
 
+# 막대/카테고리용 distinct 색 팔레트 (구분 잘 되게)
+_PALETTE = ["#185FA5", "#1D9E75", "#D85A30", "#7F77DD", "#BA7517", "#D4537E", "#0F6E56", "#993C1D"]
+
 
 def _ensure_matplotlib() -> Optional[Any]:
     """matplotlib import + 한국어 폰트 폴백 설정. 실패 시 None."""
@@ -89,6 +92,10 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
 
     try:
         vtype = vs.type or ""
+        if vtype == "chart_line":
+            return _render_line(vs, ctx, primary, accent, plt)
+        if vtype == "chart_hbar":
+            return _render_hbar(vs, ctx, primary, accent, plt)
         if vtype.startswith("chart_") or vtype == "bar":
             return _render_bar(vs, ctx, primary, accent, plt)
         if vtype == "diagram_process_linear":
@@ -174,49 +181,118 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
     labels = [_ensure_ascii(str(i[0]))[:20] for i in items]
     values = [float(i[1]) for i in items]
 
-    from matplotlib.colors import LinearSegmentedColormap, to_rgb
-
-    def _light(h, a=0.4):
-        r, g, b = to_rgb(h)
-        return (r + (1 - r) * a, g + (1 - g) * a, b + (1 - b) * a)
-
-    cmap = LinearSegmentedColormap.from_list("brand", [primary, _light(primary, 0.5)])
     max_v = max(values) if values else 1.0
-    colors_list = []
-    for i, v in enumerate(values):
-        if i < 3:
-            colors_list.append(cmap(0.2 + 0.7 * (v / max_v if max_v else 0)))
-        else:
-            colors_list.append("#E2E8F0")
+    min_v = min(values) if values else 0.0
+    spread = max_v - min_v
+    # 값이 몰려 있으면(차이가 작으면) y축을 줌인해 차이를 보이게 — 진짜 비슷하면 그대로 0 기준
+    zoomed = bool(min_v > 0 and spread > 0 and spread < 0.15 * max_v)
+    if zoomed:
+        if max_v <= 1.0:  # 비율(AUC 등) — 0.05 단위로 타이트하게 프레이밍 (8점대→9 가깝게)
+            import math as _m
 
-    fig, ax = plt.subplots(figsize=(8, 4.5), dpi=110)
+            y_lo = max(0.0, _m.floor(min_v * 20) / 20)
+            y_hi = _m.ceil(max_v * 20) / 20 + 0.02
+        else:
+            y_lo, y_hi = max(0.0, min_v - spread * 0.55), max_v + spread * 0.6
+    else:
+        y_lo, y_hi = 0.0, max_v * 1.28
+    y_off = (y_hi - y_lo) * 0.045
+
+    colors_list = [_PALETTE[i % len(_PALETTE)] for i in range(len(values))]  # 막대별 distinct 색
+
+    fig, ax = plt.subplots(figsize=(9, 4.8), dpi=120)
     fig.patch.set_facecolor("white")
-    bars = ax.bar(labels, values, color=colors_list, edgecolor="white", linewidth=2, width=0.6)
+    bars = ax.bar(labels, values, color=colors_list, width=0.35, zorder=3)  # 가로폭 절반(날씬하게)
     for bar, v in zip(bars, values):
         y = bar.get_height()
-        lbl = f"{v:.3f}" if 0 < v < 1 else f"{v:.1f}"
+        lbl = f"{v:.3f}" if 0 < v < 1 else (f"{int(v)}" if v == int(v) else f"{v:.1f}")
         ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y + max_v * 0.04,
-            lbl,
-            ha="center",
-            va="bottom",
-            fontsize=10,
-            color="#0F172A",
-            fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor=primary, linewidth=1.2),
+            bar.get_x() + bar.get_width() / 2, y + y_off, lbl,
+            ha="center", va="bottom", fontsize=21, color="#0F172A", fontweight="bold",
         )
-    title = _ensure_ascii(vs.title or "Chart")
-    ax.set_title(title, fontsize=14, color="#0F172A", pad=18, loc="left", fontweight="bold")
+    if vs.title:  # 제목은 옵션 (슬라이드 헤딩과 중복되면 빈 값으로 생략)
+        ax.set_title(_ensure_ascii(vs.title), fontsize=17, color="#0F172A", pad=16, loc="left", fontweight="bold")
+    if zoomed:
+        ax.text(0.995, 1.01, "y축 확대", transform=ax.transAxes, ha="right", va="bottom", fontsize=11, color="#64748B")
     for s in ("top", "right", "left"):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_color("#CBD5E1")
-    ax.tick_params(axis="x", colors="#475569", labelsize=10)
-    ax.tick_params(axis="y", colors="#94A3B8", labelsize=9)
-    ax.grid(axis="y", linestyle="-", color="#F1F5F9", linewidth=0.8, zorder=0)
+    ax.tick_params(axis="x", colors="#0F172A", labelsize=18, length=0)  # x 라벨 크게·검정
+    ax.tick_params(axis="y", colors="#475569", labelsize=12)
+    ax.grid(axis="y", linestyle="-", color="#EEF2F6", linewidth=1.0, zorder=0)
     ax.set_axisbelow(True)
-    ax.set_ylim(0, max_v * 1.25)
-    plt.xticks(rotation=15, ha="right")
+    ax.set_ylim(y_lo, y_hi)
+    plt.xticks(rotation=0)  # 일자 (기울임 금지)
+    plt.tight_layout()
+    out = _tmp_png()
+    plt.savefig(out, dpi=130, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def _render_line(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, plt) -> str:
+    """선 차트 — 순서/추세가 있는 축(가입 기간 등)에 적합."""
+    items = (vs.spec or {}).get("items") or []
+    if not items:
+        return _render_bar(vs, ctx, primary, accent, plt)
+    labels = [_ensure_ascii(str(i[0]))[:20] for i in items]
+    values = [float(i[1]) for i in items]
+    x = list(range(len(values)))
+    mx, mn = max(values), min(values)
+    fig, ax = plt.subplots(figsize=(9, 4.8), dpi=120)
+    fig.patch.set_facecolor("white")
+    ax.plot(x, values, color="#185FA5", linewidth=3.5, marker="o", markersize=11,
+            markerfacecolor="#185FA5", markeredgecolor="white", markeredgewidth=2.5, zorder=3)
+    ax.fill_between(x, values, mn - (mx - mn + 1) * 0.3, color="#185FA5", alpha=0.07, zorder=1)
+    for xi, v in zip(x, values):
+        lbl = f"{int(v)}" if v == int(v) else f"{v:.1f}"
+        ax.text(xi, v + (mx - mn + 1) * 0.05, lbl, ha="center", va="bottom", fontsize=21, color="#0F172A", fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    if vs.title:
+        ax.set_title(_ensure_ascii(vs.title), fontsize=17, color="#0F172A", pad=16, loc="left", fontweight="bold")
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_color("#CBD5E1")
+    ax.tick_params(axis="x", colors="#0F172A", labelsize=18, length=0)
+    ax.tick_params(axis="y", colors="#475569", labelsize=12)
+    ax.grid(axis="y", color="#EEF2F6", linewidth=1.0, zorder=0)
+    ax.set_axisbelow(True)
+    ax.margins(y=0.2)
+    plt.tight_layout()
+    out = _tmp_png()
+    plt.savefig(out, dpi=130, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def _render_hbar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, plt) -> str:
+    """가로 막대 — 범주가 많거나 라벨이 길 때 적합 (읽기 쉬움)."""
+    items = (vs.spec or {}).get("items") or []
+    if not items:
+        return _render_bar(vs, ctx, primary, accent, plt)
+    labels = [_ensure_ascii(str(i[0]))[:24] for i in items]
+    values = [float(i[1]) for i in items]
+    mx = max(values) if values else 1.0
+    y = list(range(len(values)))[::-1]
+    colors_list = [_PALETTE[i % len(_PALETTE)] for i in range(len(values))]
+    fig, ax = plt.subplots(figsize=(9, max(3.2, len(values) * 0.8)), dpi=120)
+    fig.patch.set_facecolor("white")
+    ax.barh(y, values, color=colors_list, height=0.42, zorder=3)  # 두께 절반(날씬하게)
+    for yi, v in zip(y, values):
+        lbl = f"{int(v)}" if v == int(v) else f"{v:.1f}"
+        ax.text(v + mx * 0.02, yi, lbl, va="center", ha="left", fontsize=21, color="#0F172A", fontweight="bold")
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    if vs.title:
+        ax.set_title(_ensure_ascii(vs.title), fontsize=17, color="#0F172A", pad=14, loc="left", fontweight="bold")
+    for s in ("top", "right", "bottom"):
+        ax.spines[s].set_visible(False)
+    ax.tick_params(axis="y", colors="#0F172A", labelsize=18, length=0)
+    ax.tick_params(axis="x", colors="#475569", labelsize=11)
+    ax.set_xlim(0, mx * 1.18)
+    ax.grid(axis="x", color="#EEF2F6", linewidth=1.0, zorder=0)
+    ax.set_axisbelow(True)
     plt.tight_layout()
     out = _tmp_png()
     plt.savefig(out, dpi=130, bbox_inches="tight", facecolor="white")

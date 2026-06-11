@@ -15,6 +15,7 @@ DoD: 시간 컬럼 있으면 TranAD 점수 up → top3 에 들어감.
   base + dim + time (★ DoD) + contam + interp (★ A-1)
 
 ★ X-1 정정 (2026-05-29): top3 = list[str] 모델명 (디스패처 계약). 카드는 cards 분리. (옛 E-1 list[dict] 뒤집음)
+★ V4 (2026-06-10): 6 차원 점수 (base/dim/time/contam/interp/local) — ECOD·HBOS 추가, 지역 이상치 LOF 부스트.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ BASE_SCORE: dict[str, float] = {
     "OneClassSVM": 0.75,
     "AutoEncoder": 0.65,
     "COPOD": 0.60,  # ★ FIX-3: COPOD 추가 (INTERPRETABILITY_SCORE 와 정합)
+    "ECOD": 0.72,  # ★ V4: ADBench(NeurIPS 2022) 평균 무감독 상위권 — LOF 보다 약간 높게
+    "HBOS": 0.55,  # ★ V4: 빠르지만 지역 이상치 약함 — 보수적 base
     "TranAD": 0.55,
     "AnomalyTransformer": 0.50,
 }
@@ -43,6 +46,11 @@ LOW_CONTAM_THRESHOLD = 0.02
 HIGH_DIM_THRESHOLD = 50
 MIN_ROWS_FOR_DL = 1000
 DL_PENALTY_SMALL_DATA = -0.3
+# ★ V4: 지역(local) 이상치 신호 — 단변량 통계는 침묵하는데 IF/LOF 만 발화하는
+#   high_contamination_suspected 패턴은 군집 구조 내 지역 이상치의 전형
+#   (Breunig et al., SIGMOD 2000 — LOF 가 설계된 바로 그 케이스).
+#   이때 LOF 부스트 + (신뢰 불가한 contamination 추정 기반) OCSVM 보너스 차단.
+LOCAL_STRUCTURE_LOF_BONUS = 0.25
 
 # ★ A-1 결정 (2026-05-28): interpretability 5 번째 차원
 INTERPRETABILITY_SCORE: dict[str, float] = {
@@ -53,6 +61,8 @@ INTERPRETABILITY_SCORE: dict[str, float] = {
     "TranAD": -0.05,  # attention 일부 시각화
     "AnomalyTransformer": -0.1,  # 가장 black-box
     "COPOD": 0.1,  # ★ A-1 (Day 6) 추가 — dim_score 제공, ECDF 해석 가능
+    "ECOD": 0.1,  # ★ V4: 차원별 꼬리확률 분해 → '왜 이상?' 직접 답변 가능
+    "HBOS": 0.05,  # ★ V4: 차원별 히스토그램 — 시각화 쉬움
 }
 
 
@@ -72,7 +82,8 @@ def _compute_dim_bonus(model_name: str, n_dim: int) -> float:
     """차원성 보너스/페널티."""
     if model_name == "LOF" and n_dim > HIGH_DIM_THRESHOLD:
         return DIM_PENALTY_LOF
-    if model_name == "IsolationForest" and n_dim > HIGH_DIM_THRESHOLD:
+    if model_name in ("IsolationForest", "ECOD") and n_dim > HIGH_DIM_THRESHOLD:
+        # ★ V4: ECOD 도 차원별 독립 추정 → 고차원 보너스 (IForest 와 동일 근거)
         return DIM_BONUS_IFOREST
     return 0.0
 
@@ -88,10 +99,23 @@ def _compute_time_bonus(model_name: str, has_time: bool) -> float:
     return 0.0
 
 
-def _compute_contam_bonus(model_name: str, contam: float) -> float:
-    """오염도 보너스 (저오염 → OCSVM 강화)."""
+def _compute_contam_bonus(model_name: str, contam: float, contam_unreliable: bool = False) -> float:
+    """오염도 보너스 (저오염 → OCSVM 강화).
+
+    ★ V4: contamination 추정이 신뢰 불가(high_contamination_suspected)하면
+    저오염 보너스를 주지 않음 — 가짜 저오염(지역 이상치 침묵)에 OCSVM 오선정 방지.
+    """
+    if contam_unreliable:
+        return 0.0
     if contam < LOW_CONTAM_THRESHOLD and model_name == "OneClassSVM":
         return LOW_CONTAM_OCSVM_BONUS
+    return 0.0
+
+
+def _compute_local_bonus(model_name: str, local_suspected: bool) -> float:
+    """★ V4: 지역 이상치 의심 시 LOF 부스트 (Breunig et al. 2000)."""
+    if local_suspected and model_name == "LOF":
+        return LOCAL_STRUCTURE_LOF_BONUS
     return 0.0
 
 
@@ -115,6 +139,10 @@ def _build_score_matrix(state: Any, model_cards: list[dict[str, Any]]) -> dict[s
     n_dim = int(pp.get("n_cols_out") or profile.get("dim") or profile.get("cols") or 0)  # ★ B-2
     has_time = bool(profile.get("has_time_column", False))
     contam = float(profile.get("contamination_estimate", 0.05))
+    # ★ V4: 지역 이상치 신호 — local_anomaly_suspected(정밀) 우선, 구 키 fallback
+    local_suspected = bool(
+        profile.get("local_anomaly_suspected", False) or profile.get("high_contamination_suspected", False)
+    )
 
     matrix: dict[str, dict[str, float]] = {}
     for card in model_cards:
@@ -124,15 +152,17 @@ def _build_score_matrix(state: Any, model_cards: list[dict[str, Any]]) -> dict[s
         base = _compute_base_score(name, n_rows)
         dim_b = _compute_dim_bonus(name, n_dim)
         time_b = _compute_time_bonus(name, has_time)
-        contam_b = _compute_contam_bonus(name, contam)
+        contam_b = _compute_contam_bonus(name, contam, contam_unreliable=local_suspected)  # ★ V4
         interp_b = _compute_interp_bonus(name)  # ★ A-1
+        local_b = _compute_local_bonus(name, local_suspected)  # ★ V4
         matrix[name] = {
             "base": base,
             "dim": dim_b,
             "time": time_b,
             "contam": contam_b,
             "interp": interp_b,  # ★ A-1
-            "total": base + dim_b + time_b + contam_b + interp_b,
+            "local": local_b,  # ★ V4
+            "total": base + dim_b + time_b + contam_b + interp_b + local_b,
         }
     return matrix
 
@@ -159,6 +189,8 @@ def _build_card(rank: int, name: str, breakdown: dict[str, float]) -> dict[str, 
         parts.append(f"설명 가능 보너스 +{breakdown['interp']:.2f}")
     elif breakdown["interp"] < 0:
         parts.append(f"블랙박스 페널티 {breakdown['interp']:.2f}")  # ★ E-2
+    if breakdown.get("local", 0.0) > 0:
+        parts.append(f"지역 이상치 보너스 +{breakdown['local']:.2f} ★V4")
     if breakdown["base"] < BASE_SCORE.get(name, 0.0):
         parts.append("딥러닝 소규모 페널티")  # ★ E-2
     rationale = ", ".join(parts) or "기본 점수"
@@ -173,6 +205,7 @@ def _build_card(rank: int, name: str, breakdown: dict[str, float]) -> dict[str, 
             "time": breakdown["time"],
             "contam": breakdown["contam"],
             "interp": breakdown["interp"],  # ★ A-1
+            "local": breakdown.get("local", 0.0),  # ★ V4
         },
     }
 

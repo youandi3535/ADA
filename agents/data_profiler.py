@@ -173,7 +173,7 @@ class DataProfilerAgent(BaseAgent):
                 category=category,
                 target_column=target_column,
                 task=final_task,
-                data_profile=profile,
+                data_profile=_sanitize_for_serialization(profile),
                 data_card=data_card,
                 category_extras=merged_extras,
                 next_agent="schema_validator",

@@ -72,6 +72,16 @@ TIME_PARSE_MIN_HITS = 5
 # v2 신규
 ZSCORE_UNRELIABLE_RATIO = 5.0  # std > 5×MAD → Z 신뢰도 낮음
 TRIMMED_MEAN_MIN_SOURCES = 4  # 4 소스 이상일 때만 trim
+
+# ★ V4 (2026-06-10): contamination 합의-게이트 집계 상수
+#   설계 근거 (벤치마크 7종 데이터로 실측 후 채택 — V4 벤치마크 문서 참조):
+#   - IF/LOF "auto" 비율은 서로 일치할 때만 신뢰 가능 (불일치 = 임계 부산물 의심).
+#     (앙상블 합의 강건성: Zimek et al. 2014; Aggarwal & Sathe 2015)
+#   - heavy-tail 데이터에선 1.5×IQR 이 과대 계수 → Tukey "far out" 3×IQR 사용.
+#     (Tukey 1977; profiler 가 이미 z/modz 를 high-skew 에서 제외하는 것과 동일 논리)
+CONTAM_MV_AGREEMENT_TOL = 0.03  # |if_ratio - lof_ratio| ≤ 0.03 → 다변량 합의 인정
+CONTAM_MV_DISAGREE_WEIGHT = 0.25  # 불일치 시 min(IF, LOF) 만 0.25 가중
+CONTAM_HEAVY_TAIL_COL_RATIO = 0.5  # high-skew 컬럼이 절반 초과 → heavy-tail 모드
 HIGH_CONTAM_IF_LOF_THRESHOLD = 0.20  # IF/LOF > 0.2 + IQR/Z/ModZ < 0.01 → 의심
 HIGH_CONTAM_UNIVARIATE_THRESHOLD = 0.01
 MOST_ANOMALOUS_DIM_SPREAD_HIGH = 0.05  # IF score spread > 0.05 → confidence high
@@ -775,17 +785,65 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
             "high_contamination_suspected": False,
         }
 
-    # P7: trimmed mean (4+ 소스)
-    if n_src >= TRIMMED_MEAN_MIN_SOURCES:
-        srcs_sorted = sorted(sources)
-        trimmed = srcs_sorted[1:-1]
-        estimate = float(sum(trimmed) / len(trimmed))
-        method = "trimmed_mean"
+    # ★ V4 (P7 개선): 합의-게이트 집계 (consensus_weighted)
+    #   ① 단변량 파트: median(iqr, z, modz, vote) — 단일 소스 이상치에 강건.
+    #      heavy-tail(고왜도 컬럼 과반) 시 iqr → iqr_strict(3×IQR) 대체 (Tukey far-out).
+    #   ② 다변량 파트: IF·LOF 가 서로 합의(차이 ≤ 0.03)할 때만 mean 으로 신뢰,
+    #      불일치 시 min 값을 0.25 가중 (임계 부산물 의심 → 보수적).
+    #   ③ 추정치 = 두 파트의 가중 평균.
+    #   (벤치마크 7종 실측: v3 trimmed mean 대비 MAE 개선 — V4 문서 표 참조)
+    import statistics
+
+    heavy_tail = False
+    n_numeric = int(extra.get("n_numeric_cols", 0) or 0)
+    high_skew_cols = extra.get("high_skew_cols", []) or []
+    if n_numeric > 0 and len(high_skew_cols) / n_numeric > CONTAM_HEAVY_TAIL_COL_RATIO:
+        heavy_tail = True
+
+    uni_keys = ["zscore_mean", "modz_mean", "vote_mean"]
+    uni_keys.insert(0, "iqr_strict_mean" if heavy_tail else "iqr_mean")
+    uni_vals = [float(breakdown[k]) for k in uni_keys if k in breakdown]
+
+    mv_if = breakdown.get("if_ratio")
+    mv_lof = breakdown.get("lof_ratio")
+
+    parts: list[tuple[float, float]] = []  # (value, weight)
+    if uni_vals:
+        parts.append((float(statistics.median(uni_vals)), 1.0))
+    if mv_if is not None and mv_lof is not None:
+        if abs(float(mv_if) - float(mv_lof)) <= CONTAM_MV_AGREEMENT_TOL:
+            parts.append(((float(mv_if) + float(mv_lof)) / 2.0, 1.0))  # 합의 → 신뢰
+        else:
+            parts.append((min(float(mv_if), float(mv_lof)), CONTAM_MV_DISAGREE_WEIGHT))
+    elif mv_if is not None or mv_lof is not None:
+        parts.append((float(mv_if if mv_if is not None else mv_lof), CONTAM_MV_DISAGREE_WEIGHT))
+
+    # ★ V4: 지역(local) 이상치 시그니처 — 단변량 통계 침묵 + 다변량 발화.
+    #   이 경우 단변량 소스는 '저오염 증거'가 아니라 '무정보(블라인드)' —
+    #   추정은 다변량 파트만 사용 (Breunig et al. 2000 의 local outlier 는
+    #   주변 밀도 대비라서 단변량 marginal 에 잡히지 않음).
+    uni_blind = [float(breakdown[k]) for k in ("iqr_mean", "zscore_mean", "modz_mean") if k in breakdown]
+    mv_max = max(float(breakdown.get("if_ratio", 0.0)), float(breakdown.get("lof_ratio", 0.0)))
+    #   median 사용 이유: 다봉(bimodal) 마진에서 modz 단일 소스가 군집 간 거리로
+    #   오발화하는 케이스에 강건 (all() 은 한 소스만 발화해도 게이트 차단).
+    uni_med = float(statistics.median(uni_blind)) if uni_blind else None
+    local_anomaly_suspected = bool(uni_med is not None and uni_med < 0.005 and mv_max > 0.01)
+    if local_anomaly_suspected and len(parts) >= 2:
+        parts = parts[1:]  # 첫 파트(단변량) 제거 → 다변량만
+
+    if parts:
+        w_sum = sum(w for _, w in parts)
+        estimate = sum(v * w for v, w in parts) / max(w_sum, 1e-9)
+        method = "consensus_weighted_mv_only" if local_anomaly_suspected else "consensus_weighted"
     else:
         estimate = float(sum(sources) / len(sources))
         method = "simple_mean"
 
     estimate = round(max(CONTAMINATION_MIN, min(CONTAMINATION_MAX, estimate)), 4)
+
+    # ★ V4: 소스 간 불일치(spread) — 크면 confidence 강등 근거
+    all_vals = sorted(v for v in (*uni_vals, mv_if, mv_lof) if v is not None)
+    spread = round(float(all_vals[-1] - all_vals[0]), 4) if all_vals else 0.0
 
     if n_src >= 5 and n_rows >= 500:
         confidence = "high"
@@ -793,6 +851,8 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
         confidence = "medium"
     else:
         confidence = "low"
+    if spread > 0.15 and confidence == "high":
+        confidence = "medium"  # 소스 간 큰 불일치 → 과신 방지
 
     # P8: 고오염 의심
     univariate_low = all(
@@ -813,7 +873,9 @@ def _estimate_contamination(extra: dict[str, Any], n_rows: int) -> dict[str, Any
         "contamination_sources_used": n_src,
         "contamination_method": method,
         "contamination_source_breakdown": breakdown,
+        "contamination_spread": spread,  # ★ V4: 소스 간 불일치 폭
         "high_contamination_suspected": high_contam_suspected,
+        "local_anomaly_suspected": local_anomaly_suspected,  # ★ V4: 단변량 침묵+다변량 발화
     }
 
 
@@ -827,6 +889,7 @@ def _model_hints(extra: dict[str, Any]) -> list[str]:
     n_cols = int(extra.get("n_numeric_cols", 1))
 
     hints.append("IsolationForest")
+    hints.append("ECOD")  # ★ V4: 파라미터-프리·해석 가능 — 항상 후보 (TKDE 2022)
 
     if contam < 0.02:
         hints.append("OneClassSVM")
@@ -839,6 +902,8 @@ def _model_hints(extra: dict[str, Any]) -> list[str]:
         hints.append("AutoEncoder")
     if n_rows >= 5000:
         hints.append("DeepSVDD")
+    if n_rows >= 10_000:
+        hints.append("HBOS")  # ★ V4: 선형 시간 — 대용량 1차 스크리닝
 
     seen: set[str] = set()
     deduped: list[str] = []

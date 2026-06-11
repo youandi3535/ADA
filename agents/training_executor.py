@@ -23,6 +23,18 @@ import numpy as np
 from ada.core.config import settings
 from ada.core.state import PipelineState
 from agents.base import BaseAgent
+
+
+# HJ 2026-06-11 — G4 모달 라이브 피드용 (모델별 학습 진행 상황 publish).
+def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
+    if not job_id or not isinstance(partial, dict) or not partial:
+        return
+    try:
+        from orchestrator.runner import publish_stage_partial as _psp
+
+        _psp(job_id, partial)
+    except Exception:  # noqa: BLE001
+        pass
 from orchestrator.training_tasks import HEAVY_MODELS, is_heavy_model
 from pipelines.factory import PipelineFactory
 
@@ -84,7 +96,27 @@ class TrainingExecutorAgent(BaseAgent):
 
             trained: list[dict[str, Any]] = []
             heavy_used: list[str] = []
-            for model_name in state.model_candidates:
+            n_models = len(state.model_candidates)
+            # HJ 2026-06-11 — 학습 시작 publish.
+            _safe_publish_stage_partial(
+                state.job_id,
+                {
+                    "g4_phase": "training_start",
+                    "g4_status": f"모델 학습 시작 — {n_models}개 모델 후보",
+                    "training_total_models": n_models,
+                },
+            )
+            for _idx, model_name in enumerate(state.model_candidates, start=1):
+                # HJ 2026-06-11 — 모델별 학습 진행 publish.
+                _safe_publish_stage_partial(
+                    state.job_id,
+                    {
+                        "g4_phase": "training_progress",
+                        "g4_status": f"학습 중 ({_idx}/{n_models}) — {model_name}",
+                        "training_current_model": model_name,
+                        "training_done_count": _idx - 1,
+                    },
+                )
                 # Day 6 계약: HyperparameterTuner 가 채운 best_params 우선 사용.
                 params = (state.best_params or {}).get(model_name, {}) or {}
 
@@ -129,6 +161,37 @@ class TrainingExecutorAgent(BaseAgent):
                 heavy_dispatched=heavy_used,
                 heavy_known=sorted(HEAVY_MODELS),
             )
+
+            # HJ 2026-06-11 — G4 모달 라이브 피드: 모델별 학습 메트릭을 자연어 인사이트로 publish.
+            # G2 의 eda_insights 패턴 — 사용자가 어떤 모델이 어떤 점수 받았는지 즉시 확인.
+            try:
+                _g4_train_insights: list[str] = []
+                for info in trained:
+                    mn = info.get("model_name", "?")
+                    metrics = info.get("metrics") or {}
+                    if metrics:
+                        # 상위 4개 메트릭만 표시
+                        _m_pairs = []
+                        for k in list(metrics.keys())[:4]:
+                            v = metrics[k]
+                            try:
+                                _m_pairs.append(f"{k}={float(v):.3f}")
+                            except (TypeError, ValueError):
+                                _m_pairs.append(f"{k}={v}")
+                        _g4_train_insights.append(f"학습 결과: {mn} → {', '.join(_m_pairs)}")
+                    else:
+                        _g4_train_insights.append(f"학습 결과: {mn} (메트릭 미산출)")
+                _safe_publish_stage_partial(
+                    state.job_id,
+                    {
+                        "g4_phase": "training_done",
+                        "g4_status": f"학습 완료 — {len(trained)}개 모델 학습 완료, 메트릭 집계 단계로 이동",
+                        "g4_train_insights": _g4_train_insights,
+                    },
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("g4_train_insights_publish_failed", error=str(e))
+
             return state.with_update(
                 trained_models=trained,
                 training_started_at=training_started,

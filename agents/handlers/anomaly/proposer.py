@@ -122,6 +122,35 @@ def _g2_score_copod(profile: dict, preproc: dict) -> float:
     return _clip(base)
 
 
+def _g2_score_ecod(profile: dict, preproc: dict) -> float:
+    """★ V4: ECOD — 차원별 ECDF 꼬리확률 (Li et al., 2022 TKDE).
+
+    파라미터-프리 + O(n·d) + 차원별 기여 분해 가능(해석성).
+    ADBench(NeurIPS 2022) 47개 데이터셋 평균 무감독 상위권 근거로 채택.
+    """
+    base = 0.6
+    n_cols = preproc.get("n_cols_out", 0) or profile.get("n_numeric_cols", 0)
+    if n_cols > HIGH_DIM_THRESHOLD:
+        base += 0.1  # 차원별 독립 추정 → 고차원 강건
+    if profile.get("n_rows", 0) >= 10_000:
+        base += 0.05  # 선형 시간 — 대용량 우위
+    return _clip(base)
+
+
+def _g2_score_hbos(profile: dict, preproc: dict) -> float:
+    """★ V4: HBOS — 히스토그램 밀도 (Goldstein & Dengel, 2012).
+
+    선형 시간 — 대용량 1차 스크리닝. 지역(local) 이상치엔 약함 → base 낮게.
+    """
+    base = 0.45
+    if profile.get("n_rows", 0) >= 10_000:
+        base += 0.15  # O(n) — 대용량에서 실용 우위
+    n_cols = preproc.get("n_cols_out", 0) or profile.get("n_numeric_cols", 0)
+    if n_cols > HIGH_DIM_THRESHOLD:
+        base += 0.05
+    return _clip(base)
+
+
 def _g2_score_tranad(profile: dict, preproc: dict) -> float:
     """시계열 모델 (D8 +0.3)."""
     if not profile.get("has_time_column"):
@@ -187,6 +216,9 @@ def g2(state: Any) -> list[dict[str, Any]]:
         _make_card("AutoEncoder", _g2_score_autoencoder(profile, preproc), "딥러닝 — 큰 데이터·고차원 우위"),
         # ★ FIX-3: COPOD 추가 — g2 경로에서 항상 후보에 포함 (selector BASE_SCORE 정합)
         _make_card("COPOD", _g2_score_copod(profile, preproc), "Copula 기반 — 해석 가능 ECDF 이상치 확률, 고차원 친화"),
+        # ★ V4: ECOD·HBOS 추가 — 둘 다 PyOD 내장 (신규 의존성 없음)
+        _make_card("ECOD", _g2_score_ecod(profile, preproc), "ECDF 꼬리확률 — 파라미터-프리, 빠르고 해석 가능 (TKDE 2022)"),
+        _make_card("HBOS", _g2_score_hbos(profile, preproc), "히스토그램 밀도 — 선형 시간, 대용량 1차 스크리닝"),
     ]
 
     # D1: 시계열 데이터면 트랜스포머 2 종 추가
@@ -208,7 +240,7 @@ def g2(state: Any) -> list[dict[str, Any]]:
 
     # ★ D1 불변식 (회귀 방지): 시간 컬럼이 없으면 시계열 트랜스포머는 절대 포함 금지.
     # score 헬퍼가 미래에 바뀌거나 머지 충돌로 카드가 새도 no-time 경로는
-    # 반드시 base 4 종(IForest·LOF·OCSVM·AE)만 남도록 구조적으로 강제.
+    # 반드시 base 7 종(IForest·LOF·OCSVM·AE·COPOD·ECOD·HBOS)만 남도록 구조적으로 강제 (★ V4 갱신).
     if not profile.get("has_time_column"):
         cards = [c for c in cards if c["title"] not in _TIME_SERIES_MODELS]
 
