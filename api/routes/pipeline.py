@@ -283,6 +283,12 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             ):
                 v = _gd.get(k)
                 if v is not None:
+                    # CS 2026-06-11 — gate_data 의 stale "category": "pending" 이
+                    # job.category(이미 _persist_detection 으로 정확히 갱신됨)를
+                    # 다시 "pending" 으로 덮어써서 아래 휴리스틱이 tabular_ml 로
+                    # 강제 확정시키는 문제 방지.
+                    if k == "category" and (not v or v == "pending") and data.get("category") not in (None, "", "pending"):
+                        continue
                     data[k] = v
             # output_paths: gate_data 값이 있으면 DB 값을 덮어씀 (완료 후 저장된 게 정확)
             if _gd.get("output_paths"):
