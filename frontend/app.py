@@ -1221,7 +1221,21 @@ function gateHeader(g){
   const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
   const props=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
   const stage=STAGE_TRANSITION_DESC[cur];
-  const catKey=gateData.category;
+  // CS 2026-06-11 — catKey 강건화. gateData.category 가 비어있거나 pending 이면
+  // data_profile 휴리스틱으로 4 카테고리 중 하나를 추정 → _default 로 떨어지지 않음.
+  let catKey=gateData.category;
+  if(!catKey || catKey==='pending'){
+    const dp=gateData.data_profile||{};
+    const dateCol=dp.date_col||dp.detected_time_col;
+    const hasTarget=!!(gateData.target_column||dp.has_target||dp.detected_target);
+    const rows=parseInt(dp.rows||(dp.shape&&dp.shape.rows)||0,10)||0;
+    const cols=parseInt(dp.cols||(dp.shape&&dp.shape.cols)||0,10)||0;
+    if(dateCol) catKey='timeseries';
+    else if(!hasTarget && rows>=500) catKey='anomaly_detection';
+    else if(rows>=50000 && cols>=20) catKey='tabular_dl';
+    else catKey='tabular_ml';
+    try{ console.log('[gateHeader] category 추정:', {cur:cur, inferred:catKey, dateCol:dateCol, hasTarget:hasTarget, rows:rows}); }catch(e){}
+  }
   let h2, en, desc;
   if(props.length){
     // proposals 도착 = 사용자 결정 시점
