@@ -211,7 +211,9 @@
       "PowerShell([Environment]::SetEnvironmentVariable\\(\"OLLAMA_MODELS\",\"C:\\\\ollama\\\\models\",\"Machine\"\\))",
       "PowerShell(Stop-Process -Name \"ollama app\" -Force -ErrorAction SilentlyContinue)",
       "PowerShell(Stop-Process -Name \"ollama\" -Force -ErrorAction SilentlyContinue)",
-      "Bash(curl -s -X POST http://localhost:11434/api/generate -d '{\"model\":\"qwen2.5:7b\",\"prompt\":\"hi\",\"stream\":false}' --max-time 60 -w \"\\\\nHTTP_CODE:%{http_code}\\\\n\")"
+      "Bash(curl -s -X POST http://localhost:11434/api/generate -d '{\"model\":\"qwen2.5:7b\",\"prompt\":\"hi\",\"stream\":false}' --max-time 60 -w \"\\\\nHTTP_CODE:%{http_code}\\\\n\")",
+      "Bash(tasklist)",
+      "Bash(rm .git/index.lock && git status)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"
