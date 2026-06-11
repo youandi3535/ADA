@@ -332,32 +332,88 @@ const STAGE_TRANSITION_DESC={
   4:{ko:'모델 학습 중입니다',en:'Training models'},
   5:{ko:'평가·인사이트 분석 중입니다',en:'Running evaluation & insight analysis'}
 };
-// CS 2026-06-10 — 카테고리별 헤더 매핑 (h2 + en + desc).
-// 우선 G2 정적(cur=1) + G2→G3 로딩(cur=2) 만 적용. 나머지 게이트는 본인 확인 후 일괄.
+// CS 2026-06-11 — 카테고리별 헤더 매핑 (h2 + en + desc).
+// 각 cur 의 정체성을 backend AGENT_PHASE_MAP / STAGE_TRANSITION_DESC 와 정확히 일치시킴:
+//   cur=1 loading = gate_direction (분석 방향 후보 평가)
+//   cur=2 loading = eda_agent + gate_methodology (본격 EDA + 방법론 평가)
+//   cur=3 loading = preprocessing + feature_engineer + gate_model_strategy
+//   cur=4 loading = model_selection + training + gate_best_model
+//   cur=5 loading = fine_tune + eval + insight + gate_outputs
+// static 은 사용자가 그 게이트에서 결정해야 할 내용 (분석 방향 / 방법론 / 모델 전략 / 모델 채택 / 산출물).
+// _default 는 카테고리 미확정(pending) 또는 미지원 카테고리 시 generic 폴백.
 const GATE_HEADER_BY_CATEGORY={
   static:{
     1:{
-      tabular_ml:{h2:'어떤 정형 데이터의 분석 방향으로 진행할까요?',en:'Choose your tabular data analysis direction',desc:'정형 ML 데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'},
-      tabular_dl:{h2:'어떤 정형 DL 데이터의 분석 방향으로 진행할까요?',en:'Choose your tabular DL data analysis direction',desc:'정형 DL 데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'},
-      timeseries:{h2:'어떤 시계열 데이터의 분석 방향으로 진행할까요?',en:'Choose your time series data analysis direction',desc:'시계열 ML 데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'},
-      anomaly_detection:{h2:'어떤 이상탐지 데이터의 분석 방향으로 진행할까요?',en:'Choose your anomaly detection data analysis direction',desc:'이상탐지 ML 데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'},
-      _default:{h2:'어떤 데이터의 분석 방향으로 진행할까요?',en:'Choose your data analysis direction',desc:'데이터에 맞는 EDA와 방법론 후보 평가를 마쳤습니다. 분석 방향을 선택해주세요.'}
+      timeseries:{h2:'어떤 시계열 데이터의 분석 방향으로 진행할까요?',en:'Choose your time series analysis direction',desc:'정상성·자기상관·계절성 등 시계열 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
+      tabular_ml:{h2:'어떤 정형 데이터의 분석 방향으로 진행할까요?',en:'Choose your tabular ML analysis direction',desc:'분포·결측·도메인 등 정형 ML 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 분석 방향으로 진행할까요?',en:'Choose your tabular DL analysis direction',desc:'고차원·피처 분포 등 정형 DL 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 분석 방향으로 진행할까요?',en:'Choose your anomaly detection analysis direction',desc:'분포·outlier 후보·tail 등 이상탐지 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 분석 방향으로 진행할까요?',en:'Choose your data analysis direction',desc:'데이터 특성 파악을 마쳤습니다. 분석 방향을 선택해주세요.'}
+    },
+    2:{
+      timeseries:{h2:'어떤 시계열 데이터의 방법론으로 진행할까요?',en:'Choose your time series methodology',desc:'정상성 검정·자기상관·계절성 분해 등 시계열 EDA를 마쳤습니다. 방법론을 선택해주세요.'},
+      tabular_ml:{h2:'어떤 정형 데이터의 방법론으로 진행할까요?',en:'Choose your tabular ML methodology',desc:'분포·결측·상관관계·클래스 균형 등 정형 ML EDA를 마쳤습니다. 방법론을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 방법론으로 진행할까요?',en:'Choose your tabular DL methodology',desc:'고차원 시각화·피처 상호작용 등 정형 DL EDA를 마쳤습니다. 방법론을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 방법론으로 진행할까요?',en:'Choose your anomaly detection methodology',desc:'이상치 비율·contamination·heavy-tail 분석을 마쳤습니다. 방법론을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 방법론으로 진행할까요?',en:'Choose your methodology',desc:'EDA를 마쳤습니다. 방법론을 선택해주세요.'}
+    },
+    3:{
+      timeseries:{h2:'어떤 시계열 데이터의 모델 전략으로 진행할까요?',en:'Choose your time series model strategy',desc:'결측 보간·차분·lag·rolling 등 시계열 전처리·피처 엔지니어링을 마쳤습니다. 모델 전략을 선택해주세요.'},
+      tabular_ml:{h2:'어떤 정형 데이터의 모델 전략으로 진행할까요?',en:'Choose your tabular ML model strategy',desc:'결측 대치·인코딩·스케일링 등 정형 ML 전처리·피처 엔지니어링을 마쳤습니다. 모델 전략을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 모델 전략으로 진행할까요?',en:'Choose your tabular DL model strategy',desc:'임베딩·정규화·피처 상호작용 등 정형 DL 전처리·피처 엔지니어링을 마쳤습니다. 모델 전략을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 모델 전략으로 진행할까요?',en:'Choose your anomaly detection model strategy',desc:'정규화·차원 축소·특징 추출 등 이상탐지 전처리·피처 엔지니어링을 마쳤습니다. 모델 전략을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 모델 전략으로 진행할까요?',en:'Choose your model strategy',desc:'전처리·피처 엔지니어링을 마쳤습니다. 모델 전략을 선택해주세요.'}
+    },
+    4:{
+      timeseries:{h2:'어떤 시계열 데이터의 모델을 채택할까요?',en:'Pick your best time series model',desc:'시계열 모델 학습·튜닝을 마쳤습니다. 채택할 모델을 선택해주세요.'},
+      tabular_ml:{h2:'어떤 정형 데이터의 모델을 채택할까요?',en:'Pick your best tabular ML model',desc:'정형 ML 모델 학습·튜닝을 마쳤습니다. 채택할 모델을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 모델을 채택할까요?',en:'Pick your best tabular DL model',desc:'정형 DL 모델 학습·튜닝을 마쳤습니다. 채택할 모델을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 모델을 채택할까요?',en:'Pick your best anomaly detection model',desc:'이상탐지 모델 학습·튜닝을 마쳤습니다. 채택할 모델을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 모델을 채택할까요?',en:'Pick the best model',desc:'모델 학습·튜닝을 마쳤습니다. 채택할 모델을 선택해주세요.'}
+    },
+    5:{
+      timeseries:{h2:'어떤 시계열 데이터의 산출물을 만들까요?',en:'Choose your time series outputs',desc:'시계열 모델 평가·인사이트 분석을 마쳤습니다. 산출물을 선택해주세요.'},
+      tabular_ml:{h2:'어떤 정형 데이터의 산출물을 만들까요?',en:'Choose your tabular ML outputs',desc:'정형 ML 모델 평가·인사이트 분석을 마쳤습니다. 산출물을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 산출물을 만들까요?',en:'Choose your tabular DL outputs',desc:'정형 DL 모델 평가·인사이트 분석을 마쳤습니다. 산출물을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 산출물을 만들까요?',en:'Choose your anomaly detection outputs',desc:'이상탐지 모델 평가·인사이트 분석을 마쳤습니다. 산출물을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 산출물을 만들까요?',en:'Choose your outputs',desc:'모델 평가·인사이트 분석을 마쳤습니다. 산출물을 선택해주세요.'}
     }
   },
   loading:{
     1:{
-      tabular_ml:{h2:'정형 데이터의 EDA 작업 중입니다',en:'G2 — Tabular Data EDA',desc:'정형 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
-      tabular_dl:{h2:'정형 DL 데이터의 EDA 작업 중입니다',en:'G2 — Tabular DL Data EDA',desc:'정형 DL 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
-      timeseries:{h2:'시계열 데이터의 EDA 작업 중입니다',en:'G2 — Time Series Data EDA',desc:'시계열 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
-      anomaly_detection:{h2:'이상탐지 데이터의 EDA 작업 중입니다',en:'G2 — Anomaly Detection Data EDA',desc:'이상탐지 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
-      _default:{h2:'데이터의 EDA 작업 중입니다',en:'G2 — Data EDA',desc:'데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'}
+      timeseries:{h2:'시계열 데이터의 분석 방향을 준비 중입니다',en:'G2 — Preparing time series directions',desc:'시계열 데이터 특성을 바탕으로 분석 방향 후보를 평가하는 중입니다. 끝나면 자동으로 분석 방향 추천이 표시됩니다.'},
+      tabular_ml:{h2:'정형 데이터의 분석 방향을 준비 중입니다',en:'G2 — Preparing tabular ML directions',desc:'정형 ML 데이터 특성을 바탕으로 분석 방향 후보를 평가하는 중입니다. 끝나면 자동으로 분석 방향 추천이 표시됩니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 분석 방향을 준비 중입니다',en:'G2 — Preparing tabular DL directions',desc:'정형 DL 데이터 특성을 바탕으로 분석 방향 후보를 평가하는 중입니다. 끝나면 자동으로 분석 방향 추천이 표시됩니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 분석 방향을 준비 중입니다',en:'G2 — Preparing anomaly detection directions',desc:'이상탐지 데이터 특성을 바탕으로 분석 방향 후보를 평가하는 중입니다. 끝나면 자동으로 분석 방향 추천이 표시됩니다.'},
+      _default:{h2:'데이터의 분석 방향을 준비 중입니다',en:'G2 — Preparing directions',desc:'데이터 특성을 바탕으로 분석 방향 후보를 평가하는 중입니다. 끝나면 자동으로 분석 방향 추천이 표시됩니다.'}
     },
     2:{
-      tabular_ml:{h2:'정형 데이터의 EDA 작업 중입니다',en:'G2 — Tabular Data EDA',desc:'정형 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
-      tabular_dl:{h2:'정형 DL 데이터의 EDA 작업 중입니다',en:'G2 — Tabular DL Data EDA',desc:'정형 DL 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
-      timeseries:{h2:'시계열 데이터의 EDA 작업 중입니다',en:'G2 — Time Series Data EDA',desc:'시계열 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
-      anomaly_detection:{h2:'이상탐지 데이터의 EDA 작업 중입니다',en:'G2 — Anomaly Detection Data EDA',desc:'이상탐지 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
-      _default:{h2:'데이터의 EDA 작업 중입니다',en:'G2 — Data EDA',desc:'데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'}
+      timeseries:{h2:'시계열 데이터의 EDA 분석 중입니다',en:'G3 — Running time series EDA',desc:'정상성 검정·자기상관·계절성 분해 등 시계열 특화 EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
+      tabular_ml:{h2:'정형 데이터의 EDA 분석 중입니다',en:'G3 — Running tabular ML EDA',desc:'분포·결측·상관관계·클래스 균형 등 정형 ML EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 EDA 분석 중입니다',en:'G3 — Running tabular DL EDA',desc:'고차원 시각화·피처 상호작용 등 정형 DL EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 EDA 분석 중입니다',en:'G3 — Running anomaly detection EDA',desc:'이상치 비율·contamination 추정·heavy-tail 분석을 진행하고 방법론 후보를 평가하는 중입니다.'},
+      _default:{h2:'데이터의 EDA 분석 중입니다',en:'G3 — Running EDA',desc:'데이터 특성에 맞는 EDA를 진행하고 방법론 후보를 평가하는 중입니다.'}
+    },
+    3:{
+      timeseries:{h2:'시계열 데이터의 전처리·피처 엔지니어링 중입니다',en:'G4 — Time series preprocessing & FE',desc:'결측 보간·차분·lag·rolling 등 시계열 특화 전처리를 진행하고 모델 전략을 평가하는 중입니다.'},
+      tabular_ml:{h2:'정형 데이터의 전처리·피처 엔지니어링 중입니다',en:'G4 — Tabular ML preprocessing & FE',desc:'결측 대치·인코딩·스케일링 등 정형 ML 전처리를 진행하고 모델 전략을 평가하는 중입니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 전처리·피처 엔지니어링 중입니다',en:'G4 — Tabular DL preprocessing & FE',desc:'임베딩·정규화·피처 상호작용 등 정형 DL 전처리를 진행하고 모델 전략을 평가하는 중입니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 전처리·피처 엔지니어링 중입니다',en:'G4 — Anomaly detection preprocessing & FE',desc:'정규화·차원 축소·특징 추출 등 이상탐지 전처리를 진행하고 모델 전략을 평가하는 중입니다.'},
+      _default:{h2:'데이터의 전처리·피처 엔지니어링 중입니다',en:'G4 — Preprocessing & FE',desc:'전처리·피처 엔지니어링을 진행하고 모델 전략을 평가하는 중입니다.'}
+    },
+    4:{
+      timeseries:{h2:'시계열 데이터의 모델 학습 중입니다',en:'G5 — Training time series models',desc:'시계열 모델 후보를 학습·튜닝하고 평가 지표를 집계하는 중입니다.'},
+      tabular_ml:{h2:'정형 데이터의 모델 학습 중입니다',en:'G5 — Training tabular ML models',desc:'정형 ML 모델 후보를 학습·튜닝하고 평가 지표를 집계하는 중입니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 모델 학습 중입니다',en:'G5 — Training tabular DL models',desc:'정형 DL 모델 후보를 학습·튜닝하고 평가 지표를 집계하는 중입니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 모델 학습 중입니다',en:'G5 — Training anomaly detection models',desc:'이상탐지 모델 후보를 학습·튜닝하고 평가 지표를 집계하는 중입니다.'},
+      _default:{h2:'데이터의 모델 학습 중입니다',en:'G5 — Training models',desc:'모델 후보를 학습·튜닝하고 평가 지표를 집계하는 중입니다.'}
+    },
+    5:{
+      timeseries:{h2:'시계열 데이터의 평가·인사이트 분석 중입니다',en:'G6 — Time series eval & insights',desc:'시계열 모델 평가·설명가능성·인사이트를 생성하고 산출물 후보를 평가하는 중입니다.'},
+      tabular_ml:{h2:'정형 데이터의 평가·인사이트 분석 중입니다',en:'G6 — Tabular ML eval & insights',desc:'정형 ML 모델 평가·설명가능성·인사이트를 생성하고 산출물 후보를 평가하는 중입니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 평가·인사이트 분석 중입니다',en:'G6 — Tabular DL eval & insights',desc:'정형 DL 모델 평가·설명가능성·인사이트를 생성하고 산출물 후보를 평가하는 중입니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 평가·인사이트 분석 중입니다',en:'G6 — Anomaly detection eval & insights',desc:'이상탐지 모델 평가·설명가능성·인사이트를 생성하고 산출물 후보를 평가하는 중입니다.'},
+      _default:{h2:'데이터의 평가·인사이트 분석 중입니다',en:'G6 — Eval & insights',desc:'모델 평가·설명가능성·인사이트를 생성하고 산출물 후보를 평가하는 중입니다.'}
     }
   }
 };
@@ -1213,29 +1269,17 @@ function progressBar(){
   return '<div class="progbox">'+barHtml+meta+'</div>';
 }
 function gateHeader(g){
-  // CS 2026-06-10 — 동적 헤더 + 카테고리별 매핑.
-  //   1) GATE_HEADER_BY_CATEGORY[mode][cur][category] 우선 (G2/G2→G3 적용)
+  // CS 2026-06-11 — 동적 헤더 + 카테고리별 매핑.
+  //   1) GATE_HEADER_BY_CATEGORY[mode][cur][category] 우선 (cur=1~5 전 단계 매핑됨)
   //   2) 매핑 없으면 GATE_TITLE / STAGE_TRANSITION_DESC 폴백
+  // catKey 휴리스틱 제거 — 카테고리 미확정(pending/빈값)이면 _default 자동 폴백.
+  // G1 사용자 명시 선택값이 backend 에서 정합으로 들어와 frontend 는 그대로 사용한다.
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
   const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
   const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
   const props=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
   const stage=STAGE_TRANSITION_DESC[cur];
-  // CS 2026-06-11 — catKey 강건화. gateData.category 가 비어있거나 pending 이면
-  // data_profile 휴리스틱으로 4 카테고리 중 하나를 추정 → _default 로 떨어지지 않음.
-  let catKey=gateData.category;
-  if(!catKey || catKey==='pending'){
-    const dp=gateData.data_profile||{};
-    const dateCol=dp.date_col||dp.detected_time_col;
-    const hasTarget=!!(gateData.target_column||dp.has_target||dp.detected_target);
-    const rows=parseInt(dp.rows||(dp.shape&&dp.shape.rows)||0,10)||0;
-    const cols=parseInt(dp.cols||(dp.shape&&dp.shape.cols)||0,10)||0;
-    if(dateCol) catKey='timeseries';
-    else if(!hasTarget && rows>=500) catKey='anomaly_detection';
-    else if(rows>=50000 && cols>=20) catKey='tabular_dl';
-    else catKey='tabular_ml';
-    try{ console.log('[gateHeader] category 추정:', {cur:cur, inferred:catKey, dateCol:dateCol, hasTarget:hasTarget, rows:rows}); }catch(e){}
-  }
+  const catKey=gateData.category;
   let h2, en, desc;
   if(props.length){
     // proposals 도착 = 사용자 결정 시점
@@ -1344,11 +1388,24 @@ function g2TopicArea(d){
 // gateData.topic_proposals (백엔드 schema_validator 가 prefetch 한 5개) 렌더링.
 // 사용자가 카드 선택 후 "선택 완료" 클릭 → POST /pipeline/gate/G2/directions/{job_id}
 // 호출되어 분석 방향 LLM 이 호출되고 g2SubStage='direction' 으로 전환.
+// CS 2026-06-11 — 팝업 헤더도 GATE_HEADER_BY_CATEGORY 와 동일 원칙으로 카테고리별 동기화.
+const TOPIC_HEADER_BY_CATEGORY={
+  timeseries:{h2:'🎯 시계열 주제 선정',en:'G2 · Sub-1 — Choose your time series topic'},
+  tabular_ml:{h2:'🎯 정형 주제 선정',en:'G2 · Sub-1 — Choose your tabular ML topic'},
+  tabular_dl:{h2:'🎯 정형 DL 주제 선정',en:'G2 · Sub-1 — Choose your tabular DL topic'},
+  anomaly_detection:{h2:'🎯 이상탐지 주제 선정',en:'G2 · Sub-1 — Choose your anomaly detection topic'},
+  _default:{h2:'🎯 주제 선정',en:'G2 · Sub-1 — Choose your topic'}
+};
+function topicHdrFor(d){
+  const c=(d&&d.category) && d.category!=='pending' ? d.category : '_default';
+  return TOPIC_HEADER_BY_CATEGORY[c] || TOPIC_HEADER_BY_CATEGORY._default;
+}
 function g2TopicCards(d){
   const tps = (d && d.topic_proposals) || [];
+  const _hdr = topicHdrFor(d);
   if(!tps.length){
     return '<div class="topicmodal"><div class="topicmodal-inner">'
-      +'<div class="topichdr"><h2>🎯 주제 선정</h2><div class="en">Choose your topic</div></div>'
+      +'<div class="topichdr"><h2>'+_hdr.h2+'</h2><div class="en">'+_hdr.en+'</div></div>'
       +'<div style="text-align:center;padding:40px;font-size:18px;color:#8aa0bd">🔄 주제 후보 준비 중…</div>'
       +'</div></div>';
   }
@@ -1369,8 +1426,8 @@ function g2TopicCards(d){
   const btnLabel = g2DirectionsBusy ? '… 분석 방향 생성 중' : '선택 완료 ▶';
   return '<div class="topicmodal"><div class="topicmodal-inner">'
     +'<div class="topichdr">'
-    +'<h2>🎯 주제 선정</h2>'
-    +'<div class="en">Choose your topic</div>'
+    +'<h2>'+_hdr.h2+'</h2>'
+    +'<div class="en">'+_hdr.en+'</div>'
     +'<div class="stepline">'
     +'<span class="stepchip">1/2</span>'
     +'<span class="desc">발표 자료(PPT) 표지 제목으로 사용할 주제를 선택해주세요</span>'
