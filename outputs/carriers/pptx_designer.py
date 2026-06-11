@@ -168,8 +168,13 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     try:
         _prepick_designs(slides_flat, ctx)
     except Exception as _e:  # noqa: BLE001
-        # 어떤 이유로든 LLM 단계 실패 시 조용히 룰 기반 동작 유지
-        pass
+        # LLM 단계 실패 시 룰 기반 동작 유지 — 단, 침묵 금지.
+        # (2026-06-11 사고: LLMDesigner abstract TypeError 가 여기서 삼켜져 무로그 폴백)
+        import logging
+
+        logging.getLogger("pptx_designer").warning(
+            "prepick_designs_failed_fallback_to_rules: %s", _e, exc_info=True
+        )
 
     for sl in slides_flat:
         page_num += 1
