@@ -1235,11 +1235,11 @@ function isGateLoading(){
 // HJ 2026-06-10 — 마일스톤 세그먼트 바 (기존 .lbar 진행바를 대체).
 // 단계의 agent 마다 segment 하나. 완료=초록, 현재=파랑 펄스, 대기=회색.
 // 메타: "진행 N% · 경과 Y" — ETA(예상 남은 시간) 표시 제거 (사용자 요구).
-function progressBar(){
+function progressBar(forceShow){
   if(isFailed()) return '';
   if(cur===LAST && isCompleted()) return '';                       // G7 완료 페이지 (결과 표시) — 바 숨김
   if(cur===0 && !jobId) return '';                                 // 업로드 전
-  if(cur>=1 && cur<=5 && !isGateLoading()) return '';              // proposals 표시 중
+  if(cur>=1 && cur<=5 && !isGateLoading() && !forceShow) return '';  // proposals 표시 중 (모달 내부는 forceShow 로 항상 표시)
   // CS 2026-06-10 — 본인 명시 "팝업에는 무조건 주제만". 팝업 활성 시 진행률 바 숨김.
   if(cur===1 && g2SubStage==='topic' && (gateData.topic_proposals||[]).length) return '';
   const p=_stageProgress();
@@ -1626,8 +1626,16 @@ function _labelRow(label, value, opts){
 }
 // 한 단계의 모달 박스 — G1 modalTopicArea 와 동일한 구조 (제목 + 라벨링된 row 들).
 function _stageBox(titleEmoji, titleText, rows){
-  const body=(rows||[]).filter(function(s){return !!s;}).join('');
+  var body=(rows||[]).filter(function(s){return !!s;}).join('');
   if(!body) return '';
+  // HJ 2026-06-11 — 사용자 요구: 팝업 글 최대 15줄(전 단계 공통). 각 .twrow=1줄.
+  //   초과분은 잘라 '… 생략' 표시. (모달은 라이브 피드 — 잘린 항목은 다음 카드 선택 화면에서 전체 확인 가능.)
+  var _MAX_LINES=15;
+  var _segs=body.split('<div class="twrow"');
+  if(_segs.length-1 > _MAX_LINES){
+    body=(_segs[0]||'')+_segs.slice(1,_MAX_LINES+1).map(function(s){return '<div class="twrow"'+s;}).join('')
+      +'<div class="twrow" style="margin-top:12px;font-size:18px;color:#94a3b8;opacity:0;visibility:hidden;transition:opacity .3s ease">'+twSpan('… 외 항목 생략 (최대 15줄)','sbmore-'+cur)+'</div>';
+  }
   // HJ 2026-06-10 — 박스 제목도 twrow + twSpan 으로 — 가장 먼저 등장+타이핑되고 그 다음 row 들이 순차 reveal.
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
     +'<div class="twrow" style="font-weight:700;color:#0f172a;margin-bottom:6px;font-size:32px;opacity:0;visibility:hidden;transition:opacity .3s ease">'+titleEmoji+' '+twSpan(titleText,'sbtitle-'+cur+'-'+titleText)+'</div>'
@@ -1728,6 +1736,10 @@ function modalInsightArea(d){
       if(ks.length) r.push(_labelRow('클래스 분포', ks.map(function(k){return k+': '+cd[k];}).join(', '), {mt:8}));
     }
     const sp=(d&&d.stage_partial)||{};
+    // HJ 2026-06-11 — EDA 현재 상태(✨ 2차 분석 업그레이드 멘트 포함)를 인사이트 위에 항상 표시.
+    //   구버그: eda_insights(템플릿) 채워지면 eda_status 가 숨겨져 '✨…업그레이드하는 중…' 멘트가 영영 안 떴음.
+    //   G3(g3_status 무조건 상단 표시)와 동일 패턴으로 통일.
+    if(sp.eda_status) r.push(_labelRow('▶ 현재 작업', sp.eda_status, {fs:22, mt:8, twk:'eda-status'}));
     // === EDA 인사이트 — prefix("결측 분석:", "상관관계:" 등) 별 그룹화 ===
     // HJ 2026-06-11 — 사용자 요구: 같은 주제끼리 묶고 다른 주제로 넘어갈 때 한 칸 띄움.
     //   섹션 헤더(굵게) + 들여쓴 불릿 항목 구조. 글 내용 자체는 변경 없음 (배치만 가독성 개선).
@@ -1760,8 +1772,7 @@ function modalInsightArea(d){
         });
       });
     }
-    // === 진행 상태 (인사이트 도착 전 라이브 피드용 — 도착 후엔 보조) ===
-    if(sp.eda_status && (!Array.isArray(sp.eda_insights)||!sp.eda_insights.length)) r.push(_labelRow('▶ EDA 진행', sp.eda_status, {fs:22, mt:14}));
+    // === 진행 상태 — eda_status(업그레이드 멘트 포함)는 위 '▶ 현재 작업' 배너로 이동(중복 표시 방지) ===
     if(sp.eda_charts_count!=null) r.push(_labelRow('▶ 차트 생성', sp.eda_charts_count+'종', {bold:true, mt:14}));
     // === 방법론 후보 — 섹션 헤더 + 들여쓴 불릿 구조로 통일 ===
     if(Array.isArray(sp.methodology_candidates)&&sp.methodology_candidates.length){
@@ -2383,7 +2394,7 @@ function render(){
       if(_mb._last!==_mh){_mb._last=_mh;_mb.innerHTML=_mh;}
       // [2] 진행바
       var _pbEl=document.getElementById('modal-pb');
-      if(_pbEl) _pbEl.innerHTML=progressBar();
+      if(_pbEl) _pbEl.innerHTML=progressBar(true);  // HJ 2026-06-11 — 모달 내부 진행바는 isGateLoading 무관 항상 표시(사라짐 버그 fix)
       // [3] insight 영역 — modalInsightArea 가 모달 콘텐츠 생성. modalDismissed 와 무관하게 새 데이터 도착 시 갱신.
       var _miEl=document.getElementById('modal-insight');
       if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();}}

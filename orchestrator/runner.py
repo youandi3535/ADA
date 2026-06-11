@@ -674,14 +674,14 @@ def _save_gate_data(job_id: str, final_dict: dict) -> None:
             # HJ 2026-06-11 — G3~G6 모달의 풍부한 분석 데이터 forward.
             # PipelineState 에 이미 채워진 필드들을 frontend 가 받지 못하던 문제 해결.
             # 사용자가 게이트 화면에서 직전 단계 분석 결과를 라이브로 확인 가능.
-            "chosen_recipe": final_dict.get("chosen_recipe"),         # G2 선택 = G3 화면 표시
-            "user_intent": final_dict.get("user_intent"),             # G1 사용자 의도 — G2 이후 모든 화면
+            "chosen_recipe": final_dict.get("chosen_recipe"),  # G2 선택 = G3 화면 표시
+            "user_intent": final_dict.get("user_intent"),  # G1 사용자 의도 — G2 이후 모든 화면
             "preprocessing_strategy": final_dict.get("preprocessing_strategy"),  # G3 결과 = G4 화면 표시
-            "feature_engineering": final_dict.get("feature_engineering"),       # G3 결과 = G4 화면 표시
-            "preprocessing_plan": final_dict.get("preprocessing_plan"),         # G3 plan steps
-            "candidate_models": final_dict.get("candidate_models"),             # G4 결과 = G5 화면 표시
-            "best_params": final_dict.get("best_params"),                       # G4 튜닝 결과 = G5 화면 표시
-            "explainability": final_dict.get("explainability"),                 # G5 결과 = G6 화면 표시
+            "feature_engineering": final_dict.get("feature_engineering"),  # G3 결과 = G4 화면 표시
+            "preprocessing_plan": final_dict.get("preprocessing_plan"),  # G3 plan steps
+            "candidate_models": final_dict.get("candidate_models"),  # G4 결과 = G5 화면 표시
+            "best_params": final_dict.get("best_params"),  # G4 튜닝 결과 = G5 화면 표시
+            "explainability": final_dict.get("explainability"),  # G5 결과 = G6 화면 표시
         }
         r.set(f"ada:gate_data:{job_id}", json.dumps(payload, ensure_ascii=False, default=str), ex=86400)
     except Exception:  # noqa: BLE001
@@ -907,6 +907,14 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                 del new_responses[_k]
             full_state_dict = {
                 **full_state_dict,
+                # HJ 2026-06-11 — resume 시 user_intent 누적 초기화.
+                #   user_intent 는 각 게이트가 선택을 append 로 쌓는 비멱등 필드다.
+                #   리셋하지 않으면 (a) 재진행(이전 게이트 되감기) 시 옛 방향·방법론·전략이 남아
+                #   새 카드 선택이 오염되고, (b) pre-apply + fresh invocation 이중 적용으로
+                #   정상 전진에서도 "분석 방향: X (분석 방향: X)" 중복이 생긴다.
+                #   None 으로 비우면 fresh invocation 이 유지된 게이트(G2→…)를 재통과하며 깨끗이 재구축.
+                #   (사용자가 직접 입력한 원본 질문은 user_question 에 별도 보존되므로 유실 없음)
+                "user_intent": None,
                 "preprocessing_plan": None,
                 "preprocessed_data_id": None,
                 "eda_charts": [],
@@ -958,6 +966,11 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                     new_responses.get(gate_code, {}).get("proposals") or [],
                 )
                 for _f in _ps_fields:
+                    # HJ 2026-06-11 — user_intent 는 pre-apply 에서 seed 하지 않는다.
+                    #   fresh invocation 의 게이트 재통과에서만 누적 → pre-apply 가 미리 채우면
+                    #   같은 선택이 두 번 append 되어 중복. category·target 등 overwrite 필드는 그대로.
+                    if _f == "user_intent":
+                        continue
                     _orig, _new = getattr(_temp, _f, None), getattr(_applied, _f, None)
                     if _new != _orig:
                         full_state_dict = {**full_state_dict, _f: _new}

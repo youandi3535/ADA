@@ -118,7 +118,11 @@ class EvalAgent(BaseAgent):
                     _vs = [str(v)[:100] for v in violations[:3]]
                     _g5_eval_insights.append(f"임계치 미달: {' / '.join(_vs)}")
                 _g5_eval_insights = await self._dynamic_insights(
-                    _g5_eval_insights, backend="claude", context="G5 평가", job_id=state.job_id, key="g5_eval_insights"
+                    _g5_eval_insights,
+                    backend="claude",
+                    context="G5 평가",
+                    job_id=state.job_id,
+                    key="g5_eval_insights",
                 )
                 _safe_publish_stage_partial(
                     state.job_id,

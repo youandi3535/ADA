@@ -531,6 +531,9 @@ class BaseAgent(abc.ABC):
                     {"role": "user", "content": user_prompt},
                 ],
                 "stream": False,
+                # HJ 2026-06-11 — 모델을 30분 메모리 상주시켜 G1→G2→G3 간 재로드(콜드스타트) 방지.
+                #   콜드스타트가 G2 재작성 타임아웃의 주원인 → 워밍 유지로 후속 호출 대폭 단축.
+                "keep_alive": "30m",
                 "options": {
                     "num_predict": max_tokens,
                     "temperature": temperature,
@@ -837,7 +840,13 @@ class BaseAgent(abc.ABC):
 
         fb = "anthropic" if backend in ("claude", "anthropic") else "ollama"
         if timeout_s is None:
-            timeout_s = 30.0 if fb == "anthropic" else 60.0
+            if fb == "anthropic":
+                timeout_s = 30.0
+            else:
+                # HJ 2026-06-11 — ollama(qwen 7B·CPU)는 항목 많을수록 + 콜드스타트로 느림.
+                #   고정 60s 는 G2(8항목)에서 자주 타임아웃 → 템플릿 폴백 버그. 항목수 비례로
+                #   넉넉히 잡되 urlopen(180s) 안쪽으로 상한. 8항목=160s, 4항목=80s(최소).
+                timeout_s = min(165.0, max(80.0, len(prompt_items) * 20.0))
 
         try:
             raw = await asyncio.wait_for(
@@ -899,5 +908,14 @@ class BaseAgent(abc.ABC):
             out.append(headers[i] + sep + t)
 
         if out != lines:
-            _publish(out)  # (3) 업그레이드본 발행(교체)
+            # (3) 위→아래 순차 교체 — 한 항목씩 발행해 모달이 순서대로 채워지게(꼬임 방지).
+            cur = list(lines)
+            for idx in range(len(out)):
+                cur[idx] = out[idx]
+                _publish(cur)
+                if idx < len(out) - 1:
+                    try:
+                        await asyncio.sleep(0.25)
+                    except Exception:  # noqa: BLE001
+                        pass
         return out
