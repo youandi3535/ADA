@@ -595,10 +595,20 @@ def _draw_slide(
 
 
 def _icon_name_for_sl(sl: SlideSpec) -> str:
-    """SlideSpec 으로부터 Lucide 아이콘 이름 추출 (없으면 빈 문자열)."""
+    """SlideSpec 으로부터 Lucide 아이콘 이름 추출 (없으면 빈 문자열).
+
+    Step 7-3 — LLM 디자인 힌트의 icon_concept 가 1순위:
+        sl._design_hint.icon_concept = "warning" → "alert-circle"
+        sl._design_hint.icon_concept = "kpi"     → "trending-up"
+    힌트가 없거나 매핑 안 되면 기존 icon_for_slide (slide_id + role 기반) 로 폴백.
+    """
     if not _VISUAL_TOOLS_AVAILABLE:
         return ""
-    # icon_for_slide 는 Path 반환 — 이름만 뽑기
+    # 1순위: LLM 의 icon_concept → lucide 아이콘 이름
+    hinted = design_icon_name(sl)
+    if hinted:
+        return hinted
+    # 폴백: 기존 icon_for_slide (slide_id + role 기반)
     p = icon_for_slide(sl.id, getattr(sl, "role", "claim"))
     if p is None:
         return ""
