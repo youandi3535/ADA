@@ -1553,3 +1553,11 @@ def _prepick_designs(slides_flat: list, ctx) -> None:
             sl.preferred_template = chosen
         # 디자인 힌트 (palette/photo/icon) 도 attach — 후속 sub-step 에서 사용
         sl._design_hint = result
+
+    # 성공 요약 — 성공/실패 무관하게 흔적 1줄 (2026-06-11 침묵 사고 재발 방지)
+    import logging
+
+    _n_llm = sum(1 for r in results if isinstance(r, dict) and r.get("_source") == "llm")
+    logging.getLogger("pptx_designer").info(
+        "prepick_designs_done: %d/%d slides via LLM", _n_llm, len(task_slides)
+    )
