@@ -184,7 +184,11 @@ class TrainingExecutorAgent(BaseAgent):
                     else:
                         _g4_train_insights.append(f"학습 결과: {mn} (메트릭 미산출)")
                 _g4_train_insights = await self._dynamic_insights(
-                    _g4_train_insights, backend="claude", context="G4 학습 결과"
+                    _g4_train_insights,
+                    backend="claude",
+                    context="G4 학습 결과",
+                    job_id=state.job_id,
+                    key="g4_train_insights",
                 )
                 _safe_publish_stage_partial(
                     state.job_id,

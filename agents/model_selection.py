@@ -161,7 +161,11 @@ class ModelSelectionAgent(BaseAgent):
                 if baselines:
                     _g4_model_insights.append(f"베이스라인: {', '.join(str(b) for b in baselines[:3])} (비교군)")
                 _g4_model_insights = await self._dynamic_insights(
-                    _g4_model_insights, backend="claude", context="G4 모델 선택"
+                    _g4_model_insights,
+                    backend="claude",
+                    context="G4 모델 선택",
+                    job_id=state.job_id,
+                    key="g4_model_insights",
                 )
                 _safe_publish_stage_partial(
                     state.job_id,

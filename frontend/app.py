@@ -202,7 +202,9 @@ _FLOW_HTML = """
   .btn{font-family:inherit;font-weight:600;border-radius:999px;cursor:pointer;font-size:24px;white-space:nowrap;display:inline-flex;align-items:center;gap:10px;}
   .btn-ghost{background:#fff;color:var(--deep);border:1px solid var(--line2);padding:15px 30px;}
   .btn-ghost:disabled{opacity:.4;cursor:default;color:#9aa9bd;}
-  .btn-stop{background:#fff;color:#b5481f;border:1px solid #e7c8ba;padding:15px 28px;}
+  .btn-stop{background:#fff;color:#b5481f;border:1px solid #e7c8ba;padding:18px 48px;box-shadow:0 13px 28px rgba(181,72,31,.14);}
+  .btn-stop.engaged{background:#b5481f;color:#fff;border-color:#b5481f;box-shadow:0 13px 28px rgba(181,72,31,.32);}
+  .btn-stop:disabled{opacity:.45;cursor:default;box-shadow:none;}
   .btn-primary{background:var(--deep);color:#fff;border:none;padding:18px 48px;box-shadow:0 13px 28px rgba(31,62,92,.26);}
   .btn-primary.resume{background:#1f7a52;}
   .btn-primary:disabled{opacity:.45;cursor:default;box-shadow:none;}
@@ -290,7 +292,7 @@ _FLOW_HTML = """
         <button class="btn btn-ghost" id="prevBtn">← 이전 단계</button>
         <button class="btn btn-ghost" id="nextBtn">다음 단계 →</button>
         <span class="spacer"></span>
-        <button class="btn btn-stop" id="stopBtn">⏸ 멈춤</button>
+        <button class="btn btn-stop" id="stopBtn">⏹ 정지</button>
         <button class="btn btn-primary" id="primaryBtn">⬆ 업로드</button>
       </div>
     </div>
@@ -342,6 +344,8 @@ const STAGE_TRANSITION_DESC={
 };
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
+// HJ 2026-06-11 — 정지 토글: 눌림(navUnlocked=true) 상태에서만 이전/다음 단계 활성. 1~6단계(cur=0~5) 적용.
+let navUnlocked=false;
 let _suppressG1Advance=false; // 사용자가 뒤로가기로 G1 으로 이동했을 때 자동 G1→G2 전환 억제
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
 // HJ 2026-06-09 G1 단축 Phase 4 — θ-B prefetch state.
@@ -479,7 +483,7 @@ function goToStart(){
 function resetAll(){
   clearState();
   jobId=null; fileId=null; cur=0; frontier=0; maxReached=0;
-  paused=false; follow=true; busy=false; polling=false;
+  paused=false; navUnlocked=false; follow=true; busy=false; polling=false;
   if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
@@ -974,7 +978,7 @@ async function doResume(){
   // CS 2026-06-10 — G2 일 때 선택된 주제도 choice 에 포함
   if(tg==='G2' && window._g2_selectedTopicText){ choice.topic=window._g2_selectedTopicText; }
   const gate=tg;  // curGate() 대신 cur 기준 게이트 코드 사용
-  errMsg=''; busy=true; render();
+  errMsg=''; busy=true; navUnlocked=false; render();  // 재진행 확정 → 정지 해제(정상 진행 복귀)
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
@@ -984,6 +988,10 @@ async function doResume(){
     Object.keys(gateCache).forEach(function(k){
       if(parseInt(k.slice(1),10)>_tgNum) delete gateCache[k];
     });
+    // HJ 2026-06-11 — 재진행 확정 순간에만 하위 단계 진행 결과 폐기 (frontier·maxReached 를 현재 단계로).
+    //   이전 단계 이동(prevBtn)만으로는 보존되고, 재진행을 눌러야 비로소 앞 단계가 무효화된다.
+    //   (정상 진행 case 는 cur===frontier===maxReached 라 no-op.) 이후 재실행으로 자연스럽게 재구축.
+    maxReached=cur; frontier=cur;
     // HJ 2026-06-10 — cur 그대로 유지. 각 단계 N 화면에서 진행 누르면 그 자리에서 G(N+1) 분석 모달이 뜨고,
     // 다음 gate 의 proposals 가 도착하면 frontier 추적으로 자연스럽게 cur=N+1 로 advance.
     // (이전엔 cur=cur+1 즉시 점프 → "단계 2 분석"이 단계 3 화면에서 표시되는 오프셋 발생)
@@ -2185,7 +2193,9 @@ function primaryLabel(){
   if(paused) return '▶ 계속';
   if(cur===0) return '⬆ 업로드';
   if(cur===LAST) return '📥 완료';
-  if(cur>=1 && cur<=5 && cur<frontier) return '🔄 재진행 ▸';
+  // HJ 2026-06-11 — 정지(navUnlocked) 눌림 중에는 어느 단계든 '재진행' 표기.
+  //   누르면 그 단계를 현재 선택 카드로 재실행(doResume). cur<frontier(지난 단계)도 동일.
+  if(cur>=1 && cur<=5 && (navUnlocked || cur<frontier)) return '🔄 재진행 ▸';
   return '진행 ▸';
 }
 function render(){
@@ -2324,10 +2334,18 @@ function render(){
 
   const prev=document.getElementById('prevBtn'), next=document.getElementById('nextBtn'),
         stop=document.getElementById('stopBtn'), prim=document.getElementById('primaryBtn');
-  prev.disabled=false;  // cur=0 에서도 활성 — 클릭 시 시작 화면으로
   prev.innerHTML=(cur===0)?'← 시작 화면':'← 이전 단계';
-  next.disabled=(cur>=maxReached);
-  stop.style.display=(!paused && analyzing())?'inline-flex':'none';
+  // HJ 2026-06-11 — 정지 토글 기반 네비게이션 게이트. 1~6단계(cur=0~5)에서 정지(navUnlocked)가
+  //   눌려 있어야만 이전/다음 단계 활성. 기본은 잠금(비활성). 정지 버튼은 진행 옆에 항상 노출.
+  stop.style.display='inline-flex';
+  stop.classList.toggle('engaged', navUnlocked);
+  if(cur>=0 && cur<=5){
+    prev.disabled=!navUnlocked;
+    next.disabled=!navUnlocked || (cur>=maxReached);
+  }else{
+    prev.disabled=false;                 // 7단계(완료) — 기존 동작 유지
+    next.disabled=(cur>=maxReached);
+  }
   const _tg='G'+(cur+1);  // 새 컨벤션: cur 인덱스 → 백엔드 게이트 코드
   const _cd=gateCache[_tg]||{};
   const _llmCount=function(d){ return (d.proposals||[]).filter(function(p){return !p.is_custom;}).length; };
@@ -2432,15 +2450,13 @@ document.getElementById('prevBtn').onclick=function(){
   if(cur>0){
     const goTo=cur-1;
     if(goTo===0) _suppressG1Advance=true;  // G1 화면에서 자동 G2 전환 억제
-    if(goTo>=1 && goTo<=4 && maxReached>goTo){
-      Object.keys(gateCache).forEach(function(k){ if(parseInt(k.slice(1),10)>goTo+1) delete gateCache[k]; });
-      maxReached=goTo; frontier=goTo;
-    }
+    // HJ 2026-06-11 — 이전 단계로 가도 앞 단계 진행 결과(캐시·frontier·maxReached) 보존.
+    //   다시 next 로 돌아와 이어서 진행할 수 있게. 하위 단계 폐기는 '재진행(doResume)' 누르는 순간에만 수행.
     cur=goTo; follow=false; render();
   }
 };
 document.getElementById('nextBtn').onclick=function(){ _suppressG1Advance=false; if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
-document.getElementById('stopBtn').onclick=function(){ paused=true; if(pollTimer) clearTimeout(pollTimer); polling=false; render(); };
+document.getElementById('stopBtn').onclick=function(){ navUnlocked=!navUnlocked; render(); };
 document.getElementById('primaryBtn').onclick=function(){
   if(busy) return;
   if(paused){ paused=false; render(); if(analyzing()) startPolling(); return; }

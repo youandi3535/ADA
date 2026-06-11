@@ -123,7 +123,11 @@ class HyperparameterTunerAgent(BaseAgent):
                     pass
             # 튜닝 완료 publish — frontend 모달이 best_params 받기 전 미리 안내.
             _g4_hpo_insights = await self._dynamic_insights(
-                _g4_hpo_insights, backend="claude", context="G4 하이퍼파라미터 튜닝"
+                _g4_hpo_insights,
+                backend="claude",
+                context="G4 하이퍼파라미터 튜닝",
+                job_id=state.job_id,
+                key="g4_hpo_insights",
             )
             _safe_publish_stage_partial(
                 state.job_id,

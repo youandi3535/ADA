@@ -193,7 +193,9 @@ class PreprocessingStrategistAgent(BaseAgent):
             # G2 의 eda_insights 와 동일 패턴 — frontend 가 prefix 별 그룹화. 사용자가 실시간 분석 내용 확인.
             try:
                 g3_insights = _plan_to_insights(plan, state.data_profile or {})
-                g3_insights = await self._dynamic_insights(g3_insights, backend="ollama", context="G3 전처리 전략")
+                g3_insights = await self._dynamic_insights(
+                    g3_insights, backend="ollama", context="G3 전처리 전략", job_id=state.job_id, key="g3_insights"
+                )
                 _safe_publish_stage_partial(
                     state.job_id,
                     {

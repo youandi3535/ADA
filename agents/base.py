@@ -276,6 +276,7 @@ class BaseAgent(abc.ABC):
         json_mode: bool = False,
         on_partial: Any = None,  # Callable[[str], None] — Ollama streaming 시만 활용
         force_backend: Optional[str] = None,  # "ollama"|"anthropic" 강제 (None=기본 라우팅)
+        track_progress: bool = True,  # False 면 진행률 보간·llm_end publish 생략(보조 호출용)
     ) -> str:
         prefix = f"{self.persona}\n\n" if self.persona else ""
         full_system = prefix + system_prompt
@@ -293,7 +294,7 @@ class BaseAgent(abc.ABC):
         interp_task = None
         agent_key = getattr(self, "_progress_agent_key", None)
         job_id = getattr(self, "_current_job_id", None)
-        if agent_key and job_id:
+        if track_progress and agent_key and job_id:
             interp_task = await self._start_llm_progress_interp(agent_key, job_id)
         # Routing 결정:
         #   1. use_anthropic_api=True 에이전트 (G4 모델 전략 이후) → Anthropic API 우선
@@ -348,7 +349,7 @@ class BaseAgent(abc.ABC):
                     await asyncio.wait_for(asyncio.shield(interp_task), timeout=2.0)
                 except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                     pass
-            if agent_key and job_id:
+            if track_progress and agent_key and job_id:
                 try:
                     from orchestrator.runner import agent_phase_progress, publish_progress
 
@@ -771,106 +772,132 @@ class BaseAgent(abc.ABC):
         *,
         backend: str = "ollama",
         context: str = "",
-        timeout_s: float = 15.0,
+        job_id: str | None = None,
+        key: str | None = None,
+        timeout_s: float | None = None,
     ) -> list[str]:
-        """규칙 기반 인사이트 문장들을 LLM 으로 '항목별 동적 해석' 재작성 (HJ 2026-06-11).
+        """규칙 기반 인사이트를 LLM 으로 항목별 동적 재작성 (HJ 2026-06-11 v2).
 
-        각 line 의 사실 헤더(라벨·컬럼·수치)는 보존하고, 항목마다 서로 다른 구체적
-        해석 한 문장을 LLM 으로 생성해 ``"{헤더} — {해석}"`` 형태로 돌려준다.
-        ``" — "`` 가 이미 있으면 기존 해석부를 교체, 없으면 해석부를 새로 덧붙인다.
-
-        사용자 라우팅 규약: G1~G3 → ``backend="ollama"`` (qwen2.5:7b),
-        G4~G6 → ``backend="claude"`` (Anthropic). 백엔드 미가용·타임아웃·파싱불가 등
-        모든 실패는 해당 항목을 원본 그대로 두어 파이프라인을 막지 않는다(무중단).
-
-        Args:
-            lines: 발행 직전의 인사이트 문장 리스트.
-            backend: ``"ollama"`` 또는 ``"claude"``/``"anthropic"``.
-            context: 단계 식별용 짧은 맥락 문자열(프롬프트 힌트).
-            timeout_s: LLM 호출 상한(초). 초과 시 원본 반환.
-
-        Returns:
-            같은 길이의 새 리스트(항상 안전). 입력이 비었거나 비정상이면 그대로 반환.
+        사실 헤더(라벨·컬럼·수치)는 보존, "—" 뒤 해석부만 항목별로 새로 생성.
+        job_id+key 가 있으면 (1) 템플릿 즉시 발행(모달 빈칸 방지) → (2) LLM 재작성 →
+        (3) 결과 재발행(교체). 진행바 보간은 track_progress=False 로 끔(진행바 꼬임 방지).
+        출력은 작은 모델도 잘 맞추는 `번호|해석` 한 줄 포맷 + 관대한 파싱, 백엔드별 넉넉한
+        타임아웃. 실패·누락은 항목 단위 원본 유지(무중단). G1~3 ollama / G4~6 claude.
         """
         if not lines or not isinstance(lines, list):
             return lines
+
+        # 업그레이드 안내: 기존 "현재 작업" 상태줄(*_status)을 재활용 — 멘트만 바꾸면 됨.
+        status_key = (key.split("_", 1)[0] + "_status") if key else None
+        upgrade_msg = "✨ 1차 분석 먼저 표시 · 더 정밀한 해석으로 2차 분석 업그레이드하는 중…"
+
+        def _publish(plines, status=None):
+            if not job_id or not key:
+                return
+            payload = {key: plines}
+            if status is not None and status_key:
+                payload[status_key] = status
+            try:
+                from orchestrator.runner import publish_stage_partial as _psp
+
+                _psp(job_id, payload)
+            except Exception:  # noqa: BLE001
+                pass
+
+        _publish(lines, status=upgrade_msg)  # (1) 템플릿 즉시 발행 + 업그레이드 안내
+
         sep = " — "
-        headers: list[str] = []
-        items: list[dict] = []
+        headers = []
+        order = []
+        prompt_items = []
         for i, ln in enumerate(lines):
             s = ln if isinstance(ln, str) else str(ln)
             head = s.split(sep, 1)[0] if sep in s else s
             old = s.split(sep, 1)[1] if sep in s else ""
             headers.append(head)
-            items.append({"i": i, "사실": head, "기존해석": old})
-        if not items:
-            return lines
+            n = len(order) + 1
+            order.append(i)
+            prompt_items.append(f"{n}) 사실: {head}" + (f" / 기존해석: {old}" if old else ""))
 
         system_prompt = (
             "당신은 머신러닝 데이터·모델 분석을 한국어로 해설하는 전문가입니다. "
-            "각 항목의 '사실'(라벨·컬럼·수치)에 근거해, 모델링에 도움이 되는 "
-            "구체적 해석/권장 한 문장을 항목마다 새로 작성하세요.\n"
-            "규칙:\n"
-            "1) 출력은 입력 항목과 같은 개수의 JSON 배열, 각 원소는 "
-            '{"i": <정수 인덱스>, "text": "<해석문>"}.\n'
-            "2) '사실'에 있는 수치를 새로 지어내거나 바꾸지 말 것(그대로 인용은 허용).\n"
-            "3) 항목마다 표현과 권장 조치가 서로 겹치지 않게 작성(복붙 금지).\n"
-            "4) 한 문장 90자 이내, 자연스러운 한국어.\n"
-            "5) JSON 외 텍스트·마크다운·코드펜스 금지."
+            "각 항목의 '사실'(라벨·컬럼·수치)에 근거해, 모델링에 도움이 되는 구체적 "
+            "해석/권장을 항목마다 한 문장으로 새로 작성합니다.\n"
+            "출력 형식(엄수): 한 줄에 하나씩 `번호|해석문`. "
+            "예) `1|Pclass는 상관 0.34로 중간 근접 약신호라 교호작용 피처로 보강 여지가 큽니다.`\n"
+            "규칙: (1) 번호는 입력과 동일. (2) 사실의 수치를 새로 만들거나 바꾸지 말 것. "
+            "(3) 항목마다 표현·권장이 서로 겹치지 않게. (4) 한 문장 100자 이내. "
+            "(5) `번호|해석` 외 머리말·마크다운·코드펜스 금지."
         )
-        user_prompt = json.dumps(
-            {"분석맥락": context or "ML 파이프라인 단계 인사이트", "항목들": items},
-            ensure_ascii=False,
+        user_prompt = (
+            (f"분석 맥락: {context}\n" if context else "")
+            + f"총 {len(prompt_items)}개 항목. 각 번호마다 한 줄씩 `번호|해석`:\n"
+            + "\n".join(prompt_items)
         )
+
         fb = "anthropic" if backend in ("claude", "anthropic") else "ollama"
+        if timeout_s is None:
+            timeout_s = 30.0 if fb == "anthropic" else 60.0
+
         try:
             raw = await asyncio.wait_for(
                 self._call_llm(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    max_tokens=max(256, min(1400, len(items) * 110)),
-                    temperature=0.6,
-                    json_mode=True,
+                    max_tokens=max(256, min(1600, len(prompt_items) * 120)),
+                    temperature=0.5,
                     force_backend=fb,
+                    track_progress=False,
                 ),
                 timeout=timeout_s,
             )
-        except Exception as e:  # noqa: BLE001 — 타임아웃·호출실패 모두 원본 폴백
+        except Exception as e:  # noqa: BLE001 — 타임아웃·호출실패 모두 원본 유지
             try:
-                self.logger.warning("dynamic_insights_llm_failed", error=str(e)[:200], backend=fb, n=len(items))
+                self.logger.warning("dynamic_insights_llm_failed", error=str(e)[:200], backend=fb, n=len(prompt_items))
             except Exception:
                 pass
             return lines
 
-        parsed = self._parse_json(raw)
-        new_tails: dict[int, str] = {}
-        if isinstance(parsed, list):
-            for el in parsed:
-                if isinstance(el, dict) and "i" in el and "text" in el:
-                    try:
-                        idx = int(el["i"])
-                    except (TypeError, ValueError):
-                        continue
-                    txt = str(el.get("text") or "").strip()
-                    if txt:
-                        new_tails[idx] = txt
-            # 일부 모델은 {i,text} 대신 문자열 배열만 반환 — 순서 매핑 폴백
-            if not new_tails and len(parsed) == len(items) and all(isinstance(el, str) for el in parsed):
-                for k, el in enumerate(parsed):
-                    txt = str(el).strip()
-                    if txt:
-                        new_tails[k] = txt
+        raw = self._strip_md_fence(raw or "")
+        new_tails = {}
+        plain = []
+        for ln in raw.splitlines():
+            t = ln.strip()
+            if not t:
+                continue
+            matched = False
+            for ssep in ("|", ")", ":"):
+                if ssep in t:
+                    left, _, right = t.partition(ssep)
+                    left = left.strip().lstrip("([").strip()
+                    if left.isdigit():
+                        pos = int(left)
+                        txt = right.strip().strip("|)-—: ").strip()
+                        if 1 <= pos <= len(order) and len(txt) >= 4:
+                            new_tails[order[pos - 1]] = txt
+                            matched = True
+                    break
+            if not matched:
+                plain.append(t)
+        if not new_tails and len(plain) == len(order):
+            for k, t in enumerate(plain):
+                tt = t.strip("|)-—: ").strip()
+                if len(tt) >= 4:
+                    new_tails[order[k]] = tt
 
         if not new_tails:
-            return lines  # 아무것도 못 받음 → 전체 원본 유지
+            return lines
 
-        out: list[str] = []
+        out = []
         for i, ln in enumerate(lines):
             t = new_tails.get(i, "").strip()
             if len(t) < 4:
-                out.append(ln)  # 항목 누락/부실 → 원본 유지(항목 단위 폴백)
+                out.append(ln)
                 continue
-            if len(t) > 160:
-                t = t[:158] + "…"
+            if len(t) > 180:
+                t = t[:178] + "…"
             out.append(headers[i] + sep + t)
+
+        if out != lines:
+            _publish(out)  # (3) 업그레이드본 발행(교체)
         return out
