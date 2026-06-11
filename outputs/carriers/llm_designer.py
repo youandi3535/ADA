@@ -70,6 +70,14 @@ class LLMDesigner(BaseAgent):
     model_name = "claude-haiku-4-5-20251001"  # 빠르고 저렴 — 디자인 선택은 가벼운 판단
     use_anthropic_api = True
 
+    async def __call__(self, state: Any) -> Any:  # pragma: no cover — 그래프 노드 아님
+        """LLMDesigner 는 파이프라인 노드가 아님 — ``pick_design`` 전용 유틸 에이전트.
+
+        BaseAgent 의 abstract ``__call__`` 충족용. state 를 변경 없이 반환.
+        (2026-06-11 운영 사고: 미구현 → 인스턴스화 TypeError → 조용히 룰 폴백)
+        """
+        return state
+
     async def pick_design(
         self,
         slide: SlideSpec,
