@@ -208,7 +208,14 @@ def build_eda_slide_from_chart(
     variant = resolve_slide(role_key, category)
 
     feature = getattr(chart, "x", None) or getattr(chart, "title_ko", "") or f"Feature {slide_index}"
-    title_ko = (variant.title_ko if variant else None) or getattr(chart, "title_ko", "") or f"EDA · {feature}"
+    # 2026-06-11 jh — 핸들러 meta 의 구체 제목 (예: "결측률 상위 피처") 이 있으면
+    # manifest 의 generic 제목 ("EDA · 주요 변수 N") 보다 우선.
+    _chart_title = getattr(chart, "title_ko", "") or ""
+    title_ko = (
+        (f"EDA · {_chart_title}" if _chart_title else "")
+        or (variant.title_ko if variant else None)
+        or f"EDA · {feature}"
+    )
     finding = getattr(chart, "finding", "") or ""
     so_what = auto_label(finding, ctx) if finding else f"{feature} 의 핵심 분포·패턴 발견"
 
