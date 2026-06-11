@@ -10,6 +10,7 @@ from outputs.architect.plan import ReportPlan
 from outputs.architect.skeletons.report_skeleton import ko_metric as _ko_metric
 from outputs.context.schema import ReportContext
 
+# [PYLANCE_TEST_2026] persist-check — 이 줄이 남아있으면 복원 안 됨
 _FONT_OK = False
 # 등록 후 실제 사용할 폰트명 — TTF 성공 시 ADA-KO 로 갱신, 실패 시 CID 기본값 유지.
 _KS = "HYSMyeongJo-Medium"  # 본문 (CID 폴백)
@@ -248,17 +249,49 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
 
     # 글씨는 모두 검은색 — 표 헤더(파란 배경+흰 글씨)만 예외로 유지.
     black = colors.black
-    title = PS("T", fontName=_KG, fontSize=22, leading=28, textColor=black, spaceAfter=8)
-    h1 = PS("H1", fontName=_KG, fontSize=18, leading=24, textColor=black, spaceBefore=10, spaceAfter=6)
+    h1 = PS("H1", fontName=_KG, fontSize=22, leading=30, textColor=black, spaceBefore=14, spaceAfter=8)  # [B28] h1 22pt
     # h1_toc: h1 과 모양 동일하되 목차 페이지 추적 대상(afterFlowable 가 style.name 으로 식별)
-    h1_toc = PS("H1TOC", fontName=_KG, fontSize=18, leading=24, textColor=black, spaceBefore=10, spaceAfter=6)
-    h2 = PS("H2", fontName=_KG, fontSize=14, leading=20, textColor=black, spaceBefore=8, spaceAfter=4)
-    sw = PS("SW", fontName=_KG, fontSize=12, leading=18, textColor=black, leftIndent=6)
-    body = PS("B", fontName=_KS, fontSize=11, leading=16, textColor=black)
-    bul = PS("BL", fontName=_KS, fontSize=11, leading=16, textColor=black, leftIndent=14, firstLineIndent=-8)
-    cap = PS("CP", fontName=_KS, fontSize=9, leading=12, textColor=black)
-    toc_e = PS("TOCE", fontName=_KS, fontSize=12, leading=18, textColor=black)  # 목차 항목명
-    toc_p = PS("TOCP", fontName=_KS, fontSize=12, leading=18, textColor=black, alignment=TA_RIGHT)  # 목차 페이지
+    h1_toc = PS("H1TOC", fontName=_KG, fontSize=22, leading=30, textColor=black, spaceBefore=14, spaceAfter=8)
+    h2 = PS("H2", fontName=_KG, fontSize=18, leading=26, textColor=black, spaceBefore=10, spaceAfter=6)  # [B28] h2 18pt
+    sw = PS("SW", fontName=_KG, fontSize=16, leading=23, textColor=colors.HexColor("#1E3A5F"), leftIndent=0)  # [B28][B29] sw 16pt 네이비
+    body = PS("B", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=8)  # [B28][B30] body 14pt+들여쓰기 8
+    bul = PS("BL", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=14, firstLineIndent=-10)  # [B28] bul 14pt
+    cap = PS("CP", fontName=_KS, fontSize=12, leading=16, textColor=black)  # [B28] cap 12pt
+    toc_e = PS("TOCE", fontName=_KS, fontSize=14, leading=20, textColor=black)  # [B28] toc_e 14pt  # 목차 항목명
+    toc_p = PS("TOCP", fontName=_KS, fontSize=12, leading=18, textColor=colors.HexColor("#475569"), alignment=TA_RIGHT)  # 목차 페이지(옅은 회색)
+    # [목차룰] Executive Summary 강조 + TABLE OF CONTENTS 트래킹 라벨
+    toc_e_exec = PS("TOCEE", fontName=_KG, fontSize=13, leading=20, textColor=colors.HexColor("#1E3A5F"))  # Exec Summary 강조
+    toc_p_exec = PS("TOCPE", fontName=_KS, fontSize=13, leading=20, textColor=colors.HexColor("#1E3A5F"), alignment=TA_RIGHT)
+    toc_sub_e = PS("TOCSE", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), leftIndent=16)  # 부록 하위
+    toc_sub_p = PS("TOCSP", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), alignment=TA_RIGHT)
+    toc_label = PS("TOCLbl", fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#94A3B8"))  # TABLE OF CONTENTS
+
+    # [B5 표지룰] ADA Studio 브랜드 표지 전용 스타일
+    # 카테고리 한글 매핑 (사이트 톤 통일)
+    _CAT_KO = {
+        "tabular_ml": "정형 ML",
+        "tabular_dl": "정형 DL",
+        "timeseries": "시계열",
+        "anomaly_detection": "이상 탐지",
+        "anomaly": "이상 탐지",
+    }
+    _NAVY = colors.HexColor("#1E3A5F")
+    _GRAY = colors.HexColor("#475569")
+    _GRAY_LT = colors.HexColor("#94A3B8")
+    _BLUE_PALE = colors.HexColor("#9CB4D0")
+    cover_brand = PS("CoverBrand", fontName="Helvetica-Bold", fontSize=28, leading=32, textColor=colors.white)
+    cover_brand_sub = PS("CoverBrandSub", fontName="Helvetica", fontSize=9, leading=12, textColor=_BLUE_PALE)
+    cover_class = PS("CoverCls", fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=colors.white, alignment=TA_RIGHT)
+    cover_label = PS("CoverLbl", fontName="Helvetica-Bold", fontSize=10, leading=14, textColor=_GRAY)
+    cover_title = PS("CoverTitle", fontName=_KG, fontSize=28, leading=36, textColor=_NAVY, spaceBefore=8, spaceAfter=6)
+    cover_subtitle = PS("CoverSub", fontName=_KS, fontSize=14, leading=20, textColor=_GRAY)
+    cover_meta_key = PS("CoverK", fontName=_KG, fontSize=10, leading=14, textColor=_GRAY)
+    cover_meta_val = PS("CoverV", fontName=_KS, fontSize=11, leading=15, textColor=black)
+    cover_slogan = PS("CoverSlogan", fontName=_KS, fontSize=10, leading=14, textColor=_NAVY)
+    cover_big_num = PS("CoverBigNum", fontName="Helvetica-Bold", fontSize=36, leading=42, textColor=_NAVY, alignment=TA_RIGHT)
+    cover_big_lbl = PS("CoverBigLbl", fontName=_KG, fontSize=9, leading=12, textColor=_GRAY, alignment=TA_RIGHT)
+    cover_footer = PS("CoverFt", fontName="Helvetica", fontSize=8, leading=11, textColor=_GRAY_LT)
+    cover_domain = PS("CoverDom", fontName="Helvetica", fontSize=8, leading=11, textColor=_GRAY_LT, alignment=TA_RIGHT)
 
     title_text = _clean_title(ctx.meta.user_intent)  # 비대/중복 intent 컷
     chosen = (ctx.model_selection.chosen or {}).get("name", "-")
@@ -281,49 +314,167 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         시작 페이지를 순서대로 수집 → 2차에서 페이지 범위를 채운다.
         """
         flow = []
-        # ── 표지
-        flow.append(Paragraph(title_text, title))
-        flow.append(Paragraph("데이터 분석 종합 보고서", cap))  # 고정 부제
-        flow.append(Spacer(1, 0.3 * cm))
-        flow.append(
-            Paragraph(
-                f"카테고리 : {ctx.meta.category}     모델 : {chosen}     {pm.get('name', '지표')} : {_fv(pm.get('value'))}",
-                body,
-            )
-        )
-        flow.append(Paragraph(f"분류 {ctx.meta.classification} · 생성 {(ctx.meta.generated_at or '')[:10]}", cap))
-        flow.append(Spacer(1, 1.5 * cm))
+        # ── 표지 [B5 표지룰] ADA Studio 브랜드 표지 — 사이트(ada-aiagent.com) 톤 일치
+        # 구성: (1) 네이비 헤더  (2) 보고서 종류 라벨  (3) 제목+데이터셋부제
+        #       (4) 회색 메타 박스 [카테고리/주 모델/표본/생성 | 큰 지표]
+        #       (5) 사이트 슬로건  (6) 푸터 (© + 도메인)
+        import datetime as _dt
 
-        # ── 목차 (표지 다음 페이지) — 항목명 | 페이지범위 2열, 점선 대신 옅은 구분선
+        # (1) 네이비 헤더 박스
+        _classification = (ctx.meta.classification or "PUBLIC").upper()
+        _header_left = [
+            Paragraph("ADA Studio", cover_brand),
+            Spacer(1, 0.1 * cm),
+            Paragraph("A D A P T I V E &nbsp;&nbsp; D A T A &nbsp;&nbsp; A N A L Y S T", cover_brand_sub),
+        ]
+        _header_right = Paragraph(_classification, cover_class)
+        _header = Table([[_header_left, _header_right]], colWidths=[12 * cm, 5 * cm], rowHeights=[2.8 * cm])
+        _header.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), _NAVY),
+            ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
+            ("VALIGN", (1, 0), (1, 0), "TOP"),
+            ("LEFTPADDING", (0, 0), (0, 0), 18),
+            ("RIGHTPADDING", (1, 0), (1, 0), 18),
+            ("TOPPADDING", (1, 0), (1, 0), 14),
+            ("BOX", (0, 0), (-1, -1), 0, _NAVY),
+            # 95점 push: 헤더 아래 미세한 진한 네이비 액센트 라인
+            ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#0F1E33")),
+        ]))
+        flow.append(_header)
+        flow.append(Spacer(1, 0.8 * cm))
+
+        # (2) 보고서 종류 라벨
+        flow.append(Paragraph("D A T A - D R I V E N &nbsp;&nbsp; I N S I G H T &nbsp;&nbsp; R E P O R T", cover_label))
+        flow.append(Spacer(1, 0.25 * cm))
+
+        # (3) 큰 제목 + 데이터셋 부제 (이름 · 표본 수)
+        flow.append(Paragraph(title_text, cover_title))
+        _ds_name = ""
+        try:
+            from outputs.architect.skeletons.report_skeleton import _human_dataset_name as _hdn
+            _ds_name = _hdn(ctx)
+        except Exception:
+            _ds_name = (ctx.dataset.dataset_name or "").strip() or "데이터셋"
+        # [표지룰 보강 2026-06-11] 기준 매치 — 부제 간결화 ("데이터셋명 · N건")
+        _shape = ctx.dataset.shape or {}
+        _n_rows = _shape.get("rows", 0)
+        _subtitle = f"{_ds_name} · {_n_rows:,}건" if (_ds_name and _n_rows) else _ds_name
+        flow.append(Paragraph(_subtitle, cover_subtitle))
+        flow.append(Spacer(1, 1.2 * cm))
+
+        # (4) 회색 메타 박스 — 좌: 카테고리/주 모델/표본/생성, 우: 큰 지표
+        _gen_date = (ctx.meta.generated_at or "")[:10]
+        _cat_ko = _CAT_KO.get(ctx.meta.category or "", ctx.meta.category or "-")
+        _meta_rows = [
+            [Paragraph("분석 카테고리", cover_meta_key), Paragraph(_cat_ko, cover_meta_val)],
+            [Paragraph("주 모델", cover_meta_key), Paragraph(str(chosen), cover_meta_val)],
+            [Paragraph("표본 수", cover_meta_key), Paragraph(f"{_n_rows:,}건" if _n_rows else "-", cover_meta_val)],
+            [Paragraph("생성", cover_meta_key), Paragraph(_gen_date or "-", cover_meta_val)],
+        ]
+        _meta_left = Table(_meta_rows, colWidths=[3.0 * cm, 6.5 * cm])
+        _meta_left.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        _metric_name = _ko_metric(pm.get("name")) if pm.get("name") else "지표"
+        _metric_val = _fv(pm.get("value"))
+        # 우측: 작은 네이비 사각 아이콘 (▣) + 큰 숫자 + 라벨
+        # [표지룰 보강 2026-06-11] 기준 매치 — 작은 파란 정사각 아이콘
+        _meta_right = [
+            Paragraph('<para alignment="right"><font color="#185FA5" size="14">■</font></para>', cover_big_lbl),
+            Spacer(1, 0.05 * cm),
+            Paragraph(_metric_val, cover_big_num),
+            Paragraph(_metric_name, cover_big_lbl),
+        ]
+        _meta = Table([[_meta_left, _meta_right]], colWidths=[10 * cm, 7 * cm])
+        _meta.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+            ("LINEBEFORE", (0, 0), (0, -1), 3, _NAVY),  # 좌측 네이비 액센트 (브랜드 시각 신호)
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 20),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 20),
+            ("TOPPADDING", (0, 0), (-1, -1), 20),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 20),
+        ]))
+        flow.append(_meta)
+        flow.append(Spacer(1, 1.2 * cm))
+
+        # (5) 슬로건 — 사이트 메인 카피, 평문 (좌측 액센트 라인 없음 — 사용자 확정)
+        flow.append(Paragraph("다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로", cover_slogan))
+
+        # (6) 푸터 (페이지 하단 푸시) — 위에 옅은 구분선
+        flow.append(Spacer(1, 3.0 * cm))
+        _year = _dt.datetime.now().year
+        _footer = Table([[
+            Paragraph(f"© {_year} ADA Studio · Adaptive Data Analyst", cover_footer),
+            Paragraph("ada-aiagent.com", cover_domain),
+        ]], colWidths=[10 * cm, 7 * cm])
+        _footer.setStyle(TableStyle([
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("LINEABOVE", (0, 0), (-1, 0), 0.4, colors.HexColor("#CBD5E1")),
+            ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ]))
+        flow.append(_footer)
+
+        # ── 목차 [B24 목차룰 보강 2026-06-11] 기준 매치
+        # - 항목 ~ 페이지번호 사이 점선 (....) 채움 (3열 Table: 항목 | 점선 | 페이지)
+        # - 9.x 부록 하위는 들여쓰기 + 옅은 회색 (toc_sub_e/toc_sub_p)
+        # - 8번/9번 사이 본문↔부록 구분선 강화 (네이비 진한 LINEBELOW)
         if toc_entries:
             flow.append(PageBreak())
             flow.append(Paragraph("목차", h1))
-            flow.append(Spacer(1, 0.4 * cm))
+            flow.append(Paragraph("T A B L E &nbsp;&nbsp; O F &nbsp;&nbsp; C O N T E N T S", toc_label))
+            flow.append(Spacer(1, 0.5 * cm))
+            # 점선 스타일 (가운데 채움)
+            _dot_style = PS("TOCDot", fontName="Helvetica", fontSize=9, leading=14,
+                            textColor=colors.HexColor("#94A3B8"), alignment=1)
+            _dots = ". " * 30  # 점선 패턴
             rows = []
+            _split_idx = -1  # 본문↔부록 경계 인덱스
             for _idx, _label in enumerate(toc_entries):
                 _pr = toc_render[_idx][1] if toc_render else ""
-                rows.append([Paragraph(_label, toc_e), Paragraph(_pr, toc_p)])
-            tt = Table(rows, colWidths=[14 * cm, 3 * cm])
-            tt.setStyle(
-                TableStyle(
-                    [
-                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                        ("TOPPADDING", (0, 0), (-1, -1), 5),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                        ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#E2E8F0")),
-                    ]
+                _l = _label.strip()
+                # 9.x 부록 하위 (들여쓰기) — "9.1", "9.2", ... 또는 부록 sub
+                _is_sub = _l.startswith(("9.1", "9.2", "9.3", "9.4")) or (
+                    _l.startswith(("부록", "Appendix")) and "·" in _l
                 )
-            )
+                # 본문/부록 경계 — "9. 부록" 라인 식별
+                if _l.startswith("9.") and not _is_sub:
+                    _split_idx = len(rows)
+                # 행 스타일 분기
+                if _l.lower().startswith("executive"):
+                    rows.append([Paragraph(_label, toc_e_exec), Paragraph(_dots, _dot_style), Paragraph(_pr, toc_p_exec)])
+                elif _is_sub:
+                    rows.append([Paragraph(_label, toc_sub_e), Paragraph(_dots, _dot_style), Paragraph(_pr, toc_sub_p)])
+                else:
+                    rows.append([Paragraph(_label, toc_e), Paragraph(_dots, _dot_style), Paragraph(_pr, toc_p)])
+            tt = Table(rows, colWidths=[8 * cm, 6 * cm, 3 * cm])
+            _ts = [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#E2E8F0")),
+            ]
+            # 본문/부록 경계에 진한 네이비 LINEABOVE (시각 분리)
+            if _split_idx > 0:
+                _ts.append(("LINEABOVE", (0, _split_idx), (-1, _split_idx), 1.0, colors.HexColor("#1E3A5F")))
+            tt.setStyle(TableStyle(_ts))
             flow.append(tt)
             flow.append(PageBreak())
 
         # ── Executive Summary (목차 추적 대상: H1TOC)
+        # [B25 키메시지줄띄움룰] 헤드라인(굵은 결론) 다음 한 줄 띄움 — 시각 호흡 + 본문 분리
         nt = plan.narrative_thread
         if getattr(nt, "headline", "") or nt.resolution or nt.conflict:
             flow.append(Paragraph("Executive Summary", h1_toc))
             if getattr(nt, "headline", ""):
                 flow.append(Paragraph(f"<b>{nt.headline}</b>", body))  # 결론(정수) — 굵게
-            # 라벨 없이 흐르는 단정 문장 (시니어 스타일): 원인→근거→대응→단서
+                flow.append(Spacer(1, 0.25 * cm))  # [B25] 키메시지 다음 줄 띄움
+            # 라벨 없이 흐르는 단정 문장 (시니어 스타일): 원인·근거·대응·단서
             _rest = " ".join(s for s in [nt.conflict, nt.resolution, nt.recommendation] if s)
             if _rest:
                 flow.append(Paragraph(_rest, body))
@@ -332,7 +483,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         if ctx.evaluation.metrics:
             flow.append(Paragraph("핵심 지표", h2))
             data = [["지표", "값"]]
-            for k, m in list(ctx.evaluation.metrics.items())[:6]:
+            _metric_items = list(ctx.evaluation.metrics.items())[:6]
+            for k, m in _metric_items:
                 # raw metric key('val_roc_auc' 등)를 한국어로 ('검증 AUC') — 모르는 키는 원본 유지
                 data.append([_ko_metric(k), _fv(m.get("value"))])
             t = Table(data, colWidths=[8 * cm, 4 * cm])
@@ -350,6 +502,27 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 )
             )
             flow.append(t)
+            # [C10 SoWhat룰] + [B26 표·차트SoWhat강제룰] 표 아래 인사이트 한 줄(굵게) + 해석 한 줄
+            flow.append(Spacer(1, 0.3 * cm))
+            _pm = ctx.evaluation.primary_metric or {}
+            _pm_ko = _ko_metric(_pm.get("name")) if _pm.get("name") else "주지표"
+            _pm_v = _fv(_pm.get("value"))
+            flow.append(Paragraph(
+                f"<b>주지표 {_pm_ko} = {_pm_v}이 본 분석의 판단 기준이다.</b>",
+                body,
+            ))
+            # 지표 간 격차 자동 계산
+            try:
+                _vals = [m.get("value") for _, m in _metric_items if isinstance(m.get("value"), (int, float))]
+                if len(_vals) >= 2:
+                    _spread = (max(_vals) - min(_vals)) * 100
+                    _stab = "균형적이다 — 특정 임계값에 과적합되지 않은 안정 영역으로 해석된다" if _spread <= 15 else "편차가 크다 — 임계값 의존성 확인 필요"
+                    flow.append(Paragraph(
+                        f"지표 간 격차가 {_spread:.0f}%p 이내로 {_stab}.",
+                        body,
+                    ))
+            except Exception:
+                pass
         flow.append(PageBreak())
 
         # ── 본문 섹션 (목차 추적 대상: H1TOC)
@@ -423,10 +596,11 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
 
                             with PI.open(png) as im:
                                 ar = im.width / im.height
-                            w_cm = 16.0  # 1.5배 확대 (10.7 → 16)
+                            # [B6 EDA페이지룰] 페이지당 2개 강제 — width 14cm / height 상한 6.0cm
+                            w_cm = 14.0
                             h_cm = w_cm / ar
-                            if h_cm > 10.0:
-                                h_cm = 10.0
+                            if h_cm > 6.0:
+                                h_cm = 6.0
                                 w_cm = h_cm * ar
                             sl_flow.append(Spacer(1, 0.3 * cm))
                             sl_flow.append(Image(png, width=w_cm * cm, height=h_cm * cm))
@@ -436,12 +610,16 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     except Exception:
                         pass
                 sl_flow.append(Spacer(1, 0.4 * cm))
-                # 제목+그래프가 페이지에서 쪼개지지 않게 — 차트 있는 슬라이드는 KeepTogether 로 한 덩어리
+                # [B6 EDA페이지룰] 차트 슬라이드 페이지당 2개 강제
+                # 홀수 번째(1·3·5번): 페이지 상단에서 시작하도록 보장. 짝수 번째(2·4번): 같은 페이지에 이어 붙이고 끝낸 후 PageBreak.
                 if has_img:
-                    flow.append(KeepTogether(sl_flow))
                     _img_in_sec += 1
+                    if _img_in_sec % 2 == 1 and _img_in_sec > 1:
+                        # 새 홀수 차트는 무조건 새 페이지에서 시작 (이전 짝수 차트의 PageBreak 가 처리)
+                        pass
+                    flow.append(KeepTogether(sl_flow))
                     _just_broke = False
-                    if _img_in_sec % 2 == 0:  # 차트 2개마다 페이지 분할 → 페이지당 최대 2개
+                    if _img_in_sec % 2 == 0:
                         flow.append(PageBreak())
                         _just_broke = True
                 else:
@@ -452,11 +630,16 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         return flow
 
     def _foot(canvas, dc):
+        # [푸터룰] 좌: 보고서 제목 (옅은 회색, 9pt) / 우: 페이지번호 (옅은 회색, 12pt)
         canvas.saveState()
+        # 좌측 제목 — 9pt 옅은 회색
         canvas.setFont(_KS, 9)
-        canvas.setFillColor(colors.black)
-        canvas.drawString(2 * cm, 1 * cm, title_text[:40])  # 주제만 (왼쪽)
-        canvas.drawRightString(A4[0] - 2 * cm, 1 * cm, f"p.{dc.page}")  # 페이지번호 (오른쪽 가장자리)
+        canvas.setFillColor(colors.HexColor("#94A3B8"))
+        canvas.drawString(2 * cm, 1 * cm, title_text[:40])
+        # 우측 페이지 번호 — 12pt 더 옅은 회색
+        canvas.setFont("Helvetica", 12)
+        canvas.setFillColor(colors.HexColor("#94A3B8"))
+        canvas.drawRightString(A4[0] - 2 * cm, 1 * cm, f"p.{dc.page}")
         canvas.restoreState()
 
     class _TrackDoc(SimpleDocTemplate):
