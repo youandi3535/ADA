@@ -344,6 +344,12 @@ const GATE_HEADER_BY_CATEGORY={
     }
   },
   loading:{
+    1:{
+      tabular_ml:{h2:'정형 데이터의 EDA 작업 중입니다',en:'G2 — Tabular Data EDA',desc:'정형 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 EDA 작업 중입니다',en:'G2 — Tabular DL Data EDA',desc:'정형 DL 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      timeseries:{h2:'시계열 데이터의 EDA 작업 중입니다',en:'G2 — Time Series Data EDA',desc:'시계열 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 EDA 작업 중입니다',en:'G2 — Anomaly Detection Data EDA',desc:'이상탐지 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'}
+    },
     2:{
       tabular_ml:{h2:'정형 데이터의 EDA 작업 중입니다',en:'G2 — Tabular Data EDA',desc:'정형 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
       tabular_dl:{h2:'정형 DL 데이터의 EDA 작업 중입니다',en:'G2 — Tabular DL Data EDA',desc:'정형 DL 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
