@@ -20,7 +20,7 @@ LLMDesigner 가 ``slide._design_hint`` 에 attach 한 디자인 힌트:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from outputs.style.iconography import lucide_icon_name
 from outputs.style.palette import SEMANTIC_COLORS

@@ -1459,6 +1459,7 @@ def _prepick_designs(slides_flat: list, ctx) -> None:
     실패 시 조용히 룰 기반 폴백 유지 (deck 빌드 자체는 반드시 성공).
     """
     import asyncio
+
     from outputs.carriers.template_registry import REGISTRY
     from outputs.carriers.templates_init import init_registry
 

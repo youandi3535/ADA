@@ -21,7 +21,7 @@ HJ 영역. carrier 측 LLM 진입점.
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from agents.base import BaseAgent
 from outputs.architect.plan import SlideSpec
