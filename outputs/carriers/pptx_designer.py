@@ -152,6 +152,17 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     # Iterate REORDERED slides_flat (cover, exec, agenda, rest; no backup)
     total = len(slides_flat)
     page_num = 0
+
+    # === LLM 디자인 일괄 선택 (Step 6-3) ===
+    # 각 슬라이드의 후보 N개를 LLM 한테 보여주고 1개 선택 받음.
+    # 결과는 slide.preferred_template 에 저장 — REGISTRY.best_for() 가 1순위로 인식.
+    # 실패해도 deck 빌드는 진행 (휴리스틱 폴백).
+    try:
+        _prepick_designs(slides_flat, ctx)
+    except Exception as _e:  # noqa: BLE001
+        # 어떤 이유로든 LLM 단계 실패 시 조용히 룰 기반 동작 유지
+        pass
+
     for sl in slides_flat:
         page_num += 1
         slide = prs.slides.add_slide(blank)
@@ -1432,3 +1443,71 @@ def _draw_donut(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         light_bg,
         side_items=side,
     )
+
+
+# ==============================================================
+# LLM 디자인 일괄 선택 (Step 6-3)
+# ==============================================================
+
+
+def _prepick_designs(slides_flat: list, ctx) -> None:
+    """슬라이드 N개에 대해 LLM 으로 디자인 일괄 선택.
+
+    각 슬라이드의 ``preferred_template`` 에 LLM 선택을 저장.
+    REGISTRY.best_for() 가 이걸 1순위로 인식해서 _draw_slide 가 자동 사용.
+
+    실패 시 조용히 룰 기반 폴백 유지 (deck 빌드 자체는 반드시 성공).
+    """
+    import asyncio
+    from outputs.carriers.template_registry import REGISTRY
+    from outputs.carriers.templates_init import init_registry
+
+    try:
+        from outputs.carriers.llm_designer import LLMDesigner
+    except Exception:
+        return  # LLM 의존성 못 가져오면 룰 기반으로 폴백
+
+    init_registry()
+
+    # 후보 + tasks 준비
+    designer = LLMDesigner()
+    tasks: list = []
+    task_slides: list = []
+    for sl in slides_flat:
+        # cover/agenda/section_divider 는 hardcoded path 라 LLM 스킵
+        if getattr(sl, "layout", "") in ("cover", "agenda", "section_divider"):
+            continue
+        candidates = REGISTRY.candidates_for(sl, ctx, top_n=7)
+        if not candidates:
+            continue
+        # 후보 1개 — LLM 호출 생략, 룰 1위 그대로
+        if len(candidates) == 1:
+            sl.preferred_template = candidates[0].name
+            continue
+        tasks.append(designer.pick_design(sl, ctx, candidates))
+        task_slides.append(sl)
+
+    if not tasks:
+        return
+
+    # asyncio.run + gather 로 batch 호출 (병렬)
+    # report_composer 가 asyncio.to_thread 로 호출하므로 워커 스레드엔 루프 없음 → asyncio.run() OK
+    async def _gather():
+        return await asyncio.gather(*tasks, return_exceptions=True)
+
+    try:
+        results = asyncio.run(_gather())
+    except Exception:
+        return  # LLM batch 실패 — 룰 폴백
+
+    # 각 슬라이드에 결과 저장
+    for sl, result in zip(task_slides, results):
+        if isinstance(result, Exception):
+            continue
+        if not isinstance(result, dict):
+            continue
+        chosen = result.get("chosen_template", "")
+        if chosen:
+            sl.preferred_template = chosen
+        # 디자인 힌트 (palette/photo/icon) 도 attach — 후속 sub-step 에서 사용
+        sl._design_hint = result
