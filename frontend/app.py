@@ -1576,6 +1576,76 @@ function _stageBox(titleEmoji, titleText, rows){
     +'<div class="twrow" style="font-weight:700;color:#0f172a;margin-bottom:6px;font-size:32px;opacity:0;visibility:hidden;transition:opacity .3s ease">'+titleEmoji+' '+twSpan(titleText,'sbtitle-'+cur+'-'+titleText)+'</div>'
     +body+'</div>';
 }
+// HJ 2026-06-11 — G3~G6 모달 콘텐츠 공용 헬퍼.
+//   _toBullets(v, maxLen): 어떤 데이터 타입이든 (string/array/object) 불릿 항목 배열로 변환.
+//   _modalSection(emoji, title, items, opts): 섹션 헤더 + 들여쓴 불릿 묶음 HTML 반환 (G2 패턴과 동일).
+//   각 단계 분기에서 호출 → 글 내용은 backend 데이터 그대로, 배치만 가독성 좋게.
+function _toBullets(v, maxLen){
+  maxLen = maxLen || 220;
+  if(v==null) return [];
+  if(typeof v === 'string') return v ? [v.slice(0, maxLen)] : [];
+  if(Array.isArray(v)) return v.map(function(x){ return String(x).slice(0, maxLen); }).filter(function(s){ return !!s; });
+  if(typeof v === 'object'){
+    return Object.keys(v).map(function(k){
+      var val = v[k];
+      var s = (val!=null && typeof val === 'object') ? JSON.stringify(val) : String(val==null?'':val);
+      return k + ': ' + s.slice(0, maxLen);
+    });
+  }
+  return [String(v).slice(0, maxLen)];
+}
+function _modalSection(emoji, title, items, opts){
+  opts = opts || {};
+  if(!items || !items.length) return '';
+  var mt = opts.mt != null ? opts.mt : 32;
+  var twkPrefix = opts.twk || ('sec-'+cur+'-'+title);
+  var parts = [];
+  // 섹션 헤더 (G2 그룹 헤더와 동일 스타일)
+  parts.push('<div class="twrow" style="margin-top:'+mt+'px;font-size:24px;font-weight:700;color:#0f172a;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+    + emoji + ' ' + twSpan(title, twkPrefix+'-hdr')
+    + '</div>');
+  // 들여쓴 불릿 항목들
+  items.forEach(function(item, j){
+    if(item==null || item==='') return;
+    parts.push('<div class="twrow" style="margin-top:8px;font-size:21px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+      + '<span style="opacity:.45;margin-right:10px;font-weight:700">•</span>'
+      + twSpan(String(item), twkPrefix+'-'+j)
+      + '</div>');
+  });
+  return parts.join('');
+}
+// HJ 2026-06-11 — backend 인사이트 배열을 prefix("결측 처리:", "튜닝 결과:") 별 그룹화 → HTML 반환.
+// G2 의 eda_insights 와 동일 패턴을 G3~G6 모두 통일 적용. 입력: 인사이트 배열 + emoji 매핑.
+function _modalGroupedInsights(insights, emojiMap, twkPrefix, firstMt){
+  if(!Array.isArray(insights) || !insights.length) return '';
+  firstMt = firstMt != null ? firstMt : 36;
+  var groups = {}; var order = [];
+  insights.forEach(function(ins){
+    var s = String(ins);
+    var ci = s.indexOf(':');
+    var prefix, val;
+    if(ci>0 && ci<30){ prefix = s.slice(0,ci).trim(); val = s.slice(ci+1).trim(); }
+    else { prefix = '기타'; val = s; }
+    if(!groups[prefix]){ groups[prefix] = []; order.push(prefix); }
+    groups[prefix].push(val);
+  });
+  var firstGrp = true;
+  var parts = [];
+  order.forEach(function(prefix){
+    var em = (emojiMap && emojiMap[prefix]) || '🔬';
+    parts.push('<div class="twrow" style="margin-top:'+(firstGrp?firstMt:28)+'px;font-size:24px;font-weight:700;color:#0f172a;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+      + em + ' ' + twSpan(prefix, twkPrefix+'-hdr-'+prefix)
+      + '</div>');
+    firstGrp = false;
+    groups[prefix].forEach(function(val, j){
+      parts.push('<div class="twrow" style="margin-top:8px;font-size:21px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+        + '<span style="opacity:.45;margin-right:10px;font-weight:700">•</span>'
+        + twSpan(val, twkPrefix+'-'+prefix+'-'+j)
+        + '</div>');
+    });
+  });
+  return parts.join('');
+}
 function modalInsightArea(d){
   // HJ 2026-06-11 — 모달 표시 후 5초 경과 전에는 콘텐츠 숨김 (호출처가 cur 별 placeholder 노출).
   // 5초 경과 후 데이터 있으면 즉시 작성, 데이터 늦으면 도착한 render 주기에 자동 작성.
@@ -1663,54 +1733,212 @@ function modalInsightArea(d){
     return _stageBox('📊','EDA · 방법론 분석', r);
   }
   // 3단계 (G3 — 전처리·피처 분석)
+  // HJ 2026-06-11 — G2 패턴(섹션 헤더 + 들여쓴 불릿) 으로 통일. 글 내용 동일, 배치만 가독성 개선.
+  // HJ 2026-06-11 — 🌱 파생 피처 생성 라이브 피드 추가 (backend feature_engineer 가 publish 하는 fe_* 필드).
   if(cur===2){
     const r=[];
-    if(d.category&&d.category!=='pending') r.push(_labelRow('카테고리', d.category, {mt:8,bold:true}));
-    if(d.chosen_recipe&&d.chosen_recipe.title) r.push(_labelRow('선택한 방법론', d.chosen_recipe.title, {bold:true}));
-    if(d.user_intent) r.push(_labelRow('분석 의도', String(d.user_intent).slice(0,200), {fs:22}));
-    if(d.preprocessing_strategy) r.push(_labelRow('전처리 전략', (typeof d.preprocessing_strategy==='string'?d.preprocessing_strategy:JSON.stringify(d.preprocessing_strategy)).slice(0,200), {fs:22}));
-    if(d.feature_engineering) r.push(_labelRow('피처 엔지니어링', (typeof d.feature_engineering==='string'?d.feature_engineering:JSON.stringify(d.feature_engineering)).slice(0,200), {fs:22}));
+    const sp=(d&&d.stage_partial)||{};
+    // === ▶ 라이브 진행 상태 (G2 와 동일 — 5초 게이트 통과 시 즉시 보이도록 무조건 1줄 보장) ===
+    // HJ 2026-06-11 — backend g3_status 가 있으면 그걸, 없으면 일반 안내. state 필드 미도착 시에도 빈 placeholder 회피.
+    if(sp.g3_status){
+      r.push(_labelRow('▶ 현재 작업', sp.g3_status, {fs:22, mt:8, twk:'g3-status'}));
+    } else {
+      r.push(_labelRow('▶ 진행 상태', '전처리·피처 엔지니어링 분석을 진행하고 있습니다…', {fs:22, mt:8, twk:'g3-fallback'}));
+    }
+    // === 기본 정보 ===
+    if(d.category&&d.category!=='pending') r.push(_labelRow('카테고리', d.category, {mt:14, bold:true}));
+    if(d.chosen_recipe&&d.chosen_recipe.title) r.push(_labelRow('선택한 방법론', d.chosen_recipe.title, {bold:true, mt:8}));
+    if(d.user_intent) r.push(_labelRow('분석 의도', String(d.user_intent).slice(0,200), {fs:22, mt:8}));
+    // === 🔬 전처리 인사이트 — prefix("결측 처리:", "스케일링:", "인코딩:" 등) 별 그룹화 ===
+    // HJ 2026-06-11 — G2 의 eda_insights 와 완전 동일 패턴 (공용 헬퍼 _modalGroupedInsights 사용).
+    if(Array.isArray(sp.g3_insights)&&sp.g3_insights.length){
+      var _g3emoji={'결측 처리':'📭','스케일링':'⚖️','인코딩':'🏷️','이상치 처리':'🚨','분포 변환':'📈','파생 피처':'🌿','구간화':'📊','컬럼 제거':'🗑️','행 제거':'🗑️','전처리':'🔧'};
+      r.push(_modalGroupedInsights(sp.g3_insights, _g3emoji, 'g3-ins', 36));
+    }
+    // === 💭 LLM 전체 근거 (preprocessing_strategist 한 줄 요약) ===
+    if(sp.g3_rationale){
+      r.push(_modalSection('💭','전처리 전략 근거', [sp.g3_rationale], {mt:28, twk:'g3-rat'}));
+    }
+    // === ⚠️ Leakage 위험 ===
+    if(Array.isArray(sp.g3_leakage_risks)&&sp.g3_leakage_risks.length){
+      r.push(_modalSection('⚠️','Leakage 위험', sp.g3_leakage_risks, {mt:28, twk:'g3-leak'}));
+    }
+    // === 🧹 전처리 전략 (state 필드 — gate 도착 시) ===
+    if(d.preprocessing_strategy){
+      r.push(_modalSection('🧹','전처리 전략 (state)', _toBullets(d.preprocessing_strategy, 240), {mt:28, twk:'g3-prep'}));
+    }
+    // === 🔧 피처 엔지니어링 (LLM rationale) ===
+    if(d.feature_engineering){
+      r.push(_modalSection('🔧','피처 엔지니어링', _toBullets(d.feature_engineering, 240), {mt:28, twk:'g3-feat'}));
+    }
+    // === 🌱 파생 피처 생성 — backend feature_engineer 가 실제 적용한 변환 결과 ===
+    // before/after 컬럼 수, 적용된 변환 목록, 신규 컬럼 예시 노출.
+    if(sp.fe_after_count!=null){
+      const fitems=[];
+      // 컬럼 수 변화 한 줄
+      if(sp.fe_before_count!=null){
+        const _newN=Math.max(0, sp.fe_after_count - sp.fe_before_count);
+        fitems.push('원본 '+sp.fe_before_count+'개 → '+sp.fe_after_count+'개 컬럼 (신규 '+_newN+'개)');
+      } else {
+        fitems.push('최종 '+sp.fe_after_count+'개 컬럼');
+      }
+      // 적용된 변환
+      if(Array.isArray(sp.fe_applied_steps) && sp.fe_applied_steps.length){
+        fitems.push('적용된 변환: '+sp.fe_applied_steps.join(' · '));
+      }
+      // 신규 컬럼 예시 (최대 8개)
+      if(Array.isArray(sp.fe_new_columns) && sp.fe_new_columns.length){
+        const _show=sp.fe_new_columns.slice(0,8);
+        const _more=sp.fe_new_columns.length>8 ? (' 외 '+(sp.fe_new_columns.length-8)+'개') : '';
+        fitems.push('신규 컬럼 예시: '+_show.join(', ')+_more);
+      }
+      r.push(_modalSection('🌱','파생 피처 생성', fitems, {mt:28, twk:'g3-deriv'}));
+    } else if(sp.g3_phase==='feature_engineer_start' && sp.fe_before_count!=null){
+      // 진행 중 라이브 메시지 (handler 실행 중)
+      r.push(_modalSection('🌱','파생 피처 생성', ['원본 '+sp.fe_before_count+'개 컬럼에 변환 적용 중…'], {mt:28, twk:'g3-deriv'}));
+    }
     return _stageBox('🧪','전처리 · 피처 분석', r);
   }
   // 4단계 (G4 — 모델 학습)
+  // HJ 2026-06-11 — G2 패턴(섹션 헤더 + 들여쓴 불릿). agent 가 끝나는 순서대로 필드 채워짐:
+  //   model_selection → candidate_models / hyperparameter_tuner → best_params /
+  //   training_executor → best_model / metrics_aggregator → metrics
   if(cur===3){
     const r=[];
-    if(d.chosen_recipe&&d.chosen_recipe.title) r.push(_labelRow('방법론', d.chosen_recipe.title, {mt:8,bold:true}));
-    if(d.candidate_models&&Array.isArray(d.candidate_models)) r.push(_labelRow('후보 모델', d.candidate_models.slice(0,5).join(', ')));
-    if(d.best_params&&typeof d.best_params==='object') r.push(_labelRow('최적 하이퍼파라미터', JSON.stringify(d.best_params).slice(0,180), {fs:22}));
-    if(d.best_model&&d.best_model.model_name) r.push(_labelRow('최적 모델', d.best_model.model_name, {bold:true}));
+    const sp=(d&&d.stage_partial)||{};
+    // === ▶ 라이브 진행 상태 (G2 와 동일 — 무조건 1줄 보장) ===
+    if(sp.g4_status){
+      r.push(_labelRow('▶ 현재 작업', sp.g4_status, {fs:22, mt:8, twk:'g4-status'}));
+    } else {
+      r.push(_labelRow('▶ 진행 상태', '모델 선택·하이퍼파라미터 튜닝·학습을 진행하고 있습니다…', {fs:22, mt:8, twk:'g4-fallback'}));
+    }
+    // === 기본 정보 ===
+    if(d.chosen_recipe&&d.chosen_recipe.title) r.push(_labelRow('방법론', d.chosen_recipe.title, {mt:14, bold:true}));
+    // === 🤖 모델 선정 인사이트 (backend 자연어 publish) ===
+    if(Array.isArray(sp.g4_model_insights)&&sp.g4_model_insights.length){
+      var _g4mEmoji={'모델 후보 1':'🥇','모델 후보 2':'🥈','모델 후보 3':'🥉','선정 근거':'💭','베이스라인':'📏'};
+      r.push(_modalGroupedInsights(sp.g4_model_insights, _g4mEmoji, 'g4-ms', 36));
+    }
+    // === ⚙️ 하이퍼파라미터 튜닝 인사이트 (모델별 best_params) ===
+    if(Array.isArray(sp.g4_hpo_insights)&&sp.g4_hpo_insights.length){
+      var _g4hEmoji={'튜닝 결과':'⚙️'};
+      r.push(_modalGroupedInsights(sp.g4_hpo_insights, _g4hEmoji, 'g4-hpo', 28));
+    }
+    // === 🏋️ 학습 결과 인사이트 (모델별 메트릭) ===
+    if(Array.isArray(sp.g4_train_insights)&&sp.g4_train_insights.length){
+      var _g4tEmoji={'학습 결과':'🏋️'};
+      r.push(_modalGroupedInsights(sp.g4_train_insights, _g4tEmoji, 'g4-train', 28));
+    }
+    // === 🎯 후보 모델 (state 필드 — gate 도착 시 표시) ===
+    if(d.candidate_models&&Array.isArray(d.candidate_models)&&d.candidate_models.length){
+      r.push(_modalSection('🎯','후보 모델 (state)', d.candidate_models.slice(0,10), {mt:28, twk:'g4-cand'}));
+    }
+    // === ⚙️ 최적 하이퍼파라미터 (모델별) ===
+    if(d.best_params&&typeof d.best_params==='object'&&Object.keys(d.best_params).length){
+      const bpItems=[];
+      Object.keys(d.best_params).forEach(function(mn){
+        const p=d.best_params[mn];
+        const pStr=(p!=null&&typeof p==='object')?JSON.stringify(p):String(p==null?'':p);
+        bpItems.push(mn+' → '+pStr.slice(0,200));
+      });
+      r.push(_modalSection('⚙️','최적 하이퍼파라미터', bpItems, {mt:28, twk:'g4-hp'}));
+    }
+    // === 🏆 최적 모델 ===
+    if(d.best_model&&d.best_model.model_name){
+      r.push(_labelRow('🏆 최적 모델', d.best_model.model_name, {bold:true, mt:32, fs:24}));
+    }
+    // === 📊 학습 메트릭 ===
     if(d.best_model&&d.best_model.metrics&&typeof d.best_model.metrics==='object'){
-      const m=d.best_model.metrics, ks=Object.keys(m).slice(0,4);
-      if(ks.length) r.push(_labelRow('학습 메트릭', ks.map(function(k){return k+': '+fmtNum(m[k]);}).join(', ')));
+      const m=d.best_model.metrics, ks=Object.keys(m).slice(0,6);
+      if(ks.length){
+        r.push(_modalSection('📊','학습 메트릭', ks.map(function(k){return k+': '+fmtNum(m[k]);}), {mt:14, twk:'g4-met'}));
+      }
     }
     return _stageBox('🏋️','모델 학습', r);
   }
   // 5단계 (G5 — 평가·인사이트)
+  // HJ 2026-06-11 — G2 패턴(섹션 헤더 + 들여쓴 불릿). agent 끝나는 순서:
+  //   fine_tune → best_model 갱신 / eval_agent → eval_result / explainability / insight → insights
   if(cur===4){
     const r=[];
-    if(d.best_model&&d.best_model.model_name) r.push(_labelRow('대상 모델', d.best_model.model_name, {mt:8,bold:true}));
-    if(d.eval_result&&d.eval_result.rationale) r.push(_labelRow('평가 요약', d.eval_result.rationale, {fs:22}));
-    if(d.eval_result&&d.eval_result.metrics&&typeof d.eval_result.metrics==='object'){
-      const m=d.eval_result.metrics, ks=Object.keys(m).slice(0,4);
-      if(ks.length) r.push(_labelRow('평가 메트릭', ks.map(function(k){return k+': '+fmtNum(m[k]);}).join(', ')));
+    const sp=(d&&d.stage_partial)||{};
+    // === ▶ 라이브 진행 상태 (G2 와 동일 — 무조건 1줄 보장) ===
+    if(sp.g5_status){
+      r.push(_labelRow('▶ 현재 작업', sp.g5_status, {fs:22, mt:8, twk:'g5-status'}));
+    } else {
+      r.push(_labelRow('▶ 진행 상태', '모델 파인튜닝·평가·설명·인사이트를 생성하고 있습니다…', {fs:22, mt:8, twk:'g5-fallback'}));
     }
-    if(d.explainability) r.push(_labelRow('설명가능성', String(d.explainability).slice(0,200), {fs:22}));
-    if(d.insights&&typeof d.insights==='string'&&d.insights.length>20) r.push(_labelRow('인사이트', d.insights, {fs:22}));
+    // === 기본 정보 ===
+    if(d.best_model&&d.best_model.model_name) r.push(_labelRow('대상 모델', d.best_model.model_name, {mt:14, bold:true}));
+    // === 📊 평가 인사이트 (backend 자연어 publish) ===
+    if(Array.isArray(sp.g5_eval_insights)&&sp.g5_eval_insights.length){
+      var _g5eEmoji={'평가 결과':'📊','평가 메트릭':'📈','평가 요약':'💡','임계치 미달':'⚠️'};
+      r.push(_modalGroupedInsights(sp.g5_eval_insights, _g5eEmoji, 'g5-ev', 36));
+    }
+    // === 🔍 SHAP 인사이트 (상위 피처) ===
+    if(Array.isArray(sp.g5_shap_insights)&&sp.g5_shap_insights.length){
+      var _g5sEmoji={'SHAP 상위 피처':'🔍','SHAP 계산 실패':'⚠️','시계열 분해':'📉'};
+      r.push(_modalGroupedInsights(sp.g5_shap_insights, _g5sEmoji, 'g5-shap', 28));
+    }
+    // === 📝 최종 인사이트 (LLM 한국어 3~5문장 분리) ===
+    if(Array.isArray(sp.g5_final_insights)&&sp.g5_final_insights.length){
+      var _g5fEmoji={'인사이트':'📝'};
+      r.push(_modalGroupedInsights(sp.g5_final_insights, _g5fEmoji, 'g5-final', 28));
+    }
+    // === 📊 평가 메트릭 ===
+    if(d.eval_result&&d.eval_result.metrics&&typeof d.eval_result.metrics==='object'){
+      const m=d.eval_result.metrics, ks=Object.keys(m).slice(0,6);
+      if(ks.length){
+        r.push(_modalSection('📊','평가 메트릭', ks.map(function(k){return k+': '+fmtNum(m[k]);}), {mt:32, twk:'g5-met'}));
+      }
+    }
+    // === 💡 평가 요약 ===
+    if(d.eval_result&&d.eval_result.rationale){
+      r.push(_modalSection('💡','평가 요약', _toBullets(d.eval_result.rationale, 300), {mt:28, twk:'g5-ra'}));
+    }
+    // === 🔍 설명가능성 ===
+    if(d.explainability){
+      r.push(_modalSection('🔍','설명가능성', _toBullets(d.explainability, 300), {mt:28, twk:'g5-exp'}));
+    }
+    // === 📝 인사이트 ===
+    if(d.insights&&typeof d.insights==='string'&&d.insights.length>20){
+      r.push(_modalSection('📝','인사이트', _toBullets(d.insights, 500), {mt:28, twk:'g5-ins'}));
+    }
     return _stageBox('📈','평가 · 인사이트', r);
   }
   // 6단계 (G6 — 리포트·산출물)
+  // HJ 2026-06-11 — G2 패턴(섹션 헤더 + 들여쓴 불릿). agent 끝나는 순서:
+  //   report_composer → output_paths 누적 / self_learning_dispatch → 마무리
   if(cur===5){
     const r=[];
-    if(d.requested_outputs&&Array.isArray(d.requested_outputs)){
-      const OL={'OUT-01':'PPT','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'};
-      r.push(_labelRow('요청 산출물', d.requested_outputs.map(function(o){return OL[o]||o;}).join(', '), {mt:8,bold:true}));
+    const sp=(d&&d.stage_partial)||{};
+    const OL={'OUT-01':'PPT','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'};
+    // === ▶ 라이브 진행 상태 (G2 와 동일 — 무조건 1줄 보장) ===
+    if(sp.g6_status){
+      r.push(_labelRow('▶ 현재 작업', sp.g6_status, {fs:22, mt:8, twk:'g6-status'}));
+    } else {
+      r.push(_labelRow('▶ 진행 상태', '리포트 합성 및 학습 결과 저장을 진행하고 있습니다…', {fs:22, mt:8, twk:'g6-fallback'}));
     }
+    // === 📦 산출물 생성 인사이트 (backend 자연어 publish — 산출물별 ✓/✗) ===
+    if(Array.isArray(sp.g6_output_insights)&&sp.g6_output_insights.length){
+      var _g6Emoji={'산출물 생성':'📦','종합':'🎯'};
+      r.push(_modalGroupedInsights(sp.g6_output_insights, _g6Emoji, 'g6-out', 28));
+    }
+    // === 🎁 요청 산출물 ===
+    if(d.requested_outputs&&Array.isArray(d.requested_outputs)&&d.requested_outputs.length){
+      r.push(_modalSection('🎁','요청 산출물', d.requested_outputs.map(function(o){return OL[o]||o;}), {mt:28, twk:'g6-req'}));
+    }
+    // === ✅ 생성 완료 ===
     if(d.output_paths&&typeof d.output_paths==='object'){
-      const OL={'OUT-01':'PPT','OUT-02':'PDF 보고서','OUT-03':'발표 대본','OUT-04':'HTML 대시보드','OUT-07':'인사이트 요약'};
       const ks=Object.keys(d.output_paths);
-      if(ks.length) r.push(_labelRow('생성 완료', ks.map(function(o){return OL[o]||o;}).join(', '), {bold:true}));
+      if(ks.length){
+        r.push(_modalSection('✅','생성 완료', ks.map(function(o){return OL[o]||o;}), {mt:28, twk:'g6-done'}));
+      }
     }
-    if(d.insights&&typeof d.insights==='string'&&d.insights.length>20) r.push(_labelRow('포함될 인사이트', d.insights.slice(0,200), {fs:22}));
+    // === 📝 포함될 인사이트 ===
+    if(d.insights&&typeof d.insights==='string'&&d.insights.length>20){
+      r.push(_modalSection('📝','포함될 인사이트', _toBullets(d.insights, 400), {mt:28, twk:'g6-ins'}));
+    }
     return _stageBox('📦','리포트 · 산출물', r);
   }
   return '';
@@ -2089,7 +2317,7 @@ function render(){
       //   • 5초 게이트 통과 + 데이터 있음 → 실제 분석 내용 작성 (타자기 효과 자동 동작).
       //   • cur=2~5 placeholder 는 3~6단계 모달 구축 시 동일 패턴으로 확장.
       var _miEl=document.getElementById('modal-insight');
-      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();/* innerHTML 교체 후 즉시 1 tick → 진행 상태(_twState) 복원, blank flicker 방지 */}}
+      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();/* innerHTML 교체 후 즉시 1 tick → 진행 상태(_twState) 복원, blank flicker 방지 */}}
       // [3.5] 타자기 엔진 시작 (idempotent — 모달 노출 동안 계속 run)
       _twStart();
       // [4] 모래시계 pending 블록: 최초 1회만 초기화 → SVG 애니메이션 영구 유지

@@ -16,6 +16,18 @@ from ada.core.state import PipelineState
 from agents.base import BaseAgent
 from agents.handlers import get_handler
 
+
+# HJ 2026-06-11 — G5 모달 라이브 피드용. eda_agent.py 패턴 동일.
+def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
+    if not job_id or not isinstance(partial, dict) or not partial:
+        return
+    try:
+        from orchestrator.runner import publish_stage_partial as _psp
+
+        _psp(job_id, partial)
+    except Exception:  # noqa: BLE001
+        pass
+
 SYSTEM_PROMPT = """당신은 QA 평가관입니다. best_model.metrics + eval_result 를 보고
 모델 출시 가능성을 JSON 으로 종합 판단합니다.
 
@@ -30,6 +42,15 @@ class EvalAgent(BaseAgent):
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
+            # HJ 2026-06-11 — G5 모달 라이브 피드: eval 시작 즉시 status publish.
+            _safe_publish_stage_partial(
+                state.job_id,
+                {
+                    "g5_phase": "eval_start",
+                    "g5_status": f"모델 '{(state.best_model or {}).get('model_name', '미정')}' 평가 중…",
+                },
+            )
+
             # 1) 카테고리 핸들러로 임계치 판정
             eval_result: dict[str, Any] = {
                 "passed": True,
@@ -70,6 +91,41 @@ class EvalAgent(BaseAgent):
                     )
             except Exception as e:
                 self.logger.warning("eval_llm_skip", error=str(e))
+
+            # HJ 2026-06-11 — G5 모달 라이브 피드: 평가 결과 자연어 인사이트 publish.
+            # G2 의 eda_insights 패턴 — passed/메트릭/rationale/violations 자연어로.
+            try:
+                _g5_eval_insights: list[str] = []
+                bm_name = (state.best_model or {}).get("model_name", "?")
+                passed_txt = "✓ 통과" if eval_result.get("passed") else "✗ 미달"
+                _g5_eval_insights.append(f"평가 결과: {bm_name} → {passed_txt}")
+                metrics = eval_result.get("metrics") or {}
+                if metrics:
+                    _m_pairs = []
+                    for k in list(metrics.keys())[:5]:
+                        v = metrics[k]
+                        try:
+                            _m_pairs.append(f"{k}={float(v):.3f}")
+                        except (TypeError, ValueError):
+                            _m_pairs.append(f"{k}={v}")
+                    _g5_eval_insights.append(f"평가 메트릭: {', '.join(_m_pairs)}")
+                rt = str(eval_result.get("rationale") or "").strip()
+                if rt:
+                    _g5_eval_insights.append(f"평가 요약: {rt[:200]}")
+                violations = eval_result.get("threshold_violations") or []
+                if violations:
+                    _vs = [str(v)[:100] for v in violations[:3]]
+                    _g5_eval_insights.append(f"임계치 미달: {' / '.join(_vs)}")
+                _safe_publish_stage_partial(
+                    state.job_id,
+                    {
+                        "g5_phase": "eval_done",
+                        "g5_status": f"평가 완료 — {bm_name} {passed_txt}",
+                        "g5_eval_insights": _g5_eval_insights,
+                    },
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("g5_eval_insights_publish_failed", error=str(e))
 
             # 3) 분기
             if eval_result["passed"]:
