@@ -662,13 +662,22 @@ def test_pca_reduction_stricter_v2(anomaly_state):
 
 
 def test_contamination_method_field_present(anomaly_state, anomaly_df):
-    """P7 — 'trimmed_mean' (4+ 소스)."""
+    """P7 → ★ V4 — 'consensus_weighted' (uni-median + IF/LOF 합의 게이트)."""
     from agents.handlers.anomaly.profiler import profile
 
     extra = profile(anomaly_df, anomaly_state)
     assert "contamination_method" in extra
     if extra["contamination_sources_used"] >= 4:
-        assert extra["contamination_method"] == "trimmed_mean"
+        assert extra["contamination_method"] == "consensus_weighted"
+
+
+def test_contamination_spread_present(anomaly_state, anomaly_df):
+    """★ V4 — contamination_spread (소스 간 불일치 폭) ≥ 0."""
+    from agents.handlers.anomaly.profiler import profile
+
+    extra = profile(anomaly_df, anomaly_state)
+    assert "contamination_spread" in extra
+    assert extra["contamination_spread"] >= 0.0
 
 
 def test_contamination_breakdown_present(anomaly_state, anomaly_df):

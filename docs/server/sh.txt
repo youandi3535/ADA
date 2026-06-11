@@ -1,1 +1,0 @@
-/opt/ada/scripts/daily_check.sh 로 저장해두고 매일 아침 한 번 하기

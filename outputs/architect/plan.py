@@ -64,11 +64,13 @@ SLIDE_ROLES: tuple[str, ...] = (
 
 @dataclass
 class NarrativeThread:
-    """보고서 전체의 3문장 줄거리 (Part 7-5)."""
+    """보고서 줄거리 (Part 7-5). ES 는 headline(핵심 메세지) + 문제→원인→해결→대응."""
 
-    setup: str = ""  # "현재 상황은 X 이다"
-    conflict: str = ""  # "문제는 Y 이다"
-    resolution: str = ""  # "해결은 Z 이며 영향은 W"
+    headline: str = ""  # 핵심 메세지 1문장 — 결정권자가 이것만 봐도 되는 정수 (측정가능·단정조)
+    setup: str = ""  # 문제 (상황)
+    conflict: str = ""  # 원인 (핵심 동인)
+    resolution: str = ""  # 해결 (결과 — 측정가능·기준선 대비)
+    recommendation: str = ""  # 대응 (실행 방향)
 
 
 @dataclass
@@ -128,6 +130,7 @@ class SlideSpec:
     required_refs: list[str] = field(default_factory=list)  # 필수 ref_id (Architect 검증용)
     optional_refs: list[str] = field(default_factory=list)
     title_ko: str = ""  # 슬라이드 헤더 제목 (Section 명 또는 짧은 제목)
+    prose_blocks: list[list[str]] = field(default_factory=list)  # [[라벨, 단락텍스트(<br/> 허용)], ...] — 산문형 본문
 
 
 @dataclass
