@@ -1155,15 +1155,19 @@ def draw_big_stats(slide, items, primary, accent, ink, muted, light_bg):
         add_rect(slide, x, y, card_w, card_h, bg)
         # Top thin line
         add_rect(slide, x + 1.0, y + 1.5, card_w - 2.0, 0.06, accent if is_solid else primary)
-        # HUGE number
+        # HUGE number — jh 2026-06-11: 길이별 자동 폰트.
+        # 고정 128pt 는 "79%" 같은 3자도 카드 폭 초과 줄바꿈 (probe 실측) →
+        # 카드 폭 (avail/n) 과 글자 수에서 안전 폰트 도출.
+        _val = str(item.get("value", "0"))
+        _size = {1: 128, 2: 128, 3: 110, 4: 92, 5: 76, 6: 64}.get(len(_val), 54)
         add_text_box(
             slide,
             x,
             y + 2.5,
             card_w,
             6.0,
-            str(item.get("value", "0")),
-            size_pt=128,
+            _val,
+            size_pt=_size,
             bold=True,
             color_hex=num_color,
             align="center",

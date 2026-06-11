@@ -81,8 +81,11 @@ def t_big_stats(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         vs = f"{v * 100:.0f}%" if isinstance(v, float) and v < 1 else str(v)
         items.append({"value": vs, "label": pm.get("name", "").upper(), "caption": "대표 평가 지표"})
     items.append({"value": f"{ctx.dataset.shape.get('rows', 0):,}", "label": "DATA POINTS", "caption": "분석 규모"})
-    if ctx.evaluation.business_kpi:
-        kpi = ctx.evaluation.business_kpi[0]
+    # jh 2026-06-11 — confidence=low 인 휴리스틱 KPI 는 Exec Summary 대형 숫자로
+    # 부적합 (창작 수치 노출 위험). high/medium 만 채택.
+    _solid_kpis = [k for k in (ctx.evaluation.business_kpi or []) if k.confidence != "low"]
+    if _solid_kpis:
+        kpi = _solid_kpis[0]
         items.append(
             {
                 "value": f"{kpi.estimated_value:.1f}{kpi.unit}",

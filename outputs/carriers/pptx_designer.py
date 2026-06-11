@@ -161,6 +161,18 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     total = len(slides_flat)
     page_num = 0
 
+    # === LLM 카피라이팅 (Phase 3 — jh 2026-06-11) ===
+    # 템플릿 구성 (SlideSpec 슬롯) + ctx 데이터로 덱 전체 문장 1회 채움.
+    # 실패 시 skeleton 초안 문장 유지.
+    try:
+        _prefill_copy(slides_flat, ctx)
+    except Exception as _e:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("pptx_designer").warning(
+            "prefill_copy_failed_keep_draft: %s", _e, exc_info=True
+        )
+
     # === LLM 디자인 일괄 선택 (Step 6-3) ===
     # 각 슬라이드의 후보 N개를 LLM 한테 보여주고 1개 선택 받음.
     # 결과는 slide.preferred_template 에 저장 — REGISTRY.best_for() 가 1순위로 인식.
@@ -622,6 +634,12 @@ def _icon_name_for_sl(sl: SlideSpec) -> str:
 
 def _draw_header(slide, sl: SlideSpec, primary: str, ink: str, muted: str):
     """Top header band: left accent + Lucide icon (if available) + title + so-what."""
+    # jh 2026-06-11 — 멱등 가드. _draw_slide 진입부와 템플릿 draw 내부가 각자
+    # 헤더를 호출해 같은 좌표에 5개 shape 가 이중으로 겹쳐 그려지던 버그 (probe 실측).
+    if getattr(slide, "_ada_header_drawn", False):
+        return
+    slide._ada_header_drawn = True
+
     # Left vertical accent bar
     add_vertical_accent(slide, 1.0, 1.0, 1.3, primary, w_cm=0.18)
 
@@ -1489,6 +1507,34 @@ def _draw_donut(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 # ==============================================================
 # LLM 디자인 일괄 선택 (Step 6-3)
 # ==============================================================
+
+
+def _prefill_copy(slides_flat: list, ctx) -> None:
+    """덱 전체 문장 LLM 채움 (Phase 3) — 결과를 SlideSpec 에 in-place 반영.
+
+    템플릿 소환 → 구성 파악 → 데이터 수집 → 문장 채움 순서의 마지막 단계.
+    실패 시 조용히 두지 않고 호출측에서 warning 로깅 (skeleton 초안 유지).
+    """
+    import asyncio
+
+    from outputs.carriers.llm_copywriter import LLMCopywriter
+
+    writer = LLMCopywriter()
+
+    async def _run():
+        return await writer.fill_deck(slides_flat, ctx)
+
+    fills = asyncio.run(_run())
+    for sl in slides_flat:
+        fill = fills.get(sl.id)
+        if not fill:
+            continue
+        if fill.get("title_ko"):
+            sl.title_ko = fill["title_ko"]
+        if fill.get("so_what"):
+            sl.so_what = fill["so_what"]
+        if fill.get("body_outline"):
+            sl.body_outline = fill["body_outline"]
 
 
 def _prepick_designs(slides_flat: list, ctx) -> None:

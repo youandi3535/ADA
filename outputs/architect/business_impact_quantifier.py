@@ -48,8 +48,10 @@ def quantify_business_impact(ctx: ReportContext) -> ReportContext:
                     confidence="low",
                 )
             )
-    # 수요·매출 예측
-    elif any(kw in text for kw in ("수요", "매출", "판매", "forecast", "예측")):
+    # 수요·매출 예측 — jh 2026-06-11: "예측" 단독 키워드 제거.
+    # 거의 모든 intent 에 "예측" 이 포함돼 (예: Titanic "생존 예측") 무관한
+    # "재고 회전 개선 8.0%" 하드코딩 KPI 가 Exec Summary 에 노출되던 오염 수정.
+    elif any(kw in text for kw in ("수요", "매출", "판매", "재고", "forecast")):
         kpis.append(
             BusinessKPI(
                 name="재고 회전 개선",
