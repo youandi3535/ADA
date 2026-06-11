@@ -536,9 +536,10 @@ class AnalysisProposerAgent(BaseGate):
             if chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
                 direction = chosen["title"].strip()
                 base = (state.user_intent or "").strip()
-                updates["user_intent"] = (
-                    f"{base} (분석 방향: {direction})".strip() if base else f"분석 방향: {direction}"
-                )
+                # HJ 2026-06-11 (jh 대행) — 멱등 부착 (resume 누적 오염 수정)
+                from agents.gates._intent import append_intent_tag
+
+                updates["user_intent"] = append_intent_tag(base, "분석 방향", direction)
 
                 # Method A: LLM 이 proposal 에 category 를 채워줬으면 그대로 반영
                 if "category" not in updates:
@@ -585,7 +586,9 @@ class AnalysisProposerAgent(BaseGate):
         if isinstance(topic, str) and topic.strip():
             base = updates.get("user_intent") or state.user_intent or ""
             if topic.strip() not in (base or ""):
-                updates["user_intent"] = f"{base} (주제: {topic.strip()})".strip() if base else f"주제: {topic.strip()}"
+                from agents.gates._intent import append_intent_tag
+
+                updates["user_intent"] = append_intent_tag(base, "주제", topic)
             self.logger.info("g2_topic_adopted", topic=topic.strip()[:80])
 
         self.logger.info(

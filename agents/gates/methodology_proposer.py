@@ -379,7 +379,10 @@ class MethodologyProposerAgent(BaseGate):
         custom = uc.get("custom_intent")
         _DEFAULT_META = {"variate": None, "forecast_kind": None, "task_kind": None, "horizon_hint": None}
         if isinstance(custom, str) and custom.strip():
-            updates["user_intent"] = f"{(state.user_intent or '').strip()} (방법론: {custom.strip()})".strip()
+            # HJ 2026-06-11 (jh 대행) — 멱등 부착 (resume 누적 오염 수정)
+            from agents.gates._intent import append_intent_tag
+
+            updates["user_intent"] = append_intent_tag(state.user_intent, "방법론", custom)
             if "category" not in updates:
                 inferred = _infer_category_from_text(custom, state.category)
                 if inferred != state.category and _category_feasible(inferred, state.data_profile):
@@ -402,7 +405,9 @@ class MethodologyProposerAgent(BaseGate):
             if chosen and isinstance(chosen.get("title"), str) and chosen["title"].strip():
                 method = chosen["title"].strip()
                 base = (state.user_intent or "").strip()
-                updates["user_intent"] = f"{base} (방법론: {method})" if base else f"방법론: {method}"
+                from agents.gates._intent import append_intent_tag
+
+                updates["user_intent"] = append_intent_tag(base, "방법론", method)
                 # proposal 에 category 가 들어 있으면 우선 사용
                 if "category" not in updates:
                     new_cat = chosen.get("category")

@@ -1,12 +1,18 @@
-"""agents.handlers.tabular.eda — 정형 EDA (jh 담당)."""
+"""agents.handlers.tabular.eda — 정형 EDA (jh 담당).
+
+2026-06-11 — charts() 가 (paths, meta) 튜플 반환으로 확장.
+meta 는 EDAChart 필드 (x/finding/numbers/title_ko/chart_type) 로,
+eda_agent 가 ReportContext ⑤ eda.charts 에 적립 → PPT skeleton 이
+"Feature 1" 플레이스홀더 대신 실제 피처명·수치를 인용.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 
-def charts(df: Any, state: Any) -> list[str]:
-    """결측 / 분포 / 상관 3종."""
+def charts(df: Any, state: Any) -> tuple[list[str], list[dict]]:
+    """결측 / 분포 / 상관 / target 관계 4종 — (paths, meta) 반환."""
     import matplotlib  # noqa: WPS433
 
     matplotlib.use("Agg")
@@ -15,15 +21,38 @@ def charts(df: Any, state: Any) -> list[str]:
     from agents.handlers.common.shared import save_chart_to_minio
 
     paths: list[str] = []
+    meta: list[dict] = []
 
     # 1) 결측
     try:
-        miss = df.isnull().mean().sort_values(ascending=False).head(20)
+        miss_all = df.isnull().mean().sort_values(ascending=False)
+        miss = miss_all.head(20)
         if not miss.empty:
             fig, ax = plt.subplots(figsize=(8, 4))
             miss.plot(kind="barh", ax=ax)
             ax.set_title("Missing rate (top 20) — tabular")
-            paths.append(save_chart_to_minio(fig, kind="tabular/missing", job_id=state.job_id))
+            p = save_chart_to_minio(fig, kind="tabular/missing", job_id=state.job_id)
+            if p:
+                paths.append(p)
+                top = miss_all[miss_all > 0].head(3)
+                if not top.empty:
+                    finding = " · ".join(f"{c} {v:.1%}" for c, v in top.items()) + " 결측"
+                    x_col = str(top.index[0])
+                else:
+                    finding = "전 컬럼 결측 0% — 결측 처리 불필요"
+                    x_col = None
+                meta.append(
+                    {
+                        "path": p,
+                        "chart_type": "bar",
+                        "x": x_col,
+                        "title_ko": "결측률 상위 피처",
+                        "finding": finding,
+                        "numbers": [
+                            {"name": str(c), "value": round(float(v), 4)} for c, v in top.items()
+                        ],
+                    }
+                )
     except Exception:
         pass
 
@@ -37,7 +66,10 @@ def charts(df: Any, state: Any) -> list[str]:
                 df[c].plot(kind="hist", ax=ax, bins=30)
                 ax.set_title(str(c))
             fig.tight_layout()
-            paths.append(save_chart_to_minio(fig, kind="tabular/hist", job_id=state.job_id))
+            p = save_chart_to_minio(fig, kind="tabular/hist", job_id=state.job_id)
+            if p:
+                paths.append(p)
+                meta.append(_hist_meta(df, num_cols, p))
         except Exception:
             pass
 
@@ -53,21 +85,161 @@ def charts(df: Any, state: Any) -> list[str]:
             ax.set_yticklabels(corr.columns)
             fig.colorbar(im, ax=ax)
             ax.set_title("Correlation")
-            paths.append(save_chart_to_minio(fig, kind="tabular/corr", job_id=state.job_id))
+            p = save_chart_to_minio(fig, kind="tabular/corr", job_id=state.job_id)
+            if p:
+                paths.append(p)
+                meta.append(_corr_meta(corr, p))
         except Exception:
             pass
 
     # 4) Day 11 (jh) — target ↔ feature 관계 차트
-    #    분류 : class별 boxplot grid (수치 피처 6개)
-    #    회귀 : scatter + 회귀선 grid (수치 피처 6개)
     target = getattr(state, "target_column", None)
     if target and target in df.columns and len(num_cols):
         try:
-            paths.append(_build_target_feature_chart(df, target, num_cols, state))
+            p = _build_target_feature_chart(df, target, num_cols, state)
+            if p:
+                paths.append(p)
+                meta.append(_target_meta(df, target, num_cols, p))
         except Exception:
             pass
 
-    return [p for p in paths if p]
+    paths = [p for p in paths if p]
+    meta = [m for m in meta if m.get("path") in set(paths)]
+    return paths, meta
+
+
+# ==============================================================
+# meta 계산 — 차트별 실수치 finding (2026-06-11 jh)
+# ==============================================================
+
+
+def _hist_meta(df: Any, num_cols: Any, path: str) -> dict:
+    """분포 grid — 왜도 최대 피처를 대표로."""
+    finding = f"수치 피처 {len(num_cols)}개 분포"
+    x_col = str(num_cols[0])
+    numbers: list[dict] = []
+    try:
+        skews = df[num_cols].skew(numeric_only=True).abs().sort_values(ascending=False)
+        top = skews.index[0]
+        x_col = str(top)
+        s = df[top]
+        finding = (
+            f"{top} 분포 비대칭 (왜도 {df[top].skew():.1f}) — "
+            f"중앙값 {s.median():.3g} vs 평균 {s.mean():.3g}"
+        )
+        numbers = [
+            {"name": f"{top} median", "value": round(float(s.median()), 3)},
+            {"name": f"{top} mean", "value": round(float(s.mean()), 3)},
+            {"name": f"{top} skew", "value": round(float(s.skew()), 2)},
+        ]
+    except Exception:
+        pass
+    return {
+        "path": path,
+        "chart_type": "hist",
+        "x": x_col,
+        "title_ko": "수치형 분포",
+        "finding": finding,
+        "numbers": numbers,
+    }
+
+
+def _corr_meta(corr: Any, path: str) -> dict:
+    """상관 히트맵 — |r| 최대 쌍."""
+    finding = "수치 피처 간 상관 구조"
+    x_col = None
+    numbers: list[dict] = []
+    try:
+        pairs = []
+        cols = list(corr.columns)
+        for i in range(len(cols)):
+            for j in range(i + 1, len(cols)):
+                r = float(corr.iloc[i, j])
+                if r == r:  # NaN 제외
+                    pairs.append((abs(r), r, cols[i], cols[j]))
+        pairs.sort(reverse=True)
+        if pairs:
+            _, r, a, b = pairs[0]
+            x_col = str(a)
+            finding = f"{a} ↔ {b} 상관 최대 (r={r:.2f})"
+            numbers = [
+                {"name": f"{a}↔{b}", "value": round(rr, 2)} for _, rr, a, b in pairs[:3]
+            ]
+    except Exception:
+        pass
+    return {
+        "path": path,
+        "chart_type": "corr_heatmap",
+        "x": x_col,
+        "title_ko": "변수 간 상관",
+        "finding": finding,
+        "numbers": numbers,
+    }
+
+
+def _target_meta(df: Any, target: str, num_cols: Any, path: str) -> dict:
+    """target 관계 — 분류면 그룹별 격차 최대 신호 (범주형 포함), 회귀면 최대 상관."""
+    finding = f"{target} 와 피처 관계"
+    x_col = None
+    numbers: list[dict] = []
+    try:
+        n_unique = int(df[target].nunique(dropna=True))
+        is_classification = n_unique <= 20
+
+        if is_classification and n_unique == 2:
+            # 이진 분류 — 범주형 피처 중 양성률 격차 최대 (예: Sex 74% vs 19%)
+            pos = sorted(df[target].dropna().unique())[-1]
+            best = None
+            cat_cols = [
+                c for c in df.columns
+                if c != target and df[c].nunique(dropna=True) <= 10 and not str(df[c].dtype).startswith("float")
+            ]
+            for c in cat_cols:
+                try:
+                    rates = df.groupby(c)[target].apply(lambda s: (s == pos).mean())
+                    counts = df[c].value_counts()
+                    rates = rates[counts[rates.index] >= max(10, len(df) * 0.01)]
+                    if len(rates) >= 2:
+                        gap = float(rates.max() - rates.min())
+                        if best is None or gap > best[0]:
+                            best = (gap, c, rates)
+                except Exception:
+                    continue
+            if best:
+                gap, c, rates = best
+                hi, lo = rates.idxmax(), rates.idxmin()
+                x_col = str(c)
+                finding = (
+                    f"{c} 가 최대 격차 — {hi} {rates.max():.0%} vs {lo} {rates.min():.0%} "
+                    f"({gap * 100:.0f}%p)"
+                )
+                numbers = [
+                    {"name": f"{c}={k}", "value": round(float(v), 3)} for k, v in rates.items()
+                ][:4]
+        elif not is_classification:
+            # 회귀 — target 과 상관 최대 수치 피처
+            feats = [c for c in num_cols if c != target]
+            if feats:
+                corr_t = df[feats + [target]].corr()[target].drop(target).dropna()
+                if not corr_t.empty:
+                    top = corr_t.abs().idxmax()
+                    x_col = str(top)
+                    finding = f"{top} 가 {target} 와 최대 상관 (r={corr_t[top]:.2f})"
+                    numbers = [
+                        {"name": str(k), "value": round(float(v), 2)}
+                        for k, v in corr_t.abs().sort_values(ascending=False).head(3).items()
+                    ]
+    except Exception:
+        pass
+    return {
+        "path": path,
+        "chart_type": "box" if x_col else "scatter",
+        "x": x_col,
+        "y": target,
+        "title_ko": f"{target} 결정 요인",
+        "finding": finding,
+        "numbers": numbers,
+    }
 
 
 def _build_target_feature_chart(df: Any, target: str, num_cols: Any, state: Any) -> str | None:

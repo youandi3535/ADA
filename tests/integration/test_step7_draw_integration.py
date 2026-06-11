@@ -142,3 +142,20 @@ class TestLLMDesignerInstantiable:
         designer = LLMDesigner()
         sentinel = object()
         assert asyncio.run(designer(sentinel)) is sentinel
+
+    def test_parse_json_lenient_extracts_wrapped_json(self):
+        """한국어 가드로 인한 'JSON 앞뒤 잡설' 케이스에서 JSON 블록 추출."""
+        from outputs.carriers.llm_designer import LLMDesigner
+
+        d = LLMDesigner()
+        wrapped = '다음과 같이 선택했습니다.\n{"chosen_template": "kpi_cards", "nested": {"a": 1}}\n이상입니다.'
+        parsed = d._parse_json_lenient(wrapped)
+        assert parsed == {"chosen_template": "kpi_cards", "nested": {"a": 1}}
+
+    def test_parse_json_lenient_truncated_returns_none(self):
+        """max_tokens 절단으로 닫히지 않은 JSON 은 None (폴백 경로)."""
+        from outputs.carriers.llm_designer import LLMDesigner
+
+        d = LLMDesigner()
+        assert d._parse_json_lenient('{"chosen_template": "kpi_cards", "palette') is None
+        assert d._parse_json_lenient("") is None
