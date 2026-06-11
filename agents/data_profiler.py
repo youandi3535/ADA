@@ -118,6 +118,46 @@ class DataProfilerAgent(BaseAgent):
             )
             if category not in CATEGORIES:
                 category = "tabular_ml"
+            # CS 2026-06-11 — 최후 수단 가드 (시계열·이상탐지). 모든 분류 경로 통과 후.
+            # _detect_category_safe 는 (1) 사용자 G1 선택값 (2) prefetch cache (3) LLM 호출
+            # 3가지 중 하나 반환. _llm_detect_category 안의 가드는 (3) 만 통과.
+            # 여기에서 가드 적용해야 (1)(2)(3) 모두 통과 보장. 본인 명시 "강제는 최후 수단".
+            try:
+                if category != "timeseries":
+                    from agents.handlers.timeseries.profiler import _detect_date_column  # noqa: WPS433
+
+                    _dc = _detect_date_column(df)
+                    if _dc:
+                        self.logger.info(
+                            "category_last_resort_post_to_timeseries",
+                            original=category,
+                            detected_date_col=str(_dc),
+                        )
+                        category = "timeseries"
+                        if not isinstance(detection, dict):
+                            detection = {}
+                        detection["post_date_override"] = True
+                        detection["detected_date_col"] = str(_dc)
+                if category not in ("timeseries", "anomaly_detection"):
+                    _intent_lc = (intent or "").lower()
+                    _anomaly_keywords = (
+                        "이상탐지", "이상 탐지", "anomaly", "outlier", "novelty",
+                        "사기", "fraud", "이탈", "비정상",
+                    )
+                    _hits = [k for k in _anomaly_keywords if k in _intent_lc or k in (intent or "")]
+                    if _hits and not target_column:
+                        self.logger.info(
+                            "category_last_resort_post_to_anomaly",
+                            original=category,
+                            intent_hits=_hits[:3],
+                        )
+                        category = "anomaly_detection"
+                        target_column = None
+                        if not isinstance(detection, dict):
+                            detection = {}
+                        detection["post_anomaly_override"] = True
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("post_last_resort_failed", error=str(e))
             await self._persist_detection(state, category, target_column)
 
             # 2단계: 도메인 LLM 호출과 CPU profile/data_card 빌드를 동시 실행 (E)
@@ -334,11 +374,42 @@ class DataProfilerAgent(BaseAgent):
             sample = df.head(3).fillna("").astype(str).to_dict(orient="records")
         except Exception:
             sample = []
+        # CS 2026-06-11 — 4 카테고리 인지 신호를 LLM 에 제공 (강제 X, 인지 보조).
+        #   timeseries: timeseries handler 의 _detect_date_column (datetime/한글/wide format/내용)
+        #   anomaly_detection: intent 키워드 (이상탐지/사기/outlier 등)
+        #   tabular_dl: 대용량 신호 (rows·cols)
+        #   tabular_ml: 그 외 (default)
+        # LLM 이 신호 보고 자체 판단 → 카테고리 결정 (override X).
+        _date_signal = "none"
+        try:
+            from agents.handlers.timeseries.profiler import _detect_date_column  # noqa: WPS433
+
+            _dc = _detect_date_column(df)
+            if _dc:
+                _date_signal = str(_dc)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            _rows = int(df.shape[0]) if hasattr(df, "shape") else 0
+            _cols_n = int(df.shape[1]) if hasattr(df, "shape") else 0
+        except Exception:  # noqa: BLE001
+            _rows = _cols_n = 0
+        _anomaly_keywords = (
+            "이상탐지", "이상 탐지", "anomaly", "outlier", "novelty",
+            "사기", "fraud", "이탈", "비정상",
+        )
+        _intent_lc = (intent or "").lower()
+        _anomaly_hits = [k for k in _anomaly_keywords if k in _intent_lc or k in (intent or "")]
+        _anomaly_signal = ", ".join(_anomaly_hits[:3]) if _anomaly_hits else "none"
+        _scale_signal = f"rows={_rows}, cols={_cols_n}"
         user_prompt = (
             f"columns: {profile.get('columns', [])}\n"
             f"dtypes: {_json.dumps(profile.get('dtypes', {}), ensure_ascii=False)}\n"
             f"sample_rows: {_json.dumps(sample, ensure_ascii=False)[:2000]}\n"
-            f"user_intent: {intent or 'none'}"
+            f"user_intent: {intent or 'none'}\n"
+            f"date_column_detected: {_date_signal}\n"
+            f"anomaly_intent_keywords: {_anomaly_signal}\n"
+            f"data_scale: {_scale_signal}"
         )
         raw = await self._call_llm(
             system_prompt=_CATEGORY_SYSTEM_PROMPT,
@@ -351,11 +422,59 @@ class DataProfilerAgent(BaseAgent):
         category = parsed.get("category", "tabular_ml")
         target_column = parsed.get("target_column") or None
         reason = parsed.get("reason", "")
+        # CS 2026-06-11 — 본인 명시: "강제는 최후 수단". user_prompt 에 date_column_detected 신호를
+        # 줬는데도 LLM 이 timeseries 외로 분류한 경우만 보정 (= 최후 안전망).
+        # gate_methodology 의 _infer_category_from_text 가 사용자 선택 후 재분류로 보정하지만
+        # 그 사이 5~33% 구간이 정형으로 표시되는 문제 방지.
+        date_override = False
+        anomaly_override = False
+        # (1) 시계열 최후 수단 — date 컬럼 명확 + LLM 누락
+        if category != "timeseries":
+            try:
+                from agents.handlers.timeseries.profiler import _detect_date_column  # noqa: WPS433
+
+                _dc = _detect_date_column(df)
+                if _dc:
+                    self.logger.info(
+                        "category_last_resort_to_timeseries",
+                        original=category,
+                        detected_date_col=str(_dc),
+                    )
+                    reason = f"date 컬럼({_dc}) 명확 + LLM 누락 → 시계열 보정 (최후 수단)"
+                    category = "timeseries"
+                    date_override = True
+            except Exception:  # noqa: BLE001
+                pass
+        # (2) 이상탐지 최후 수단 — intent 키워드 + target 미지정 + LLM 누락
+        if category not in ("timeseries", "anomaly_detection"):
+            try:
+                _intent_lc = (intent or "").lower()
+                _anomaly_keywords = (
+                    "이상탐지", "이상 탐지", "anomaly", "outlier", "novelty",
+                    "사기", "fraud", "이탈", "비정상",
+                )
+                _hits = [k for k in _anomaly_keywords if k in _intent_lc or k in (intent or "")]
+                if _hits and not target_column:
+                    self.logger.info(
+                        "category_last_resort_to_anomaly",
+                        original=category,
+                        intent_hits=_hits[:3],
+                    )
+                    reason = f"intent 키워드({', '.join(_hits[:2])}) + target 없음 + LLM 누락 → 이상탐지 보정 (최후 수단)"
+                    category = "anomaly_detection"
+                    target_column = None
+                    anomaly_override = True
+            except Exception:  # noqa: BLE001
+                pass
         detection = {
             "detected_category": category,
             "detected_target": target_column,
             "reason": reason,
-            "signals": {"llm_inferred": True},
+            "signals": {
+                "llm_inferred": True,
+                "date_override": date_override,
+                "anomaly_override": anomaly_override,
+            },
         }
         return category, target_column, detection
 

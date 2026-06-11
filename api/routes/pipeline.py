@@ -283,12 +283,37 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             ):
                 v = _gd.get(k)
                 if v is not None:
+                    # CS 2026-06-11 — gate_data 의 stale "category": "pending" 이
+                    # job.category(이미 _persist_detection 으로 정확히 갱신됨)를
+                    # 다시 "pending" 으로 덮어써서 아래 휴리스틱이 tabular_ml 로
+                    # 강제 확정시키는 문제 방지.
+                    if k == "category" and (not v or v == "pending") and data.get("category") not in (None, "", "pending"):
+                        continue
                     data[k] = v
             # output_paths: gate_data 값이 있으면 DB 값을 덮어씀 (완료 후 저장된 게 정확)
             if _gd.get("output_paths"):
                 data["output_paths"] = {**(data.get("output_paths") or {}), **_gd["output_paths"]}
     except Exception:  # noqa: BLE001
         pass
+
+    # CS 2026-06-11 — category 누락/pending 보정.
+    # data_profiler 완료 전에 _save_g2_screen_ready 가 실행되면 Redis 에 category="pending"
+    # 또는 None 이 저장될 수 있고, 그 결과 frontend gateHeader 가 _default 로 떨어진다.
+    # data_profile 기반 휴리스틱으로 4 카테고리 중 하나를 강제 보장 → 어떤 데이터든 정상 표시.
+    if not data.get("category") or data.get("category") == "pending":
+        _dp = data.get("data_profile") or {}
+        _date_col = _dp.get("date_col") or _dp.get("detected_time_col")
+        _has_target = bool(data.get("target_column") or _dp.get("has_target") or _dp.get("detected_target"))
+        _rows = int(_dp.get("rows") or (_dp.get("shape") or {}).get("rows") or 0)
+        _cols = int(_dp.get("cols") or (_dp.get("shape") or {}).get("cols") or 0)
+        if _date_col:
+            data["category"] = "timeseries"
+        elif not _has_target and _rows >= 500:
+            data["category"] = "anomaly_detection"
+        elif _rows >= 50_000 and _cols >= 20:
+            data["category"] = "tabular_dl"
+        else:
+            data["category"] = "tabular_ml"
 
     try:
         rows = (await db.scalars(select(Output).where(Output.job_id == job.id))).all()

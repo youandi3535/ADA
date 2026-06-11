@@ -142,8 +142,11 @@ class SupervisorAgent(BaseAgent):
         # pending/auto 는 data_profiler 가 자동 감지하는 플레이스홀더 → 여기서 거부 금지
         if state.category not in VALID_CATEGORIES and state.category not in ("pending", "auto"):
             errs.append(f"유효하지 않은 카테고리: {state.category}")
-        if state.category == "timeseries" and not state.target_column:
-            errs.append("timeseries 카테고리는 target_column 필수")
+        # CS 2026-06-11 — wide-format(시점 컬럼이 헤더인) 시계열 데이터는 단일
+        # target_column 이 없을 수 있음. timeseries handler 가 target_column=None
+        # 을 graceful 하게 처리(타겟 자동 추천 + timeseries_warning)하므로,
+        # 여기서 하드 차단하면 정상 분류된 wide-format 데이터가 pipeline_ended_with_error
+        # 로 떨어짐. schema_validator 도 동일 사유로 강제 변경 대신 warning 으로 완화함.
         if not state.file_id:
             errs.append("file_id 누락")
         return len(errs) == 0, errs

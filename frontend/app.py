@@ -332,6 +332,35 @@ const STAGE_TRANSITION_DESC={
   4:{ko:'모델 학습 중입니다',en:'Training models'},
   5:{ko:'평가·인사이트 분석 중입니다',en:'Running evaluation & insight analysis'}
 };
+// CS 2026-06-10 — 카테고리별 헤더 매핑 (h2 + en + desc).
+// 우선 G2 정적(cur=1) + G2→G3 로딩(cur=2) 만 적용. 나머지 게이트는 본인 확인 후 일괄.
+const GATE_HEADER_BY_CATEGORY={
+  static:{
+    1:{
+      tabular_ml:{h2:'어떤 정형 ML 데이터의 분석 방향으로 진행할까요?',en:'Choose your tabular ML analysis direction',desc:'분포·결측·도메인 등 정형 ML 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 분석 방향으로 진행할까요?',en:'Choose your tabular DL analysis direction',desc:'고차원·피처 분포 등 정형 DL 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
+      timeseries:{h2:'어떤 시계열 데이터의 분석 방향으로 진행할까요?',en:'Choose your time series analysis direction',desc:'정상성·자기상관·계절성 등 시계열 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 분석 방향으로 진행할까요?',en:'Choose your anomaly detection analysis direction',desc:'분포·outlier 후보·tail 등 이상탐지 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 분석 방향으로 진행할까요?',en:'Choose your data analysis direction',desc:'데이터 특성 파악을 마쳤습니다. 분석 방향을 선택해주세요.'}
+    }
+  },
+  loading:{
+    1:{
+      tabular_ml:{h2:'정형 데이터의 EDA 작업 중입니다',en:'G2 — Tabular Data EDA',desc:'정형 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 EDA 작업 중입니다',en:'G2 — Tabular DL Data EDA',desc:'정형 DL 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      timeseries:{h2:'시계열 데이터의 EDA 작업 중입니다',en:'G2 — Time Series Data EDA',desc:'시계열 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 EDA 작업 중입니다',en:'G2 — Anomaly Detection Data EDA',desc:'이상탐지 ML 데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      _default:{h2:'데이터의 EDA 작업 중입니다',en:'G2 — Data EDA',desc:'데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'}
+    },
+    2:{
+      tabular_ml:{h2:'정형 ML 데이터의 EDA 작업 중입니다',en:'G2 — Tabular ML Data EDA',desc:'분포·결측·상관관계·클래스 균형 등 정형 ML EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 EDA 작업 중입니다',en:'G2 — Tabular DL Data EDA',desc:'고차원 시각화·피처 상호작용 등 정형 DL EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
+      timeseries:{h2:'시계열 데이터의 EDA 작업 중입니다',en:'G2 — Time Series Data EDA',desc:'정상성 검정·자기상관·계절성 분해 등 시계열 특화 EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 EDA 작업 중입니다',en:'G2 — Anomaly Detection Data EDA',desc:'이상탐지 신호·contamination 추정·heavy-tail 분석을 진행하고 방법론 후보를 평가하는 중입니다.'},
+      _default:{h2:'데이터의 EDA 작업 중입니다',en:'G2 — Data EDA',desc:'데이터 특성에 맞는 EDA를 진행하고 방법론 후보를 평가하는 중입니다.'}
+    }
+  }
+};
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 let _suppressG1Advance=false; // 사용자가 뒤로가기로 G1 으로 이동했을 때 자동 G1→G2 전환 억제
@@ -1223,24 +1252,30 @@ function progressBar(){
   return '<div class="progbox">'+barHtml+meta+'</div>';
 }
 function gateHeader(g){
-  // CS 2026-06-10 — 동적 헤더: 단계 전환 구간엔 사용자 친화 설명.
-  //   proposals 도착 = 정적 제목 (사용자 결정 시점)
-  //   proposals 없음 + cur 2~5 = STAGE_TRANSITION_DESC[cur] 의 단계 친화 표현
+  // CS 2026-06-10 — 동적 헤더 + 카테고리별 매핑.
+  //   1) GATE_HEADER_BY_CATEGORY[mode][cur][category] 우선 (G2/G2→G3 적용)
+  //   2) 매핑 없으면 GATE_TITLE / STAGE_TRANSITION_DESC 폴백
   const tt=GATE_TITLE[g]||['추천을 검토하세요','Review the recommendation'];
   const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
   const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
   const props=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
   const stage=STAGE_TRANSITION_DESC[cur];
+  // CS 2026-06-11 — 본인 명시 "강제 X". frontend 휴리스틱 override 제거.
+  // backend 의 LLM 분류 결과를 그대로 신뢰. 미확정/빈값이면 _default 폴백.
+  let catKey=gateData.category;
   let h2, en, desc;
   if(props.length){
-    // proposals 도착 = 사용자 결정 시점 → 정적 제목
-    h2=tt[0]; en=tt[1];
-    desc='업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.';
+    // proposals 도착 = 사용자 결정 시점
+    const cmap=GATE_HEADER_BY_CATEGORY.static[cur]||{};
+    const byCat=cmap[catKey]||cmap._default;   // catKey 매칭 없으면 _default 사용 (어떤 데이터든 대응)
+    if(byCat){ h2=byCat.h2; en=byCat.en; desc=byCat.desc||'업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.'; }
+    else { h2=tt[0]; en=tt[1]; desc='업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.'; }
   } else if(stage){
-    // 전환 구간 = 단계 친화 설명 (agent 이름 X)
-    h2=stage.ko;
-    en=stage.en;
-    desc='곧 "'+esc(tt[0])+'" 화면이 표시됩니다.';
+    // 로딩 구간 = 카테고리별 헤더 우선, _default fallback, 없으면 단계 친화 폴백
+    const cmap=GATE_HEADER_BY_CATEGORY.loading[cur]||{};
+    const byCat=cmap[catKey]||cmap._default;
+    if(byCat){ h2=byCat.h2; en=byCat.en; desc=byCat.desc||('곧 "'+esc(tt[0])+'" 화면이 표시됩니다.'); }
+    else { h2=stage.ko; en=stage.en; desc='곧 "'+esc(tt[0])+'" 화면이 표시됩니다.'; }
   } else {
     // 폴링 대기·미정 → 기본
     h2=tt[0]; en=tt[1];
@@ -1957,8 +1992,31 @@ function modalHtml(){
   const stepNum=cur+1;
   let body='';
   if(errMsg) body+='<div class="err">⚠ '+esc(errMsg)+'</div>';
-  body+='<div class="modal-title">'+stepNum+'단계 분석 중</div>';
-  body+='<div class="modal-en">Stage '+stepNum+' analysis in progress…</div>';
+  // CS 2026-06-11 — modal 헤더 동기화.
+  //   cur=0 (G1→G2 팝업, 주제 나오기 전) = G1 인라인 헤더와 동일 (단일 표현)
+  //   cur=2 (G2→G3 팝업) = cur=2 loading 헤더와 동기화 (카테고리별)
+  //   그 외 cur (1/3/4/5) = 기존 'N단계 분석 중'
+  if(cur===0){
+    body+='<div class="modal-title">데이터를 파악하는 중입니다</div>';
+    body+='<div class="modal-en">G1 — Data Understanding</div>';
+    body+='<div class="desc" style="text-align:center;font-size:20px;color:#6b7c95;margin:14px 0 0;line-height:1.5">출처·스키마·도메인 의미·데이터 품질·카테고리 판정·PII 점검까지 마치는 중입니다. 끝나면 자동으로 분석 방향 추천이 표시됩니다.</div>';
+  } else {
+    // CS 2026-06-11 — 본인 명시 "강제 X". modal 도 frontend 휴리스틱 제거. backend LLM 분류 신뢰.
+    //   cur=1 (G2→G3 진행: 사용자 G2 응답 후 ~ G3 게이트 도달 전, eda_agent 동작)
+    //   + cur=2 (G3 도달 후 → G4 진행 중) 모두 loading[2] = "EDA 작업 중" 헤더와 동기화.
+    //   backend AGENT_PHASE_MAP 의 18~33% 가 cur=1 eda_agent 시점.
+    var _useLoading2 = (cur===1 || cur===2);
+    var _mc=_useLoading2?((GATE_HEADER_BY_CATEGORY.loading&&GATE_HEADER_BY_CATEGORY.loading[2])||{}):{};
+    var _mb=_mc[gateData.category]||_mc._default;
+    if(_useLoading2 && _mb){
+      body+='<div class="modal-title">'+_mb.h2+'</div>';
+      body+='<div class="modal-en">'+_mb.en+'</div>';
+      body+='<div class="desc" style="text-align:center;font-size:20px;color:#6b7c95;margin:14px 0 0;line-height:1.5">'+_mb.desc+'</div>';
+    } else {
+      body+='<div class="modal-title">'+stepNum+'단계 분석 중</div>';
+      body+='<div class="modal-en">Stage '+stepNum+' analysis in progress…</div>';
+    }
+  }
   return body;
 }
 function contentGate(){

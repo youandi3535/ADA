@@ -189,11 +189,45 @@ async def prefetch_analyze(payload: dict) -> dict:
                 "한자·중국어 금지. reason 한국어 1문장.\n"
                 'JSON 만: {"category":"tabular_ml","target_column":"price","reason":"한국어 1문장"}'
             )
+            # CS 2026-06-11 — 4 카테고리 인지 신호 (강제 X, LLM 자체 판단 보조).
+            _date_signal = "none"
+            _anomaly_signal = "none"
+            try:
+                import re as _re
+
+                _date_pat = _re.compile(
+                    r"(date|time|ts|timestamp|datetime|year|month|week|day|period|"
+                    r"시점|날짜|일시|기간|연월|시간|일자|년월|연도|기준일|기준연월|년월일|ym|ymd|"
+                    r"^\d{4}[.\-_/년]?\s?\d{1,2}[월]?$|^\d{4}\s?Q[1-4]$)",
+                    _re.IGNORECASE,
+                )
+                _hits = [str(c) for c in columns if _date_pat.search(str(c))]
+                if not _hits:
+                    for _c, _dt in dtypes.items():
+                        if "datetime" in str(_dt).lower():
+                            _hits.append(str(_c))
+                            break
+                if _hits:
+                    _date_signal = _hits[0]
+                _anomaly_keywords = (
+                    "이상탐지", "이상 탐지", "anomaly", "outlier", "novelty",
+                    "사기", "fraud", "이탈", "비정상",
+                )
+                _intent_lc = (user_intent or "").lower()
+                _anomaly_hits = [k for k in _anomaly_keywords if k in _intent_lc or k in (user_intent or "")]
+                if _anomaly_hits:
+                    _anomaly_signal = ", ".join(_anomaly_hits[:3])
+            except Exception:
+                pass
+            _scale_signal = f"rows={len(sample)}+, cols={len(columns)}"
             user_prompt = (
                 f"columns: {columns}\n"
                 f"dtypes: {_json.dumps(dtypes, ensure_ascii=False)}\n"
                 f"sample_rows: {_json.dumps(sample[:3], ensure_ascii=False)[:2000]}\n"
-                f"user_intent: {user_intent or 'none'}"
+                f"user_intent: {user_intent or 'none'}\n"
+                f"date_column_detected: {_date_signal}\n"
+                f"anomaly_intent_keywords: {_anomaly_signal}\n"
+                f"data_scale: {_scale_signal}"
             )
             base_url = settings.ollama_base_url.rstrip("/")
             model = settings.ollama_model_analysis

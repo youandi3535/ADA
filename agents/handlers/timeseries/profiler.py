@@ -63,6 +63,18 @@ def _detect_date_column(df: Any) -> Optional[str]:
                     except Exception:
                         continue
 
+    # CS 2026-06-11 — 2.5순위: 컬럼명 자체가 날짜 라벨인 wide format (통계청·OECD 등).
+    #   예) "2010.01", "2024-01", "2023Q4", "201001", "2023년 1월" 같은 형식이 컬럼명으로 들어옴.
+    #   이 경우 데이터는 숫자형 (취업자 수 등) 이라 dtype 검사로는 못 잡음 → 컬럼명 패턴 매칭.
+    _WIDE_DATE_PAT = re.compile(
+        r"^\s*(\d{4}[.\-_/년]?\s?\d{1,2}[월]?|\d{4}\s?Q[1-4]|\d{6}|\d{4}년)\s*$",
+        re.IGNORECASE,
+    )
+    _wide_hits = [str(c) for c in df.columns if _WIDE_DATE_PAT.match(str(c))]
+    if len(_wide_hits) >= 2:
+        # 2개 이상이면 wide format 시계열로 판단 (단일 매칭은 우연 가능)
+        return _wide_hits[0]
+
     # 3순위: 내용 기반 — object 컬럼 중 다양한 날짜 형식으로 80% 이상 파싱 성공
     _CONTENT_FORMATS = [
         None,  # pandas 자동 추론
