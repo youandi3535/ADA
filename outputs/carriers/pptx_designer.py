@@ -14,6 +14,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from outputs.architect.plan import ReportPlan, SlideSpec
+
+# Step 7-1 — LLM 디자인 힌트 적용 헬퍼 (palette/photo/icon)
+from outputs.carriers.design_hint_helpers import (
+    check_and_log_miss,
+    icon_name as design_icon_name,
+    palette_override,
+    photo_keyword,
+)
 from outputs.context.schema import ReportContext
 from outputs.style.visual_kit import (
     GLYPHS,
@@ -28,14 +36,6 @@ from outputs.style.visual_kit import (
     add_text_box,
     add_triangle,
     add_vertical_accent,
-)
-
-# Step 7-1 — LLM 디자인 힌트 적용 헬퍼 (palette/photo/icon)
-from outputs.carriers.design_hint_helpers import (
-    check_and_log_miss,
-    icon_name as design_icon_name,
-    palette_override,
-    photo_keyword,
 )
 
 # HJ 2026-06-08 — 시각 품질 도구 (graceful import, 자산 없어도 동작)

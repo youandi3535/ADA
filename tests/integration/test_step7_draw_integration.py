@@ -18,7 +18,6 @@ from outputs.architect.plan import SlideSpec
 from outputs.carriers.pptx_designer import _icon_name_for_sl
 from outputs.context.schema import ReportContext
 
-
 # ==============================================================
 # Step 7-1 — palette_override 단일 진입점 (정적 확인)
 # ==============================================================
