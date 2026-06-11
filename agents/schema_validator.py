@@ -155,29 +155,21 @@ class SchemaValidatorAgent(BaseAgent):
                 _save_g2_screen_ready(state)
                 return state.with_update(validation=v, next_agent="gate_direction", error=None)
 
-            # 데이터 검증 실패 = 사용자가 잘못된 카테고리를 선택한 경우.
-            # AutoErrorHandler(코드 패치)로 보내지 않고 tabular_ml 로 자동 보정 후
-            # gate_direction(G2)에서 재진행 — 사용자 입장에서는 자동 복구로 보임.
-            #
-            # Z' 적용 시 카테고리 보정이 발생하면 stale 도메인 분석을 사전 표시하지 않음
-            # (도메인 분석은 보정 전 카테고리 기반이라 불일치 위험). 기존 흐름만 유지.
-            fallback = "tabular_ml"
-            fallback_rules = CATEGORY_RULES[fallback]
-            v2 = self._validate(state.data_profile or {}, fallback_rules)
+            # CS 2026-06-11 — 본인 명시: 강제 X, 인지 정확.
+            # 기존은 검증 실패 시 tabular_ml 로 강제 변경 → 시계열 데이터가 정형으로 표시되는 원인.
+            # 카테고리 유지 + warning 만 노출 + 정상 진행. _save_g2_screen_ready 도 호출.
             warn_msg = (
-                f"선택한 카테고리({state.category})가 데이터와 맞지 않습니다 "
-                f"({'; '.join(v['errors'])}). "
-                f"'{fallback}'으로 자동 변경합니다."
+                f"선택한 카테고리({state.category}) 검증 경고: "
+                f"{'; '.join(v['errors'])}. 카테고리는 유지하며 다음 단계로 진행합니다."
             )
             self.logger.warning(
-                "category_auto_corrected",
-                original=state.category,
-                fallback=fallback,
+                "category_validation_failed_keep_category",
+                category=state.category,
                 errors=v["errors"],
             )
+            _save_g2_screen_ready(state)
             return state.with_update(
-                category=fallback,
-                validation={**v2, "warnings": [warn_msg] + (v2.get("warnings") or [])},
+                validation={**v, "warnings": [warn_msg] + (v.get("warnings") or [])},
                 next_agent="gate_direction",
                 error=None,
             )
