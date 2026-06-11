@@ -15,6 +15,18 @@ from typing import Any, Optional
 from ada.core.state import PipelineState
 from agents.base import BaseAgent
 
+
+# HJ 2026-06-11 — G4 모달 라이브 피드용. eda_agent.py 패턴 동일.
+def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
+    if not job_id or not isinstance(partial, dict) or not partial:
+        return
+    try:
+        from orchestrator.runner import publish_stage_partial as _psp
+
+        _psp(job_id, partial)
+    except Exception:  # noqa: BLE001
+        pass
+
 _SEARCH_SPACE_MODULES: dict[str, str] = {
     "tabular_ml": "pipelines.tabular_ml.search_space",
     "tabular_dl": "pipelines.tabular_dl.search_space",
@@ -70,9 +82,54 @@ class HyperparameterTunerAgent(BaseAgent):
 
             best_params: dict[str, dict[str, Any]] = {}
             task = _resolve_task(state.category, y)
-            for model_name in state.model_candidates:
+            n_models = len(state.model_candidates)
+            # HJ 2026-06-11 — G4 모달 라이브 피드: 튜닝 진입 시점 status + 모델별 진행 publish.
+            _safe_publish_stage_partial(
+                state.job_id,
+                {
+                    "g4_phase": "hpo_start",
+                    "g4_status": f"하이퍼파라미터 튜닝 시작 — {n_models}개 모델, 각 {self.n_trials} trials",
+                    "hpo_total_models": n_models,
+                    "hpo_trials_per_model": self.n_trials,
+                },
+            )
+            _g4_hpo_insights: list[str] = []
+            for idx, model_name in enumerate(state.model_candidates, start=1):
+                _safe_publish_stage_partial(
+                    state.job_id,
+                    {
+                        "g4_phase": "hpo_progress",
+                        "g4_status": f"튜닝 중 ({idx}/{n_models}) — {model_name}",
+                        "hpo_current_model": model_name,
+                        "hpo_done_count": idx - 1,
+                    },
+                )
                 best = await self._run_optuna(state, model_name, X, y, task, ss_module)
                 best_params[model_name] = best
+                # HJ 2026-06-11 — 모델별 튜닝 결과 자연어 인사이트 누적 publish.
+                # 사용자가 G2 의 eda_insights 처럼 모델별 최적 파라미터 라이브 확인.
+                try:
+                    if best:
+                        _p_pairs = [f"{k}={v}" for k, v in list(best.items())[:4]]
+                        _g4_hpo_insights.append(f"튜닝 결과: {model_name} → {', '.join(_p_pairs)}")
+                    else:
+                        _g4_hpo_insights.append(f"튜닝 결과: {model_name} → 기본 파라미터 사용")
+                    _safe_publish_stage_partial(
+                        state.job_id,
+                        {"g4_hpo_insights": list(_g4_hpo_insights)},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            # 튜닝 완료 publish — frontend 모달이 best_params 받기 전 미리 안내.
+            _safe_publish_stage_partial(
+                state.job_id,
+                {
+                    "g4_phase": "hpo_done",
+                    "g4_status": f"하이퍼파라미터 튜닝 완료 — {n_models}개 모델 — 학습 단계로 이동",
+                    "hpo_done_count": n_models,
+                    "g4_hpo_insights": _g4_hpo_insights,
+                },
+            )
 
             return state.with_update(best_params=best_params, next_agent="training_executor")
 

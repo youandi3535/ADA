@@ -15,17 +15,67 @@ from ada.core.state import PipelineState
 from agents.base import BaseAgent
 
 
+# HJ 2026-06-11 — G5 모달 라이브 피드용.
+def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
+    if not job_id or not isinstance(partial, dict) or not partial:
+        return
+    try:
+        from orchestrator.runner import publish_stage_partial as _psp
+
+        _psp(job_id, partial)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class ExplainabilityAgent(BaseAgent):
     uses_llm = False
     SAMPLE_SIZE = 1000
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
+            # HJ 2026-06-11 — G5 모달 라이브 피드: SHAP/시계열분해 시작 status publish.
+            _safe_publish_stage_partial(
+                state.job_id,
+                {
+                    "g5_phase": "explainability_start",
+                    "g5_status": "SHAP·설명가능성 계산 중…",
+                },
+            )
             artifacts: dict[str, Any] = {}
             if state.category == "timeseries":
                 artifacts.update(await self._timeseries_decompose(state))
             else:
                 artifacts.update(await self._shap(state))
+
+            # HJ 2026-06-11 — G5 SHAP 상위 피처 자연어 인사이트 publish.
+            # G2 의 eda_insights 패턴 — "SHAP 상위 피처: 'Age' (importance 0.32)" 형식.
+            try:
+                _g5_shap_insights: list[str] = []
+                top = artifacts.get("shap_top_features") or []
+                if isinstance(top, list) and top:
+                    for i, ent in enumerate(top[:6], start=1):
+                        fn = str(ent.get("feature", "?"))
+                        imp = ent.get("importance", 0)
+                        try:
+                            _g5_shap_insights.append(f"SHAP 상위 피처: '{fn}' (importance {float(imp):.3f})")
+                        except (TypeError, ValueError):
+                            _g5_shap_insights.append(f"SHAP 상위 피처: '{fn}' (importance {imp})")
+                elif artifacts.get("shap_error"):
+                    _g5_shap_insights.append(f"SHAP 계산 실패: {str(artifacts['shap_error'])[:150]}")
+                elif artifacts.get("decomposition_path") or artifacts.get("seasonality_period"):
+                    period = artifacts.get("seasonality_period")
+                    _g5_shap_insights.append(f"시계열 분해: 계절성 주기 {period} (추세·계절·잔차 분해 완료)")
+                _safe_publish_stage_partial(
+                    state.job_id,
+                    {
+                        "g5_phase": "explainability_done",
+                        "g5_status": "설명가능성 분석 완료 — 인사이트 생성 단계로 이동",
+                        "g5_shap_insights": _g5_shap_insights,
+                    },
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("g5_shap_insights_publish_failed", error=str(e))
+
             return state.with_update(explanations=artifacts, next_agent="insight")
 
     # ------------------------------------------------------------------

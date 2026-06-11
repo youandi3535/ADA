@@ -19,6 +19,18 @@ from ada.db.models import SelfLearningKB
 from agents.base import BaseAgent
 from agents.handlers import get_handler
 
+
+# HJ 2026-06-11 — G4 모달 라이브 피드용. eda_agent.py 패턴 동일.
+def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
+    if not job_id or not isinstance(partial, dict) or not partial:
+        return
+    try:
+        from orchestrator.runner import publish_stage_partial as _psp
+
+        _psp(job_id, partial)
+    except Exception:  # noqa: BLE001
+        pass
+
 _MODEL_FAMILY_MAP: dict[str, str] = {
     # tabular_ml
     "RandomForest": "Ensemble",
@@ -73,6 +85,15 @@ class ModelSelectionAgent(BaseAgent):
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
+            # HJ 2026-06-11 — G4 모달 라이브 피드: model_selection 진입 즉시 status publish.
+            _safe_publish_stage_partial(
+                state.job_id,
+                {
+                    "g4_phase": "model_selection_start",
+                    "g4_status": f"카테고리 '{state.category}' 에 적합한 모델 후보 선정 중…",
+                },
+            )
+
             recipes = await self._fetch_recipes(state.category) if self.session else []
 
             top3: list[str] = []
@@ -126,6 +147,29 @@ class ModelSelectionAgent(BaseAgent):
             if not top3:
                 top3 = ["XGBoost"]
                 rationale = "최후 fallback"
+
+            # HJ 2026-06-11 — G4 모달 라이브 피드: top3 모델 + LLM rationale 자연어 인사이트 publish.
+            # G2 의 methodology_candidates 와 동일 패턴 — 사용자가 어떤 모델이 왜 선정됐는지 즉시 확인.
+            try:
+                _g4_model_insights: list[str] = []
+                for i, m in enumerate(top3, start=1):
+                    fam = _infer_family(str(m))
+                    _g4_model_insights.append(f"모델 후보 {i}: {m} (계열: {fam})")
+                if rationale:
+                    _g4_model_insights.append(f"선정 근거: {str(rationale)[:200]}")
+                if baselines:
+                    _g4_model_insights.append(f"베이스라인: {', '.join(str(b) for b in baselines[:3])} (비교군)")
+                _safe_publish_stage_partial(
+                    state.job_id,
+                    {
+                        "g4_phase": "model_selection_done",
+                        "g4_status": f"모델 후보 {len(top3)}개 선정 완료 — 하이퍼파라미터 튜닝 단계로 이동",
+                        "g4_model_insights": _g4_model_insights,
+                        "g4_top3": [str(m) for m in top3[:5]],
+                    },
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("g4_model_insights_publish_failed", error=str(e))
 
             # Day 11 — KB 인용 시 per-agent 카운터 증가 (KP9 측정 정확도)
             if citations:

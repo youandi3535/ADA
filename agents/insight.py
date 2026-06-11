@@ -26,6 +26,18 @@ from ada.core.state import PipelineState
 from ada.security.guardrails import insight_must_cite
 from agents.base import BaseAgent
 
+
+# HJ 2026-06-11 — G5 모달 라이브 피드용.
+def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
+    if not job_id or not isinstance(partial, dict) or not partial:
+        return
+    try:
+        from orchestrator.runner import publish_stage_partial as _psp
+
+        _psp(job_id, partial)
+    except Exception:  # noqa: BLE001
+        pass
+
 CATEGORY_TO_MODULE = {
     "timeseries": "agents.handlers.timeseries.insight",
     "anomaly_detection": "agents.handlers.anomaly.insight",
@@ -67,6 +79,14 @@ class InsightAgent(BaseAgent):
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
+            # HJ 2026-06-11 — G5 모달 라이브 피드: 인사이트 LLM 호출 시작 status.
+            _safe_publish_stage_partial(
+                state.job_id,
+                {
+                    "g5_phase": "insight_start",
+                    "g5_status": "인사이트 LLM 호출 중 — 한국어 3~5문장 생성",
+                },
+            )
             mod_name = CATEGORY_TO_MODULE.get(state.category)
             text: str = ""
             mod = None
@@ -143,6 +163,22 @@ class InsightAgent(BaseAgent):
 
             if not text:
                 text = "이번 분석 결과는 추가 검토가 필요합니다."
+
+            # HJ 2026-06-11 — G5 모달 라이브 피드: 최종 인사이트 자연어 publish.
+            # 한국어 3~5 문장을 문장 단위로 분리해 G2 의 eda_insights 처럼 그룹 표시.
+            try:
+                _sentences = [s.strip() for s in text.replace("\n", " ").split(".") if s.strip() and len(s.strip()) > 5]
+                _g5_final_insights = [f"인사이트: {s[:200]}" for s in _sentences[:6]]
+                _safe_publish_stage_partial(
+                    state.job_id,
+                    {
+                        "g5_phase": "insight_done",
+                        "g5_status": "인사이트 생성 완료 — 산출물 단계로 이동",
+                        "g5_final_insights": _g5_final_insights,
+                    },
+                )
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("g5_final_insights_publish_failed", error=str(e))
 
             # Day 4 — PII reattach (LLM 응답에 토큰이 남았을 가능성 대비)
             try:
