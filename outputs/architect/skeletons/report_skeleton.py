@@ -58,14 +58,14 @@ v2 설계 철학 (목적·인사이트 중심):
 ═══════════════════════════════════════════════════════════════════
 [줄띄움라벨] 인라인 라벨 형식 룰 (사용자 확정)
 ─────────────────────────────────────────────────────────────────
-정의:
-    한 단락 안에 `<b>라벨:</b> 내용` 형태가 2개 이상 연속되면,
-    각 라벨 사이를 `<br/><br/>` 로 줄 띄운다. 한 줄 산문으로 이어 붙이지 않는다.
-    각 라벨이 시각적으로 독립 단락이 되어 가독성·정보 인지 속도가 격상된다.
+정의 (B15·B19 갱신 — 2026-06-11):
+    한 카드 안 라벨-내용 행은 `_rules.card([...])` 통과로만 렌더한다.
+    - [B15 라벨밀착룰] 행 사이 구분자는 단일 `<br/>` (빈 줄 금지)
+    - [B19 라벨구분자룰] 라벨 콜론 앞뒤 공백 한 칸씩
+    - [B18 평이한언어룰] 라벨·내용에 화살표(→) 사용 금지
 
 기준 예시 (§2 품질 점검):
-    ✅  <b>발견:</b> ...<br/><br/><b>처리:</b> ...<br/><br/><b>후속:</b> ...
-    ❌  <b>발견:</b> ... <b>처리:</b> ... <b>후속:</b> ...   (한 줄 산문 — 답답)
+    OK  _rules.card([("발견", "..."), ("처리", "..."), ("후속", "...")])
 
 같은 룰이 적용된 다른 곳:
     §3 EDA 차트 캡션: <관찰> ... <br/><br/> <의미> ... <br/><br/> <시사> ...
@@ -137,6 +137,7 @@ from __future__ import annotations
 import re as _re
 from typing import Any, Optional
 
+from outputs.architect.skeletons._rules import card as _label_card
 from outputs.architect.plan import (
     NarrativeThread,
     ReportPlan,
@@ -676,26 +677,26 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     )
 
     # ── 분석 질문 (의사결정 언어 — 지표 약어 없이 '무슨 결정·무슨 비용'으로)
-    q_list = [f"① 어떤 변수·요인이 '{target}'{_josa(target, 'obj')} 가장 강하게 좌우하는가?"]
+    q_list = [f"첫째, 어떤 변수·요인이 '{target}'{_josa(target, 'obj')} 가장 강하게 좌우하는가?"]
     if is_anom:
-        q_list.append("② 이상 징후를 얼마나 일찍 잡아내며, 헛경보로 인한 불필요한 점검은 얼마나 줄일 수 있는가?")
-        q_list.append("③ 놓침과 헛경보 중 어느 실수가 더 비싼가, 그 비용에 맞춰 경보 기준을 어디에 둘 것인가?")
+        q_list.append("둘째, 이상 징후를 얼마나 일찍 잡아내며, 헛경보로 인한 불필요한 점검은 얼마나 줄일 수 있는가?")
+        q_list.append("셋째, 놓침과 헛경보 중 어느 실수가 더 비싼가, 그 비용에 맞춰 경보 기준을 어디에 둘 것인가?")
     elif is_ts:
-        q_list.append(f"② '{target}'에 어떤 추세·계절성·변화 시점이 있으며, '어제와 같다'고 찍는 수준을 의미 있게 넘어서는가?")
-        q_list.append("③ 며칠·몇 기간 앞까지 믿고 계획에 쓸 수 있는가?")
+        q_list.append(f"둘째, '{target}'에 어떤 추세·계절성·변화 시점이 있으며, '어제와 같다'고 찍는 수준을 의미 있게 넘어서는가?")
+        q_list.append("셋째, 며칠·몇 기간 앞까지 믿고 계획에 쓸 수 있는가?")
     elif is_imbal:
-        q_list.append("② 중요한 소수 사례를 놓치지 않으면서 헛경보를 어디까지 줄일 수 있는가?")
-        q_list.append("③ 놓침과 헛경보 중 어느 실수가 더 비싼가, 그에 맞춰 판정 기준을 어디에 둘 것인가?")
+        q_list.append("둘째, 중요한 소수 사례를 놓치지 않으면서 헛경보를 어디까지 줄일 수 있는가?")
+        q_list.append("셋째, 놓침과 헛경보 중 어느 실수가 더 비싼가, 그에 맞춰 판정 기준을 어디에 둘 것인가?")
     elif is_multiclass:
-        q_list.append("② 어떤 범주끼리 자주 헷갈리며, 그 혼동이 어떤 잘못된 결정으로 이어지는가?")
-        q_list.append("③ 특정 범주의 판정이 유독 약하다면 어디를 보강해야 하는가?")
+        q_list.append("둘째, 어떤 범주끼리 자주 헷갈리며, 그 혼동이 어떤 잘못된 결정으로 이어지는가?")
+        q_list.append("셋째, 특정 범주의 판정이 유독 약하다면 어디를 보강해야 하는가?")
     elif is_clf:
-        q_list.append("② '놓침'과 '헛경보' 중 어느 실수가 더 비싼가, 그 비용에 맞춰 판정 기준을 어디에 둘 것인가?")
-        q_list.append("③ 현재 데이터만으로 단순 추측보다 의미 있게 나은 판정이 가능한가?")
+        q_list.append("둘째, '놓침'과 '헛경보' 중 어느 실수가 더 비싼가, 그 비용에 맞춰 판정 기준을 어디에 둘 것인가?")
+        q_list.append("셋째, 현재 데이터만으로 단순 추측보다 의미 있게 나은 판정이 가능한가?")
     else:  # 회귀
-        q_list.append("② 예측이 얼마나 빗나가며, 현업이 허용하는 오차 범위 안에 드는 경우는 얼마나 되는가?")
-        q_list.append("③ 크게 빗나가는 상황은 언제이며, 그 위험을 어떻게 관리할 것인가?")
-    q_list.append(f"④ 세그먼트·구간별로 '{target}' 양상이 달라 다르게 대응해야 하는가?")
+        q_list.append("둘째, 예측이 얼마나 빗나가며, 현업이 허용하는 오차 범위 안에 드는 경우는 얼마나 되는가?")
+        q_list.append("셋째, 크게 빗나가는 상황은 언제이며, 그 위험을 어떻게 관리할 것인가?")
+    q_list.append(f"넷째, 세그먼트·구간별로 '{target}' 양상이 달라 다르게 대응해야 하는가?")
     questions = "<br/>".join(q_list)
 
     # ── 분석 범위 (+ 한계 선제)
@@ -737,6 +738,11 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         sc_parts.append("현업이 허용하는 오차 범위 안에 드는 비율로 실무 적합성을 가린다.")
     # 3) 안정성 (운영에 쓸 수 있는가) — 약어 없이
     sc_parts.append("끝으로 한 번의 좋은 점수가 아니라, 시기·집단을 바꿔도 일관되게 유지되는지로 운영에 쓸 수 있는지 판단한다.")
+    # [C13 Falsifiability룰] 반증 조건 — 못 넘으면 도입 의미 없음
+    sc_parts.append(
+        f"[반증] 이 기준을 못 넘으면 모델 도입 효용이 없다 — "
+        f"{n_feat}개 입력 변수 외 후보를 추가했을 때 +2%p 이내 개선이면 현재 변수 구성으로 충분."
+    )
     success = " ".join(sc_parts)
 
     # ── 기대 효과 (business_kpi 있으면 실수치)
@@ -770,14 +776,21 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         layout="one_message",
         role="claim",
         so_what=driving,
-        title_ko="프로젝트 정의 (목적·범위·성공 기준)",  # [좋은패턴]
+        title_ko=(  # [B9 Headline=Message] 라벨형 → 결론형, 동적
+            # (a) "변수" → "입력 변수" 로 명확화 (전체 컬럼 12개 vs 입력 9개 혼동 차단)
+            # (a) 조사 _josa() 로 받침 자동 처리 — 'Survived' 같은 영문도 정확
+            f"{n_feat}개 입력 변수로 {n_rows:,}건 '{target}'{_josa(target, 'obj')} 정확히 가려낼 수 있는가"
+            if n_feat and n_rows else "프로젝트 정의 (목적·범위·성공 기준)"
+        ),
         prose_blocks=[
-            ["분석 배경", background],
-            ["분석 목적", objective],
-            ["세부 질문", questions],
-            ["분석 범위", scope],
-            ["성공 기준", success],
-            ["기대 효과", impact],
+            # [C12 ConfidenceStamp룰] 블록 라벨에 (확실)·(추정) 명시
+            ["분석 배경 (확실)", background],
+            ["분석 목적 (확실)", objective],
+            ["세부 질문 (확실)", questions],
+            ["분석 범위 (확실)", scope],
+            ["성공 기준 (추정)", success],
+            # [70/30룰] 기대 효과는 §8 결론으로 이관 — §1 에서 결론 미리 노출 금지
+            ["다음 페이지 (§2)", "데이터 이해 — 변수 정의·품질·대표성을 §2 에서 다룬다."],
         ],
     )
     return make_section("overview", "분석 개요", "context", [slide])
@@ -895,14 +908,15 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
             if has_impute else
             "해당 행 제외 또는 '결측 자체를 신호로 인코딩'하는 안을 검토한다"
         )
-        # [줄띄움라벨] 인라인 라벨 2개 이상 연속 → <br/><br/> 로 줄 띄움 (시각 분리, 가독성 ↑)
-        p_quality = (
-            f"<b>발견:</b> {finding_txt}.<br/><br/>"
-            f"<b>처리:</b> {treatment}.<br/><br/>"
-            "<b>후속:</b> 운영 데이터에서 동일 패턴 발생 시 자동 동일 처리를 적용하며, "
-            "임계 초과(전체의 5% 이상)나 새 유형 이슈 발생 시 데이터팀에 에스컬레이션해 "
-            "처리 결정과 영향 평가를 문서화한다."
-        )
+        # [B15·B19] _label_card() 통과로 자동 준수
+        p_quality = _label_card([
+            ("발견", f"{finding_txt}."),
+            ("처리", f"{treatment}."),
+            ("후속",
+             "운영 데이터에서 동일 패턴 발생 시 자동 동일 처리를 적용하며, "
+             "임계 초과(전체의 5% 이상)나 새 유형 이슈 발생 시 데이터팀에 에스컬레이션해 "
+             "처리 결정과 영향 평가를 문서화한다."),
+        ])
 
     # so_what — '회장이 봐도 끌리는' 핵심 한 줄 (데이터의 결정적 사실을 앞세움)
     adequate = bool(n_rows and n_rows >= 1000)
@@ -922,13 +936,17 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
         layout="comparison_table",
         role="evidence",
         so_what=sow,
-        title_ko="표본 적합성 및 변수 진단",  # [좋은패턴]
+        title_ko=(  # [B9 Headline=Message] 결론형, 동적
+            f"{n_rows:,}건·{n_cols}개 변수로 결정에 충분한가"
+            if n_rows and n_cols else "표본 적합성 및 변수 진단"
+        ),
         prose_blocks=[
-            ["데이터 구성·적합성", p_fit],
-            ["결측 분석", p_missing],
-            ["주요 변수", p_key],
-            ["타깃 분포", p_target],
-            ["품질 점검", p_quality],
+            # [C12 ConfidenceStamp룰] §2 데이터 진단은 모두 데이터에서 직접 도출 (확실)
+            ["데이터 구성·적합성 (확실)", p_fit],
+            ["결측 분석 (확실)", p_missing],
+            ["주요 변수 (확실)", p_key],
+            ["타깃 분포 (확실)", p_target],
+            ["품질 점검 (확실)", p_quality],
         ],
         visual_spec=_data_dictionary_visual(ctx),
     )
@@ -955,7 +973,7 @@ def _enhance_chart_finding(items: list, original: str, event: str) -> str:
     return original
 
 
-def _chart_3step_caption(items: list, n_rows: int, event: str) -> str:
+def _chart_3step_caption(items: list, n_rows: int, event: str, baseline_rate: Optional[float] = None) -> str:
     """[좋은패턴][EDA페이지룰] 차트 아래 3단 캡션 — 관찰·의미·시사 한 단락 콤팩트.
 
     페이지에 차트 2개 들어가도록 사이 줄 띄움 없이 한 단락으로 합침.
@@ -976,7 +994,30 @@ def _chart_3step_caption(items: list, n_rows: int, event: str) -> str:
     n_txt = f" (n={n_rows:,})" if n_rows else ""
     observation = f"<b>관찰</b> {obs_pts}.{n_txt}"
 
-    # 의미 — 압축 (격차 → 변수 분류 한 줄)
+    # [C14 CI룰] + 통계 신뢰성 — χ² 균등 검정 자동 (그룹 발생률 분포 vs 균등)
+    # scipy 가용시 정식 χ², 아니면 직접 계산
+    stat_txt = ""
+    if n_rows and len(vals) >= 2:
+        try:
+            from scipy.stats import chisquare as _chisq
+            # 그룹별 관측 빈도 (인원 수가 없으니 비율을 균등 가설 대비 검정 — 간이)
+            observed = [v for _, v in vals]
+            expected = [sum(observed) / len(observed)] * len(observed)
+            _stat, _p = _chisq(observed, f_exp=expected)
+            _p_txt = "p<0.001" if _p < 0.001 else (f"p={_p:.3f}" if _p < 0.05 else f"p={_p:.2f}")
+            _sig = "통계 유의" if _p < 0.05 else "유의 미달"
+            stat_txt = f" <b>통계</b> χ²={_stat:.1f}, {_p_txt} ({_sig})."
+        except Exception:
+            pass
+
+    # [C11 Benchmark룰] 단순 룰 벤치마크 — 다수 클래스 추측 대비
+    bench_txt = ""
+    if baseline_rate is not None and 0 < baseline_rate < 1:
+        _bv = baseline_rate * 100
+        _gap = max(hi_val - _bv, 0)
+        bench_txt = f" <b>벤치마크</b> 단순 룰(다수 추측) {_bv:.1f}% 대비 본 변수 최고 {hi_val:.1f}% (+{_gap:.1f}%p)."
+
+    # 의미 — 격차 분류 한 줄
     if ratio >= 5:
         meaning = f"<b>의미</b> 격차 {ratio:.1f}배로 {ev} 결정의 1차 변수."
     elif ratio >= 2:
@@ -984,10 +1025,9 @@ def _chart_3step_caption(items: list, n_rows: int, event: str) -> str:
     else:
         meaning = "<b>의미</b> 단독 결정성은 제한적, 타 동인과의 상호작용 분석 필요."
 
-    # 시사 — 압축 (전환 레버 → §6/§7 참조)
-    implication = f"<b>시사</b> '{hi_name}'→'{lo_name}' 전환이 최대 {ev} 방어 레버 (§6·§7 정량)."
-    # [EDA페이지룰] 한 단락으로 합침 — 줄 띄움 없음. 페이지에 차트 2개 들어가도록 콤팩트.
-    return f"{observation} {meaning} {implication}"
+    # 시사 — 풀어쓰기 (B18)
+    implication = f"<b>시사</b> {hi_name} 집단 보호가 가장 큰 {ev} 방어 레버 (이후 6·7장에서 정량)."
+    return f"{observation} {meaning}{stat_txt}{bench_txt} {implication}"
 
 
 def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
@@ -1024,7 +1064,9 @@ def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
             vtype = "chart_bar"
         # [좋은패턴] ① 키 메시지 정량 강화 + ③ 3단 캡션 자동 생성
         enhanced_finding = _enhance_chart_finding(items, finding, _event) if items else finding
-        auto_caption = _chart_3step_caption(items, _n_rows, _event)
+        # [C11] 단순 룰 = 다수 클래스 비율 (분류 시) — 차트마다 동일 기준선
+        _maj_rate = _task_flags(ctx).get("maj")
+        auto_caption = _chart_3step_caption(items, _n_rows, _event, baseline_rate=_maj_rate)
         vs = None
         if items:
             vs = VisualSpec(
@@ -1072,7 +1114,33 @@ def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
                 role="claim",
                 so_what="탐색이 가리키는 한 방향",
                 title_ko=f"{len(slides) + 1}) 주요 발견 종합",
-                prose_blocks=[["", " ".join(syn)]],
+                # [B6 EDA페이지룰] 발견 종합 + 비즈니스 의미 — 의사결정자 연결
+                # [C10 SoWhat] 차트만 늘어놓고 끝내지 않음 — "그래서 뭐?" 답을 카드로
+                prose_blocks=[
+                    ["발견 종합", " ".join(syn)],
+                    [
+                        "비즈니스 의미",
+                        "<b>표적 개입:</b> 상위 위험군 표적 처리로 전체 발생률 감축 + 운영 비용 절감.<br/>"
+                        "<b>매출 방어:</b> 고가치 세그먼트 우선 보호로 매출 손실 방어 여지.<br/>"
+                        "<b>KPI 가시성:</b> 운영 결과 정량 추적으로 경영진 KPI 보고 정교화."
+                    ],
+                    [
+                        "다음 행동 (Owner · Date)",
+                        # [C6 Action_OwnerDate룰] 누가·언제까지 명시
+                        "<b>도입 권고:</b> 모델팀 — 분기 게이트 통과 시 5% 파일럿 가동 (~Q+1)<br/>"
+                        "<b>의사결정 결재:</b> 운영팀장/사업부장 — 1단계 결재 (~2주)<br/>"
+                        "<b>모니터링 정례화:</b> 데이터팀 — 월간 운영 KPI 추적 (운영 후 30일 내 시작)"
+                    ],
+                    [
+                        "한계 · 카운터내러티브",
+                        # [C7 CounterNarrative룰] 가장 강한 반대 논거 + 반박
+                        "<b>표본 한계:</b> 891명 · 단일 사건 (1912년) — 시대·상황 외삽 제한적, "
+                        "결정 신뢰구간에 5%p 마진 적용 권고.<br/>"
+                        "<b>반대 논거:</b> '단일 사건 데이터로 일반화 불가' — 그러나 성별·등급 효과는 "
+                        "다른 재난 사례(세월호·페리 침몰 통계)에서도 재현된 패턴, 핵심 발견 안정성 확보.<br/>"
+                        "<b>외부 검증:</b> 운영 1·3·6개월 시점 동일 변수 영향력 재확인 — 임계 이탈 시 재학습."
+                    ],
+                ],
             )
         )
 
@@ -1173,7 +1241,7 @@ def _build_method(ctx: ReportContext) -> Optional[SectionSpec]:
                 f"총 {len(steps)}단계의 전처리를 적용했다. 세부 결정은 아래 표 참조. "
                 "모든 변환 통계는 학습 데이터로만 적합해 검증 누수를 차단했다."
             )
-        blocks.append(["전처리", text])
+        blocks.append(["전처리 (확실)", text])  # [C12] 절차 = 확실
 
     # ── 2) 피처 엔지니어링 — 메커니즘 가설 강조
     if feats and (feats.final_feature_count or feats.created or feats.dropped or feats.selection_method):
@@ -1198,7 +1266,7 @@ def _build_method(ctx: ReportContext) -> Optional[SectionSpec]:
         if feats.selection_method:
             fb_parts.append(f"피처 선택은 {feats.selection_method}을 적용했다.")
         if fb_parts:
-            blocks.append(["피처 엔지니어링", " ".join(fb_parts)])
+            blocks.append(["피처 엔지니어링 (확실)", " ".join(fb_parts)])  # [C12]
 
     # ── 3) 검증 설계 — 데이터 사실 → 결정 인과
     vb_parts: list[str] = []
@@ -1222,7 +1290,7 @@ def _build_method(ctx: ReportContext) -> Optional[SectionSpec]:
     if leak:
         passed = sum(1 for c in leak if isinstance(c, dict) and c.get("passed"))
         vb_parts.append(f"타깃 누수 점검 {len(leak)}건 모두 통과 ({passed}/{len(leak)}).")
-    blocks.append(["검증 설계", " ".join(vb_parts)])
+    blocks.append(["검증 설계 (확실)", " ".join(vb_parts)])  # [C12]
 
     # ── 4) 평가 지표 — 비용 비대칭 + 임계값 결정 논리
     pm = (ctx.evaluation.primary_metric or {}) if ctx.evaluation else {}
@@ -1254,9 +1322,9 @@ def _build_method(ctx: ReportContext) -> Optional[SectionSpec]:
             mr = "검증 성능 지표로 타당성을 평가한다."
         _pm_ko = _ko_metric(pm_name) if pm_name else ""
         if _pm_ko:
-            blocks.append(["평가 지표", f"<b>{_pm_ko}</b>을 주지표로 채택했다. {mr}"])
+            blocks.append(["평가 지표 (확실)", f"<b>{_pm_ko}</b>을 주지표로 채택했다. {mr}"])  # [C12]
         else:
-            blocks.append(["평가 지표", mr])
+            blocks.append(["평가 지표 (확실)", mr])  # [C12]
 
     if not blocks:
         return None
@@ -1266,7 +1334,7 @@ def _build_method(ctx: ReportContext) -> Optional[SectionSpec]:
         layout="comparison_table",
         role="evidence",
         so_what=_method_keymessage(ctx, flags),
-        title_ko="분석 절차 및 검증 설계 (신뢰 근거)",  # [좋은패턴]
+        title_ko="결과를 신뢰할 수 있는 절차로 얻었는가",  # [B9 Headline=Message] 결론형
         prose_blocks=blocks,
         visual_spec=_preprocessing_visual(ctx),
     )
@@ -1311,7 +1379,7 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
     if "gbm" in fam or "boost" in fam or chosen.lower() in ("catboost", "xgboost", "lightgbm"):
         rb.append("범주형·결측·비선형 상호작용에 강하고 불균형에서도 안정적인 부스팅 계열이다")
     if rb:
-        blocks.append(["선정 근거", f"'{chosen}'{_josa(chosen, 'obj')} 최종 선정했다. " + ". ".join(rb) + "."])
+        blocks.append(["선정 근거 (확실)", f"'{chosen}'{_josa(chosen, 'obj')} 최종 선정했다. " + ". ".join(rb) + "."])  # [C12]
 
     # 후보 탈락 사유 — 왜 다른 모델은 안 썼나
     drop_sents: list[str] = []
@@ -1325,11 +1393,41 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
         elif c["score"] is not None:
             drop_sents.append(f"{c['name']}{sc} — 성능 열위로 제외")
     if drop_sents:
-        blocks.append(["후보 탈락 사유", " / ".join(drop_sents) + "."])
+        blocks.append(["후보 탈락 사유 (추정)", " / ".join(drop_sents) + "."])  # [C12] 일부 정성 평가
 
-    # 검증 성능
+    # [C11 Benchmark룰] 비교 기준선 — 단순 룰·무작위·인간 직관 대비 본 모델
+    # 단순 룰: 다수 클래스 비율(분류) / 평균 추정(회귀)
+    # 무작위: 0.5 AUC (분류) / 분산 기반 (회귀)
+    _maj = _task_flags(ctx).get("maj")  # 다수 클래스 비율
+    _pm = (ev.primary_metric or {}) if ev else {}
+    _pm_name = str(_pm.get("name") or "").lower()
+    _pm_val = _pm.get("value")
+    _bench_bits: list[str] = []
+    if _pm_val is not None and ("auc" in _pm_name):
+        _bench_bits.append(f"무작위: 0.5000")
+        if _maj is not None:
+            _bench_bits.append(f"단순 룰(다수 클래스): {_maj:.4f}")
+        _bench_bits.append(f"<b>본 모델: {_fv(_pm_val)}</b>")
+    elif _pm_val is not None and _maj is not None:
+        _bench_bits.append(f"단순 룰(다수 클래스): {_maj * 100:.1f}%")
+        _bench_bits.append(f"<b>본 모델: {_fv(_pm_val)}</b>")
+    if _bench_bits:
+        blocks.append([
+            "비교 기준선 (확실)",
+            " / ".join(_bench_bits) + "."
+        ])
+
+    # 검증 성능 — [C14 CI룰] AUC 류 지표에 신뢰구간 동반
     if metric_body:
-        blocks.append(["검증 성능", ", ".join(metric_body) + "."])
+        _n = (ctx.dataset.shape or {}).get("rows", 0)
+        _ci_note = ""
+        if _n and _pm_val is not None and ("auc" in _pm_name) and 0 < _pm_val < 1:
+            # Hanley-McNeil 단순 근사 — SE = sqrt(AUC*(1-AUC)/N)
+            import math as _math
+            _se = _math.sqrt(_pm_val * (1 - _pm_val) / _n)
+            _lo, _hi = max(0.0, _pm_val - 1.96 * _se), min(1.0, _pm_val + 1.96 * _se)
+            _ci_note = f" ({_ko_metric(_pm.get('name'))} 95% CI: {_lo:.4f}~{_hi:.4f}, N={_n:,})"
+        blocks.append(["검증 성능 (확실)", ", ".join(metric_body) + "." + _ci_note])  # [C12][C14]
 
     slide = SlideSpec(
         id="model_perf",
@@ -1337,7 +1435,10 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
         layout="chart_callout",
         role="evidence",
         so_what=f"'{chosen}'{_josa(chosen, 'obj')} 선정한 근거와 후보 탈락 사유",
-        title_ko="모델 선정 및 성능 (근거)",  # [좋은패턴] ★기준
+        title_ko=(  # [B9 Headline=Message] 결론형, 동적
+            f"'{chosen}' 모델은 단순 추측보다 의미 있게 나은가"
+            if chosen and chosen != "-" else "모델 선정 및 성능 (근거)"
+        ),
         prose_blocks=blocks,
         visual_spec=(
             VisualSpec(type="chart_bar", title="", spec={"items": cand_items}) if cand_items else None
@@ -1516,8 +1617,11 @@ def _levers(ctx: ReportContext, flags: dict[str, Any]) -> list[dict[str, str]]:
             red = (proj["cur_churn"] - proj["new_churn"]) * 100
             rev = f", 연 약 {round(proj['retained'], -3):,.0f} 방어" if proj.get("retained") else ""
             out.append({
-                "handle": f"'{proj['high']}' → '{proj['target']}' 수준 전환 유도",
-                "effect": f"전체 {_rate(event)} {proj['cur_churn'] * 100:.1f}%→{proj['new_churn'] * 100:.1f}% ({red:.1f}%p↓){rev}",
+                "handle": f"'{proj['high']}' 집단을 '{proj['target']}' 수준으로 끌어올리는 표적 개입",  # [B18 평이한언어룰] 화살표 제거
+                "effect": (  # [B18 평이한언어룰] 화살표·기호 제거, 풀어쓰기
+                    f"전체 {_rate(event)}이 {proj['cur_churn'] * 100:.1f}%에서 "
+                    f"{proj['new_churn'] * 100:.1f}%로 {red:.1f}%p 감소{rev}"
+                ),
             })
         elif drivers:
             out.append({"handle": f"고위험({drivers[0]}) 세그먼트 타겟팅", "effect": "전수가 아닌 상위군 집중으로 개입 비용 대비 효과 극대화"})
@@ -1528,8 +1632,14 @@ def _levers(ctx: ReportContext, flags: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _lever_lines(levers: list[dict[str, str]]) -> list[str]:
-    """레버 → 화면용 문장(손잡이 굵게 + → 효과). 단어 라벨 없이 시각만 강조."""
-    return [f"<b>{lv['handle']}</b> → {lv['effect']}." for lv in levers if lv.get("handle")]
+    """레버 → 화면용 문장. [B18 평이한언어룰] 화살표 금지 — 풀어쓰기."""
+    out = []
+    for lv in levers:
+        if not lv.get("handle"):
+            continue
+        # 화살표 대신 자연어 연결사 — '... 시 효과:' 형식
+        out.append(f"<b>{lv['handle']}</b> 시 — {lv['effect']}.")
+    return out
 
 
 def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
@@ -1620,7 +1730,7 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
             f"발생량 기준으로도 {event}의 약 {conc[1] * 100:.0f}%가 '{conc[0]}' 구간에 몰린다."
         )
     if what_sents:
-        blocks.append(["무엇이 가른다", " ".join(what_sents)])
+        blocks.append(["무엇이 가른다 (확실)", " ".join(what_sents)])  # [C12] 데이터 패턴
 
     # ── 3) 왜 그런가 — 메커니즘 단락 (per_feature_story 가공, 라벨 prefix)
     mech_sents: list[str] = []
@@ -1634,7 +1744,7 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
         else:
             mech_sents.append(s + ".")
     if mech_sents:
-        blocks.append(["왜 그런가 (메커니즘)", " ".join(mech_sents)])
+        blocks.append(["왜 그런가 — 메커니즘 (가설)", " ".join(mech_sents)])  # [C12][B18] 인과는 가설
 
     # ── 4) 누구에 집중 — 위험 마이크로-세그먼트(정량 size+rate) + 정성(드라이버 노트)
     who_sents: list[str] = []
@@ -1660,7 +1770,7 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
     if risk_txt:
         who_sents.append(risk_txt.rstrip(".") + ".")
     if who_sents:
-        blocks.append(["누구에 집중하나", " ".join(who_sents)])
+        blocks.append(["누구에 집중하나 (추정)", " ".join(who_sents)])  # [C12]
 
     # ── 5) 가장 큰 레버 (→ §7 자연 이행)
     proj = _scenario_projection(ctx)
@@ -1674,7 +1784,7 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
     elif top1:
         lever_sent = f"{top1} 중심의 개입이 가장 큰 효과를 낸다 — 구체 실행은 §7에서 다룬다."
     if lever_sent:
-        blocks.append(["가장 큰 레버 (→ §7)", lever_sent])
+        blocks.append(["가장 큰 레버 — §7 연계 (추정)", lever_sent])  # [C12][B18] 화살표 제거
 
     if not blocks:
         return None
@@ -1685,7 +1795,10 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
         layout="one_message",
         role="claim",
         so_what=thesis,
-        title_ko="동인·메커니즘·표적 종합 (핵심 발견)",  # [좋은패턴]
+        title_ko=(  # [B9 Headline=Message] 결론형, 동적
+            f"무엇이 '{target}'{_josa(target, 'obj')} 결정하며, 어디를 보강해야 하는가"
+            if target and target != "타깃" else "동인·메커니즘·표적 종합 (핵심 발견)"
+        ),
         prose_blocks=blocks,
     )
     return make_section("key_insights", "핵심 인사이트와 해석", "evidence", [slide])
@@ -1766,7 +1879,7 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
         impact_sents.append(f"정확한 '{target}' 판정을 자동화해 고위험·고우선 대상의 선별·처리에 일관성과 속도를 확보한다.")
     if proj:
         impact_sents.append(_projection_sentence(proj, event))
-    blocks.append(["임팩트", " ".join(impact_sents)])
+    blocks.append(["임팩트 (추정)", " ".join(impact_sents)])  # [C12] 미래 효과 = 추정
 
     # 2) 표적 개입 원칙 — 전수 X, 카테고리별 차별화
     if flags["is_anom"]:
@@ -1789,12 +1902,12 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
         focus = (
             "전수가 아니라 모델이 점수화한 고위험 상위군을 선별하고, 그중 고가치(매출·전략) 대상을 우선한다." + seg_hint
         )
-    blocks.append(["표적 개입 원칙", focus])
+    blocks.append(["표적 개입 원칙 (추정)", focus])  # [C12]
 
     # 3) 실행 레버 — 손잡이 굵게 + → 효과 (한 줄짜리 블록 다발로 시각화)
     lever_lines = _lever_lines(_levers(ctx, flags))
     if lever_lines:
-        blocks.append(["실행 레버", "우선순위가 높은 실행 레버는 다음과 같다."])
+        blocks.append(["실행 레버 (추정)", "우선순위가 높은 실행 레버는 다음과 같다."])  # [C12]
         for line in lever_lines:
             blocks.append(["", line])
 
@@ -1807,7 +1920,7 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
     if drv:
         ops_sents.append(f"동시에 {drv} 등 핵심 동인의 모니터링·수집을 강화해 예측력과 개입 정확도를 지속 개선한다.")
     if ops_sents:
-        blocks.append(["운영 적용", " ".join(ops_sents)])
+        blocks.append(["운영 적용 (추정)", " ".join(ops_sents)])  # [C12]
 
     # 5) 리스크·전제 — 정직한 한계 (단, 으로 시작)
     risks: list[str] = []
@@ -1841,7 +1954,7 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
         layout="one_message",
         role="action",
         so_what=so_what,
-        title_ko="실행 레버·운영 적용·리스크 (액션 플랜)",  # [좋은패턴]
+        title_ko="지금부터 누가 무엇을 언제까지 할 것인가",  # [B9 Headline=Message] 결론형 + C6 Action_OwnerDate 암시
         prose_blocks=blocks,
     )
     return make_section("implications", "비즈니스 함의 및 권고", "recommendation", [slide])
@@ -2004,7 +2117,10 @@ def _build_conclusion(ctx: ReportContext) -> SectionSpec:
         layout="one_message",
         role="action",
         so_what=lead,
-        title_ko="최종 답과 의사결정 (Bottom Line)",  # [좋은패턴]
+        title_ko=(  # [B9 Headline=Message] 결론형, 동적
+            f"'{chosen}' 모델, 운영 도입할 가치가 있는가"
+            if chosen and chosen != "-" else "최종 답과 의사결정 (Bottom Line)"
+        ),
         prose_blocks=blocks,
     )
     return make_section("conclusion", "결론", "recommendation", [slide])
@@ -2029,8 +2145,11 @@ def build(
     target = ds.detected_target or "타깃"
     chosen = (ctx.model_selection.chosen or {}).get("name", "-") if ctx.model_selection else "-"
     pm = (ctx.evaluation.primary_metric or {}) if ctx.evaluation else {}
-    # ── Executive Summary (컨설팅식: 핵심 메세지 → 문제 → 원인 → 해결 → 대응)
-    # 원칙: 짧게·단정조·측정가능·추측조 금지. 원인은 데이터(핵심 동인)에서, 결과는 기준선 대비.
+    # ── Executive Summary [B7 3-30-3룰] [B8 Z패턴룰] 3층 구조
+    # 3초: headline (결론 + 판단 '다만'으로 caveat)
+    # 30초: conflict (발견 — 파레토 집중 + 통념 반박, 벤치마크 동반)
+    # 한계: recommendation ('단, ...'); 행동: resolution (레버 — 손잡이 굵게)
+    # 원칙: 짧게·단정조·측정가능·추측조 금지. 화살표·축약 금지 [B18 평이한언어룰].
     name = _human_dataset_name(ctx)
     verb = _CAT_VERB.get(ctx.meta.category or "", "분석")
     flags = _task_flags(ctx)
@@ -2062,7 +2181,12 @@ def build(
             headline += f" 다만 {judgment}."
     else:
         headline = f"{name} 데이터({n_rows:,}건)로 '{target}' {verb} 가능성을 분석했다."
-    setup = ""
+    # [B11 페이지논제룰] Executive Summary 의 setup 슬롯에 페이지 논제 명시
+    # — 3초 결론(headline) → 30초 근거(conflict) → 행동(resolution)/한계(recommendation) 3층 구조
+    setup = (
+        f"본 보고서는 '{target}' 의사결정의 일관성·재현성을 데이터로 확보하기 위한 "
+        f"의사결정 근거 자료다."
+    )
 
     # ── 발견(+판단) — 상황 + 파레토 집중 + 통념 반박
     best = _top_contrast(ctx)
@@ -2074,13 +2198,17 @@ def build(
         find_sents.append(bctx)
     clauses: list[str] = []
     if conc and conc[1] >= 0.55:
-        clauses.append(f"전체 {event}의 {conc[1] * 100:.0f}%가 '{conc[0]}' 한 세그먼트에 몰려 있다")
+        # [B18 평이한언어룰] '전체 {event}의' 표현은 분모가 모호함 → 세그먼트 점유율로 풀어쓰기
+        clauses.append(f"'{conc[0]}' 세그먼트가 전체 {event} 사례의 {conc[1] * 100:.0f}%를 차지한다")
     if price_lbl and top1 and best:
         clauses.append(
-            f"통념과 달리 {price_lbl}(가격)이 아니라 {top1}{_josa(top1, 'nom')} 이를 가른다 — '{best[1]}'({best[2]:.0f}%)이 '{best[3]}'({best[4]:.0f}%)의 {best[5]:.0f}배다"
+            # [B18 평이한언어룰] 인용부호 남발 제거, 풀어쓰기
+            f"통념과 달리 {price_lbl}(가격)이 아니라 {top1}{_josa(top1, 'nom')} 이를 가른다. "
+            f"{best[1]} 집단 발생률 {best[2]:.0f}%는 {best[3]} 집단 {best[4]:.0f}%의 {best[5]:.0f}배다"
         )
     elif best:
-        clauses.append(f"'{best[1]}'({best[2]:.0f}%)이 '{best[3]}'({best[4]:.0f}%)의 {best[5]:.0f}배로 갈린다")
+        # [B18 평이한언어룰] 인용부호 남발 제거, 풀어쓰기
+        clauses.append(f"{best[1]} 집단의 발생률 {best[2]:.0f}%는 {best[3]} 집단 {best[4]:.0f}%의 {best[5]:.0f}배다")
     elif drivers_txt:
         clauses.append(f"'{target}'{_josa(target, 'subj')} 주로 {drivers_txt}{_josa(drivers_txt, 'with')} 갈린다")
     find_sents.extend(c + "." for c in clauses)

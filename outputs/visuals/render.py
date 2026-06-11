@@ -117,6 +117,8 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
             return _render_kpi_cards(vs, ctx, primary, plt, slide)
         if vtype == "kpi_single":
             return _render_kpi_single(vs, ctx, primary, plt, slide)
+        if vtype == "risk_matrix":
+            return _render_risk_matrix(vs, ctx, primary, plt)
         # 기타 — KPI 카드들 또는 일반 다이어그램
         return _render_generic_box(vs, ctx, primary, plt, slide)
     except Exception:
@@ -198,17 +200,27 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
         y_lo, y_hi = 0.0, max_v * 1.28
     y_off = (y_hi - y_lo) * 0.045
 
-    colors_list = [_PALETTE[i % len(_PALETTE)] for i in range(len(values))]  # 막대별 distinct 색
+    # [좋은패턴][디자이너 라운드 2026-06-11] 시니어 차트 디자인 — max 막대만 강조, 나머지 묻힘
+    # 메시지가 어느 값에 있는지 한눈에 보이게 (BCG/McKinsey 정석)
+    _max_idx = values.index(max(values)) if values else -1
+    # [차트강조색통일룰 2026-06-11] 모든 차트 강조 막대 = #185FA5 (사이트 메인 블루)
+    # 사용자 확정: "4번 승선항 셰르부르 색" 으로 통일 (의미 있는 막대는 공통 색)
+    _ACCENT = "#185FA5"   # 강조 색 — 사이트 메인 블루 (전 차트 통일)
+    _MUTED = "#94A3B8"    # 묻힘 색 — 표준 슬레이트
+    colors_list = [_ACCENT if i == _max_idx else _MUTED for i in range(len(values))]
 
     fig, ax = plt.subplots(figsize=(9, 4.8), dpi=120)
     fig.patch.set_facecolor("white")
-    bars = ax.bar(labels, values, color=colors_list, width=0.35, zorder=3)  # 가로폭 절반(날씬하게)
-    for bar, v in zip(bars, values):
+    bars = ax.bar(labels, values, color=colors_list, width=0.38, zorder=3, edgecolor="none")
+    for i, (bar, v) in enumerate(zip(bars, values)):
         y = bar.get_height()
         lbl = f"{v:.3f}" if 0 < v < 1 else (f"{int(v)}" if v == int(v) else f"{v:.1f}")
+        # 강조 값에는 더 굵게 + 살짝 큰 폰트
+        _fs = 22 if i == _max_idx else 19
+        _fw = "bold" if i == _max_idx else "semibold"
         ax.text(
             bar.get_x() + bar.get_width() / 2, y + y_off, lbl,
-            ha="center", va="bottom", fontsize=21, color="#0F172A", fontweight="bold",
+            ha="center", va="bottom", fontsize=_fs, color="#0F172A", fontweight=_fw,
         )
     if vs.title:  # 제목은 옵션 (슬라이드 헤딩과 중복되면 빈 값으로 생략)
         ax.set_title(_ensure_ascii(vs.title), fontsize=17, color="#0F172A", pad=16, loc="left", fontweight="bold")
@@ -275,7 +287,11 @@ def _render_hbar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, 
     values = [float(i[1]) for i in items]
     mx = max(values) if values else 1.0
     y = list(range(len(values)))[::-1]
-    colors_list = [_PALETTE[i % len(_PALETTE)] for i in range(len(values))]
+    # [차트강조색통일룰] _render_bar 와 동일 강조 색 (#185FA5)
+    _max_idx = values.index(max(values)) if values else -1
+    _ACCENT = "#185FA5"   # 강조 색 — 사이트 메인 블루 (전 차트 통일)
+    _MUTED = "#94A3B8"    # 묻힘 색
+    colors_list = [_ACCENT if i == _max_idx else _MUTED for i in range(len(values))]
     fig, ax = plt.subplots(figsize=(9, max(3.2, len(values) * 0.8)), dpi=120)
     fig.patch.set_facecolor("white")
     ax.barh(y, values, color=colors_list, height=0.42, zorder=3)  # 두께 절반(날씬하게)
@@ -532,6 +548,60 @@ def _render_kpi_single(vs: VisualSpec, ctx: ReportContext, primary: str, plt, sl
     )
     out = _tmp_png()
     plt.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def _render_risk_matrix(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -> str:
+    """[RiskMatrix] 2×2 리스크 매트릭스 — 확률(X) × 영향(Y) 사분면.
+
+    spec.items: [(label, prob, impact), ...]  — prob/impact 는 0~1.
+    사분면:
+        좌하(낮음·낮음) = 무시 가능 (녹색)
+        우하(높음·낮음) = 주의 (노랑)
+        좌상(낮음·높음) = 모니터링 (노랑)
+        우상(높음·높음) = 즉각 대응 (빨강)
+    """
+    items = (vs.spec or {}).get("items") or []
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
+    fig.patch.set_facecolor("white")
+    # 사분면 배경 (axhspan/axvspan 사용)
+    ax.fill_betweenx([0, 0.5], 0, 0.5, color="#D1FAE5", alpha=0.7, zorder=0)   # 좌하 녹색
+    ax.fill_betweenx([0, 0.5], 0.5, 1.0, color="#FEF3C7", alpha=0.7, zorder=0)  # 우하 노랑
+    ax.fill_betweenx([0.5, 1.0], 0, 0.5, color="#FEF3C7", alpha=0.7, zorder=0)  # 좌상 노랑
+    ax.fill_betweenx([0.5, 1.0], 0.5, 1.0, color="#FECACA", alpha=0.7, zorder=0)  # 우상 빨강
+    # 사분면 라벨 (모서리)
+    ax.text(0.02, 0.97, _ensure_ascii("모니터링"), ha="left", va="top", fontsize=12, color="#92400E", fontweight="bold", zorder=2)
+    ax.text(0.98, 0.97, _ensure_ascii("즉각 대응"), ha="right", va="top", fontsize=12, color="#991B1B", fontweight="bold", zorder=2)
+    ax.text(0.02, 0.03, _ensure_ascii("무시 가능"), ha="left", va="bottom", fontsize=12, color="#065F46", fontweight="bold", zorder=2)
+    ax.text(0.98, 0.03, _ensure_ascii("주의"), ha="right", va="bottom", fontsize=12, color="#92400E", fontweight="bold", zorder=2)
+    # 격자 가운데 선
+    ax.axhline(0.5, color="#475569", linewidth=1.5, zorder=1)
+    ax.axvline(0.5, color="#475569", linewidth=1.5, zorder=1)
+    # 리스크 점 + 라벨 (번호 표시)
+    for idx, item in enumerate(items[:8], 1):
+        if not isinstance(item, (list, tuple)) or len(item) < 3:
+            continue
+        label, prob, impact = str(item[0]), float(item[1]), float(item[2])
+        # 점
+        ax.scatter([prob], [impact], s=550, color="#185FA5", edgecolor="white", linewidth=2.5, zorder=4)
+        ax.text(prob, impact, str(idx), ha="center", va="center", fontsize=14, color="white", fontweight="bold", zorder=5)
+    # 축
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.02, 1.02)
+    ax.set_xticks([0.25, 0.75])
+    ax.set_xticklabels([_ensure_ascii("낮음"), _ensure_ascii("높음")], fontsize=13)
+    ax.set_yticks([0.25, 0.75])
+    ax.set_yticklabels([_ensure_ascii("낮음"), _ensure_ascii("높음")], fontsize=13)
+    ax.set_xlabel(_ensure_ascii("확률 (Likelihood)"), fontsize=14, labelpad=8)
+    ax.set_ylabel(_ensure_ascii("영향 (Impact)"), fontsize=14, labelpad=8)
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    ax.spines["left"].set_color("#94A3B8")
+    ax.spines["bottom"].set_color("#94A3B8")
+    plt.tight_layout()
+    out = _tmp_png()
+    plt.savefig(out, dpi=130, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return out
 
