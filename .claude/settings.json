@@ -213,10 +213,23 @@
       "PowerShell(Stop-Process -Name \"ollama\" -Force -ErrorAction SilentlyContinue)",
       "Bash(curl -s -X POST http://localhost:11434/api/generate -d '{\"model\":\"qwen2.5:7b\",\"prompt\":\"hi\",\"stream\":false}' --max-time 60 -w \"\\\\nHTTP_CODE:%{http_code}\\\\n\")",
       "Bash(tasklist)",
-      "Bash(rm .git/index.lock && git status)"
+      "Bash(rm .git/index.lock && git status)",
+      "Bash(node --check /tmp/app_extracted.js)",
+      "Bash(netstat -ano)",
+      "Bash(PowerShell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"ProcessId=20256\\\\\" | Select-Object ProcessId,Name,CommandLine | Format-List\")",
+      "Bash(node -e \"require\\('jsdom'\\); console.log\\('ok'\\)\")",
+      "Bash(node -e \"require\\('playwright'\\); console.log\\('playwright ok'\\)\")",
+      "Bash(node -e \"require\\('puppeteer'\\); console.log\\('puppeteer ok'\\)\")",
+      "Bash(mkdir -p *)",
+      "Bash(node debug_harness.js)",
+      "Bash(node --check debug_script.js)",
+      "Bash(node --check flow_js.js)",
+      "Bash(cd c:/IT/workspace_python/ADA && rm .git/index.lock && git checkout 9f9c210 -- frontend/app.py api/routes/pipeline.py && git status)"
     ],
     "additionalDirectories": [
-      "C:\\IT\\workspace_python\\ADA\\.git"
+      "C:\\IT\\workspace_python\\ADA\\.git",
+      "\\tmp",
+      "c:\\IT\\workspace_python\\ADA\\.git"
     ]
   },
   "hooks": {
