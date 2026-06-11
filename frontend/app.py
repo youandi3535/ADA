@@ -202,7 +202,9 @@ _FLOW_HTML = """
   .btn{font-family:inherit;font-weight:600;border-radius:999px;cursor:pointer;font-size:24px;white-space:nowrap;display:inline-flex;align-items:center;gap:10px;}
   .btn-ghost{background:#fff;color:var(--deep);border:1px solid var(--line2);padding:15px 30px;}
   .btn-ghost:disabled{opacity:.4;cursor:default;color:#9aa9bd;}
-  .btn-stop{background:#fff;color:#b5481f;border:1px solid #e7c8ba;padding:15px 28px;}
+  .btn-stop{background:#fff;color:#b5481f;border:1px solid #e7c8ba;padding:18px 48px;box-shadow:0 13px 28px rgba(181,72,31,.14);}
+  .btn-stop.engaged{background:#b5481f;color:#fff;border-color:#b5481f;box-shadow:0 13px 28px rgba(181,72,31,.32);}
+  .btn-stop:disabled{opacity:.45;cursor:default;box-shadow:none;}
   .btn-primary{background:var(--deep);color:#fff;border:none;padding:18px 48px;box-shadow:0 13px 28px rgba(31,62,92,.26);}
   .btn-primary.resume{background:#1f7a52;}
   .btn-primary:disabled{opacity:.45;cursor:default;box-shadow:none;}
@@ -290,7 +292,7 @@ _FLOW_HTML = """
         <button class="btn btn-ghost" id="prevBtn">← 이전 단계</button>
         <button class="btn btn-ghost" id="nextBtn">다음 단계 →</button>
         <span class="spacer"></span>
-        <button class="btn btn-stop" id="stopBtn">⏸ 멈춤</button>
+        <button class="btn btn-stop" id="stopBtn">⏹ 정지</button>
         <button class="btn btn-primary" id="primaryBtn">⬆ 업로드</button>
       </div>
     </div>
@@ -303,6 +305,14 @@ _FLOW_HTML = """
       <div id="modal-body"></div><div id="modal-insight"></div><div id="modal-pending-wrap"></div><div id="modal-pb"></div>
     </div>
   </div>
+  <!-- HJ 2026-06-11 — 모달 ✕ 닫은 후 화면 가운데에 표시되는 '다시 열기' 버튼. 1~6단계 모두 지원.
+       render() 가 modalDismissed && _shouldModalBeShown() 시점에만 display:flex 토글.
+       2026-06-11 수정 — 우측 하단 floating → 화면 가운데, 크기 2배 (눈에 띄는 큰 박스 버튼). -->
+  <button id="reopenModalBtn" onclick="reopenModal()" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:500;
+    background:#1f3e5c;color:#fff;border:none;border-radius:24px;padding:28px 48px;font-size:34px;font-weight:600;font-family:inherit;
+    cursor:pointer;box-shadow:0 20px 48px rgba(31,62,92,.4);align-items:center;justify-content:center;gap:16px;transition:transform .15s,box-shadow .2s">
+    🔍 분석 모달 다시 열기
+  </button>
 <!-- HJ 2026-06-09 G1 단축 Phase 4 — client-side 파일 파싱 (PapaParse: CSV, SheetJS: XLSX) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -363,6 +373,8 @@ const GATE_HEADER_BY_CATEGORY={
 };
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; return p+'//'+h+':8000'; })();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
+// HJ 2026-06-11 — 정지 토글: 눌림(navUnlocked=true) 상태에서만 이전/다음 단계 활성. 1~6단계(cur=0~5) 적용.
+let navUnlocked=false;
 let _suppressG1Advance=false; // 사용자가 뒤로가기로 G1 으로 이동했을 때 자동 G1→G2 전환 억제
 let jobId=null, fileId=null, selectedFile=null, intentText='', status={}, errMsg='';
 // HJ 2026-06-09 G1 단축 Phase 4 — θ-B prefetch state.
@@ -388,6 +400,9 @@ let _sawAnalyzingAfterSubmit=false;  // resume 후 analyzing() 상태를 거쳤�
 let modalDismissed=false;
 let _modalDismissedCur=-1;     // dismissed 가 발생한 cur — cur 변경되면 자동 해제
 function dismissModal(){ modalDismissed=true; _modalDismissedCur=cur; try{render();}catch(e){} }
+// HJ 2026-06-11 — 분석 모달 ✕ 닫은 후 다시 열기. 1~6단계(cur=0~5) 모두 동일 동작.
+//   사용자가 떠다니는 "🔍 분석 모달 다시 열기" 버튼 클릭 → modalDismissed=false → render → 모달 재표시.
+function reopenModal(){ modalDismissed=false; try{render();}catch(e){} }
 // HJ 2026-06-11 — 주제 선정 팝업 닫기 (사용자가 ✕ 누름). 같은 cur 동안만 유효, cur 변경 시 자동 reset.
 // 본문에 "🎯 주제 선정 다시 열기" 버튼이 노출되어 언제든 다시 띄울 수 있음.
 let topicDismissed=false;
@@ -416,12 +431,36 @@ function _typingHoldComplete(){
     if(_twAllDoneAt!=null) _twAllDoneAt=null;
     return false;
   }
+  // HJ 2026-06-11 버그픽스: _shownPct<100 가드 제거.
+  //   이 함수는 "다음 게이트 proposals 가 이미 도착한 후"에만 실질적으로 호출됨 → backend 추가 publish 없음.
+  //   _shownPct<100 를 유지하면 G1 등에서 progress 가 100 에 도달하지 않는 엣지케이스(95% 고착 등)에서
+  //   _twAllDoneAt 영구 리셋 → hold 영구 false → 11분 넘어도 다음 단계 불가 고착 버그.
+  //   새 콘텐츠 도착 시 _miEl.innerHTML 교체 → _twAllDone()=false → _twAllDoneAt=null 자동 리셋.
+  //   즉 "타자기 도중 추가 콘텐츠 도착" 케이스는 _twAllDone() 가 자연스럽게 처리. 별도 가드 불필요.
   if(_twAllDoneAt==null){
     _twAllDoneAt=Date.now();
-    // 정확한 3초 시점 재렌더 보장 (setInterval 500ms 주기로는 최대 500ms 지연 가능)
-    setTimeout(function(){ try{render();}catch(_e){} }, POST_TYPING_HOLD_MS+50);
+    // 정확한 3초 시점 재렌더 보장. 모달 닫힘 직후 cur 전진 + stale 해제를 즉시 수행 (다음 poll 2.5s 기다리지 않음).
+    setTimeout(function(){
+      try{
+        // hold 완료 시점(이 콜백 등록 = _twAllDoneAt 설정 시점 기준 3초 후)에 다음 게이트가 와있으면 전진.
+        if(_nextGateArrived()){
+          lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; follow=true;
+        }
+        if(follow && frontier>cur){ cur=Math.max(cur,frontier); }
+        render();
+      }catch(_e){}
+    }, POST_TYPING_HOLD_MS+50);
   }
   return (Date.now()-_twAllDoneAt) >= POST_TYPING_HOLD_MS;
+}
+// HJ 2026-06-11 — "다음 단계 진입" 판정: 제출한 게이트보다 '높은 번호' 게이트가 도착했는지.
+//   backend 는 분석 중 일시적으로 stale 이전 게이트(예: G3 분석 중 G2)를 publish 할 수 있다(app.py:998 주석 참조).
+//   curGate()!==lastSubmittedGate 만으로 해제하면 그 stale G2 에 속아 모달이 분석 도중 사라지고
+//   3단계 선택화면(cur=2 본문)으로 빠지는 버그 발생. 번호 비교로 '진짜 다음 게이트(G4)'만 인정.
+function _nextGateArrived(){
+  const g=curGate();
+  if(!lastSubmittedGate || !g) return false;
+  return parseInt(g.slice(1),10) > parseInt(lastSubmittedGate.slice(1),10);
 }
 
 // ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
@@ -473,7 +512,7 @@ function goToStart(){
 function resetAll(){
   clearState();
   jobId=null; fileId=null; cur=0; frontier=0; maxReached=0;
-  paused=false; follow=true; busy=false; polling=false;
+  paused=false; navUnlocked=false; follow=true; busy=false; polling=false;
   if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
@@ -757,8 +796,12 @@ function _twTick(){
 }
 function _twStart(){ if(_twTimer) return; _twTimer=setInterval(_twTick,_TW_STEP_MS); }
 // HJ 2026-06-10 — 모달 내 모든 타자기 요소가 완료됐는지 확인. 분석 완료여도 타이핑 끝나기 전엔 다음 단계로 못 넘어가도록.
+// HJ 2026-06-11 버그픽스: document 전체 querySelectorAll 사용 시 body(컬럼의미, 도메인카드 등)의 span 이 포함돼
+//   body span 이 계속 새로 생성될 때 _twAllDone()=false 고착 → _twAllDoneAt 영구 리셋 → _typingHoldComplete()=false
+//   → 모달 영구 stuck. #modal-insight 범위로만 제한.
 function _twAllDone(){
-  var els=document.querySelectorAll('span.tw[data-tw]');
+  var _mi=document.getElementById('modal-insight');
+  var els=_mi?_mi.querySelectorAll('span.tw[data-tw]'):[];
   if(!els.length) return false;  // 아직 요소 자체가 안 만들어짐(데이터 미도착) → 미완료로 간주
   for(var i=0;i<els.length;i++){
     var key=els[i].getAttribute('data-twk');
@@ -964,7 +1007,7 @@ async function doResume(){
   // CS 2026-06-10 — G2 일 때 선택된 주제도 choice 에 포함
   if(tg==='G2' && window._g2_selectedTopicText){ choice.topic=window._g2_selectedTopicText; }
   const gate=tg;  // curGate() 대신 cur 기준 게이트 코드 사용
-  errMsg=''; busy=true; render();
+  errMsg=''; busy=true; navUnlocked=false; render();  // 재진행 확정 → 정지 해제(정상 진행 복귀)
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
@@ -974,6 +1017,10 @@ async function doResume(){
     Object.keys(gateCache).forEach(function(k){
       if(parseInt(k.slice(1),10)>_tgNum) delete gateCache[k];
     });
+    // HJ 2026-06-11 — 재진행 확정 순간에만 하위 단계 진행 결과 폐기 (frontier·maxReached 를 현재 단계로).
+    //   이전 단계 이동(prevBtn)만으로는 보존되고, 재진행을 눌러야 비로소 앞 단계가 무효화된다.
+    //   (정상 진행 case 는 cur===frontier===maxReached 라 no-op.) 이후 재실행으로 자연스럽게 재구축.
+    maxReached=cur; frontier=cur;
     // HJ 2026-06-10 — cur 그대로 유지. 각 단계 N 화면에서 진행 누르면 그 자리에서 G(N+1) 분석 모달이 뜨고,
     // 다음 gate 의 proposals 가 도착하면 frontier 추적으로 자연스럽게 cur=N+1 로 advance.
     // (이전엔 cur=cur+1 즉시 점프 → "단계 2 분석"이 단계 3 화면에서 표시되는 오프셋 발생)
@@ -1019,7 +1066,9 @@ async function poll(){
     if((_g1Done || _topicReady) && _typingHoldComplete()){ cur=1; follow=true; }
   }
   // follow=true 여도 cur 는 절대 자동 regress 안 함. 사용자 prev 버튼 클릭 으로만 내려갈 수 있음.
-  if(follow) cur=Math.max(cur, frontier);
+  // HJ 2026-06-11 — 모달 표시 중에는 cur 자동 전진 차단. frontier 가 올라가도 inModalLoading()=false 될 때까지 고정.
+  //   (구 코드: cur=3 으로 올리면 inModalLoading(cur=3) 이 submittedHere=false 반환 → 모달 즉시 소멸 버그)
+  if(follow && !inModalLoading()) cur=Math.max(cur, frontier);
   // cur 상한 = max(maxReached, frontier) — backend stale 일 때도 사용자 진행 단계 유지.
   cur=Math.max(0,Math.min(cur,Math.max(maxReached,frontier)));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
@@ -1030,9 +1079,17 @@ async function poll(){
   // 분석 중(curGate=null)에는 유지 — 새 게이트 등장 시에만 클리어.
   // 실패·완료 시 stale 가드 즉시 해제 — 이전 단계 캐시 proposals 복원 가능하게
   if(isFailed()||isCompleted()){ lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; }
-  // resume 후 analyzing() 통과 확인 — stale gate_data 로 lastSubmittedGate 조기 클리어 방지
+  // resume 후 analyzing() 통과 확인 — staleRun(renderBody 의 이전 gate_data 무시) 보호용.
   if(lastSubmittedGate && analyzing()) _sawAnalyzingAfterSubmit=true;
-  if(lastSubmittedGate && _sawAnalyzingAfterSubmit && curGate() && curGate()!==lastSubmittedGate) lastSubmittedGate=null;
+  // HJ 2026-06-11 버그픽스: 진행 완료(다음 단계 전진) 판정을 '게이트 번호 비교 + 모달 hold 완료' 로.
+  //   • _nextGateArrived(): 제출게이트보다 높은 번호(G3→G4)만 인정 → backend stale 이전 게이트(G2)에 안 속음.
+  //     (구 `curGate()!==lastSubmittedGate` 는 stale G2 에 속아 모달이 분석 도중 사라지고 선택화면으로 빠짐)
+  //   • _typingHoldComplete(): 모달의 실시간 분석 내용을 끝까지 작성 + 3초 hold 후에만 전진 (사용자 요구).
+  //     hold 미완료면 lastSubmittedGate 유지 → inModalLoading()=true → 모달이 계속 내용 작성.
+  if(_nextGateArrived() && _typingHoldComplete()){
+    lastSubmittedGate=null;
+    follow=true;  // 진행 완료 → 새 게이트로 자동 전진 복구
+  }
   // G1→G2 자동 전환 대기 중에는 polling 을 유지해야 한다.
   // 백엔드가 G2 게이트 도달 시점에 analyzing()=false 가 되어 기존 조건만으론 폴링이 멈추고,
   // 그 결과 _shownPct 가 99 에 도달해도 cur 전환을 못 한 채 화면이 stuck 된다(2026-06-04 발견).
@@ -1207,11 +1264,11 @@ function isGateLoading(){
 // HJ 2026-06-10 — 마일스톤 세그먼트 바 (기존 .lbar 진행바를 대체).
 // 단계의 agent 마다 segment 하나. 완료=초록, 현재=파랑 펄스, 대기=회색.
 // 메타: "진행 N% · 경과 Y" — ETA(예상 남은 시간) 표시 제거 (사용자 요구).
-function progressBar(){
+function progressBar(forceShow){
   if(isFailed()) return '';
   if(cur===LAST && isCompleted()) return '';                       // G7 완료 페이지 (결과 표시) — 바 숨김
   if(cur===0 && !jobId) return '';                                 // 업로드 전
-  if(cur>=1 && cur<=5 && !isGateLoading()) return '';              // proposals 표시 중
+  if(cur>=1 && cur<=5 && !isGateLoading() && !forceShow) return '';  // proposals 표시 중 (모달 내부는 forceShow 로 항상 표시)
   // CS 2026-06-10 — 본인 명시 "팝업에는 무조건 주제만". 팝업 활성 시 진행률 바 숨김.
   if(cur===1 && g2SubStage==='topic' && (gateData.topic_proposals||[]).length) return '';
   const p=_stageProgress();
@@ -1427,49 +1484,49 @@ function g2TopicCards(d){
     +'</div></div>';
 }
 
-// HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 시작(jobId 셋)부터 G2 proposals 도착 전까지 모달 유지.
-// 진행 단계와 무관하게 분석 내용 표시 시점부터(=업로드 직후) 노출. 모달이 본문 내용을 대체.
-function inModalLoading(){
+// HJ 2026-06-11 — 모달의 "논리적 활성" 조건. modalDismissed 와 무관 — backend 분석이 진행 중이고
+//   모달이 원래 떠야 하는 상태이면 true. render 가 이 값으로 콘텐츠/타자기 백그라운드 갱신 결정.
+//   사용자 요구: "모달 ✕ 닫아도 글 작성은 계속 진행. 다시 열면 그동안 작성된 글이 보임."
+function _modalShouldBeActive(){
   if(!jobId) return false;
   if(isFailed()) return false;
   if(isCompleted()) return false;
-  // HJ 2026-06-10 — 사용자가 ✕ 로 모달 닫음. 같은 cur 동안만 유효, cur 변경 시 자동 해제.
-  if(modalDismissed && _modalDismissedCur===cur) return false;
-  if(modalDismissed && _modalDismissedCur!==cur){ modalDismissed=false; }
-  // HJ 2026-06-10 — 1~6단계(cur=0~5) 모달은 진행률 41% 이상에서만 노출. 초반 40% 까지는 본문 카드 표시.
-  // _stageProgress() 는 단계 전환 시 0 으로 리셋되므로 매 단계 0→41 도달 후 모달 등장.
-  // (_shownPct 는 _stageProgress() 결과 캐시. 재귀 회피용으로 _stageProgress() 직접 호출 안 함.)
+  // 1~6단계(cur=0~5) 모달은 진행률 41% 이상에서만 노출. 초반 40% 까지는 본문 카드 표시. (원래 동작 유지)
   if(cur>=0 && cur<=5 && _shownPct<41) return false;
   if(cur===0){
-    // HJ 2026-06-11 — 41% 도달 시점에 도메인 데이터(domain_partial) 미도착이어도 모달 무조건 표시.
-    //   이전: if(!g2TopicArea(gateData)) return false;  ← 도메인 도착 전엔 모달 안 떴음
-    //   변경: 41% 게이트만 통과하면 모달 표시 → 5초 placeholder → 데이터 도착 즉시 작성.
-    //         cur=1~5 분기와 동일한 패턴(데이터 도착 여부와 무관한 모달 표시)으로 통일.
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
-    // HJ 2026-06-10 — proposals 도착해도 타자기 끝까지 안 적혔으면 모달 유지 → 사용자 못 넘어감.
-    // HJ 2026-06-11 — 타자기 완료 후 3초 hold 동안에도 모달 유지 — _typingHoldComplete() 로 통합.
     if(_p0.length && curGate()==='G2' && _typingHoldComplete()) return false;
     return true;
   }
-  // HJ 2026-06-10 — cur=1~5 는 선택 상태 vs 분석 상태 구분:
-  //   선택 상태: G(cur+1) proposals 표시 중. lastSubmittedGate ≠ 'G(cur+1)'. → 모달 없음 (옵션 카드 보임)
-  //   분석 상태: 진행 버튼 누른 직후. lastSubmittedGate === 'G(cur+1)'. 다음 gate G(cur+2) proposals 도착 전까지 모달.
   if(cur>=1 && cur<=5){
     const currentGate='G'+(cur+1);
     const nextGate='G'+(cur+2);
-    const submittedHere=(lastSubmittedGate===currentGate);
-    if(!submittedHere) return false;  // 선택 화면 — 모달 없음
+    if(lastSubmittedGate!==currentGate) return false;
     const ag=curGate();
     const d=(ag===nextGate)?gateData:(gateCache[nextGate]||{});
     const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
-    // HJ 2026-06-10 — proposals 도착해도 타자기 끝까지 안 적혔으면 모달 유지.
-    // HJ 2026-06-11 — 타자기 완료 후 3초 hold 동안에도 모달 유지 — _typingHoldComplete() 로 통합.
     if(llmProps.length && _typingHoldComplete()) return false;
     return true;
   }
-  // cur=6 (단계 7 — 완료) — 분석 없음. 결과 표시. 모달 안 띄움.
   return false;
 }
+// HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 시작(jobId 셋)부터 G2 proposals 도착 전까지 모달 유지.
+// 진행 단계와 무관하게 분석 내용 표시 시점부터(=업로드 직후) 노출. 모달이 본문 내용을 대체.
+// HJ 2026-06-11 — 시각적 표시 여부 (modalDismissed=true 시 false). _modalShouldBeActive 와 분리.
+function inModalLoading(){
+  // HJ 2026-06-10 — 사용자가 ✕ 로 모달 닫음. 같은 cur 동안만 유효, cur 변경 시 자동 해제.
+  if(modalDismissed && _modalDismissedCur===cur) return false;
+  if(modalDismissed && _modalDismissedCur!==cur){
+    // HJ 2026-06-11 — cur 변경 → modalDismissed 해제 + 이전 단계 모달 상태 모두 리셋.
+    //   dismiss 보존 로직이 새 단계로 새지 않도록 fresh start.
+    modalDismissed=false;
+    _twState={}; _twDotsShownAt=0;
+    _modalOpenedAt=null; _modalOpenedCur=-1;
+    _twAllDoneAt=null;
+  }
+  return _modalShouldBeActive();
+}
+// (구 inModalLoading 본체는 위 _modalShouldBeActive() 로 통합됨)
 // 모달 전용 주제 영역 — g2TopicArea 의 2배 사이즈 버전. 사용자 요구 (글씨 2x).
 function modalTopicArea(d){
   const dp=(d&&d.data_profile)||{};
@@ -1490,7 +1547,7 @@ function modalTopicArea(d){
     // 점 3개(⋮)는 상단 4 카드의 타이핑이 모두 완료되어야 등장. ~800ms 정지 후 하단 시작.
     const _card=function(k,row,sec){return '<div class="cmcard" data-cmrow="'+row+'" data-cmsec="'+sec+'" style="background:#fff;padding:14px 18px;border-radius:8px;border:1px solid #e2e8f0;opacity:0;visibility:hidden;transition:opacity .35s ease"><b>'+esc(k)+'</b> &nbsp;<span style="opacity:.75">'+twSpan(String(cm[k]),'g1-cm-'+k)+'</span></div>';};
     const _grid='display:grid;grid-template-columns:repeat(2,1fr);gap:12px;font-size:22px';
-    const _dots='<div class="cmdots" style="display:flex;flex-direction:column;align-items:center;gap:6px;margin:20px 0;color:#94a3b8;font-size:34px;line-height:1;font-weight:800;opacity:0;visibility:hidden;transition:opacity .4s ease"><span>·</span><span>·</span><span>·</span></div>';
+    const _dots='<div class="cmdots" style="display:flex;flex-direction:column;align-items:center;gap:3px;margin:10px 0;color:#94a3b8;font-size:17px;line-height:1;font-weight:800;opacity:0;visibility:hidden;transition:opacity .4s ease"><span>·</span><span>·</span><span>·</span></div>';
     const _label='<div class="twrow" style="font-size:22px;margin-bottom:12px;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">'+twSpan('컬럼 의미 ('+cmAllKeys.length+')','g1-cmlabel')+'</span></div>';
     if(cmAllKeys.length<=8){
       cmHtml='<div style="margin-top:22px">'+_label+'<div style="'+_grid+'">'
@@ -1604,8 +1661,16 @@ function _labelRow(label, value, opts){
 }
 // 한 단계의 모달 박스 — G1 modalTopicArea 와 동일한 구조 (제목 + 라벨링된 row 들).
 function _stageBox(titleEmoji, titleText, rows){
-  const body=(rows||[]).filter(function(s){return !!s;}).join('');
+  var body=(rows||[]).filter(function(s){return !!s;}).join('');
   if(!body) return '';
+  // HJ 2026-06-11 — 사용자 요구: 팝업 글 최대 15줄(전 단계 공통). 각 .twrow=1줄.
+  //   초과분은 잘라 '… 생략' 표시. (모달은 라이브 피드 — 잘린 항목은 다음 카드 선택 화면에서 전체 확인 가능.)
+  var _MAX_LINES=15;
+  var _segs=body.split('<div class="twrow"');
+  if(_segs.length-1 > _MAX_LINES){
+    body=(_segs[0]||'')+_segs.slice(1,_MAX_LINES+1).map(function(s){return '<div class="twrow"'+s;}).join('')
+      +'<div class="twrow" style="margin-top:12px;font-size:18px;color:#94a3b8;opacity:0;visibility:hidden;transition:opacity .3s ease">'+twSpan('… 외 항목 생략 (최대 15줄)','sbmore-'+cur)+'</div>';
+  }
   // HJ 2026-06-10 — 박스 제목도 twrow + twSpan 으로 — 가장 먼저 등장+타이핑되고 그 다음 row 들이 순차 reveal.
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
     +'<div class="twrow" style="font-weight:700;color:#0f172a;margin-bottom:6px;font-size:32px;opacity:0;visibility:hidden;transition:opacity .3s ease">'+titleEmoji+' '+twSpan(titleText,'sbtitle-'+cur+'-'+titleText)+'</div>'
@@ -1706,6 +1771,10 @@ function modalInsightArea(d){
       if(ks.length) r.push(_labelRow('클래스 분포', ks.map(function(k){return k+': '+cd[k];}).join(', '), {mt:8}));
     }
     const sp=(d&&d.stage_partial)||{};
+    // HJ 2026-06-11 — EDA 현재 상태(✨ 2차 분석 업그레이드 멘트 포함)를 인사이트 위에 항상 표시.
+    //   구버그: eda_insights(템플릿) 채워지면 eda_status 가 숨겨져 '✨…업그레이드하는 중…' 멘트가 영영 안 떴음.
+    //   G3(g3_status 무조건 상단 표시)와 동일 패턴으로 통일.
+    if(sp.eda_status) r.push(_labelRow('▶ 현재 작업', sp.eda_status, {fs:22, mt:8, twk:'eda-status'}));
     // === EDA 인사이트 — prefix("결측 분석:", "상관관계:" 등) 별 그룹화 ===
     // HJ 2026-06-11 — 사용자 요구: 같은 주제끼리 묶고 다른 주제로 넘어갈 때 한 칸 띄움.
     //   섹션 헤더(굵게) + 들여쓴 불릿 항목 구조. 글 내용 자체는 변경 없음 (배치만 가독성 개선).
@@ -1738,8 +1807,7 @@ function modalInsightArea(d){
         });
       });
     }
-    // === 진행 상태 (인사이트 도착 전 라이브 피드용 — 도착 후엔 보조) ===
-    if(sp.eda_status && (!Array.isArray(sp.eda_insights)||!sp.eda_insights.length)) r.push(_labelRow('▶ EDA 진행', sp.eda_status, {fs:22, mt:14}));
+    // === 진행 상태 — eda_status(업그레이드 멘트 포함)는 위 '▶ 현재 작업' 배너로 이동(중복 표시 방지) ===
     if(sp.eda_charts_count!=null) r.push(_labelRow('▶ 차트 생성', sp.eda_charts_count+'종', {bold:true, mt:14}));
     // === 방법론 후보 — 섹션 헤더 + 들여쓴 불릿 구조로 통일 ===
     if(Array.isArray(sp.methodology_candidates)&&sp.methodology_candidates.length){
@@ -2194,7 +2262,9 @@ function primaryLabel(){
   if(paused) return '▶ 계속';
   if(cur===0) return '⬆ 업로드';
   if(cur===LAST) return '📥 완료';
-  if(cur>=1 && cur<=5 && cur<frontier) return '🔄 재진행 ▸';
+  // HJ 2026-06-11 — 정지(navUnlocked) 눌림 중에는 어느 단계든 '재진행' 표기.
+  //   누르면 그 단계를 현재 선택 카드로 재실행(doResume). cur<frontier(지난 단계)도 동일.
+  if(cur>=1 && cur<=5 && (navUnlocked || cur<frontier)) return '🔄 재진행 ▸';
   return '진행 ▸';
 }
 function render(){
@@ -2333,10 +2403,18 @@ function render(){
 
   const prev=document.getElementById('prevBtn'), next=document.getElementById('nextBtn'),
         stop=document.getElementById('stopBtn'), prim=document.getElementById('primaryBtn');
-  prev.disabled=false;  // cur=0 에서도 활성 — 클릭 시 시작 화면으로
   prev.innerHTML=(cur===0)?'← 시작 화면':'← 이전 단계';
-  next.disabled=(cur>=maxReached);
-  stop.style.display=(!paused && analyzing())?'inline-flex':'none';
+  // HJ 2026-06-11 — 정지 토글 기반 네비게이션 게이트. 1~6단계(cur=0~5)에서 정지(navUnlocked)가
+  //   눌려 있어야만 이전/다음 단계 활성. 기본은 잠금(비활성). 정지 버튼은 진행 옆에 항상 노출.
+  stop.style.display='inline-flex';
+  stop.classList.toggle('engaged', navUnlocked);
+  if(cur>=0 && cur<=5){
+    prev.disabled=!navUnlocked;
+    next.disabled=!navUnlocked || (cur>=maxReached);
+  }else{
+    prev.disabled=false;                 // 7단계(완료) — 기존 동작 유지
+    next.disabled=(cur>=maxReached);
+  }
   const _tg='G'+(cur+1);  // 새 컨벤션: cur 인덱스 → 백엔드 게이트 코드
   const _cd=gateCache[_tg]||{};
   const _llmCount=function(d){ return (d.proposals||[]).filter(function(p){return !p.is_custom;}).length; };
@@ -2353,48 +2431,81 @@ function render(){
   else if(cur===0) prim.disabled=(!selectedFile || !!jobId);
   else if(cur===LAST) prim.disabled=true;
   else prim.disabled=!atGate||!g5ok;
-  // HJ 2026-06-10 G1→G2 전환 팝업 토글 — inModalLoading() 동안 modal 표시, 끝나면 자동 숨김.
-  // backdrop-filter:blur 로 배경 카드·스텝 자동 흐림. 진행바는 modal-pb 에 독립 갱신.
+  // HJ 2026-06-11 — 모달 토글 로직 재구성: 콘텐츠 갱신과 시각 표시 분리.
+  //   _active = _modalShouldBeActive() : backend 분석 진행 중 + 모달 단계 = 콘텐츠 백그라운드 갱신 계속
+  //   _show   = inModalLoading()       : 실제 화면에 모달 visible 여부 (modalDismissed 시 false)
+  //   사용자 요구: "모달 ✕ 닫아도 글 작성은 계속 진행. 다시 열면 그동안 작성된 글이 그대로 보임."
   const _modalOv=document.getElementById('modalOverlay');
   if(_modalOv){
-    if(inModalLoading()){
-      // HJ 2026-06-11 — 모달 최초 표시 시각 기록 (cur 변경 시 재셋). 5초 게이트의 기준점.
-      // setInterval 의 500ms 주기로는 정확한 5초 시점에 render 되지 않을 수 있으므로 setTimeout 한 번 박음.
+    const _active = _modalShouldBeActive();
+    const _show   = inModalLoading();
+    if(_active){
+      // ── [A] 콘텐츠 백그라운드 갱신 — modalDismissed 여도 무조건 진행 ──
+      // 5초 게이트 기준점 (cur 변경 시 재셋)
       if(_modalOpenedAt==null || _modalOpenedCur!==cur){
         _modalOpenedAt=Date.now();
         _modalOpenedCur=cur;
-        setTimeout(function(){ if(inModalLoading()) try{render();}catch(_e){} }, MODAL_CONTENT_DELAY_MS+50);
+        setTimeout(function(){ if(_modalShouldBeActive()) try{render();}catch(_e){} }, MODAL_CONTENT_DELAY_MS+50);
       }
-      // [1] 제목 영역: cur·errMsg 변경 시만 재설정
+      // [1] 제목 영역
       var _mh=modalHtml(); var _mb=document.getElementById('modal-body');
       if(_mb._last!==_mh){_mb._last=_mh;_mb.innerHTML=_mh;}
-      // [2] 진행바: 매 500ms 갱신
-      document.getElementById('modal-pb').innerHTML=progressBar();
-      // [3] insight 영역: insightHtml 변경 시만 재설정 (모래시계와 완전 분리)
-      //   • modalInsightArea 가 '' 반환 = 5초 게이트 미통과 OR 데이터 미도착 → cur 별 placeholder.
-      //   • 5초 게이트 통과 + 데이터 있음 → 실제 분석 내용 작성 (타자기 효과 자동 동작).
-      //   • cur=2~5 placeholder 는 3~6단계 모달 구축 시 동일 패턴으로 확장.
+      // [2] 진행바
+      var _pbEl=document.getElementById('modal-pb');
+      if(_pbEl) _pbEl.innerHTML=progressBar(true);  // HJ 2026-06-11 — 모달 내부 진행바는 isGateLoading 무관 항상 표시(사라짐 버그 fix)
+      // [3] insight 영역 — modalInsightArea 가 모달 콘텐츠 생성. modalDismissed 와 무관하게 새 데이터 도착 시 갱신.
       var _miEl=document.getElementById('modal-insight');
-      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();/* innerHTML 교체 후 즉시 1 tick → 진행 상태(_twState) 복원, blank flicker 방지 */}}
-      // [3.5] 타자기 엔진 시작 (idempotent — 모달 노출 동안 계속 run)
+      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();}}
+      // [3.5] 타자기 엔진 — modalDismissed 여도 setInterval 계속 도는 핵심.
+      //   _twTick 가 span.tw[data-tw] 들을 95ms 마다 1글자씩 채움. 모달 숨겨져 있어도 DOM 은 살아있어 글자 누적.
+      //   사용자가 다시 열면 그동안 그려진 글자가 그대로 보임.
       _twStart();
-      // [4] 모래시계 pending 블록: 최초 1회만 초기화 → SVG 애니메이션 영구 유지
+      // [4] 모래시계 pending 블록
       var _mpEl=document.getElementById('modal-pending-wrap');
       if(_mpEl&&!_mpEl._init){_mpEl._init=true;_mpEl.innerHTML='<div class="modal-pending"><div class="t">'+HOURGLASS_HTML+'<span id="mlmsg"></span></div><div class="s" id="msubinfo"></div></div>';}
-      // [5] 동적 텍스트 span 직접 갱신 (innerHTML 재설정 없이)
+      // [5] 동적 텍스트
       var _mlEl=document.getElementById('mlmsg');if(_mlEl)_mlEl.textContent=loadMsg()+'…';
       var _msiEl=document.getElementById('msubinfo');
       if(_msiEl){var _ml2=_curAgentLabel();var _sd={0:'데이터 출처·스키마·도메인·품질 점검 등을 진행하고 있습니다.',1:'EDA 분석 + 방법론 후보를 산출하고 있습니다.',2:'전처리·피처 엔지니어링 전략을 수립하고 있습니다.',3:'모델 선택·하이퍼파라미터 튜닝·학습을 진행하고 있습니다.',4:'파인튜닝·평가·설명·인사이트를 생성하고 있습니다.',5:'리포트를 합성하고 학습 결과를 저장하고 있습니다.'};var _sn={0:'분석 방향',1:'방법론',2:'모델 전략',3:'최적 모델',4:'산출물',5:'최종 결과'};var _d2=_sd[cur]||'다음 단계를 준비하고 있습니다.';var _n2=_sn[cur]||'다음 단계';_msiEl.innerHTML=_ml2?(_d2+' &nbsp;·&nbsp; 현재 작업: <b>'+esc(_ml2)+'</b> &nbsp;·&nbsp; 곧 <b>'+esc(_n2)+'</b> 카드가 표시됩니다.'):(_d2+' &nbsp;·&nbsp; 곧 <b>'+esc(_n2)+'</b> 카드가 표시됩니다.');}
+    }
+    // ── [B] 시각 표시 토글 — _show 만 보고 결정. modalDismissed=true 면 _show=false → 숨김 ──
+    if(_show){
       _modalOv.style.display='flex';
     } else {
       _modalOv.style.display='none';
-      // HJ 2026-06-10 — 모달 닫힘 시 타자기 상태 리셋. 다음 잡(job)에서 처음부터 다시 타이핑.
-      _twState={}; _twDotsShownAt=0;
-      // HJ 2026-06-11 — 5초 게이트도 리셋. 다음 모달 표시 시 0→5s 처음부터 카운트.
-      _modalOpenedAt=null; _modalOpenedCur=-1;
-      // HJ 2026-06-11 — 타자기 hold 카운트도 리셋. 다음 단계 모달에서 타자기 완료 시 새로 3초 카운트.
-      _twAllDoneAt=null;
+      // 자연 닫힘 (사용자 dismiss 아님 + 더 이상 active 아님) 시 _modalOpenedAt 만 리셋.
+      // HJ 2026-06-11 버그픽스: _twState/_twAllDoneAt 를 여기서 지우면 _typingHoldComplete()=false 로 되돌아가
+      //   → inModalLoading()=true 재반전 → 모달 재표시 → 재타자 → 완료 → reset → 무한루프 → cur 전진 불가.
+      //   _twState/_twAllDoneAt 는 _typingHoldComplete() 가 자체 관리. 여기선 건드리지 않음.
+      //   다음 단계 모달이 열릴 때 새 span 키 등장 → _twAllDone()=false → _twAllDoneAt 자동 리셋.
+      if(!_active && !modalDismissed){
+        _modalOpenedAt=null; _modalOpenedCur=-1;
+      }
     }
+  }
+  // HJ 2026-06-11 — "분석 모달 다시 열기" floating 버튼 토글.
+  //   조건: ① modalDismissed=true (사용자가 ✕ 로 닫음) AND ② 같은 cur 안에 있음 AND ③ 모달이 원래 떠야 하는 상태
+  //   ③ = jobId 있음 + 실패·완료 아님 + 41% 도달 + cur=0~5 + 다음 게이트 proposals 미도착
+  const _reBtn=document.getElementById('reopenModalBtn');
+  if(_reBtn){
+    let _shouldShow=false;
+    if(modalDismissed && _modalDismissedCur===cur && jobId && !isFailed() && !isCompleted() && cur>=0 && cur<=5 && _shownPct>=41){
+      if(cur===0){
+        // G1: G2 proposals 미도착 (또는 도착했지만 타자기 미완료)이면 모달이 원래 떠야 함
+        const _g2p=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+        _shouldShow = !(_g2p && _typingHoldComplete());
+      } else {
+        // cur=1~5: submittedHere 이고 다음 게이트 proposals 미도착
+        const _cg='G'+(cur+1), _ng='G'+(cur+2);
+        if(lastSubmittedGate===_cg){
+          const _ag=curGate();
+          const _d=(_ag===_ng)?gateData:(gateCache[_ng]||{});
+          const _np=(_d.proposals||[]).filter(function(p){return !p.is_custom;}).length;
+          _shouldShow = !(_np && _typingHoldComplete());
+        }
+      }
+    }
+    _reBtn.style.display = _shouldShow ? 'inline-flex' : 'none';
   }
 }
 document.getElementById('prevBtn').onclick=function(){
@@ -2408,15 +2519,13 @@ document.getElementById('prevBtn').onclick=function(){
   if(cur>0){
     const goTo=cur-1;
     if(goTo===0) _suppressG1Advance=true;  // G1 화면에서 자동 G2 전환 억제
-    if(goTo>=1 && goTo<=4 && maxReached>goTo){
-      Object.keys(gateCache).forEach(function(k){ if(parseInt(k.slice(1),10)>goTo+1) delete gateCache[k]; });
-      maxReached=goTo; frontier=goTo;
-    }
+    // HJ 2026-06-11 — 이전 단계로 가도 앞 단계 진행 결과(캐시·frontier·maxReached) 보존.
+    //   다시 next 로 돌아와 이어서 진행할 수 있게. 하위 단계 폐기는 '재진행(doResume)' 누르는 순간에만 수행.
     cur=goTo; follow=false; render();
   }
 };
 document.getElementById('nextBtn').onclick=function(){ _suppressG1Advance=false; if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
-document.getElementById('stopBtn').onclick=function(){ paused=true; if(pollTimer) clearTimeout(pollTimer); polling=false; render(); };
+document.getElementById('stopBtn').onclick=function(){ navUnlocked=!navUnlocked; render(); };
 document.getElementById('primaryBtn').onclick=function(){
   if(busy) return;
   if(paused){ paused=false; render(); if(analyzing()) startPolling(); return; }

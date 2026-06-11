@@ -28,6 +28,7 @@ def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
     except Exception:  # noqa: BLE001
         pass
 
+
 SYSTEM_PROMPT = """당신은 QA 평가관입니다. best_model.metrics + eval_result 를 보고
 모델 출시 가능성을 JSON 으로 종합 판단합니다.
 
@@ -116,6 +117,13 @@ class EvalAgent(BaseAgent):
                 if violations:
                     _vs = [str(v)[:100] for v in violations[:3]]
                     _g5_eval_insights.append(f"임계치 미달: {' / '.join(_vs)}")
+                _g5_eval_insights = await self._dynamic_insights(
+                    _g5_eval_insights,
+                    backend="claude",
+                    context="G5 평가",
+                    job_id=state.job_id,
+                    key="g5_eval_insights",
+                )
                 _safe_publish_stage_partial(
                     state.job_id,
                     {

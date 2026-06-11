@@ -181,6 +181,13 @@ class EDAAgent(BaseAgent):
                 self.logger.warning("eda_insight_compute_failed", error=str(e))
 
             if insights:
+                insights = await self._dynamic_insights(
+                    insights,
+                    backend="ollama",
+                    context=f"G2 EDA·{state.category}",
+                    job_id=state.job_id,
+                    key="eda_insights",
+                )
                 _safe_publish_stage_partial(
                     state.job_id,
                     {"eda_insights": insights, "eda_phase": "insights_done"},

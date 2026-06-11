@@ -275,6 +275,8 @@ class BaseAgent(abc.ABC):
         model_name: Optional[str] = None,
         json_mode: bool = False,
         on_partial: Any = None,  # Callable[[str], None] — Ollama streaming 시만 활용
+        force_backend: Optional[str] = None,  # "ollama"|"anthropic" 강제 (None=기본 라우팅)
+        track_progress: bool = True,  # False 면 진행률 보간·llm_end publish 생략(보조 호출용)
     ) -> str:
         prefix = f"{self.persona}\n\n" if self.persona else ""
         full_system = prefix + system_prompt
@@ -292,15 +294,21 @@ class BaseAgent(abc.ABC):
         interp_task = None
         agent_key = getattr(self, "_progress_agent_key", None)
         job_id = getattr(self, "_current_job_id", None)
-        if agent_key and job_id:
+        if track_progress and agent_key and job_id:
             interp_task = await self._start_llm_progress_interp(agent_key, job_id)
         # Routing 결정:
         #   1. use_anthropic_api=True 에이전트 (G4 모델 전략 이후) → Anthropic API 우선
         #   2. use_ollama_for_analysis=True 면 Ollama (qwen2.5:7b 기본 — 서버 성능 한계)
         #   3. anthropic_api_key 있으면 Anthropic API
         #   4. fallback: Claude CLI
-        force_anthropic = self.use_anthropic_api and bool(settings.anthropic_api_key)
-        use_ollama = getattr(settings, "use_ollama_for_analysis", False) and not force_anthropic
+        # HJ 2026-06-11 — force_backend 로 단계별 백엔드 강제 (G1~3 Ollama / G4~6 Claude).
+        if force_backend == "ollama":
+            use_ollama = True
+        elif force_backend == "anthropic":
+            use_ollama = False
+        else:
+            force_anthropic = self.use_anthropic_api and bool(settings.anthropic_api_key)
+            use_ollama = getattr(settings, "use_ollama_for_analysis", False) and not force_anthropic
         try:
             if use_ollama:
                 # HJ 2026-06-09 G1 단축 γ — on_partial 콜백이 있으면 streaming 사용
@@ -341,7 +349,7 @@ class BaseAgent(abc.ABC):
                     await asyncio.wait_for(asyncio.shield(interp_task), timeout=2.0)
                 except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                     pass
-            if agent_key and job_id:
+            if track_progress and agent_key and job_id:
                 try:
                     from orchestrator.runner import agent_phase_progress, publish_progress
 
@@ -523,6 +531,9 @@ class BaseAgent(abc.ABC):
                     {"role": "user", "content": user_prompt},
                 ],
                 "stream": False,
+                # HJ 2026-06-11 — 모델을 30분 메모리 상주시켜 G1→G2→G3 간 재로드(콜드스타트) 방지.
+                #   콜드스타트가 G2 재작성 타임아웃의 주원인 → 워밍 유지로 후속 호출 대폭 단축.
+                "keep_alive": "30m",
                 "options": {
                     "num_predict": max_tokens,
                     "temperature": temperature,
@@ -757,3 +768,154 @@ class BaseAgent(abc.ABC):
             return json.loads(text)
         except Exception:
             return None
+
+    async def _dynamic_insights(
+        self,
+        lines: list[str],
+        *,
+        backend: str = "ollama",
+        context: str = "",
+        job_id: str | None = None,
+        key: str | None = None,
+        timeout_s: float | None = None,
+    ) -> list[str]:
+        """규칙 기반 인사이트를 LLM 으로 항목별 동적 재작성 (HJ 2026-06-11 v2).
+
+        사실 헤더(라벨·컬럼·수치)는 보존, "—" 뒤 해석부만 항목별로 새로 생성.
+        job_id+key 가 있으면 (1) 템플릿 즉시 발행(모달 빈칸 방지) → (2) LLM 재작성 →
+        (3) 결과 재발행(교체). 진행바 보간은 track_progress=False 로 끔(진행바 꼬임 방지).
+        출력은 작은 모델도 잘 맞추는 `번호|해석` 한 줄 포맷 + 관대한 파싱, 백엔드별 넉넉한
+        타임아웃. 실패·누락은 항목 단위 원본 유지(무중단). G1~3 ollama / G4~6 claude.
+        """
+        if not lines or not isinstance(lines, list):
+            return lines
+
+        # 업그레이드 안내: 기존 "현재 작업" 상태줄(*_status)을 재활용 — 멘트만 바꾸면 됨.
+        status_key = (key.split("_", 1)[0] + "_status") if key else None
+        upgrade_msg = "✨ 1차 분석 먼저 표시 · 더 정밀한 해석으로 2차 분석 업그레이드하는 중…"
+
+        def _publish(plines, status=None):
+            if not job_id or not key:
+                return
+            payload = {key: plines}
+            if status is not None and status_key:
+                payload[status_key] = status
+            try:
+                from orchestrator.runner import publish_stage_partial as _psp
+
+                _psp(job_id, payload)
+            except Exception:  # noqa: BLE001
+                pass
+
+        _publish(lines, status=upgrade_msg)  # (1) 템플릿 즉시 발행 + 업그레이드 안내
+
+        sep = " — "
+        headers = []
+        order = []
+        prompt_items = []
+        for i, ln in enumerate(lines):
+            s = ln if isinstance(ln, str) else str(ln)
+            head = s.split(sep, 1)[0] if sep in s else s
+            old = s.split(sep, 1)[1] if sep in s else ""
+            headers.append(head)
+            n = len(order) + 1
+            order.append(i)
+            prompt_items.append(f"{n}) 사실: {head}" + (f" / 기존해석: {old}" if old else ""))
+
+        system_prompt = (
+            "당신은 머신러닝 데이터·모델 분석을 한국어로 해설하는 전문가입니다. "
+            "각 항목의 '사실'(라벨·컬럼·수치)에 근거해, 모델링에 도움이 되는 구체적 "
+            "해석/권장을 항목마다 한 문장으로 새로 작성합니다.\n"
+            "출력 형식(엄수): 한 줄에 하나씩 `번호|해석문`. "
+            "예) `1|Pclass는 상관 0.34로 중간 근접 약신호라 교호작용 피처로 보강 여지가 큽니다.`\n"
+            "규칙: (1) 번호는 입력과 동일. (2) 사실의 수치를 새로 만들거나 바꾸지 말 것. "
+            "(3) 항목마다 표현·권장이 서로 겹치지 않게. (4) 한 문장 100자 이내. "
+            "(5) `번호|해석` 외 머리말·마크다운·코드펜스 금지."
+        )
+        user_prompt = (
+            (f"분석 맥락: {context}\n" if context else "")
+            + f"총 {len(prompt_items)}개 항목. 각 번호마다 한 줄씩 `번호|해석`:\n"
+            + "\n".join(prompt_items)
+        )
+
+        fb = "anthropic" if backend in ("claude", "anthropic") else "ollama"
+        if timeout_s is None:
+            if fb == "anthropic":
+                timeout_s = 30.0
+            else:
+                # HJ 2026-06-11 — ollama(qwen 7B·CPU)는 항목 많을수록 + 콜드스타트로 느림.
+                #   고정 60s 는 G2(8항목)에서 자주 타임아웃 → 템플릿 폴백 버그. 항목수 비례로
+                #   넉넉히 잡되 urlopen(180s) 안쪽으로 상한. 8항목=160s, 4항목=80s(최소).
+                timeout_s = min(165.0, max(80.0, len(prompt_items) * 20.0))
+
+        try:
+            raw = await asyncio.wait_for(
+                self._call_llm(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    max_tokens=max(256, min(1600, len(prompt_items) * 120)),
+                    temperature=0.5,
+                    force_backend=fb,
+                    track_progress=False,
+                ),
+                timeout=timeout_s,
+            )
+        except Exception as e:  # noqa: BLE001 — 타임아웃·호출실패 모두 원본 유지
+            try:
+                self.logger.warning("dynamic_insights_llm_failed", error=str(e)[:200], backend=fb, n=len(prompt_items))
+            except Exception:
+                pass
+            return lines
+
+        raw = self._strip_md_fence(raw or "")
+        new_tails = {}
+        plain = []
+        for ln in raw.splitlines():
+            t = ln.strip()
+            if not t:
+                continue
+            matched = False
+            for ssep in ("|", ")", ":"):
+                if ssep in t:
+                    left, _, right = t.partition(ssep)
+                    left = left.strip().lstrip("([").strip()
+                    if left.isdigit():
+                        pos = int(left)
+                        txt = right.strip().strip("|)-—: ").strip()
+                        if 1 <= pos <= len(order) and len(txt) >= 4:
+                            new_tails[order[pos - 1]] = txt
+                            matched = True
+                    break
+            if not matched:
+                plain.append(t)
+        if not new_tails and len(plain) == len(order):
+            for k, t in enumerate(plain):
+                tt = t.strip("|)-—: ").strip()
+                if len(tt) >= 4:
+                    new_tails[order[k]] = tt
+
+        if not new_tails:
+            return lines
+
+        out = []
+        for i, ln in enumerate(lines):
+            t = new_tails.get(i, "").strip()
+            if len(t) < 4:
+                out.append(ln)
+                continue
+            if len(t) > 180:
+                t = t[:178] + "…"
+            out.append(headers[i] + sep + t)
+
+        if out != lines:
+            # (3) 위→아래 순차 교체 — 한 항목씩 발행해 모달이 순서대로 채워지게(꼬임 방지).
+            cur = list(lines)
+            for idx in range(len(out)):
+                cur[idx] = out[idx]
+                _publish(cur)
+                if idx < len(out) - 1:
+                    try:
+                        await asyncio.sleep(0.25)
+                    except Exception:  # noqa: BLE001
+                        pass
+        return out

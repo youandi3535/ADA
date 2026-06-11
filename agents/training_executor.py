@@ -35,6 +35,8 @@ def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
         _psp(job_id, partial)
     except Exception:  # noqa: BLE001
         pass
+
+
 from orchestrator.training_tasks import HEAVY_MODELS, is_heavy_model
 from pipelines.factory import PipelineFactory
 
@@ -181,6 +183,13 @@ class TrainingExecutorAgent(BaseAgent):
                         _g4_train_insights.append(f"학습 결과: {mn} → {', '.join(_m_pairs)}")
                     else:
                         _g4_train_insights.append(f"학습 결과: {mn} (메트릭 미산출)")
+                _g4_train_insights = await self._dynamic_insights(
+                    _g4_train_insights,
+                    backend="claude",
+                    context="G4 학습 결과",
+                    job_id=state.job_id,
+                    key="g4_train_insights",
+                )
                 _safe_publish_stage_partial(
                     state.job_id,
                     {
