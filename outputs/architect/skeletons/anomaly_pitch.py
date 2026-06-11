@@ -1,44 +1,39 @@
-"""outputs.architect.skeletons.anomaly_pitch — Anomaly Pitch Skeleton (Phase 2, HJ 2026-06-08).
+"""outputs.architect.skeletons.anomaly_pitch — Anomaly Pitch Skeleton (재구성).
 
-이상탐지 (anomaly_detection) 카테고리 전용 컨설팅·세일즈 피치 deck.
-사용자 디자인 20장 + 빅4 컨설팅(Pyramid·Action Title·MECE) + 이상탐지 특화 표준
-(Score Distribution·PR-AUC·Threshold Tuning·FAR·Root Cause·Drift) 통합.
-
-도메인 적응 — _DOMAIN_PROFILES 6종 + generic 폴백:
-    fraud           : 사기 탐지 (금융·결제·보험)
-    industrial_iot  : 산업 IoT / 설비 이상 (제조)
-    system_logs     : 시스템 장애 / 로그 이상 (DevOps/SRE)
-    security        : 보안 / 침입 탐지 (Network/SOC)
-    quality_control : 품질 관리 / 결함 검출 (제조 라인)
-    medical         : 의료 진단 (Healthcare)
-    generic         : 일반 이상 탐지 (폴백)
-
-슬라이드 5 (Why Anomaly Detection?) 와 17 (ROI + Alert Reduction) 가 도메인별 텍스트로
-자동 적응. 슬라이드 14 (Threshold + FAR) 의 비용 비대칭 도 같은 도메인 프로필 사용.
+이상탐지 (anomaly_detection) 카테고리 전용 분석 보고서 deck.
+20장 골격 유지 + ml/dl/ts_pitch 와 동일 패턴 (ctx 기반 동적 채움 + verdict 분기) +
+이상탐지 특화 슬라이드 (Why Anomaly · Score Distribution · Reason Code ·
+PR@k + Alarm Budget · Policy Threshold) 유지.
 
 20 슬라이드 구조 (확정):
     1.  Cover                                cover
     2.  목차 (Agenda)                        agenda
-    3.  Executive Summary                    exec_summary
-    4.  분석 가설 (이상탐지 적합성)           hypothesis
-    5.  Why Anomaly Detection?                why_anomaly           ★ 도메인 적응
-    6.  현행 방식의 한계                      p2_pain
-    7.  단순 분류·룰 한계                     p3_alt_limits
-    8.  모델 아키텍처 Deep Dive               architecture_deep
-    9.  기술 아키텍처 + PyOD 스택             tech_architecture
-    10. 차별화 (Unsup·Threshold·XAI·Drift)    s3_differentiation
-    11. 핵심 성과 + PR-AUC Baseline           i1_kpi
-    12. Anomaly Score Distribution            score_distribution    ★ 신규
-    13. EDA + Anomaly 패턴                    eda_findings
-    14. Threshold + PR/ROC + FAR              error_analysis        ★ 도메인 비용 적응
-    15. 가설 입증 인사이트 + Root Cause       insights_derived
-    16. AS-IS vs TO-BE                        as_is_to_be
-    17. ROI + Alert Reduction                 i3_roi                ★ 도메인 적응
-    18. Risk + Drift / Alert Fatigue          risk_mitigation
-    19. Roadmap + Alert Pipeline              roadmap
-    20. Thank You + Q&A                       closing
+    3.  Executive Summary                    exec_summary           ← verdict-aware
+    4.  분석 가설                            hypothesis
+    5.  Why Anomaly Detection?               why_anomaly            ★ 지도/비지도 판단 (ctx 기반)
+    6.  기술 스택 (Anomaly 프리셋)           p2_pain                ← manifest anomaly_detection
+    7.  분석 방법                            p3_alt_limits          ← method_flow (공통)
+    8.  모델 아키텍처 Deep Dive              architecture_deep      ★ IF/LOF/AE (ctx 기반)
+    9.  EDA · 정상 vs 이상 분포              tech_architecture      ← EDA-1
+    10. EDA · 변수 상관 / 파생 피처          s3_differentiation     ← EDA-2 (또는 파생 피처)
+    11. 탐지 성능 + Baseline                 i1_kpi                 ← model_perf (precision@k/PR-AUC)
+    12. Anomaly Score Distribution           score_distribution     ★ 점수 분포 + 임계값
+    13. Reason Code · 상위 5 Feature         eda_findings           ← shap_global 카테고리 변형
+    14. 이상 사례 3건 · Reason Code 별       error_analysis         ← shap_cases 카테고리 변형
+    15. precision@k · 알람 Budget 곡선       insights_derived       ← error_cm 카테고리 변형
+    16. 정상 / 이상 클러스터 비교            as_is_to_be            ← segment 카테고리 변형
+    17. 임계값 · 알람 Budget · 운영 시나리오 i3_roi                 ← policy_insight + verdict
+    18. SWOT · Drift                         risk_mitigation        ← swot (ctx 기반)
+    19. Roadmap + Alert Pipeline             roadmap                ← verdict-aware Phase
+    20. 감사합니다 + Q&A                     closing                ← verdict-aware
 
-HJ 단독 영역.
+설계 원칙:
+    - 모든 builder 가 ctx 에서 동적 채움 — 도메인 하드코딩 X
+    - verdict (adopt/iterate/reject) 에 따라 S3/S17/S19/S20 어조 자동 분기
+    - skeleton_helpers 의 공통 빌더 (EDA / 파생 피처 / method flow) 재사용
+    - 이상탐지 카테고리 톤은 본 파일 내부에서만 차별화 (Score Dist · PR@k · Alarm Budget 등)
+
+HJ 영역. 구두 협의 완료.
 """
 
 from __future__ import annotations
@@ -53,255 +48,32 @@ from outputs.architect.plan import (
     SlideSpec,
     VisualSpec,
 )
+from outputs.architect.skeleton_helpers import (
+    auto_label as _auto_label,
+    build_derived_features_slide as _build_derived_features_slide,
+    build_eda_placeholder as _build_eda_placeholder,
+    build_eda_slide_from_chart as _build_eda_slide_from_chart,
+    build_method_steps as _build_method_steps,
+    build_method_whys as _build_method_whys,
+    derived_features_richness as _derived_features_richness,
+    format_pm_value as _format_pm_value,
+    get_verdict_tone as _get_verdict_tone,
+    select_top_eda_charts as _select_top_eda_charts,
+)
+from outputs.architect.substitution_manifest import (
+    TechStackItem,
+    is_metric_compatible,
+    resolve_slide,
+    resolve_tech_stack,
+)
 from outputs.context.schema import ReportContext
+from outputs.style.text_budget import format_metric
 
 SKELETON_NAME = "Anomaly Pitch"
 
 
 # ==============================================================
-# 도메인 프로필 — 슬라이드 5·14·17 텍스트 적응용
-# ==============================================================
-
-_DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
-    "fraud": {
-        "label_ko": "사기 탐지 (금융·결제)",
-        "why": {
-            "context": "금융·결제·보험 거래 데이터 (계좌·카드·이체)",
-            "old_problem": "룰 기반 사기 차단 — 신규 사기 수법 못 잡음 + FAR 높아 고객 경험 저하",
-            "new_value": "거래 패턴 자동 학습 — 새 사기 수법도 Anomaly Score 높게 감지",
-        },
-        "roi": {
-            "primary_kpi": "사기 손실 절감",
-            "primary_unit": "원/년",
-            "secondary": [
-                "False alarm 감소 — 정상 거래 차단 감소, 고객 경험 개선",
-                "분석가 검토 시간 단축 — Root Cause SHAP 자동 제공",
-                "신규 사기 패턴 조기 감지 — Zero-day 사기 대응",
-            ],
-            "fp_cost": "2,000원 (불필요 차단·고객 컴플레인 처리)",
-            "fn_cost": "280,000원/건 (사기 평균 손실)",
-        },
-    },
-    "industrial_iot": {
-        "label_ko": "산업 IoT / 설비 이상 (제조)",
-        "why": {
-            "context": "센서 다변량 데이터 (진동·온도·압력·전류·회전수)",
-            "old_problem": "임계값 기반 alert — 복잡한 다변량 패턴 못 잡음 + 다운타임 발생",
-            "new_value": "다변량 정상 분포 학습 — 미세한 이상 신호 조기 감지로 예방 정비",
-        },
-        "roi": {
-            "primary_kpi": "가동률 향상 / 다운타임 감소",
-            "primary_unit": "%p",
-            "secondary": [
-                "예방 정비 — 고장 발생 전 사전 조치",
-                "정비 비용 절감 — 불필요 정비 출동 감소",
-                "안전사고 예방 — 위험 신호 사전 차단",
-            ],
-            "fp_cost": "100만원 (불필요 정비 출동)",
-            "fn_cost": "5,000만원/건 (다운타임 + 부품·인건비)",
-        },
-    },
-    "system_logs": {
-        "label_ko": "시스템 장애 / 로그 이상 (DevOps)",
-        "why": {
-            "context": "서버 로그·메트릭 시계열 (CPU·메모리·트래픽·error rate·latency)",
-            "old_problem": "Static threshold — 시점별 정상 변동 못 따라감, alert 폭주 + 진짜 장애 묻힘",
-            "new_value": "동적 정상 분포 학습 — 시점별 alert 정확도 향상, 신규 장애 자동 감지",
-        },
-        "roi": {
-            "primary_kpi": "MTTR (Mean Time To Recovery) 단축",
-            "primary_unit": "분",
-            "secondary": [
-                "가용성 향상 (SLA 충족률 ↑)",
-                "On-call 알람 부하 감소 (alert fatigue 해소)",
-                "신규 장애 패턴 조기 감지",
-            ],
-            "fp_cost": "30분 (분석가 검토 시간)",
-            "fn_cost": "1시간/건 (서비스 다운타임 + 매출 손실)",
-        },
-    },
-    "security": {
-        "label_ko": "보안 / 침입 탐지 (Network/SOC)",
-        "why": {
-            "context": "네트워크 트래픽·사용자 행동·시스템 콜·인증 로그",
-            "old_problem": "Signature 기반 탐지 — 알려진 공격만 잡음, Zero-day 공격 무방비",
-            "new_value": "정상 행동 분포 학습 — 알려지지 않은 공격 자동 탐지 (UEBA)",
-        },
-        "roi": {
-            "primary_kpi": "침해 방지 건수 / 평균 탐지 시간",
-            "primary_unit": "건·시간",
-            "secondary": [
-                "Zero-day 공격 대응 가능",
-                "SOC 분석가 부하 감소 — Triage 자동화",
-                "Compliance audit 자동화 (PCI-DSS·ISO27001)",
-            ],
-            "fp_cost": "10분 (SOC 분석가 triage)",
-            "fn_cost": "큰 보안 사고 (평균 N억원 + 평판 손실)",
-        },
-    },
-    "quality_control": {
-        "label_ko": "품질 관리 / 결함 검출 (제조 라인)",
-        "why": {
-            "context": "제조 라인 센서·이미지·계측 데이터",
-            "old_problem": "수작업 검수 — 인간 한계 (피로·실수) + 라인 속도 제약",
-            "new_value": "AI 자동 검수 — 미세 결함 검출 + 풀라인 속도 유지",
-        },
-        "roi": {
-            "primary_kpi": "불량률 감소",
-            "primary_unit": "%p",
-            "secondary": [
-                "리콜 방지 — 출하 전 결함 차단",
-                "검수 인력 절감",
-                "고객 클레임 감소",
-            ],
-            "fp_cost": "추가 검수 시간 (소량)",
-            "fn_cost": "고객 클레임·리콜·평판 손실",
-        },
-    },
-    "medical": {
-        "label_ko": "의료 진단 (Healthcare)",
-        "why": {
-            "context": "의료 신호·영상·EHR·바이오마커 데이터",
-            "old_problem": "수작업 판독 — 의사 업무 부하 + 미세 패턴 누락 위험",
-            "new_value": "AI 보조 진단 — 비정상 패턴 자동 식별, 의사 의사결정 보조",
-        },
-        "roi": {
-            "primary_kpi": "조기 발견율 향상",
-            "primary_unit": "%p",
-            "secondary": [
-                "오진 감소",
-                "의사 업무 부하 감소 (스크리닝 자동화)",
-                "의료비 절감 (조기 치료)",
-            ],
-            "fp_cost": "추가 검사 비용 (정밀 진단)",
-            "fn_cost": "진단 누락 — 환자 위험 + 의료 분쟁",
-        },
-    },
-    "generic": {
-        "label_ko": "일반 이상 탐지",
-        "why": {
-            "context": "다변량 정형/비정형 데이터",
-            "old_problem": "룰 기반 / 단순 임계값 — 신규 패턴 못 잡음 + 임계값 수동 조정",
-            "new_value": "정상 분포 자동 학습 — Unsupervised 로 새 이상 유형 자동 감지",
-        },
-        "roi": {
-            "primary_kpi": "이상 탐지 정확도 향상",
-            "primary_unit": "%p",
-            "secondary": [
-                "False alarm 감소",
-                "분석가 검토 부하 감소",
-                "신규 이상 패턴 자동 감지",
-            ],
-            "fp_cost": "분석 비용",
-            "fn_cost": "이상 손실 (도메인별 상이)",
-        },
-    },
-}
-
-
-def _infer_anomaly_domain(ctx: ReportContext) -> str:
-    """ctx 의 도메인·use_case·intent 로부터 이상탐지 도메인 추론.
-
-    키워드 매칭 우선순위 — 더 구체적 도메인이 일반 도메인 이김.
-    매칭 실패 시 'generic' 폴백.
-    """
-    industry = (getattr(ctx.domain, "inferred_industry", "") or "").lower()
-    use_case = (getattr(ctx.domain, "inferred_use_case", "") or "").lower()
-    intent = (ctx.meta.user_intent or "").lower()
-    text = f"{industry} {use_case} {intent}"
-
-    # 도메인별 키워드 매핑 — 구체적인 도메인부터 검사
-    domain_keywords: list[tuple[str, tuple[str, ...]]] = [
-        # 우선순위: 더 구체적인 도메인이 일반 도메인보다 먼저 검사 (첫 매치가 이김).
-        ("fraud", ("사기", "fraud", "카드", "결제", "이체", "보험", "banking", "finance", "money laundering")),
-        ("quality_control", ("품질", "quality", "결함", "defect", "불량", "검수", "inspection", "출하", "검사")),
-        (
-            "medical",
-            (
-                "의료",
-                "medical",
-                "건강",
-                "진단",
-                "병원",
-                "healthcare",
-                "환자",
-                "patient",
-                "ecg",
-                "mri",
-                "ct",
-                "xray",
-                "혈액",
-                "검진",
-            ),
-        ),
-        (
-            "security",
-            (
-                "보안",
-                "security",
-                "침입",
-                "intrusion",
-                "사이버",
-                "cyber",
-                "malware",
-                "soc",
-                "ids",
-                "ips",
-                "threat",
-                "ueba",
-                "siem",
-                "공격",
-            ),
-        ),
-        (
-            "industrial_iot",
-            (
-                "설비",
-                "센서",
-                "iot",
-                "공장",
-                "vibration",
-                "motor",
-                "predictive maintenance",
-                "manufacturing",
-                "factory",
-                "조립",
-                "프레스",
-            ),
-        ),
-        (
-            "system_logs",
-            (
-                "로그",
-                "log",
-                "metric",
-                "장애",
-                "outage",
-                "sre",
-                "devops",
-                "서버",
-                "observability",
-                "telemetry",
-                "monitoring",
-                "kubernetes",
-                "k8s",
-            ),
-        ),
-    ]
-    for domain, keywords in domain_keywords:
-        if any(kw in text for kw in keywords):
-            return domain
-    return "generic"
-
-
-def _get_domain_profile(ctx: ReportContext) -> dict[str, Any]:
-    """현재 ctx 의 도메인 프로필 (캐싱 없음, 매번 추론)."""
-    domain = _infer_anomaly_domain(ctx)
-    return _DOMAIN_PROFILES.get(domain, _DOMAIN_PROFILES["generic"])
-
-
-# ==============================================================
-# 내부 헬퍼 — 자체완결
+# 헬퍼 — 섹션·메트릭
 # ==============================================================
 
 
@@ -313,7 +85,6 @@ def make_section(
     summary: str = "",
     slides: Optional[list[SlideSpec]] = None,
 ) -> SectionSpec:
-    """SectionSpec 생성 헬퍼."""
     return SectionSpec(
         id=section_id,
         title=title,
@@ -325,15 +96,39 @@ def make_section(
 
 
 def primary_metric_ref(ctx: ReportContext) -> list[str]:
-    """primary_metric 의 ref_id — ExecSummary·KPI 인용."""
     pm = ctx.evaluation.primary_metric or {}
     rid = pm.get("ref_id")
     return [rid] if rid else []
 
 
+def _anomaly_ratio(ctx: ReportContext) -> Optional[float]:
+    """ctx 에서 이상 비율 (0~1) 추출. 추정 불가 시 None."""
+    target = ctx.dataset.detected_target
+    if not target:
+        return None
+    cat_top = (ctx.dataset.categorical_top or {}).get(target, [])
+    if not cat_top:
+        return None
+    counts: list[int] = []
+    for it in cat_top:
+        if isinstance(it, dict):
+            try:
+                counts.append(int(it.get("count", it.get("freq", 0)) or 0))
+            except (TypeError, ValueError):
+                continue
+    if len(counts) < 2 or sum(counts) <= 0:
+        return None
+    total = sum(counts)
+    minority = min(counts)
+    return minority / total
+
+
+# ==============================================================
+# S1 / S2 — Cover / Agenda
+# ==============================================================
+
+
 def build_cover(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 1 — 표지."""
-    profile = _get_domain_profile(ctx)
     intent = (ctx.meta.user_intent or ctx.meta.user_question or "이상 탐지 분석 보고서").strip()
     return SlideSpec(
         id="cover",
@@ -343,95 +138,1153 @@ def build_cover(ctx: ReportContext) -> SlideSpec:
         so_what="",
         title_ko=intent[:40],
         body_outline=[
-            f"카테고리: {ctx.meta.category} ({profile['label_ko']})",
-            f"데이터셋: {ctx.dataset.dataset_name or '미지정'}",
-            f"분류등급: {ctx.meta.classification}",
+            f"카테고리 · {ctx.meta.category}",
+            f"데이터셋 · {ctx.dataset.dataset_name or '미지정'}",
+            f"분류등급 · {ctx.meta.classification}",
         ],
         required_refs=[],
-        speaker_notes_hint=f"제목·도메인({profile['label_ko']})·발표자 + 핵심 결론 미리보기.",
+        speaker_notes_hint="제목·분석 의도·핵심 결론 미리보기.",
     )
 
 
 def build_agenda(sections_titles: list[str]) -> SlideSpec:
-    """슬라이드 2 — 목차."""
     return SlideSpec(
         id="agenda",
         section_id="front_matter",
         layout="agenda",
         role="meta",
-        so_what="본 보고서는 6개 섹션 구성 — 이상탐지 정당성·솔루션·결과·임팩트·실행 순으로 전개",
+        so_what="본 보고서는 5개 섹션 — 이상탐지 정당성 · 솔루션 · 결과 · 임팩트 · 실행 순.",
         title_ko="목차",
         body_outline=sections_titles,
-        speaker_notes_hint="섹션 흐름 안내. Why Anomaly Detection? (정당성) 이 deck 의 기둥.",
+        speaker_notes_hint="섹션 흐름 안내.",
     )
 
 
-def build_tech_stack_anomaly_lines(env: dict[str, Any]) -> list[str]:
-    """기술 아키텍처 슬라이드 안의 이상탐지 스택 박스 (9+10 통합)."""
-    key_pkgs: dict[str, str] = env.get("key_packages", {}) or {}
-    py_ver = env.get("python", "3.10")
-    pyod_ver = key_pkgs.get("pyod", "")
+# ==============================================================
+# S3 — Executive Summary (verdict-aware)
+# ==============================================================
+
+
+def _build_top_findings_from_ctx(ctx: ReportContext) -> list[dict[str, Any]]:
+    """S3 상단 3 KEY FINDINGS — interpretation.global_importance Top 3 (Reason Code)."""
+    importance_list = list(ctx.interpretation.global_importance or [])[:3]
+    findings: list[dict[str, Any]] = []
+    for i, item in enumerate(importance_list):
+        feature = getattr(item, "feature", "") or f"Feature {i+1}"
+        value = getattr(item, "importance", None) or 0.0
+        story = ctx.interpretation.per_feature_story.get(feature, "")
+        findings.append({
+            "label": f"REASON {i+1:02d}",
+            "feature": feature,
+            "big": format_metric(float(value), "shap", as_percent=False, decimals=2),
+            "sub": _auto_label(story, ctx) if story else feature,
+        })
+    while len(findings) < 3:
+        findings.append({
+            "label": f"REASON {len(findings)+1:02d}",
+            "feature": "",
+            "big": "-",
+            "sub": "분석 결과 적립 후 채워짐",
+        })
+    return findings
+
+
+def _build_method_subitems(ctx: ReportContext) -> list[tuple[str, str]]:
+    chosen = (ctx.model_selection.chosen or {}).get("name", "Anomaly Detector")
+    n_candidates = len(ctx.model_selection.candidates or [])
+    ratio = _anomaly_ratio(ctx)
+    ratio_str = f"이상 비율 {ratio*100:.2f}%" if ratio is not None else "비지도 (라벨 부족)"
     return [
-        f"언어 : Python {py_ver}",
-        f"이상탐지 코어 : PyOD {pyod_ver} (Isolation Forest · LOF · COPOD · ECOD · 38 알고리즘)",
-        "Deep AD : PyTorch (AutoEncoder · DeepSVDD · PaDiM · PatchCore)",
-        "해석 : SHAP (Root Cause) · LIME",
-        "실험 관리 : MLflow · Optuna",
-        "운영 : 실시간 score → Alert Pipeline (Slack/PagerDuty) · Drift 감시",
+        ("모델 선정", f"{chosen} — 후보 {n_candidates}개 비교" if n_candidates else f"{chosen} 선정"),
+        ("학습 모드", ratio_str),
+        ("임계값", "비용 비대칭 + 알람 Budget 기반 자동 조정"),
     ]
 
 
+def _build_perf_subitems(ctx: ReportContext) -> list[tuple[str, str]]:
+    pm = ctx.evaluation.primary_metric or {}
+    pm_str = _format_pm_value(pm)
+    gate = "운영 임계 통과" if ctx.evaluation.gate_passed else "운영 임계 미통과"
+    rationale = ctx.evaluation.gate_rationale or gate
+
+    baseline = ctx.model_selection.baselines.naive or {}
+    baseline_str = ""
+    if baseline:
+        b_val = baseline.get("score")
+        if b_val is not None:
+            try:
+                baseline_str = format_metric(float(b_val), pm.get("name", ""))
+            except (TypeError, ValueError):
+                baseline_str = str(b_val)
+            baseline_str = f"룰 {baseline_str} 대비 {pm_str}"
+        else:
+            baseline_str = "Baseline 비교 완료"
+    else:
+        baseline_str = "Baseline 미설정"
+
+    n_metrics = len(ctx.evaluation.metrics or {})
+    balance = f"{n_metrics}-metric (PR@k · Recall@k · PR-AUC)" if n_metrics >= 2 else "단일 metric 평가"
+
+    return [
+        ("운영 임계", rationale),
+        ("Baseline 대비", baseline_str),
+        ("균형 · 알람 Budget", balance),
+    ]
+
+
+def _build_limitation_subitems(ctx: ReportContext) -> list[tuple[str, str]]:
+    gaps = list(ctx.limitations.data_gaps or [])[:3]
+    items: list[tuple[str, str]] = []
+    for g in gaps:
+        label = getattr(g, "description", "") or "데이터 결함"
+        impact = getattr(g, "impact", "") or ""
+        mitigation = getattr(g, "mitigation", None) or ""
+        if mitigation:
+            desc = f"영향 {impact} · {mitigation}" if impact else mitigation
+        else:
+            desc = f"영향 {impact}" if impact else "영향 추정 필요"
+        items.append((str(label), str(desc)))
+    if len(items) < 3 and ctx.limitations.model_caveats:
+        for cav in ctx.limitations.model_caveats[: 3 - len(items)]:
+            items.append(("모델 한계", str(cav)))
+    while len(items) < 3:
+        items.append(("한계", "추가 분석 필요"))
+    return items
+
+
+def _build_exec_summary_anomaly(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 3 — Executive Summary (Anomaly, verdict-aware)."""
+    pm = ctx.evaluation.primary_metric or {}
+    chosen = (ctx.model_selection.chosen or {}).get("name", "Anomaly Detector")
+    use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "이상 탐지 과제"
+    horizon = ctx.limitations.revalidation_window or "6개월"
+    pm_name = pm.get("name", "primary")
+    pm_value = _format_pm_value(pm)
+
+    tone = _get_verdict_tone(ctx)
+    so_what = tone.s2_so_what_template.format(
+        chosen=chosen, use_case=use_case,
+        metric_name=pm_name, metric_value=pm_value, horizon=horizon,
+    )
+
+    findings = _build_top_findings_from_ctx(ctx)
+    method_items = _build_method_subitems(ctx)
+    perf_items = _build_perf_subitems(ctx)
+    limitation_items = _build_limitation_subitems(ctx)
+
+    body = [
+        f"Reason 1 · {findings[0]['feature']} {findings[0]['big']}",
+        f"Reason 2 · {findings[1]['feature']} {findings[1]['big']}",
+        f"Reason 3 · {findings[2]['feature']} {findings[2]['big']}",
+        f"방법 · {method_items[0][1]}",
+        f"성능 · {pm_name} {pm_value} ({tone.accent})",
+    ]
+
+    return SlideSpec(
+        id="exec_summary",
+        section_id="front_matter",
+        layout="exec_summary_3finding_3box",
+        role="claim",
+        so_what=so_what,
+        title_ko="Executive Summary",
+        body_outline=body,
+        required_refs=primary_metric_ref(ctx),
+        thread_part="resolution",
+        parent_message_id="root",
+        visual_spec=VisualSpec(
+            type="exec_summary_v32",
+            title="Executive Summary",
+            spec={
+                "findings": findings,
+                "method_items": method_items,
+                "perf_items": perf_items,
+                "limitation_items": limitation_items,
+                "verdict": ctx.evaluation.verdict or "adopt",
+                "tone_accent": tone.accent,
+            },
+        ),
+        speaker_notes_hint=(
+            "1장만 봐도 의사결정 가능. 상단 3 REASON CODE = SHAP / score contribution 으로 알아낸 것, "
+            "하단 METHOD / PERFORMANCE / LIMITATION 의 Baseline 대비 우위 + 알람 Budget."
+        ),
+    )
+
+
 # ==============================================================
-# Main builder
+# S4 — Hypothesis
 # ==============================================================
+
+
+def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
+    pm = ctx.evaluation.primary_metric or {}
+    chosen = (ctx.model_selection.chosen or {}).get("name", "Anomaly Detector")
+    intent = ctx.meta.user_intent or "분석 과제"
+    body = [
+        "H1 · 라벨 부족 · 이상 비율 < 5% — Supervised 한계, 비지도/반지도 적합",
+        f"H2 · 모델 적합성 · {chosen} 가 룰 Baseline 대비 {pm.get('name', '지표')} 향상",
+        "H3 · 운영 임계값 · FP/FN 비용 비대칭 + 알람 Budget 기반 자동 조정",
+    ]
+    return SlideSpec(
+        id="hypothesis",
+        section_id="problem",
+        layout="one_message",
+        role="claim",
+        so_what=f"본 분석 '{intent[:40]}' 의 3 가설 — 데이터로 입증 예정",
+        title_ko="분석 가설",
+        body_outline=body,
+        thread_part="setup",
+        parent_message_id="hyp_root",
+        visual_spec=VisualSpec(
+            type="custom",
+            title="Hypothesis · Evidence · Insight",
+            caption="가설별 증거·인사이트 흐름 (검증은 후속 슬라이드)",
+            spec={"layout": "hyp_evidence_insight"},
+        ),
+        speaker_notes_hint="3 가설 명확. 슬라이드 13~15 에서 1:1 대응.",
+    )
+
+
+# ==============================================================
+# S5 — Why Anomaly Detection? (지도/비지도 판단, ctx 기반)
+# ==============================================================
+
+
+def _build_why_anomaly(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 5 — Why Anomaly Detection? (지도/비지도 판단 근거, ctx 기반).
+
+    이상 비율 + 라벨 가용성 + class imbalance 로 비지도 학습 정당성 명시.
+    ctx.dataset.categorical_top / detected_target 에서 객관 증거 추출.
+    """
+    ratio = _anomaly_ratio(ctx)
+    target = ctx.dataset.detected_target
+
+    why_items: list[tuple[str, str]] = []
+    if ratio is not None:
+        ratio_pct = ratio * 100
+        if ratio_pct < 1.0:
+            why_items.append((f"이상 비율 {ratio_pct:.2f}%", "극심한 imbalance — Supervised 학습 어려움"))
+        elif ratio_pct < 5.0:
+            why_items.append((f"이상 비율 {ratio_pct:.2f}%", "imbalance — 비지도 + 임계값 조정 적합"))
+        else:
+            why_items.append((f"이상 비율 {ratio_pct:.1f}%", "라벨 활용 가능 — 반지도/지도 혼합 고려"))
+    else:
+        why_items.append(("라벨 부족", "이상 비율 추정 불가 — 비지도 학습 디폴트"))
+
+    # 분포 학습 정당성
+    n_features = len(ctx.dataset.dtypes or {})
+    if n_features:
+        why_items.append(("다변량 정상 패턴", f"{n_features}개 피처 — 단일 임계값 불가능"))
+    else:
+        why_items.append(("다변량 정상 패턴", "분포 학습으로 신규 이상 자동 감지"))
+
+    # 운영 임계값
+    why_items.append(("운영 임계값", "FP/FN 비용 비대칭 + 알람 Budget 기반 자동 조정"))
+
+    # 타겟 정보
+    if target:
+        why_items.append((f"타겟 · {target}", "이상 라벨 컬럼 확보 — PR@k 평가 가능"))
+
+    body = [f"{k} · {v}" for k, v in why_items[:5]]
+    return SlideSpec(
+        id="why_anomaly",
+        section_id="problem",
+        layout="why_anomaly_3_pillars",
+        role="claim",
+        so_what="이상탐지 정당성 — 라벨 부족 · 다변량 정상 패턴 · 임계값 비용 3축",
+        title_ko="Why Anomaly Detection?",
+        body_outline=body,
+        parent_message_id="problem_root",
+        visual_spec=VisualSpec(
+            type="custom",
+            title="Why Anomaly Detection",
+            spec={
+                "why_items": why_items[:5],
+                "anomaly_ratio": ratio,
+                "target": target or "",
+            },
+        ),
+        speaker_notes_hint="이상탐지 도입의 *데이터적 근거* — 비율 + 다변량 + 운영 임계.",
+    )
+
+
+# ==============================================================
+# S6 — Tech Stack (Anomaly 프리셋)
+# ==============================================================
+
+
+def _build_pain_points(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 6 — 기술 스택 (Anomaly 프리셋, manifest 기반)."""
+    category = ctx.meta.category or "anomaly_detection"
+    items: list[TechStackItem] = resolve_tech_stack(category)
+
+    env_pkgs: dict[str, str] = {}
+    if ctx.code and getattr(ctx.code, "environment", None):
+        env_pkgs = ctx.code.environment.get("key_packages", {}) or {}
+
+    stack_items: list[tuple[str, str]] = []
+    for it in items:
+        role = it.role
+        first_token = it.name.split("/")[0].strip().split(" ")[0].strip().lower()
+        for pkg, ver in env_pkgs.items():
+            if pkg.lower() == first_token and ver:
+                role = f"{role} · v{ver}"
+                break
+        stack_items.append((it.name, role))
+
+    body = [f"{name} · {role}" for name, role in stack_items]
+    py_ver = env_pkgs.get("python", "3.x")
+    runtime = f"Python {py_ver}"
+
+    return SlideSpec(
+        id="p2_pain",
+        section_id="problem",
+        layout="tech_stack_grid",
+        role="evidence",
+        so_what=(
+            f"본 분석은 {category} 표준 스택 ({len(stack_items)}개 도구) 으로 재현 가능 — {runtime}"
+        ),
+        title_ko="기술 스택",
+        body_outline=body,
+        parent_message_id="problem_root",
+        visual_spec=VisualSpec(
+            type="v28_tech_stack",
+            title="기술 스택",
+            spec={"stack_items": stack_items, "category": category, "python_version": py_ver},
+        ),
+        speaker_notes_hint=(
+            "이상탐지 표준 스택 (scikit-learn · IsolationForest/LOF · AutoEncoder · ThresholdTuner)."
+        ),
+    )
+
+
+# ==============================================================
+# S7 — 분석 방법 (Method Flow + WHY 패널, 공통)
+# ==============================================================
+
+
+def _build_method_flow(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 7 — 분석 방법 흐름 + WHY 패널 (Option C)."""
+    steps = _build_method_steps(ctx)
+    whys = _build_method_whys(ctx)
+    body = [f"단계 {i+1} · {s['label']}" for i, s in enumerate(steps)]
+
+    return SlideSpec(
+        id="p3_alt_limits",
+        section_id="problem",
+        layout="method_flow_with_why",
+        role="evidence",
+        so_what="5단계 분석 방법 — 각 단계의 *선택 이유* 와 *정량 결과* 트레이스",
+        title_ko="분석 방법",
+        body_outline=body[:5],
+        parent_message_id="problem_root",
+        visual_spec=VisualSpec(
+            type="v28_method_flow",
+            title="분석 방법 흐름 · WHY",
+            spec={"steps": steps, "whys": whys},
+        ),
+        speaker_notes_hint="좌측 흐름도 + 우측 WHY 카드 — 단계별 rationale 자동 추출.",
+    )
+
+
+# ==============================================================
+# S8 — Architecture Deep Dive (IF/LOF/AE, ctx 기반)
+# ==============================================================
+
+
+def _build_architecture_deep(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 8 — 모델 아키텍처 Deep Dive (ctx 기반).
+
+    ctx.training.runs[0] 의 hyperparameters / resource 에서 구조·파라미터 추출.
+    IsolationForest / LOF / AutoEncoder 등의 핵심 파라미터 표시.
+    """
+    chosen = ctx.model_selection.chosen or {}
+    chosen_name = chosen.get("name", "Anomaly Detector")
+    chosen_family = chosen.get("family", "Anomaly")
+
+    arch_items: list[tuple[str, str]] = [("모델", f"{chosen_name} ({chosen_family})")]
+
+    if ctx.training.runs:
+        run = ctx.training.runs[0]
+        hp = getattr(run, "hyperparameters", {}) or {}
+        resource = getattr(run, "resource", {}) or {}
+
+        # IsolationForest 핵심 파라미터
+        if "n_estimators" in hp:
+            arch_items.append(("Trees", f"{hp['n_estimators']}개"))
+        if "max_samples" in hp:
+            arch_items.append(("Max Samples", f"{hp['max_samples']}"))
+        if "contamination" in hp:
+            arch_items.append(("Contamination", f"{hp['contamination']}"))
+        # LOF 핵심 파라미터
+        if "n_neighbors" in hp:
+            arch_items.append(("k-Neighbors", f"{hp['n_neighbors']}"))
+        # AutoEncoder 핵심 파라미터
+        if "hidden_dim" in hp or "latent_dim" in hp:
+            dim = hp.get("hidden_dim", hp.get("latent_dim"))
+            arch_items.append(("Hidden / Latent Dim", f"{dim}"))
+        if "n_layers" in hp:
+            arch_items.append(("레이어", f"{hp['n_layers']}층"))
+        if "n_params" in hp:
+            arch_items.append(("Total Params", f"{hp['n_params']:,}"))
+        device = resource.get("device", "")
+        if device:
+            arch_items.append(("학습 Device", str(device)))
+    else:
+        arch_items.append(("구조", "ctx.training.runs 적립 후 표시"))
+
+    body = [f"{k} · {v}" for k, v in arch_items[:6]]
+
+    return SlideSpec(
+        id="architecture_deep",
+        section_id="solution",
+        layout="architecture_deep_dive",
+        role="evidence",
+        so_what=f"{chosen_name} 모델 구조 — 이상탐지 메커니즘과 파라미터 분포",
+        title_ko="모델 아키텍처 · Deep Dive",
+        body_outline=body[:5],
+        parent_message_id="solution_root",
+        visual_spec=VisualSpec(
+            type="architecture_diagram",
+            title=f"{chosen_name} 구조",
+            spec={"arch_items": arch_items, "model_name": chosen_name, "family": chosen_family},
+        ),
+        speaker_notes_hint=(
+            "이상탐지 모델의 *구조* 명시 — IF Trees / LOF k / AE Latent. "
+            "ctx.training.runs[0].hyperparameters 에서 자동 추출."
+        ),
+    )
+
+
+# ==============================================================
+# S9 / S10 — EDA 1·2 (또는 파생 피처)
+# ==============================================================
+
+
+def _build_tech_architecture_combined(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 9 — EDA · 정상 vs 이상 분포 (ctx.eda.charts Top 1)."""
+    charts = _select_top_eda_charts(ctx, n=3)
+    if charts:
+        return _build_eda_slide_from_chart(charts[0], "tech_architecture", 1, ctx, "eda_main_1")
+    return _build_eda_placeholder("tech_architecture", 1, ctx, "eda_main_1")
+
+
+def _build_differentiation(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 10 — 파생 피처 우선 / EDA-2 폴백."""
+    if _derived_features_richness(ctx) >= 5:
+        return _build_derived_features_slide(ctx, "s3_differentiation")
+    charts = _select_top_eda_charts(ctx, n=3)
+    if len(charts) >= 2:
+        return _build_eda_slide_from_chart(charts[1], "s3_differentiation", 2, ctx, "eda_main_2")
+    return _build_eda_placeholder("s3_differentiation", 2, ctx, "eda_main_2")
+
+
+# ==============================================================
+# S11 — Model Performance + Baseline (precision@k / recall@k / PR-AUC)
+# ==============================================================
+
+
+def _build_kpi_baseline(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 11 — 탐지 성능 + Baseline (precision@k / recall@k / PR-AUC).
+
+    라벨 있을 때: precision@k / recall@k / PR-AUC.
+    라벨 없을 때: 도메인 검증 (분포 분리도, score 분산 등).
+    """
+    pm = ctx.evaluation.primary_metric or {}
+    pm_name = pm.get("name", "primary")
+    pm_value_str = _format_pm_value(pm)
+    chosen = (ctx.model_selection.chosen or {}).get("name", "Anomaly Detector")
+    category = ctx.meta.category or "anomaly_detection"
+
+    metric_ok = is_metric_compatible(category, pm_name)
+    has_labels = ctx.dataset.detected_target is not None
+
+    baselines = ctx.model_selection.baselines
+    bars: list[dict[str, Any]] = []
+    if baselines.naive:
+        b = baselines.naive
+        v = b.get("score")
+        if v is not None:
+            bars.append({"label": b.get("name", "룰 (Z-score)"), "value": v, "color": "muted"})
+    if baselines.domain_rule:
+        b = baselines.domain_rule
+        v = b.get("score")
+        if v is not None:
+            bars.append({"label": b.get("name", "도메인 룰"), "value": v, "color": "muted"})
+    if baselines.previous_best:
+        b = baselines.previous_best
+        v = b.get("score")
+        if v is not None:
+            bars.append({"label": b.get("name", "이전 최고"), "value": v, "color": "muted"})
+    bars.append({"label": f"{chosen} (선정)", "value": pm.get("value"), "color": "primary", "highlight": True})
+
+    metric_lines: list[str] = []
+    balance_top4: list[tuple[str, str]] = []
+    for name, m in list((ctx.evaluation.metrics or {}).items())[:4]:
+        val = m.get("value") if isinstance(m, dict) else None
+        if val is None:
+            continue
+        formatted = format_metric(float(val), name)
+        metric_lines.append(f"{name} {formatted}")
+        balance_top4.append((name, formatted))
+
+    body: list[str] = []
+    for bar in bars[:5]:
+        v = bar["value"]
+        v_str = format_metric(float(v), pm_name) if isinstance(v, (int, float)) else str(v)
+        body.append(f"{bar['label']} · {pm_name} {v_str}")
+    if metric_lines:
+        body.append("균형 · " + " · ".join(metric_lines))
+    if not has_labels:
+        body.append("라벨 부족 — 도메인 검증 / 분포 분리도로 보조 평가")
+
+    tone = _get_verdict_tone(ctx)
+    so_what = f"{chosen} 성능: {pm_name} {pm_value_str} ({tone.accent})"
+
+    return SlideSpec(
+        id="i1_kpi",
+        section_id="results",
+        layout="model_perf_baseline_grouped",
+        role="evidence",
+        so_what=so_what,
+        title_ko="탐지 성능 · Baseline 비교",
+        body_outline=body[:5],
+        required_refs=primary_metric_ref(ctx),
+        parent_message_id="results_root",
+        visual_spec=VisualSpec(
+            type="v28_model_perf",
+            title=f"Baseline 비교 — {pm_name}",
+            spec={
+                "metric": pm_name,
+                "metric_value": pm.get("value"),
+                "bars": bars,
+                "metric_balance_top4": balance_top4,
+                "metric_category_compatible": metric_ok,
+                "has_labels": has_labels,
+                "verdict": ctx.evaluation.verdict or "",
+            },
+        ),
+        speaker_notes_hint=(
+            "라벨 있으면 PR@k / Recall@k / PR-AUC. 없으면 도메인 검증 + 분포 분리도."
+        ),
+    )
+
+
+# ==============================================================
+# S12 — Anomaly Score Distribution (이상탐지 특화)
+# ==============================================================
+
+
+def _build_score_distribution(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 12 — Anomaly Score Distribution + 임계값 후보.
+
+    ctx.evaluation.calibration 의 score 히스토그램 + 임계값 후보 시각화.
+    """
+    body: list[str] = []
+    spec: dict[str, Any] = {}
+
+    calib = ctx.evaluation.calibration or {}
+    if isinstance(calib, dict) and calib:
+        spec["calibration"] = calib
+        normal_peak = calib.get("normal_peak")
+        anomaly_peak = calib.get("anomaly_peak")
+        bhatt = calib.get("bhattacharyya")
+        thresholds = calib.get("thresholds")
+
+        if normal_peak is not None and anomaly_peak is not None:
+            body.append(f"정상 평균 score {normal_peak:.2f} · 이상 평균 score {anomaly_peak:.2f}")
+        if bhatt is not None:
+            body.append(f"Bhattacharyya 거리 {bhatt:.2f} — 분포 분리도 (높을수록 좋음)")
+        if isinstance(thresholds, dict) and thresholds:
+            t_str = " · ".join(f"{k} {v}" for k, v in list(thresholds.items())[:3])
+            body.append(f"임계값 후보 · {t_str}")
+            spec["thresholds"] = thresholds
+
+    # 알람 budget
+    pm = ctx.evaluation.primary_metric or {}
+    pm_value = pm.get("value")
+    if pm_value is not None:
+        body.append(f"운영 성능 · {pm.get('name', 'primary')} {_format_pm_value(pm)}")
+
+    if not body:
+        body = ["Score Distribution 미적립 — ctx.evaluation.calibration 채워지면 자동 반영"]
+
+    return SlideSpec(
+        id="score_distribution",
+        section_id="results",
+        layout="score_distribution",
+        role="evidence",
+        so_what="정상 vs 이상 score 분포 분리도 — 운영 임계값 자동 결정 가능",
+        title_ko="Anomaly Score Distribution",
+        body_outline=body[:5],
+        parent_message_id="results_root",
+        visual_spec=VisualSpec(
+            type="chart_score_distribution",
+            title="Score Distribution — 정상 vs 이상",
+            spec=spec,
+            severity="important",
+        ),
+        speaker_notes_hint=(
+            "★ 이상탐지 핵심 시각화 — 분포 분리도가 모델 품질의 직관적 지표."
+        ),
+    )
+
+
+# ==============================================================
+# S13 — Reason Code (SHAP global 카테고리 변형)
+# ==============================================================
+
+
+def _build_reason_code(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 13 — Reason Code · 상위 5 Feature (Anomaly 변형).
+
+    Top 5 importance 항목에 (파생) / (원본) 라벨 부착.
+    """
+    category = ctx.meta.category or "anomaly_detection"
+    variant = resolve_slide("shap_global", category)
+    title_ko = (variant.title_ko if variant else "Reason Code · 상위 5 Feature")
+
+    imps = list(ctx.interpretation.global_importance or [])[:5]
+    derived_names = {
+        getattr(f, "name", "") for f in (ctx.features.created or []) if getattr(f, "name", "")
+    }
+    items: list[dict[str, Any]] = []
+    refs: list[str] = []
+    for it in imps:
+        feat = getattr(it, "feature", "")
+        is_derived = feat in derived_names
+        items.append({
+            "feature": feat,
+            "importance": getattr(it, "importance", 0.0),
+            "method": getattr(it, "method", "shap"),
+            "kind": "derived" if is_derived else "original",
+        })
+        rid = getattr(it, "ref_id", None)
+        if rid:
+            refs.append(rid)
+
+    body = [
+        f"{i+1}순위 · {it['feature']} ({'파생' if it['kind'] == 'derived' else '원본'}) · "
+        f"{format_metric(float(it['importance']), 'shap', as_percent=False, decimals=2)}"
+        for i, it in enumerate(items)
+    ]
+    if not body:
+        body = ["분석 결과 적립 후 채워짐"]
+
+    so_what = "상위 5 Reason Code — 이상 결정의 근거 피처"
+    if items:
+        total = sum(float(it["importance"]) for it in items)
+        top3 = sum(float(it["importance"]) for it in items[:3])
+        if total > 0:
+            ratio = top3 / total * 100
+            so_what = (
+                f"상위 3 Reason Code 가 이상 결정의 {ratio:.0f}% — "
+                f"{items[0]['feature']} 이 가장 강한 신호"
+            )
+
+    return SlideSpec(
+        id="eda_findings",
+        section_id="results",
+        layout=(variant.layout if variant else "chart_callout"),
+        role="evidence",
+        so_what=so_what,
+        title_ko=title_ko,
+        body_outline=body[:5],
+        required_refs=refs,
+        parent_message_id="results_root",
+        visual_spec=VisualSpec(
+            type=(variant.visual_type if variant else "chart_annotated_bar"),
+            title=title_ko,
+            spec={"items": items, "method": "reason_code"},
+            severity="important",
+        ),
+        speaker_notes_hint="이상탐지 의 Reason Code — Top 5 만 보여줌. 도메인 룰 backup 가능.",
+    )
+
+
+# ==============================================================
+# S14 — 이상 사례 3건 (SHAP cases 카테고리 변형)
+# ==============================================================
+
+
+def _build_anomaly_cases(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 14 — 이상 사례 3건 · Reason Code 별 (Anomaly 변형).
+
+    ctx.interpretation.local_examples 3건 + 각 사례의 reason code.
+    """
+    category = ctx.meta.category or "anomaly_detection"
+    variant = resolve_slide("shap_cases", category)
+    title_ko = (variant.title_ko if variant else "이상 사례 3건 · Reason Code 별")
+
+    locals_ = list(ctx.interpretation.local_examples or [])[:3]
+    cases: list[dict[str, Any]] = []
+    body: list[str] = []
+    for i, ex in enumerate(locals_):
+        if not isinstance(ex, dict):
+            continue
+        score = ex.get("anomaly_score") or ex.get("prediction", "-")
+        true = ex.get("true", "-")
+        contributions = ex.get("contributions", [])
+        top_feats = ", ".join(
+            f"{c.get('feature', '')}({c.get('value', '')})"
+            for c in (contributions[:3] if isinstance(contributions, list) else [])
+        )
+        cases.append({
+            "index": i + 1,
+            "anomaly_score": score,
+            "true": true,
+            "top_contributions": contributions[:3] if isinstance(contributions, list) else [],
+        })
+        body.append(f"사례 {i+1} · score {score} / 실제 {true} · {top_feats}")
+    while len(body) < 3:
+        body.append(f"사례 {len(body)+1} · ctx 적립 후 채워짐")
+
+    return SlideSpec(
+        id="error_analysis",
+        section_id="results",
+        layout=(variant.layout if variant else "one_message"),
+        role="evidence",
+        so_what="이상 사례 3건 — 각 사례의 *왜 이상인가* Reason Code 추적",
+        title_ko=title_ko,
+        body_outline=body[:5],
+        parent_message_id="results_root",
+        visual_spec=VisualSpec(
+            type="anomaly_cases_with_reason",
+            title=title_ko,
+            spec={"cases": cases},
+        ),
+        speaker_notes_hint="이상탐지 의 사례 분석 — 각 케이스의 Reason Code 별 trace.",
+    )
+
+
+# ==============================================================
+# S15 — precision@k 곡선 · 알람 Budget (Error CM 카테고리 변형)
+# ==============================================================
+
+
+def _build_pk_alarm_curve(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 15 — precision@k 곡선 + 알람 Budget 곡선 (Anomaly 변형)."""
+    category = ctx.meta.category or "anomaly_detection"
+    variant = resolve_slide("error_cm", category)
+    title_ko = (variant.title_ko if variant else "precision@k 곡선 · 알람 Budget 곡선")
+
+    body: list[str] = []
+    spec: dict[str, Any] = {}
+
+    # PR@k 시리즈는 metrics 안에 들어올 수도 있음
+    metrics = ctx.evaluation.metrics or {}
+    for name, m in metrics.items():
+        if not isinstance(m, dict):
+            continue
+        n_low = name.lower()
+        if "precision_at_k" in n_low or "pr@k" in n_low or "pk_curve" in n_low:
+            series = m.get("series") or m.get("curve")
+            if series:
+                spec["pk_curve"] = series
+                body.append("precision@k 곡선 적립 완료 — k 별 정밀도 추세")
+        if "alarm_budget" in n_low or "budget" in n_low:
+            series = m.get("series") or m.get("curve")
+            if series:
+                spec["alarm_budget_curve"] = series
+                body.append("알람 Budget 곡선 적립 완료 — 임계값 별 알람 수 추세")
+
+    # Confusion matrix 도 보조로 사용 (라벨 있을 때)
+    cm = ctx.evaluation.confusion_matrix or {}
+    if cm:
+        spec["confusion_matrix"] = cm
+        tp = cm.get("tp") or cm.get("true_positive") or 0
+        fp = cm.get("fp") or cm.get("false_positive") or 0
+        fn = cm.get("fn") or cm.get("false_negative") or 0
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        body.append(f"Precision {precision:.2f} · Recall {recall:.2f}")
+        if fp > fn:
+            body.append("오탐(FP) > 미탐(FN) — 알람 Budget 압박, 임계값 ↑")
+        elif fn > fp:
+            body.append("미탐(FN) > 오탐(FP) — Recall 우선, 임계값 ↓")
+
+    if not body:
+        body = ["precision@k / 알람 Budget 곡선 미적립"]
+
+    return SlideSpec(
+        id="insights_derived",
+        section_id="results",
+        layout=(variant.layout if variant else "chart_callout"),
+        role="caveat",
+        so_what="precision@k + 알람 Budget — 운영 임계값과 알람 부하 trade-off",
+        title_ko=title_ko,
+        body_outline=body[:5],
+        parent_message_id="results_root",
+        visual_spec=VisualSpec(
+            type=(variant.visual_type if variant else "chart_pk_alarm_budget"),
+            title=title_ko,
+            spec=spec,
+            severity="important",
+        ),
+        speaker_notes_hint="precision@k 곡선 + 알람 Budget 곡선 = 운영 임계값 결정의 양 축.",
+    )
+
+
+# ==============================================================
+# S16 — 정상 / 이상 클러스터 비교 (Segment 카테고리 변형)
+# ==============================================================
+
+
+def _build_cluster_compare(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 16 — 정상 vs 이상 클러스터 비교."""
+    category = ctx.meta.category or "anomaly_detection"
+    variant = resolve_slide("segment", category)
+    title_ko = (variant.title_ko if variant else "정상 / 이상 클러스터 비교")
+
+    segs = list(ctx.evaluation.per_segment or [])[:6]
+    body: list[str] = []
+    seg_items: list[dict[str, Any]] = []
+    for seg in segs:
+        if not isinstance(seg, dict):
+            continue
+        name = seg.get("segment") or seg.get("name") or "?"
+        metric_name = seg.get("metric") or "score"
+        value = seg.get("value")
+        if value is None:
+            continue
+        formatted = format_metric(float(value), str(metric_name))
+        body.append(f"{name} · {metric_name} {formatted}")
+        seg_items.append({"segment": name, "metric": metric_name, "value": value})
+
+    if not body:
+        body = ["클러스터 비교 미적립 — ctx.evaluation.per_segment 채워지면 자동 반영"]
+
+    so_what = "정상 vs 이상 클러스터 — 분포 분리 + 세그먼트별 일관성"
+    if len(seg_items) >= 2:
+        vals = [float(s["value"]) for s in seg_items]
+        gap = max(vals) - min(vals)
+        if gap > 0.1:
+            so_what = f"클러스터 격차 {gap:.2f} — 일부 세그먼트 임계값 재조정 필요"
+
+    return SlideSpec(
+        id="as_is_to_be",
+        section_id="impact",
+        layout=(variant.layout if variant else "one_message"),
+        role="evidence",
+        so_what=so_what,
+        title_ko=title_ko,
+        body_outline=body[:6],
+        parent_message_id="impact_root",
+        visual_spec=VisualSpec(
+            type="cluster_compare_table",
+            title=title_ko,
+            spec={"segments": seg_items},
+        ),
+        speaker_notes_hint="정상/이상 클러스터의 분리도 + 세그먼트별 일관성.",
+    )
+
+
+# ==============================================================
+# S17 — Policy · 임계값 · 알람 Budget (verdict-aware + 이상탐지 특화)
+# ==============================================================
+
+
+def _build_policy_threshold(ctx: ReportContext) -> SlideSpec:
+    """슬라이드 17 — 임계값 · 알람 Budget · 운영 시나리오 (verdict-aware).
+
+    이상탐지 특화: 임계값 후보 + 알람 Budget + FP/FN 비용 비대칭.
+    """
+    tone = _get_verdict_tone(ctx)
+    title_ko = tone.s17_section_label or "임계값 · 알람 Budget · 운영 시나리오"
+
+    chosen = (ctx.model_selection.chosen or {}).get("name", "Anomaly Detector")
+    pm = ctx.evaluation.primary_metric or {}
+    pm_value = _format_pm_value(pm)
+
+    policy_items: list[tuple[str, str]] = []
+    v = (ctx.evaluation.verdict or "").lower()
+    if v == "adopt":
+        policy_items = [
+            ("운영 임계값", ctx.evaluation.gate_rationale or "비용 최적 + 알람 Budget 기반"),
+            ("알람 Pipeline", "실시간 score → Tier 별 자동/수동 처리"),
+            ("모니터링", "drift · 분포 shift · PR@k 정기 재평가"),
+        ]
+    elif v == "iterate":
+        policy_items = [
+            ("보강 우선순위", "이상 라벨 수집 확대 · 신규 피처 추가 검토"),
+            ("재시도 조건", f"{pm_value} 대비 +5%p 이상 향상 시 재평가"),
+            ("Owner", "분석팀 — 보강 후 재학습"),
+        ]
+    elif v == "reject":
+        policy_items = [
+            ("폐기 사유", ctx.evaluation.gate_rationale or "운영 임계 미달"),
+            ("대안 권고", "룰 Baseline 유지 또는 다른 모델 family 탐색"),
+            ("Owner", "프로덕트 · 분석팀 공동 재정의"),
+        ]
+    else:
+        policy_items = [
+            ("판정 미정", "ctx.evaluation.verdict 적립 시 자동 분기"),
+            ("기본 모니터링", "drift · score 분포 추적"),
+            ("재검토", "월간"),
+        ]
+
+    # 임계값 후보 (calibration 에서 가져옴)
+    calib = ctx.evaluation.calibration or {}
+    thresholds = calib.get("thresholds") if isinstance(calib, dict) else None
+    if isinstance(thresholds, dict) and thresholds:
+        t_str = " · ".join(f"{k} {v}" for k, v in list(thresholds.items())[:3])
+        policy_items.append(("임계값 후보", t_str))
+
+    body = [f"{k} · {v}" for k, v in policy_items[:5]]
+    biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
+    if biz_kpi:
+        body.append(
+            f"비즈니스 KPI · {getattr(biz_kpi, 'name', '')} "
+            f"{getattr(biz_kpi, 'estimated_value', '')} {getattr(biz_kpi, 'unit', '')}"
+        )
+
+    so_what = f"{chosen} 운영 정책 — 판정: {ctx.evaluation.verdict or '미정'} + 임계값/알람 Budget"
+
+    return SlideSpec(
+        id="i3_roi",
+        section_id="impact",
+        layout="one_message",
+        role="action",
+        so_what=so_what,
+        title_ko=title_ko,
+        body_outline=body[:5],
+        parent_message_id="impact_root",
+        visual_spec=VisualSpec(
+            type="v28_policy_insight",
+            title=title_ko,
+            spec={
+                "policy_items": policy_items,
+                "verdict": ctx.evaluation.verdict or "",
+                "tone_accent": tone.accent,
+                "biz_kpi": (
+                    {
+                        "name": getattr(biz_kpi, "name", ""),
+                        "value": getattr(biz_kpi, "estimated_value", ""),
+                        "unit": getattr(biz_kpi, "unit", ""),
+                    } if biz_kpi else None
+                ),
+                "thresholds": thresholds if isinstance(thresholds, dict) else None,
+                "anomaly_policy_hint": "임계값 · 알람 Budget · FP/FN 비용 비대칭",
+            },
+        ),
+        speaker_notes_hint="verdict 분기 + 이상탐지 특화 임계값 · 알람 Budget 메시지.",
+    )
+
+
+# ==============================================================
+# S18 — SWOT · Drift (ctx 기반)
+# ==============================================================
+
+
+def _build_risk_mitigation_anomaly(ctx: ReportContext) -> SlideSpec:
+    pm = ctx.evaluation.primary_metric or {}
+    pm_value_str = _format_pm_value(pm)
+    chosen = (ctx.model_selection.chosen or {}).get("name", "Anomaly Detector")
+
+    strengths: list[str] = []
+    if ctx.interpretation.global_importance:
+        top_feat = ctx.interpretation.global_importance[0].feature
+        strengths.append(f"강한 신호 · {top_feat} 등 Reason Code 식별")
+    if pm.get("value") is not None:
+        strengths.append(f"임계 통과 · {chosen} {pm_value_str}")
+    if ctx.evaluation.calibration:
+        strengths.append("Score 분포 분리도 적립 완료")
+    if not strengths:
+        strengths.append("강점 적립 후 채워짐")
+
+    weaknesses: list[str] = []
+    ratio = _anomaly_ratio(ctx)
+    if ratio is not None and ratio < 0.01:
+        weaknesses.append(f"극심 imbalance · 이상 비율 {ratio*100:.2f}% — PR 평가 어려움")
+    for g in (ctx.limitations.data_gaps or [])[:2]:
+        desc = getattr(g, "description", "") or "데이터 결함"
+        impact = getattr(g, "impact", "") or ""
+        weaknesses.append(f"{desc}" + (f" ({impact})" if impact else ""))
+    if not weaknesses:
+        weaknesses.append("약점 식별 안 됨")
+
+    opportunities: list[str] = []
+    rev = ctx.limitations.revalidation_window
+    if rev:
+        opportunities.append(f"{rev} 후 재검증 + 신규 라벨")
+    opportunities.append("Active Learning · 검토 결과 피드백 학습")
+    opportunities.append("Ensemble (IF + LOF + AE) · Multi-method agreement")
+    opportunities = opportunities[:3]
+
+    threats: list[str] = []
+    shift = ctx.limitations.distribution_shift_risk or {}
+    if shift.get("detected"):
+        ev = shift.get("evidence") or "분포 변화"
+        threats.append(f"Concept Drift · {ev}")
+    threats.append("Alert fatigue · 임계값 낮으면 검토 부하 폭주")
+    threats.append("Adversarial · 공격자가 정상처럼 위장")
+    for c in (ctx.limitations.model_caveats or [])[:1]:
+        threats.append(f"모델 한계 · {c}")
+    threats = threats[:3]
+    if not threats:
+        threats.append("위협 추적 중")
+
+    body = [
+        f"S · {strengths[0]}",
+        f"W · {weaknesses[0]}",
+        f"O · {opportunities[0]}",
+        f"T · {threats[0]}",
+        "Mitigation · drift 모니터링 + Ensemble 다층 방어 + 주간 분포 점검",
+    ]
+
+    return SlideSpec(
+        id="risk_mitigation",
+        section_id="plan",
+        layout="swot_2x2",
+        role="caveat",
+        so_what="SWOT 4분면 — ctx 기반 + 이상탐지 특화 (Drift · Alert fatigue · Adversarial)",
+        title_ko="SWOT · Drift",
+        body_outline=body[:5],
+        parent_message_id="plan_root",
+        visual_spec=VisualSpec(
+            type="v28_swot_reach",
+            title="SWOT · Drift",
+            spec={
+                "strengths": strengths[:3],
+                "weaknesses": weaknesses[:3],
+                "opportunities": opportunities[:3],
+                "threats": threats[:3],
+                "revalidation_window": rev or "",
+            },
+            severity="important",
+        ),
+        speaker_notes_hint="이상탐지 SWOT — Drift / Alert fatigue / Adversarial 위협 명시.",
+    )
+
+
+# ==============================================================
+# S19 — Roadmap + Alert Pipeline (verdict-aware)
+# ==============================================================
+
+
+def _build_roadmap_alert(ctx: ReportContext) -> SlideSpec:
+    tone = _get_verdict_tone(ctx)
+    verdict = (ctx.evaluation.verdict or "").lower() or "adopt"
+
+    raw_pattern = tone.s19_phase_pattern or "Phase 1 → Phase 2 → Phase 3"
+    phases = [p.strip() for p in raw_pattern.split("→") if p.strip()][:3]
+
+    body: list[str] = []
+    for i, phase in enumerate(phases):
+        body.append(f"{i+1}. {phase}")
+
+    if verdict == "adopt":
+        body.extend([
+            "Alert Pipeline · 실시간 score → Tier 별 자동/수동 처리",
+            "운영 KPI · PR@k · 알람 Budget · drift score",
+        ])
+    elif verdict == "iterate":
+        body.extend([
+            "보강 측정 · 이상 라벨 수집 · 신규 피처 추가",
+            "재평가 · 본 모델 대비 +5%p 향상 시 도입 재고려",
+        ])
+    else:  # reject
+        body.extend([
+            "대안 후보 · 룰 Baseline 유지 또는 새 모델 family",
+            "재학습 금지 · 현 데이터·구조로는 폐기",
+        ])
+
+    return SlideSpec(
+        id="roadmap",
+        section_id="plan",
+        layout="roadmap_phase_kpi",
+        role="action",
+        so_what=f"실행 로드맵 — 판정({verdict}) 별 단계 분기 + Alert Pipeline",
+        title_ko="실행 로드맵 · Alert Pipeline",
+        body_outline=body[:5],
+        parent_message_id="plan_root",
+        visual_spec=VisualSpec(
+            type="v28_domain_mapping",
+            title="실행 로드맵 · Alert Pipeline",
+            spec={
+                "verdict": verdict,
+                "phases": phases,
+                "tone_accent": tone.accent,
+                "alert_pipeline_hint": "실시간 score · 일/주/월 cadence · Multi-tier alert",
+            },
+        ),
+        speaker_notes_hint="verdict 별 Phase + 이상탐지 Alert Pipeline 다층 cadence.",
+    )
+
+
+# ==============================================================
+# S20 — Closing
+# ==============================================================
+
+
+def _build_closing_qna(ctx: ReportContext) -> SlideSpec:
+    pm = ctx.evaluation.primary_metric or {}
+    pm_value = _format_pm_value(pm)
+    chosen = (ctx.model_selection.chosen or {}).get("name", "Anomaly Detector")
+    tone = _get_verdict_tone(ctx)
+    verdict = (ctx.evaluation.verdict or "").lower() or "adopt"
+
+    if verdict == "adopt":
+        result_line = f"결론 · {chosen} {pm.get('name', '')} {pm_value} — 도입 가능"
+    elif verdict == "iterate":
+        result_line = f"결론 · {chosen} {pm.get('name', '')} {pm_value} — 보강 후 재검토"
+    else:
+        result_line = f"결론 · {chosen} {pm.get('name', '')} {pm_value} — 현 모델 도입 불가"
+
+    body = [
+        f"본 보고서 · {ctx.meta.user_intent or '이상 탐지 분석'}",
+        result_line,
+        "Q&A — 데이터 / 모델 / 임계값 / Alert Pipeline / Drift",
+    ]
+    return SlideSpec(
+        id="closing",
+        section_id="closing",
+        layout="closing",
+        role="meta",
+        so_what=f"본 분석 마무리 — 판정: {verdict}",
+        title_ko="감사합니다",
+        body_outline=body,
+        visual_spec=VisualSpec(
+            type="closing_simple",
+            title="감사합니다",
+            spec={"verdict": verdict, "tone_accent": tone.accent},
+        ),
+        speaker_notes_hint="Executive Summary 재인용 + Q&A.",
+    )
+
+
+# ==============================================================
+# Build
+# ==============================================================
+
+
 def build(
     ctx: ReportContext,
     audience_profile: dict[str, Any],
     length_target: int = 20,
 ) -> ReportPlan:
-    """Anomaly Pitch Skeleton → ReportPlan (20장 고정).
-
-    슬라이드 5·14·17 가 도메인 (fraud/industrial_iot/system_logs/security/
-    quality_control/medical/generic) 별로 텍스트 자동 적응.
-    """
+    """Anomaly Pitch Skeleton → ReportPlan (20장 고정)."""
     sections: list[SectionSpec] = []
     messages: list[MessageNode] = _build_message_tree(ctx)
-    profile = _get_domain_profile(ctx)
 
-    # ── ① Front Matter (3장) ─────────────────────────────────────
     front = make_section(
-        "front_matter",
-        "Front Matter",
-        kind="cover",
-        divider=False,
-        slides=[
-            build_cover(ctx),
-            _build_exec_summary_anomaly(ctx),
-        ],
+        "front_matter", "Front Matter", kind="cover", divider=False,
+        slides=[build_cover(ctx), _build_exec_summary_anomaly(ctx)],
     )
     sections.append(front)
 
-    # ── ② Problem (4장) ──────────────────────────────────────────
     problem_section = make_section(
-        "problem",
-        "Section 1 — 문제 정의 & 이상탐지 정당성",
-        kind="context",
-        divider=True,
+        "problem", "Section 1 - Problem", kind="context", divider=True,
         slides=[
             _build_hypothesis(ctx),
-            _build_why_anomaly(ctx),  # ★ 도메인 적응
+            _build_why_anomaly(ctx),
             _build_pain_points(ctx),
-            _build_classification_limits(ctx),
+            _build_method_flow(ctx),
         ],
     )
     sections.append(problem_section)
 
-    # ── ③ Solution (3장) ─────────────────────────────────────────
     solution_section = make_section(
-        "solution",
-        "Section 2 — 이상탐지 솔루션",
-        kind="evidence",
-        divider=True,
+        "solution", "Section 2 - Solution", kind="evidence", divider=True,
         slides=[
             _build_architecture_deep(ctx),
             _build_tech_architecture_combined(ctx),
@@ -440,65 +1293,42 @@ def build(
     )
     sections.append(solution_section)
 
-    # ── ④ Results (5장) ──────────────────────────────────────────
     results_section = make_section(
-        "results",
-        "Section 3 — 분석 결과",
-        kind="evidence",
-        divider=True,
+        "results", "Section 3 - Results", kind="evidence", divider=True,
         slides=[
             _build_kpi_baseline(ctx),
-            _build_score_distribution(ctx),  # ★ 신규
-            _build_eda_anomaly_patterns(ctx),
-            _build_threshold_pr_far(ctx),  # ★ 도메인 비용 적응
-            _build_insights_root_cause(ctx),
+            _build_score_distribution(ctx),
+            _build_reason_code(ctx),
+            _build_anomaly_cases(ctx),
+            _build_pk_alarm_curve(ctx),
         ],
     )
     sections.append(results_section)
 
-    # ── ⑤ Impact (2장) ───────────────────────────────────────────
     impact_section = make_section(
-        "impact",
-        "Section 4 — 비즈니스 임팩트",
-        kind="recommendation",
-        divider=True,
-        slides=[
-            _build_as_is_to_be(ctx),
-            _build_roi_alert_reduction(ctx),  # ★ 도메인 적응
-        ],
+        "impact", "Section 4 - Impact", kind="recommendation", divider=True,
+        slides=[_build_cluster_compare(ctx), _build_policy_threshold(ctx)],
     )
     sections.append(impact_section)
 
-    # ── ⑥ Risk & Roadmap (2장) ───────────────────────────────────
     plan_section = make_section(
-        "plan",
-        "Section 5 — 리스크 & 실행",
-        kind="recommendation",
-        divider=False,
-        slides=[
-            _build_risk_mitigation_anomaly(ctx),
-            _build_roadmap_alert_pipeline(ctx),
-        ],
+        "plan", "Section 5 - Plan", kind="recommendation", divider=False,
+        slides=[_build_risk_mitigation_anomaly(ctx), _build_roadmap_alert(ctx)],
     )
     sections.append(plan_section)
 
-    # ── ⑦ Closing (1장) ──────────────────────────────────────────
     closing_section = make_section(
-        "closing",
-        "Closing",
-        kind="closing",
-        divider=False,
+        "closing", "Closing", kind="closing", divider=False,
         slides=[_build_closing_qna(ctx)],
     )
     sections.append(closing_section)
 
-    # Agenda 삽입 — Cover 다음, Exec 앞
     sections_titles = [
-        "Section 1 — 문제 정의 & 이상탐지 정당성 (4장)",
-        "Section 2 — 이상탐지 솔루션 (아키텍처·스택·차별화)",
-        "Section 3 — 분석 결과 (KPI·Score Dist·EDA·Threshold·Root Cause)",
-        "Section 4 — 비즈니스 임팩트 (AS-IS/TO-BE·ROI·Alert Reduction)",
-        "Section 5 — 리스크 & 실행 계획",
+        "Section 1 - 문제 정의 & 이상탐지 정당성",
+        "Section 2 - 이상탐지 솔루션 · EDA",
+        "Section 3 - 분석 결과",
+        "Section 4 - 임팩트 · 정책",
+        "Section 5 - 리스크 & 실행",
     ]
     agenda = build_agenda(sections_titles)
     sections[0].slides.insert(1, agenda)
@@ -511,671 +1341,39 @@ def build(
         sections=sections,
         narrative_thread=NarrativeThread(
             setup=(
-                f"{ctx.domain.inferred_industry or profile['label_ko']} 의 "
-                f"{ctx.domain.inferred_use_case or ctx.meta.user_intent or '이상 탐지 과제'} 가 본 분석 출발점"
+                f"{ctx.domain.inferred_industry or ctx.meta.category} 산업의 "
+                f"{ctx.domain.inferred_use_case or ctx.meta.user_intent or '이상 탐지 과제'}"
             ),
-            conflict="룰 기반 / 단순 분류 한계 — 라벨 부족 + Class imbalance + 신규 패턴 못 잡음",
+            conflict="라벨 부족 · 다변량 정상 패턴 · 임계값 비용 비대칭",
             resolution=(
-                f"{(ctx.model_selection.chosen or {}).get('name', '이상탐지 모델')} 로 Unsupervised "
-                f"분포 학습 + Threshold 비용 최적화 + Root Cause SHAP 운영 신뢰성 확보"
+                f"{(ctx.model_selection.chosen or {}).get('name', 'Anomaly Detector')} 의 분포 학습 + "
+                "Threshold/Budget 운영 정책 + Reason Code"
             ),
         ),
         message_tree=messages,
-        meta={
-            "skeleton_variant": "anomaly_pitch_v1",
-            "anomaly_domain": _infer_anomaly_domain(ctx),
-            "domain_label": profile["label_ko"],
-        },
+        meta={"skeleton_variant": "anomaly_pitch_v2"},
         warnings=[],
     )
     return plan
 
 
 # ==============================================================
-# 슬라이드 빌더
-# ==============================================================
-
-
-def _build_exec_summary_anomaly(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 3 — Executive Summary (이상탐지 5박스, 도메인 인식)."""
-    profile = _get_domain_profile(ctx)
-    pm = ctx.evaluation.primary_metric or {}
-    chosen_name = (ctx.model_selection.chosen or {}).get("name", "AutoEncoder")
-    biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    pm_name = pm.get("name", "PR-AUC")
-    pm_value = pm.get("value", "-")
-    biz_summary = (
-        f"{biz_kpi.name} {biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else profile["roi"]["primary_kpi"]
-    )
-
-    body = [
-        f"배경 · {profile['label_ko']} — {profile['why']['context']}",
-        f"접근 · {chosen_name} (Unsupervised) + Threshold Tuning + Root Cause SHAP",
-        f"결과 · {pm_name} {pm_value} (vs Baseline 우수, FAR 대폭 감소)",
-        f"효과 · {biz_summary} + Alert 폭주 해소",
-        "권고 · Phase 1 (30일) 파일럿 → Phase 2 (90일) Ensemble + Active Learning",
-    ]
-    return SlideSpec(
-        id="exec_summary",
-        section_id="front_matter",
-        layout="kpi_cards_3",
-        role="claim",
-        so_what=(f"{chosen_name} 로 {profile['label_ko']} 자동화 — PR-AUC + FAR 동시 개선, 운영 도입 권장"),
-        title_ko="Executive Summary",
-        body_outline=body,
-        required_refs=primary_metric_ref(ctx),
-        thread_part="resolution",
-        parent_message_id="root",
-        speaker_notes_hint=(
-            f"도메인: {profile['label_ko']}. 핵심 — Unsupervised + Threshold + Root Cause. "
-            "FAR 절감으로 alert fatigue 해소 강조."
-        ),
-    )
-
-
-def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 4 — 분석 가설 (이상탐지 적합성)."""
-    intent = ctx.meta.user_intent or "분석 과제"
-    body = [
-        "H1 · 라벨 부족 · Anomaly 비율 < 1% — Supervised 분류 불가, Unsupervised 적합",
-        "H2 · 분포 학습 · 정상 패턴 명확, 이상은 정상에서 벗어난 outlier — 거리 기반 가능",
-        "H3 · 운영 임계값 · FAR vs Recall trade-off 비용 기반 자동 조정 가능",
-    ]
-    return SlideSpec(
-        id="hypothesis",
-        section_id="problem",
-        layout="one_message",
-        role="claim",
-        so_what=f"본 분석 '{intent[:40]}' 에 이상탐지 적합 3가지 가설 — 데이터로 입증",
-        title_ko="분석 가설",
-        body_outline=body,
-        thread_part="setup",
-        parent_message_id="hyp_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title="Hypothesis · Evidence · Insight",
-            caption="이상탐지 3가설 → 슬라이드 15 에서 1:1 입증",
-            spec={"layout": "hyp_evidence_insight"},
-        ),
-        speaker_notes_hint="이상탐지 가설 3개 — 라벨 부족·분포 학습·임계값 조절.",
-    )
-
-
-def _build_why_anomaly(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 5 — Why Anomaly Detection? (도메인 적응). ★ 도메인."""
-    profile = _get_domain_profile(ctx)
-    why_info = profile["why"]
-    body = [
-        f"맥락 · {why_info['context']} ({profile['label_ko']})",
-        f"좌 · 현행 한계 · {why_info['old_problem']}",
-        f"우 · 이상탐지 우위 · {why_info['new_value']}",
-        "조건 · 라벨 < 1% ✓ + 정상 패턴 명확 ✓ + 운영 임계값 조정 가능 ✓",
-        "결론 · 본 분석 조건 충족 — 이상탐지 모델 정당화 ✓",
-    ]
-    return SlideSpec(
-        id="why_anomaly",
-        section_id="problem",
-        layout="comparison_before_after",
-        role="claim",
-        so_what=f"{profile['label_ko']} 에서 이상탐지 정당성 — 현행 한계 + Unsupervised 우위 + 본 데이터 조건",
-        title_ko="Why Anomaly Detection?",
-        body_outline=body,
-        thread_part="conflict",
-        parent_message_id="problem_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title=f"룰/분류 vs 이상탐지 — {profile['label_ko']}",
-            caption=f"도메인: {profile['label_ko']}. 좌 한계 / 우 우위.",
-            spec={
-                "layout": "split_compare",
-                "axes": ["현행 한계", "이상탐지 우위"],
-                "domain": _infer_anomaly_domain(ctx),
-            },
-            severity="critical",
-        ),
-        speaker_notes_hint=(
-            f"★ deck 의 기둥. 도메인 = {profile['label_ko']}. "
-            "'왜 굳이 이상탐지 모델?' 반론 차단. 도메인 컨텍스트로 즉시 공감 유도."
-        ),
-    )
-
-
-def _build_pain_points(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 6 — 현행 방식의 한계."""
-    profile = _get_domain_profile(ctx)
-    issues = ctx.eda.data_quality_issues or []
-    pain_lines = [
-        f"01 · {it.get('issue', '데이터 품질 이슈')} (영향: {it.get('severity', 'medium')})" for it in issues[:3]
-    ]
-    if not pain_lines:
-        pain_lines = [
-            f"01 · 룰 기반 alert ({profile['label_ko']}) — 임계값 수동, 신규 패턴 못 잡음",
-            "02 · Alert 폭주 — Alert fatigue, 진짜 이상이 묻힘",
-            "03 · Root cause 추론 수동 — 분석가 1건당 평균 30분",
-            "04 · 분류 모델 시도 실패 — Class imbalance 로 학습 안 됨",
-        ]
-    return SlideSpec(
-        id="p2_pain",
-        section_id="problem",
-        layout="kpi_cards_4",
-        role="caveat",
-        so_what=f"{profile['label_ko']} 현행 방식의 핵심 한계 4가지 — 룰 한계·alert 폭주·수동 RCA·분류 실패",
-        title_ko="현행 방식의 한계",
-        body_outline=pain_lines,
-        thread_part="conflict",
-        parent_message_id="problem_root",
-        speaker_notes_hint=f"현행 운영의 정량 손실 — 시간·정확도·신뢰성. 도메인: {profile['label_ko']}.",
-    )
-
-
-def _build_classification_limits(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 7 — 단순 분류·룰 한계 (Baseline 정량 시도)."""
-    body = [
-        "01 · 룰 기반 (Z-score > 3) · Precision 12% · Recall 45% · FAR 9.2%",
-        "02 · Logistic Regression (라벨 0.5%) · F1 0.18 — class imbalance 로 학습 실패",
-        "03 · XGBoost (SMOTE oversampling) · F1 0.31 · FAR 6.8% — 신규 anomaly 못 잡음",
-        "04 · 결론 · Supervised 한계 명확 → Unsupervised 이상탐지 모델 필요",
-    ]
-    return SlideSpec(
-        id="p3_alt_limits",
-        section_id="problem",
-        layout="comparison_table",
-        role="caveat",
-        so_what="Supervised Baseline 3종 정량 시도 — Class imbalance 한계 명확, Unsupervised 필요",
-        title_ko="단순 분류·룰 한계",
-        body_outline=body,
-        parent_message_id="problem_root",
-        speaker_notes_hint="실제 분류·룰 시도 결과. '왜 그냥 분류 안 됨?' 반론 차단.",
-    )
-
-
-def _build_architecture_deep(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 8 — 모델 아키텍처 Deep Dive."""
-    chosen = (ctx.model_selection.chosen or {}).get("name", "AutoEncoder")
-    body = [
-        f"01 · {chosen} (선정) · Reconstruction error 기반 이상 score",
-        "02 · 비교군 · Isolation Forest · LOF · COPOD · DeepSVDD",
-        "03 · Encoder (Dense 128→64→32) → Latent (32) → Decoder → Reconstruction Error",
-        "04 · 파라미터 18K · 학습 30분 (CPU) · 추론 <1ms/sample",
-        "05 · 정상 데이터만 학습 — 라벨 불필요, 신규 anomaly 자동 식별",
-    ]
-    return SlideSpec(
-        id="architecture_deep",
-        section_id="solution",
-        layout="process_flow",
-        role="claim",
-        so_what=f"{chosen} 구조 — 정상 분포 학습 + Reconstruction Error = Anomaly Score",
-        title_ko="모델 아키텍처 Deep Dive",
-        body_outline=body,
-        parent_message_id="solution_root",
-        visual_spec=VisualSpec(
-            type="diagram_architecture_layered",
-            title=f"{chosen} 구조도",
-            caption="Encoder → Latent → Decoder → Reconstruction Error (Score)",
-            spec={
-                "layers": ["Input", "Encoder Dense", "Latent 32", "Decoder Dense", "Output (recon)"],
-                "params": "18K",
-                "compare_to": ["Isolation Forest", "LOF", "COPOD", "DeepSVDD"],
-            },
-        ),
-        speaker_notes_hint="구조 + PyOD 38 알고리즘 비교군 강조. 정상 분포 학습 패러다임 설명.",
-    )
-
-
-def _build_tech_architecture_combined(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 9 — 기술 아키텍처 + PyOD 스택 (9+10 통합)."""
-    pipeline_steps = [
-        "01 · 데이터 업로드 (G1) — 정상/이상 라벨 (선택)",
-        "02 · Data Profiler — Class imbalance 자동 감지",
-        "03 · 전처리 + 정상 데이터 선택",
-        "04 · EDA + Feature 추출",
-        "05 · 모델 학습 (정상 분포 학습)",
-        "06 · Anomaly Score + Threshold Tuning",
-        "07 · 산출 (Alert pipeline + Root Cause)",
-    ]
-    env = ctx.code.environment if ctx.code else {}
-    env = env or {}
-    stack_lines = build_tech_stack_anomaly_lines(env)
-    lineage = ctx.dataset.lineage if hasattr(ctx.dataset, "lineage") else {}
-    src_system = lineage.get("source_system", "내부 데이터") if isinstance(lineage, dict) else "내부 데이터"
-    window = lineage.get("window", "지정 기간") if isinstance(lineage, dict) else "지정 기간"
-
-    body = (
-        pipeline_steps
-        + ["─ 스택 ─"]
-        + stack_lines
-        + [
-            "─ 데이터 Lineage ─",
-            f"원천 · {src_system} | 기간 · {window} | 검증된 anomaly · 데이터 일부 | PII · R-103 마스킹",
-        ]
-    )
-    return SlideSpec(
-        id="tech_architecture",
-        section_id="solution",
-        layout="process_flow",
-        role="evidence",
-        so_what="7단계 이상탐지 파이프라인 + PyOD/PyTorch/SHAP 스택 + 데이터 lineage",
-        title_ko="기술 아키텍처 + PyOD 스택",
-        body_outline=body,
-        parent_message_id="solution_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title="ADA Anomaly 파이프라인 + 스택",
-            caption="좌 7단계 + 우 PyOD/PyTorch 스택 + 하단 lineage",
-            spec={
-                "left": "diagram_process_linear",
-                "right": "table_feature_matrix",
-                "pipeline_steps": pipeline_steps,
-                "stack_lines": stack_lines,
-            },
-        ),
-        speaker_notes_hint="9·10 통합 — PyOD 38 알고리즘 자체 ensemble + SHAP Root Cause 명시.",
-    )
-
-
-def _build_differentiation(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 10 — 차별화."""
-    body = [
-        "PRODUCT · Unsupervised · 라벨 없이 정상 분포 자동 학습",
-        "QUALITY · Threshold Tuning · 비용 기반 자동 최적화",
-        "SCALE · PyOD 38 알고리즘 · Ensemble 가능",
-        "TRUST · Root Cause · SHAP feature contribution 자동 제공",
-    ]
-    return SlideSpec(
-        id="s3_differentiation",
-        section_id="solution",
-        layout="2x2_matrix",
-        role="claim",
-        so_what="이상탐지 4축 차별화 — Unsupervised · Threshold · Ensemble · Root Cause 모두 자동",
-        title_ko="차별화 포인트",
-        body_outline=body,
-        parent_message_id="solution_root",
-        speaker_notes_hint="2×2 매트릭스 — 룰 기반 / 분류 모델 둘 다 못 하는 4가지.",
-    )
-
-
-def _build_kpi_baseline(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 11 — 핵심 성과 + PR-AUC Baseline 비교."""
-    pm = ctx.evaluation.primary_metric or {}
-    pm_value = pm.get("value", 0.67)
-    try:
-        pm_float = float(pm_value) if isinstance(pm_value, (int, float)) else 0.67
-    except (TypeError, ValueError):
-        pm_float = 0.67
-    chosen = (ctx.model_selection.chosen or {}).get("name", "AutoEncoder")
-
-    body = [
-        "01 · 룰 기반 (Z-score) · PR-AUC 0.15 · F1 0.21 · FAR 9.2%",
-        "02 · Logistic Regression · PR-AUC 0.18 · F1 0.20 · FAR 12.4%",
-        "03 · XGBoost (SMOTE) · PR-AUC 0.34 · F1 0.31 · FAR 6.8%",
-        f"04 · {chosen} (선정) · PR-AUC {pm_float:.2f} · FAR 2.1%  ← 본 모델",
-        "05 · ROC-AUC 0.94 (참고용, 불균형 때문에 의미 작음) | PR-AUC 가 진짜 지표",
-    ]
-    return SlideSpec(
-        id="i1_kpi",
-        section_id="results",
-        layout="kpi_cards_4",
-        role="evidence",
-        so_what=(
-            f"{chosen} 가 XGBoost(SMOTE) 대비 PR-AUC "
-            f"{((pm_float - 0.34) / max(0.34, 0.01) * 100):.0f}% 개선 + FAR 77% 감소"
-        ),
-        title_ko="핵심 성과 + PR-AUC Baseline",
-        body_outline=body,
-        required_refs=primary_metric_ref(ctx),
-        parent_message_id="results_root",
-        visual_spec=VisualSpec(
-            type="chart_annotated_bar",
-            title="PR-AUC 비교 (불균형 데이터의 진짜 지표)",
-            caption="룰·LR·XGBoost·선정 모델 4 막대",
-            spec={
-                "metric": "PR-AUC",
-                "bars": [
-                    {"label": "룰 (Z-score)", "value": 0.15, "color": "muted"},
-                    {"label": "Logistic", "value": 0.18, "color": "muted"},
-                    {"label": "XGBoost (SMOTE)", "value": 0.34, "color": "muted"},
-                    {"label": f"{chosen} (선정)", "value": pm_value, "color": "primary", "highlight": True},
-                ],
-                "note": "ROC-AUC 는 불균형에서 over-optimistic — PR-AUC 가 진짜 지표",
-            },
-        ),
-        speaker_notes_hint="PR-AUC > ROC-AUC 강조. 불균형 데이터에서 ROC 의 함정 설명.",
-    )
-
-
-def _build_score_distribution(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 12 — Anomaly Score Distribution. ★ 신규."""
-    body = [
-        "01 · 정상 (Normal) · score 평균 0.1, narrow distribution",
-        "02 · 이상 (Anomaly) · score 평균 0.7, wider tail",
-        "03 · Bhattacharyya 거리 0.84 — 분포 명확 분리 (높을수록 좋음)",
-        "04 · Overlap region 0.12 — 회색지대 (낮을수록 좋음)",
-        "05 · 임계값 후보 · 0.45 (KDE crossing) · 0.65 (자동차단) · 0.42 (비용 최적)",
-    ]
-    return SlideSpec(
-        id="score_distribution",
-        section_id="results",
-        layout="chart_callout",
-        role="evidence",
-        so_what="정상 vs 이상 Score 분포 명확 분리 (Bhatt 0.84) — 운영 임계값 자동 결정 가능",
-        title_ko="Anomaly Score Distribution",
-        body_outline=body,
-        parent_message_id="results_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title="Score Distribution — 정상 vs 이상",
-            caption="KDE plot + 임계값 후보 vertical lines",
-            spec={
-                "layout": "score_distribution",
-                "normal_peak": 0.1,
-                "anomaly_peak": 0.7,
-                "bhattacharyya": 0.84,
-                "thresholds": {"kde_crossing": 0.45, "auto_block": 0.65, "cost_optimal": 0.42},
-            },
-            severity="important",
-        ),
-        speaker_notes_hint=("★ 이상탐지 핵심 시각화 — 정상/이상 score 분포 분리 정도가 모델 품질의 직관적 지표."),
-    )
-
-
-def _build_eda_anomaly_patterns(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 13 — EDA + Anomaly 패턴."""
-    profile = _get_domain_profile(ctx)
-    body = [
-        "01 · Feature Distribution — 정상 vs 이상 분포 차이 명확 (Top 3 피처)",
-        "02 · Anomaly Cluster — PCA/t-SNE 에서 이상 케이스 3 군집 분리",
-        f"03 · 도메인 패턴 ({profile['label_ko']}) — 시간·세그먼트별 이상 발생 분포 특이",
-        "04 · 결측·outlier 사전 처리 — Hampel filter 적용 후 학습 안정",
-    ]
-    return SlideSpec(
-        id="eda_findings",
-        section_id="results",
-        layout="chart_dual",
-        role="evidence",
-        so_what="EDA — 정상/이상 분포 차이 + Anomaly 군집 3종 + 도메인 패턴 식별",
-        title_ko="EDA + Anomaly 패턴",
-        body_outline=body,
-        visual_spec=VisualSpec(
-            type="chart_dual",
-            title="Anomaly EDA",
-            caption="좌 정상/이상 Feature 분포 | 우 PCA/t-SNE Anomaly Cluster",
-            spec={
-                "left": "feature_distribution_compare",
-                "right": "anomaly_cluster_2d",
-                "n_clusters": 3,
-            },
-            severity="important",
-        ),
-        parent_message_id="results_root",
-        speaker_notes_hint="좌 분포 비교 + 우 군집 — 이상도 동질하지 않음, 유형별 대응 필요.",
-    )
-
-
-def _build_threshold_pr_far(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 14 — Threshold Tuning + PR/ROC + FAR (도메인 비용 적응). ★ 이상탐지 핵심."""
-    profile = _get_domain_profile(ctx)
-    roi = profile["roi"]
-    body = [
-        "01 · PR Curve · PR-AUC 0.67 (불균형 데이터의 진짜 지표)",
-        "02 · ROC Curve · ROC-AUC 0.94 (over-optimistic, 참고용)",
-        "03 · Threshold 0.30 · FAR 8% · Recall 92% (Recall 우선)",
-        "04 · Threshold 0.65 · FAR 1% · Recall 75% (자동차단 권장)",
-        f"05 · 비용 비대칭 · FP {roi['fp_cost']} / FN {roi['fn_cost']} → 비용 최적 0.42",
-    ]
-    return SlideSpec(
-        id="error_analysis",
-        section_id="results",
-        layout="2x2_matrix",
-        role="caveat",
-        so_what=(
-            f"Threshold Tuning 4분면 — PR > ROC + FAR 운영 권고 + 도메인 비용 ({profile['label_ko']}) 기반 임계값"
-        ),
-        title_ko="Threshold + PR/ROC + FAR",
-        body_outline=body,
-        parent_message_id="results_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title="Threshold 4분면",
-            caption="PR Curve · ROC · FAR vs Recall · 비용 최적 임계값",
-            spec={
-                "quadrants": [
-                    {"title": "PR Curve", "pr_auc": 0.67, "best_threshold": 0.45},
-                    {"title": "ROC Curve", "roc_auc": 0.94, "note": "over-optimistic"},
-                    {
-                        "title": "FAR vs Recall",
-                        "candidates": [
-                            {"threshold": 0.30, "far": 0.08, "recall": 0.92},
-                            {"threshold": 0.45, "far": 0.02, "recall": 0.78},
-                            {"threshold": 0.65, "far": 0.005, "recall": 0.45},
-                        ],
-                    },
-                    {
-                        "title": f"비용 최적 ({profile['label_ko']})",
-                        "fp_cost": roi["fp_cost"],
-                        "fn_cost": roi["fn_cost"],
-                        "optimal_threshold": 0.42,
-                    },
-                ]
-            },
-            severity="critical",
-        ),
-        speaker_notes_hint=(
-            f"★ 이상탐지 핵심. 도메인 = {profile['label_ko']}. "
-            "FP/FN 비용 비대칭 기반 임계값 — 단순 0.5 가 아닌 비즈니스 최적."
-        ),
-    )
-
-
-def _build_insights_root_cause(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 15 — 가설 입증 인사이트 + Root Cause."""
-    chosen = (ctx.model_selection.chosen or {}).get("name", "AutoEncoder")
-    body = [
-        f"01 · H1 입증 · {chosen} (Unsupervised) PR-AUC 0.67 vs Supervised XGB 0.34 — 2배",
-        "02 · H2 입증 · Score 분포 분리 명확 (Bhatt 0.84) — 정상 패턴 학습 성공",
-        "03 · H3 입증 · 임계값 비용 최적 0.42 / 자동차단 0.65 — 운영 조정 가능",
-        "04 · Root Cause (SHAP Top-5) · 피처 1 (47%) · 피처 2 (22%) · 피처 3 (15%) ...",
-        "→ 인사이트 · 상위 3 피처가 이상 결정의 84% 설명, 도메인 룰 backup 가능",
-    ]
-    return SlideSpec(
-        id="insights_derived",
-        section_id="results",
-        layout="kpi_cards_3",
-        role="claim",
-        so_what="이상탐지 3가설 입증 + Root Cause SHAP — 상위 3 피처 84% 기여, 도메인 룰 backup 권장",
-        title_ko="가설 입증 + Root Cause",
-        body_outline=body,
-        thread_part="resolution",
-        parent_message_id="results_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title="가설 → 증거 → Root Cause",
-            caption="3가설 입증 + SHAP feature contribution",
-            spec={"layout": "insight_funnel"},
-        ),
-        speaker_notes_hint="가설 입증 + Root Cause 통합. SHAP TOP-5 로 도메인 해석 강화.",
-    )
-
-
-def _build_as_is_to_be(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 16 — AS-IS vs TO-BE."""
-    chosen = (ctx.model_selection.chosen or {}).get("name", "이상탐지 모델")
-    body = [
-        "AS-IS · 룰 기반 alert (FAR 9.2%)",
-        "AS-IS · 분석가 검토 시간 30분/건",
-        "AS-IS · 신규 패턴 못 잡음 (룰 외)",
-        "AS-IS · 임계값 수동 (개입자별 편차)",
-        f"TO-BE · {chosen} (FAR 2.1%, 77% 감소)",
-        "TO-BE · Root Cause 자동 (5분/건, 83% 단축)",
-        "TO-BE · Unsupervised — 새 anomaly 자동 탐지",
-        "TO-BE · 비용 기반 자동 calibration",
-    ]
-    return SlideSpec(
-        id="as_is_to_be",
-        section_id="impact",
-        layout="comparison_before_after",
-        role="claim",
-        so_what="이상탐지 도입 전후 — FAR·검토시간·신규탐지·임계값 4축 본질적 개선",
-        title_ko="AS-IS vs TO-BE",
-        body_outline=body,
-        parent_message_id="impact_root",
-        speaker_notes_hint="좌 AS-IS 4 한계 + 우 TO-BE 4 개선. 정량 비교.",
-    )
-
-
-def _build_roi_alert_reduction(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 17 — ROI + Alert Reduction (도메인 적응). ★ 도메인."""
-    profile = _get_domain_profile(ctx)
-    roi = profile["roi"]
-    biz_kpi = ctx.evaluation.business_kpi[0] if ctx.evaluation.business_kpi else None
-    kpi_value = f"{biz_kpi.estimated_value} {biz_kpi.unit}" if biz_kpi else f"{roi['primary_unit']} 단위 개선"
-
-    body = [
-        f"01 · 핵심 KPI · {roi['primary_kpi']} · {kpi_value}",
-        f"02 · {roi['secondary'][0]}",
-        f"03 · {roi['secondary'][1]}",
-        f"04 · {roi['secondary'][2]}",
-        f"05 · 비용 비대칭 · FP {roi['fp_cost']} / FN {roi['fn_cost']} → 비용 최적 임계값 0.42",
-        "06 · ROI 회수 기간 · 8개월 (보수적 추정)",
-    ]
-    return SlideSpec(
-        id="i3_roi",
-        section_id="impact",
-        layout="kpi_cards_4",
-        role="claim",
-        so_what=(
-            f"{profile['label_ko']} 도입 효과 — {roi['primary_kpi']} {kpi_value} + "
-            f"Alert 폭주 해소 + Root Cause 자동, ROI 8개월"
-        ),
-        title_ko="ROI + Alert Reduction",
-        body_outline=body,
-        parent_message_id="impact_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title=f"ROI ({profile['label_ko']})",
-            caption="핵심 KPI + 비용 비대칭 + ROI 회수",
-            spec={
-                "layout": "circular_progress",
-                "domain": _infer_anomaly_domain(ctx),
-                "primary_kpi": roi["primary_kpi"],
-                "fp_cost": roi["fp_cost"],
-                "fn_cost": roi["fn_cost"],
-                "roi_months": 8,
-            },
-        ),
-        speaker_notes_hint=(
-            f"★ 도메인 적응 — {profile['label_ko']} 비용 구조 반영. "
-            "Alert reduction (FAR 77% 감소) 강조 — 분석가 부하 해소가 핵심 매력."
-        ),
-    )
-
-
-def _build_risk_mitigation_anomaly(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 18 — Risk + Drift / Alert Fatigue / Concept Drift."""
-    body = [
-        "S 강점 · Unsupervised · Score Distribution · Root Cause SHAP 통합",
-        "W 약점 · Anomaly 라벨 적어 정확한 PR 평가 어려움 (검증된 이상 < 200건)",
-        "W 약점 · 신규 anomaly 유형 — 학습 분포에 없으면 놓침",
-        "W 약점 · Alert fatigue — Threshold 너무 낮으면 검토 부하 폭주",
-        "O 기회 · Active Learning · 검토 결과 피드백으로 모델 자동 개선",
-        "O 기회 · Ensemble (IF + AE + LOF) · Multi-method agreement",
-        "T 위협 · Concept Drift · 정상 패턴 자체 변화 (계절성·운영 변경)",
-        "T 위협 · Adversarial · 공격자가 정상처럼 위장하는 시도",
-        "→ Mitigation · 주간 score distribution 점검 · 월간 검토 라벨로 PR 재평가 · Ensemble 다층 방어",
-    ]
-    return SlideSpec(
-        id="risk_mitigation",
-        section_id="plan",
-        layout="2x2_matrix",
-        role="caveat",
-        so_what="이상탐지 특화 리스크 (Drift · Alert fatigue · Adversarial · 신규 유형) + 대응책",
-        title_ko="Risk + Drift / Fatigue",
-        body_outline=body,
-        parent_message_id="plan_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title="SWOT + 이상탐지 안정성",
-            caption="Concept Drift · Alert Fatigue · Adversarial · 신규 anomaly",
-            spec={"layout": "swot_with_drift_anomaly"},
-            severity="important",
-        ),
-        speaker_notes_hint=(
-            "이상탐지 운영의 4 위협 — Drift · Alert Fatigue · Adversarial · 신규 유형. "
-            "Mitigation 으로 주간/월간 cadence + Ensemble 다층 방어 명시."
-        ),
-    )
-
-
-def _build_roadmap_alert_pipeline(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 19 — Roadmap + Alert Pipeline + Operational Monitoring."""
-    profile = _get_domain_profile(ctx)
-    body = [
-        "Phase 01 · (0~30일) · 파일럿 · AE 단일 + 임계값 0.65 · 모니터링: FAR<3% · Recall>70% · 검토<100건/일",
-        "Phase 02 · (30~90일) · 운영 전환 · Ensemble (IF+AE+LOF) · Active Learning loop · 모니터링: drift score · 분포 shift",
-        "Phase 03 · (90일+) · 확장 · Streaming detection (Kafka) · Multi-tier alert · Fairness audit",
-        "Cadence · 실시간 score+alert · 일간 검토 큐 · 주간 distribution drift · 월간 PR 재평가 · 분기 모델 재검토",
-        f"고도화 ({profile['label_ko']}) · 도메인 룰 ensemble · Adversarial detection layer · Multi-tier auto-action",
-    ]
-    return SlideSpec(
-        id="roadmap",
-        section_id="plan",
-        layout="process_flow",
-        role="action",
-        so_what="Phase 별 + 실시간/일/주/월 Alert Pipeline + Monitoring KPI 명시",
-        title_ko="Roadmap + Alert Pipeline",
-        body_outline=body,
-        parent_message_id="plan_root",
-        visual_spec=VisualSpec(
-            type="custom",
-            title="이상탐지 Roadmap + Operational Cadence",
-            caption="Phase 별 + Alert Pipeline + Monitoring KPI",
-            spec={
-                "layout": "roadmap_upgrades",
-                "alert_cadence": {
-                    "realtime": "score + Slack/PagerDuty alert",
-                    "daily": "검토 결과 정량화 + Active Learning 학습 큐",
-                    "weekly": "score distribution drift 점검",
-                    "monthly": "PR-AUC 재평가 (새 검증 라벨)",
-                    "quarterly": "전체 모델 재검토",
-                },
-            },
-        ),
-        speaker_notes_hint=(
-            "Alert Pipeline 다층 — 실시간 score + 일/주/월 cadence. "
-            "Multi-tier alert (auto-block / queue / monitor) 강조."
-        ),
-    )
-
-
-def _build_closing_qna(ctx: ReportContext) -> SlideSpec:
-    """슬라이드 20 — Thank You + Q&A."""
-    profile = _get_domain_profile(ctx)
-    return SlideSpec(
-        id="closing",
-        section_id="closing",
-        layout="closing",
-        role="meta",
-        so_what="감사합니다 — 질문 받겠습니다",
-        title_ko="Thank You",
-        body_outline=[
-            f"본 보고서 · {ctx.meta.user_intent or '이상 탐지'} ({profile['label_ko']})",
-            f"생성 · {ctx.meta.generated_at or ''} · ADA v2",
-            "Q&A — Threshold·FAR·Drift·신규 anomaly·Active Learning 대응",
-        ],
-        speaker_notes_hint=f"Q&A 유도 — {profile['label_ko']} 특화 질문 예상.",
-    )
-
-
-# ==============================================================
-# Pyramid Principle 메시지 트리
+# Message tree (verdict-aware)
 # ==============================================================
 
 
 def _build_message_tree(ctx: ReportContext) -> list[MessageNode]:
-    """Pyramid Principle — root → 5 섹션 → 슬라이드별."""
-    chosen = (ctx.model_selection.chosen or {}).get("name", "이상탐지 모델")
-    profile = _get_domain_profile(ctx)
+    chosen = (ctx.model_selection.chosen or {}).get("name", "Anomaly Detector")
+    pm = ctx.evaluation.primary_metric or {}
+    verdict = (ctx.evaluation.verdict or "").lower()
+    if verdict == "iterate":
+        conclusion = "보강 후 재학습 권장"
+    elif verdict == "reject":
+        conclusion = "현 모델 도입 불가"
+    else:
+        conclusion = "운영 도입 권장 + Alert Pipeline + Drift 모니터링"
     root_msg = (
-        f"{chosen} 로 {profile['label_ko']} 자동화 — PR-AUC 개선 + FAR 77% 감소 + Root Cause 자동, 운영 도입 권장"
+        f"{chosen} 로 {pm.get('name', 'primary')} {pm.get('value', '-')} 달성 — {conclusion}"
     )
     return [
         MessageNode(
@@ -1185,46 +1383,26 @@ def _build_message_tree(ctx: ReportContext) -> list[MessageNode]:
             parent_id=None,
             children=["problem_root", "solution_root", "results_root", "impact_root", "plan_root"],
         ),
+        MessageNode(id="hyp_root", role="claim", text="이상탐지 적합성 3가설", parent_id="root", slide_ids=["hypothesis"]),
         MessageNode(
-            id="hyp_root",
-            role="claim",
-            text="이상탐지 적합성 3가설",
-            parent_id="root",
-            slide_ids=["hypothesis"],
+            id="problem_root", role="evidence", text="이상탐지 정당성 + 기술 스택 + 분석 방법",
+            parent_id="root", slide_ids=["why_anomaly", "p2_pain", "p3_alt_limits"],
         ),
         MessageNode(
-            id="problem_root",
-            role="evidence",
-            text="현행 한계 + 이상탐지 정당성",
-            parent_id="root",
-            slide_ids=["why_anomaly", "p2_pain", "p3_alt_limits"],
+            id="solution_root", role="evidence", text="이상탐지 아키텍처 + EDA",
+            parent_id="root", slide_ids=["architecture_deep", "tech_architecture", "s3_differentiation"],
         ),
         MessageNode(
-            id="solution_root",
-            role="evidence",
-            text="이상탐지 모델 + PyOD 스택 + 차별화",
-            parent_id="root",
-            slide_ids=["architecture_deep", "tech_architecture", "s3_differentiation"],
-        ),
-        MessageNode(
-            id="results_root",
-            role="evidence",
-            text="PR-AUC 우수 + Score 분포 분리 + 비용 최적 + Root Cause",
+            id="results_root", role="evidence", text="Baseline 대비 우수 + Score 분포 + Reason Code + PR@k",
             parent_id="root",
             slide_ids=["i1_kpi", "score_distribution", "eda_findings", "error_analysis", "insights_derived"],
         ),
         MessageNode(
-            id="impact_root",
-            role="claim",
-            text="비즈니스 효과 + Alert Reduction",
-            parent_id="root",
-            slide_ids=["as_is_to_be", "i3_roi"],
+            id="impact_root", role="claim", text="비즈니스 효과 + 임계값/알람 정책",
+            parent_id="root", slide_ids=["as_is_to_be", "i3_roi"],
         ),
         MessageNode(
-            id="plan_root",
-            role="action",
-            text="단계별 실행 + Alert Pipeline",
-            parent_id="root",
-            slide_ids=["risk_mitigation", "roadmap"],
+            id="plan_root", role="action", text="단계별 실행 + Alert Pipeline",
+            parent_id="root", slide_ids=["risk_mitigation", "roadmap"],
         ),
     ]
