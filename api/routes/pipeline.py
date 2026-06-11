@@ -271,11 +271,6 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             ):
                 v = _gd.get(k)
                 if v is not None:
-                    # CS 2026-06-11 — Redis category 가 "pending" 이면 job.category(G1 선택값)를
-                    # 덮어쓰지 않음. _save_g2_screen_ready 가 data_profiler 완료 전에 호출되어
-                    # state.category="pending" 상태로 Redis 에 박힌 경우를 차단.
-                    if k == "category" and v == "pending":
-                        continue
                     data[k] = v
             # output_paths: gate_data 값이 있으면 DB 값을 덮어씀 (완료 후 저장된 게 정확)
             if _gd.get("output_paths"):
@@ -320,14 +315,6 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             raw_partial = rc.get(f"ada:domain_partial:{job_id}")
             if raw_partial:
                 data["domain_partial"] = _json.loads(raw_partial)
-        except Exception:  # noqa: BLE001
-            pass
-        # HJ 2026-06-10 — stage 2~6 의 long-phase agent 가 publish 한 인크리멘털 상태.
-        # eda_agent / methodology_proposer / ... 의 _emit 가 ada:stage_partial:{job_id} 에 누적.
-        try:
-            raw_sp = rc.get(f"ada:stage_partial:{job_id}")
-            if raw_sp:
-                data["stage_partial"] = _json.loads(raw_sp)
         except Exception:  # noqa: BLE001
             pass
     except Exception:  # noqa: BLE001
