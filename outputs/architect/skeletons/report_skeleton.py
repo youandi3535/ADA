@@ -666,13 +666,7 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
     missing = ds.missing_rate or {}
     miss_cols = [(c, r) for c, r in sorted(missing.items(), key=lambda kv: -kv[1]) if r and r > 0]
     high_miss = [c for c, r in miss_cols if r >= 0.2]
-    if not miss_cols:
-        miss_txt = "결측이 사실상 없어 별도 대치 없이 분석 가능하다"
-    elif high_miss:
-        miss_txt = f"{', '.join(map(str, high_miss[:3]))} 등은 결측이 20%를 넘어 대치·제외 검토가 필요하다"
-    else:
-        top = miss_cols[0]
-        miss_txt = f"{top[0]} {_pct(top[1])} 등 경미해 대치로 처리 가능하다"
+    # 결측 서술은 아래 p_missing 단락에서 생성 (miss_cols·high_miss 활용)
 
     # 고카디널리티 (인코딩 주의)
     card = ds.cardinality or {}
