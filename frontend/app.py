@@ -166,7 +166,7 @@ _FLOW_HTML = """
   .err{background:#fbeaea;border:1px solid #e7b7b7;color:#a33;border-radius:14px;padding:15px 20px;font-size:19px;margin:0 0 20px;}
   /* CS 2026-06-10 — G2 Sub-1 (주제 선정) 팝업 모달 */
   .topicmodal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,30,50,.45);display:flex;align-items:center;justify-content:center;z-index:9000;padding:20px;}
-  .topicmodal-inner{background:#fff;border-radius:24px;max-width:1100px;width:100%;max-height:90vh;overflow-y:auto;padding:40px;box-shadow:0 24px 64px rgba(0,0,0,.3);}
+  .topicmodal-inner{position:relative;background:#fff;border-radius:24px;max-width:1100px;width:100%;max-height:90vh;overflow-y:auto;padding:40px;box-shadow:0 24px 64px rgba(0,0,0,.3);}
   .topichdr{text-align:center;}
   .topichdr h2{font-size:32px;font-weight:800;margin:0;color:var(--ink);}
   .topichdr .en{font-size:20px;color:#8aa0bd;font-style:italic;margin:4px 0 0;}
@@ -349,6 +349,7 @@ let g2SubStage='topic';          // 'topic' (디폴트) → 'direction' (선택 
 let selectedTopic={id:1};        // {id:1~5} 또는 {custom:"text"}
 let topicCustomText='';          // 직접 입력 textarea 값
 let g2DirectionsBusy=false;      // endpoint 호출 중 표시용
+let g2DirectionsStartedAt=null;  // HJ 2026-06-11 — busy 시작 시각(ms). 버튼 라벨에 경과초 표시용.
 let g2DirectionsReady=false;     // endpoint 응답 받았는지 (resume 가드)
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
@@ -358,6 +359,41 @@ let _sawAnalyzingAfterSubmit=false;  // resume 후 analyzing() 상태를 거쳤�
 let modalDismissed=false;
 let _modalDismissedCur=-1;     // dismissed 가 발생한 cur — cur 변경되면 자동 해제
 function dismissModal(){ modalDismissed=true; _modalDismissedCur=cur; try{render();}catch(e){} }
+// HJ 2026-06-11 — 주제 선정 팝업 닫기 (사용자가 ✕ 누름). 같은 cur 동안만 유효, cur 변경 시 자동 reset.
+// 본문에 "🎯 주제 선정 다시 열기" 버튼이 노출되어 언제든 다시 띄울 수 있음.
+let topicDismissed=false;
+let _topicDismissedCur=-1;
+function dismissTopic(){ topicDismissed=true; _topicDismissedCur=cur; try{render();}catch(e){} }
+function reopenTopicPopup(){ topicDismissed=false; try{render();}catch(e){} }
+// HJ 2026-06-11 — 모달 표시 후 콘텐츠 작성 시작까지 최소 대기(ms).
+//   • 모달이 처음 떴을 때 잠시 "분석 중" placeholder 만 보여주고, 5초 후부터 실제 분석 내용을 작성한다.
+//   • 만약 5초 경과 시점에 데이터가 아직 도착 안 했으면 placeholder 유지 → 데이터 도착 즉시(다음 render 주기) 자동 작성.
+//   • cur 변경 / dismiss / 모달 닫힘 시 _modalOpenedAt 리셋되어 다음 단계에서 다시 0→5s 카운트.
+let _modalOpenedAt=null;
+let _modalOpenedCur=-1;
+const MODAL_CONTENT_DELAY_MS=5000;
+function _modalContentReady(){
+  if(_modalOpenedAt==null) return false;
+  return (Date.now()-_modalOpenedAt) >= MODAL_CONTENT_DELAY_MS;
+}
+// HJ 2026-06-11 — 타자기 작성 완료 후 다음 단계로 넘어가기까지 추가 hold 시간(ms).
+//   • 모달 내 모든 타자기(_twAllDone) 가 끝난 시점부터 3초 동안 사용자가 내용을 읽을 시간 확보.
+//   • 그 동안 backend 분석이 끝나(proposals 도착) 도 cur 자동 전환 / 모달 닫힘은 대기.
+//   • 타자기에 새 콘텐츠가 추가되어 다시 미완료 상태가 되면 hold 카운트 리셋 → 다시 완료 후 3초.
+let _twAllDoneAt=null;
+const POST_TYPING_HOLD_MS=3000;
+function _typingHoldComplete(){
+  if(!_twAllDone()){
+    if(_twAllDoneAt!=null) _twAllDoneAt=null;
+    return false;
+  }
+  if(_twAllDoneAt==null){
+    _twAllDoneAt=Date.now();
+    // 정확한 3초 시점 재렌더 보장 (setInterval 500ms 주기로는 최대 500ms 지연 가능)
+    setTimeout(function(){ try{render();}catch(_e){} }, POST_TYPING_HOLD_MS+50);
+  }
+  return (Date.now()-_twAllDoneAt) >= POST_TYPING_HOLD_MS;
+}
 
 // ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
 // 1순위: URL 해시(#ada=…) — window.parent.history.replaceState 로 기록.
@@ -950,7 +986,8 @@ async function poll(){
     // CS 2026-06-10 — Sub-1 흐름: topic_proposals 도착도 G1 종료 신호로 인정
     const _topicReady=(gateData.topic_proposals||[]).length;
     // HJ 2026-06-10 — proposals 도착해도 모달 타자기 끝까지 안 적혔으면 자동 cur 전환 차단.
-    if((_g1Done || _topicReady) && _twAllDone()){ cur=1; follow=true; }
+    // HJ 2026-06-11 — 타자기 완료 후 3초 추가 hold (사용자 읽을 시간) — _typingHoldComplete() 로 통합.
+    if((_g1Done || _topicReady) && _typingHoldComplete()){ cur=1; follow=true; }
   }
   // follow=true 여도 cur 는 절대 자동 regress 안 함. 사용자 prev 버튼 클릭 으로만 내려갈 수 있음.
   if(follow) cur=Math.max(cur, frontier);
@@ -988,7 +1025,8 @@ setInterval(function(){
   if(cur===0 && jobId && !_suppressG1Advance && curGate()==='G2'){
     const _p=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;
     // HJ 2026-06-10 — proposals 도착해도 모달 타자기 끝까지 안 적혔으면 자동 cur 전환 차단.
-    if(_p && _twAllDone()){
+    // HJ 2026-06-11 — 타자기 완료 후 3초 추가 hold — _typingHoldComplete() 로 통합.
+    if(_p && _typingHoldComplete()){
       cur=1; follow=true;
       saveState();
       render();
@@ -997,7 +1035,8 @@ setInterval(function(){
     }
   }
   if(!jobId && cur===0) return;  // 업로드 대기 화면 — textarea 포커스 보호
-  if(analyzing() || _shownPct < 100 || (cur===0 && jobId)) render();
+  // HJ 2026-06-11 — g2DirectionsBusy 동안에도 render → "분석 방향 생성 중 (N초)" 라벨 1초 단위 갱신.
+  if(analyzing() || _shownPct < 100 || (cur===0 && jobId) || g2DirectionsBusy) render();
 }, 500);
 
 // A 트랙(2026-06-04): 백엔드 BaseAgent 가 매초 phase 단위 진행률을 publish 하므로
@@ -1319,8 +1358,11 @@ function g2TopicCards(d){
   const customChecked = customSelected ? ' checked' : '';
   const btnDisabled = g2DirectionsBusy
     || (customSelected && !topicCustomText.trim());
-  const btnLabel = g2DirectionsBusy ? '… 분석 방향 생성 중' : '선택 완료 ▶';
+  // HJ 2026-06-11 — busy 중 경과초 표시. render 500ms 주기로 자동 갱신.
+  const _gdSec = (g2DirectionsBusy && g2DirectionsStartedAt) ? Math.floor((Date.now()-g2DirectionsStartedAt)/1000) : 0;
+  const btnLabel = g2DirectionsBusy ? ('… 분석 방향 생성 중 ('+_gdSec+'초)') : '선택 완료 ▶';
   return '<div class="topicmodal"><div class="topicmodal-inner">'
+    +'<button class="modal-close" title="팝업 닫기 (다시 열기 버튼으로 복원 가능)" onclick="dismissTopic()">✕</button>'
     +'<div class="topichdr">'
     +'<h2>🎯 주제 선정</h2>'
     +'<div class="en">Choose your topic</div>'
@@ -1364,11 +1406,14 @@ function inModalLoading(){
   // (_shownPct 는 _stageProgress() 결과 캐시. 재귀 회피용으로 _stageProgress() 직접 호출 안 함.)
   if(cur>=0 && cur<=5 && _shownPct<41) return false;
   if(cur===0){
-    // 도메인 데이터 도착 시부터 팝업. proposals 이미 도착해도 타자기 미완료 → 모달 유지.
-    if(!g2TopicArea(gateData)) return false;
+    // HJ 2026-06-11 — 41% 도달 시점에 도메인 데이터(domain_partial) 미도착이어도 모달 무조건 표시.
+    //   이전: if(!g2TopicArea(gateData)) return false;  ← 도메인 도착 전엔 모달 안 떴음
+    //   변경: 41% 게이트만 통과하면 모달 표시 → 5초 placeholder → 데이터 도착 즉시 작성.
+    //         cur=1~5 분기와 동일한 패턴(데이터 도착 여부와 무관한 모달 표시)으로 통일.
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
     // HJ 2026-06-10 — proposals 도착해도 타자기 끝까지 안 적혔으면 모달 유지 → 사용자 못 넘어감.
-    if(_p0.length && curGate()==='G2' && _twAllDone()) return false;
+    // HJ 2026-06-11 — 타자기 완료 후 3초 hold 동안에도 모달 유지 — _typingHoldComplete() 로 통합.
+    if(_p0.length && curGate()==='G2' && _typingHoldComplete()) return false;
     return true;
   }
   // HJ 2026-06-10 — cur=1~5 는 선택 상태 vs 분석 상태 구분:
@@ -1383,7 +1428,8 @@ function inModalLoading(){
     const d=(ag===nextGate)?gateData:(gateCache[nextGate]||{});
     const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
     // HJ 2026-06-10 — proposals 도착해도 타자기 끝까지 안 적혔으면 모달 유지.
-    if(llmProps.length && _twAllDone()) return false;
+    // HJ 2026-06-11 — 타자기 완료 후 3초 hold 동안에도 모달 유지 — _typingHoldComplete() 로 통합.
+    if(llmProps.length && _typingHoldComplete()) return false;
     return true;
   }
   // cur=6 (단계 7 — 완료) — 분석 없음. 결과 표시. 모달 안 띄움.
@@ -1531,6 +1577,9 @@ function _stageBox(titleEmoji, titleText, rows){
     +body+'</div>';
 }
 function modalInsightArea(d){
+  // HJ 2026-06-11 — 모달 표시 후 5초 경과 전에는 콘텐츠 숨김 (호출처가 cur 별 placeholder 노출).
+  // 5초 경과 후 데이터 있으면 즉시 작성, 데이터 늦으면 도착한 render 주기에 자동 작성.
+  if(!_modalContentReady()) return '';
   // 1단계 (G1, cur=0): 데이터 도메인 정보 — domain_partial streaming
   if(cur===0){
     return modalTopicArea(d);
@@ -1542,38 +1591,73 @@ function modalInsightArea(d){
   // + methodology_candidates[].rationale (각 방법론의 3줄 글머리 설명) 을 본격 노출.
   if(cur===1){
     const r=[];
+    // === 기본 정보 (좁은 간격) ===
     if(dp.rows&&dp.cols) r.push(_labelRow('데이터 크기', dp.rows.toLocaleString()+'행 × '+dp.cols+'컬럼', {mt:8,bold:true}));
-    if(d.category&&d.category!=='pending') r.push(_labelRow('카테고리', d.category, {bold:true}));
-    if(d.target_column) r.push(_labelRow('타깃', d.target_column, {bold:true}));
-    if(dp.target_dtype) r.push(_labelRow('타깃 자료형', dp.target_dtype));
+    if(d.category&&d.category!=='pending') r.push(_labelRow('카테고리', d.category, {bold:true, mt:8}));
+    if(d.target_column) r.push(_labelRow('타깃', d.target_column, {bold:true, mt:8}));
+    if(dp.target_dtype) r.push(_labelRow('타깃 자료형', dp.target_dtype, {mt:8}));
     if(dp.class_distribution&&typeof dp.class_distribution==='object'){
       const cd=dp.class_distribution, ks=Object.keys(cd).slice(0,4);
-      if(ks.length) r.push(_labelRow('클래스 분포', ks.map(function(k){return k+': '+cd[k];}).join(', ')));
+      if(ks.length) r.push(_labelRow('클래스 분포', ks.map(function(k){return k+': '+cd[k];}).join(', '), {mt:8}));
     }
     const sp=(d&&d.stage_partial)||{};
-    // 🔍 EDA 인사이트 — 실시간 분석 결과 (결측치·상관관계·클래스 분포·분포 비대칭). 각 인사이트의 prefix(":" 앞) 를 라벨로 분리.
+    // === EDA 인사이트 — prefix("결측 분석:", "상관관계:" 등) 별 그룹화 ===
+    // HJ 2026-06-11 — 사용자 요구: 같은 주제끼리 묶고 다른 주제로 넘어갈 때 한 칸 띄움.
+    //   섹션 헤더(굵게) + 들여쓴 불릿 항목 구조. 글 내용 자체는 변경 없음 (배치만 가독성 개선).
     if(Array.isArray(sp.eda_insights)&&sp.eda_insights.length){
-      sp.eda_insights.forEach(function(ins,i){
+      var _groups={}; var _order=[];
+      sp.eda_insights.forEach(function(ins){
         var s=String(ins);
         var ci=s.indexOf(':');
-        var lab, val;
-        if(ci>0 && ci<30){ lab='🔍 '+s.slice(0,ci).trim(); val=s.slice(ci+1).trim(); }
-        else { lab='🔍 EDA 인사이트 '+(i+1); val=s; }
-        r.push(_labelRow(lab, val, {fs:22, mt:14, twk:'eda-ins-'+i}));
+        var prefix, val;
+        if(ci>0 && ci<30){ prefix=s.slice(0,ci).trim(); val=s.slice(ci+1).trim(); }
+        else { prefix='EDA 인사이트'; val=s; }
+        if(!_groups[prefix]){ _groups[prefix]=[]; _order.push(prefix); }
+        _groups[prefix].push(val);
+      });
+      var _emoji={'결측 분석':'📭','상관관계':'🔗','클래스 분포':'⚖️','분포 비대칭':'🌀','EDA 인사이트':'🔍'};
+      var _firstGrp=true;
+      _order.forEach(function(prefix){
+        var em=_emoji[prefix]||'🔍';
+        // 섹션 헤더 (굵게, 큰 spacer로 이전 그룹과 분리)
+        r.push('<div class="twrow" style="margin-top:'+(_firstGrp?36:28)+'px;font-size:24px;font-weight:700;color:#0f172a;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+          +em+' '+twSpan(prefix,'eda-hdr-'+prefix)
+          +'</div>');
+        _firstGrp=false;
+        // 그룹 항목 (불릿 + 들여쓰기, 좁은 간격)
+        _groups[prefix].forEach(function(val,j){
+          r.push('<div class="twrow" style="margin-top:8px;font-size:21px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+            +'<span style="opacity:.45;margin-right:10px;font-weight:700">•</span>'
+            +twSpan(val,'eda-'+prefix+'-'+j)
+            +'</div>');
+        });
       });
     }
-    // 진행 상태 (인사이트 도착 전 라이브 피드용 — 도착 후엔 보조 정보)
-    if(sp.eda_status && (!Array.isArray(sp.eda_insights)||!sp.eda_insights.length)) r.push(_labelRow('▶ EDA 진행', sp.eda_status, {fs:22}));
-    if(sp.eda_charts_count!=null) r.push(_labelRow('▶ 차트 생성', sp.eda_charts_count+'종', {bold:true}));
-    // 🧪 방법론 후보 — 각 후보의 제목 + LLM rationale (3줄 설명) 노출
+    // === 진행 상태 (인사이트 도착 전 라이브 피드용 — 도착 후엔 보조) ===
+    if(sp.eda_status && (!Array.isArray(sp.eda_insights)||!sp.eda_insights.length)) r.push(_labelRow('▶ EDA 진행', sp.eda_status, {fs:22, mt:14}));
+    if(sp.eda_charts_count!=null) r.push(_labelRow('▶ 차트 생성', sp.eda_charts_count+'종', {bold:true, mt:14}));
+    // === 방법론 후보 — 섹션 헤더 + 들여쓴 불릿 구조로 통일 ===
     if(Array.isArray(sp.methodology_candidates)&&sp.methodology_candidates.length){
+      r.push('<div class="twrow" style="margin-top:40px;font-size:24px;font-weight:700;color:#0f172a;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+        +'🧪 '+twSpan('방법론 후보','meth-hdr')
+        +'</div>');
       sp.methodology_candidates.forEach(function(c,i){
         var titleLine=(c.id||(i+1))+'. '+(c.title||'')+(c.score!=null?' (점수: '+c.score+')':'');
-        r.push(_labelRow('🧪 방법론 후보 '+(i+1), titleLine, {bold:true, mt:18, twk:'meth-title-'+i}));
-        if(c.rationale) r.push(_labelRow('   └ 설명', String(c.rationale), {fs:22, mt:6, twk:'meth-rat-'+i}));
+        // 후보 제목 (불릿 + 굵게)
+        r.push('<div class="twrow" style="margin-top:'+(i===0?12:20)+'px;font-size:22px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+          +'<span style="opacity:.45;margin-right:10px;font-weight:700">•</span>'
+          +'<b>'+twSpan(titleLine,'meth-title-'+i)+'</b>'
+          +'</div>');
+        // 후보 설명 (한 단계 더 들여쓰기)
+        if(c.rationale){
+          r.push('<div class="twrow" style="margin-top:4px;font-size:20px;line-height:1.55;padding-left:48px;color:#475569;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+            +'<span style="opacity:.55;margin-right:8px">└</span>'
+            +twSpan(String(c.rationale),'meth-rat-'+i)
+            +'</div>');
+        }
       });
     } else if(sp.methodology_status){
-      r.push(_labelRow('▶ 방법론', sp.methodology_status, {fs:22}));
+      r.push(_labelRow('▶ 방법론', sp.methodology_status, {fs:22, mt:14}));
     }
     if(d.eda_summary) r.push(_labelRow('EDA 요약', typeof d.eda_summary==='string'?d.eda_summary:JSON.stringify(d.eda_summary).slice(0,200), {fs:22, mt:18}));
     return _stageBox('📊','EDA · 방법론 분석', r);
@@ -1666,6 +1750,16 @@ function contentGate(){
   // g2SubStage='topic' + topic_proposals 도착했을 때만 팝업 모달 표시.
   // topic_proposals 없으면 (백그라운드 prefetch 미완료) → G1 모달 / 로딩 유지.
   if(g==='G2' && g2SubStage==='topic' && (d.topic_proposals||[]).length){
+    // HJ 2026-06-11 — cur 변경 시 topicDismissed 자동 해제 (modalDismissed 와 동일 패턴).
+    if(topicDismissed && _topicDismissedCur!==cur){ topicDismissed=false; }
+    // 사용자가 ✕ 로 팝업 닫음 — 본문에 "다시 열기" 버튼만 표시. 주제 선택은 필수이므로 진행 불가 안내.
+    if(topicDismissed && _topicDismissedCur===cur){
+      return gateHeader(g)
+        +'<div style="background:#f0f4fa;border:1px solid #d6e0ed;border-radius:14px;padding:22px 26px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap">'
+        +'<div style="font-size:18px;color:#1f3e5c"><b>🎯 주제 선정 팝업이 닫혔습니다.</b><br><span style="font-size:15px;color:#6b7c95">다음 단계 진행을 위해 주제를 선택해야 합니다.</span></div>'
+        +'<button class="topicbtn" onclick="reopenTopicPopup()">주제 선정 다시 열기 ▶</button>'
+        +'</div>';
+    }
     // CS 2026-06-10 — 본인 명시 "팝업에는 무조건 주제만". gateHeader 제외.
     return g2TopicCards(d);
   }
@@ -1929,7 +2023,7 @@ function render(){
       if(selectedTopic.custom!==undefined){ topicText=topicCustomText.trim(); }
       else { var t=tps.find(function(x){return x.id===selectedTopic.id;}); topicText=(t&&t.title)||''; }
       if(!topicText){ return; }
-      g2DirectionsBusy=true; render();
+      g2DirectionsBusy=true; g2DirectionsStartedAt=Date.now(); render();
       try{
         await api('/pipeline/gate/G2/directions/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:topicText})});
         window._g2_selectedTopicText=topicText;
@@ -1937,7 +2031,7 @@ function render(){
         g2SubStage='direction';
         saveState();
       }catch(e){ errMsg='분석 방향 생성 실패 — '+e.message; }
-      finally{ g2DirectionsBusy=false; render(); }
+      finally{ g2DirectionsBusy=false; g2DirectionsStartedAt=null; render(); }
     };
   }
 
@@ -1978,14 +2072,24 @@ function render(){
   const _modalOv=document.getElementById('modalOverlay');
   if(_modalOv){
     if(inModalLoading()){
+      // HJ 2026-06-11 — 모달 최초 표시 시각 기록 (cur 변경 시 재셋). 5초 게이트의 기준점.
+      // setInterval 의 500ms 주기로는 정확한 5초 시점에 render 되지 않을 수 있으므로 setTimeout 한 번 박음.
+      if(_modalOpenedAt==null || _modalOpenedCur!==cur){
+        _modalOpenedAt=Date.now();
+        _modalOpenedCur=cur;
+        setTimeout(function(){ if(inModalLoading()) try{render();}catch(_e){} }, MODAL_CONTENT_DELAY_MS+50);
+      }
       // [1] 제목 영역: cur·errMsg 변경 시만 재설정
       var _mh=modalHtml(); var _mb=document.getElementById('modal-body');
       if(_mb._last!==_mh){_mb._last=_mh;_mb.innerHTML=_mh;}
       // [2] 진행바: 매 500ms 갱신
       document.getElementById('modal-pb').innerHTML=progressBar();
       // [3] insight 영역: insightHtml 변경 시만 재설정 (모래시계와 완전 분리)
+      //   • modalInsightArea 가 '' 반환 = 5초 게이트 미통과 OR 데이터 미도착 → cur 별 placeholder.
+      //   • 5초 게이트 통과 + 데이터 있음 → 실제 분석 내용 작성 (타자기 효과 자동 동작).
+      //   • cur=2~5 placeholder 는 3~6단계 모달 구축 시 동일 패턴으로 확장.
       var _miEl=document.getElementById('modal-insight');
-      if(_miEl){var _iHtml=modalInsightArea(gateData)||(cur===0?'<div class="modal-placeholder">📊 데이터 도메인을 분석하는 중입니다…</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();/* innerHTML 교체 후 즉시 1 tick → 진행 상태(_twState) 복원, blank flicker 방지 */}}
+      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();/* innerHTML 교체 후 즉시 1 tick → 진행 상태(_twState) 복원, blank flicker 방지 */}}
       // [3.5] 타자기 엔진 시작 (idempotent — 모달 노출 동안 계속 run)
       _twStart();
       // [4] 모래시계 pending 블록: 최초 1회만 초기화 → SVG 애니메이션 영구 유지
@@ -2000,6 +2104,10 @@ function render(){
       _modalOv.style.display='none';
       // HJ 2026-06-10 — 모달 닫힘 시 타자기 상태 리셋. 다음 잡(job)에서 처음부터 다시 타이핑.
       _twState={}; _twDotsShownAt=0;
+      // HJ 2026-06-11 — 5초 게이트도 리셋. 다음 모달 표시 시 0→5s 처음부터 카운트.
+      _modalOpenedAt=null; _modalOpenedCur=-1;
+      // HJ 2026-06-11 — 타자기 hold 카운트도 리셋. 다음 단계 모달에서 타자기 완료 시 새로 3초 카운트.
+      _twAllDoneAt=null;
     }
   }
 }
