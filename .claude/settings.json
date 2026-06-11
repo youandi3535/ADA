@@ -205,7 +205,13 @@
       "Bash(sed -n '922,960p' frontend/app.py)",
       "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"C:\\\\IT\\\\workspace_python\\\\ADA\\\\scripts\\\\ada.ps1\"\\); \"First 4 bytes: \" + \\($bytes[0..3] -join ','\\))",
       "Bash(PowerShell -Command \"\\(Get-Item 'frontend/app_clean.py'\\).Length, \\(Get-Item 'frontend/app.py'\\).Length\")",
-      "Bash(git config *)"
+      "Bash(git config *)",
+      "Bash(curl -s -X POST http://localhost:11434/api/generate -d '{\"model\":\"qwen2.5:7b\",\"prompt\":\"hi\",\"stream\":false}' --max-time 30 -w \"\\\\nHTTP_CODE:%{http_code}\\\\n\")",
+      "PowerShell([Environment]::GetEnvironmentVariable\\(\"OLLAMA_MODELS\",\"User\"\\); [Environment]::GetEnvironmentVariable\\(\"OLLAMA_MODELS\",\"Machine\"\\); Get-CimInstance Win32_Process -Filter \"name='ollama.exe' or name='ollama app.exe'\" | Select-Object ProcessId,Name,@{n='Path';e={$_.ExecutablePath}})",
+      "PowerShell([Environment]::SetEnvironmentVariable\\(\"OLLAMA_MODELS\",\"C:\\\\ollama\\\\models\",\"Machine\"\\))",
+      "PowerShell(Stop-Process -Name \"ollama app\" -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Name \"ollama\" -Force -ErrorAction SilentlyContinue)",
+      "Bash(curl -s -X POST http://localhost:11434/api/generate -d '{\"model\":\"qwen2.5:7b\",\"prompt\":\"hi\",\"stream\":false}' --max-time 60 -w \"\\\\nHTTP_CODE:%{http_code}\\\\n\")"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"
