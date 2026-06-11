@@ -30,6 +30,14 @@ from outputs.style.visual_kit import (
     add_vertical_accent,
 )
 
+# Step 7-1 — LLM 디자인 힌트 적용 헬퍼 (palette/photo/icon)
+from outputs.carriers.design_hint_helpers import (
+    check_and_log_miss,
+    icon_name as design_icon_name,
+    palette_override,
+    photo_keyword,
+)
+
 # HJ 2026-06-08 — 시각 품질 도구 (graceful import, 자산 없어도 동작)
 try:
     from tools.visual import (
@@ -475,6 +483,20 @@ def _draw_slide(
     render_fn,
 ):
     layout = sl.layout
+
+    # Step 7-1 — LLM 디자인 힌트의 palette_hint 적용 (단일 진입점).
+    # LLMDesigner 가 sl._design_hint 에 attach 한 palette_hint
+    # ("default"/"warning"/"success"/"monochrome") 에 따라 primary/accent/secondary 가
+    # 일괄 변경됨. 이하 모든 sub-draw 가 변경된 팔레트를 자동으로 받음.
+    _overridden = palette_override(
+        sl, {"primary": primary, "accent": accent, "secondary": secondary}
+    )
+    primary = _overridden["primary"]
+    accent = _overridden["accent"]
+    secondary = _overridden["secondary"]
+
+    # 부족 신호 카운터 누적 (fallback_reason 있는 경우만)
+    check_and_log_miss(sl)
 
     # Hardcoded specials (cover/agenda/divider use bespoke draw)
     if layout == "cover":
