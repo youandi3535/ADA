@@ -41,15 +41,19 @@ def test_draw_slide_calls_palette_override_at_entry():
 
 
 def test_draw_cover_uses_photo_keyword_with_user_intent_fallback():
-    """_draw_cover 가 photo_keyword(sl, fallback=user_intent) 호출하는지."""
+    """_draw_cover 가 photo_keyword 호출 + user_intent 폴백을 유지하는지.
+
+    jh 2026-06-12 — cover 견본 상향(c7f24ad) 후 시그니처 변경:
+    photo_keyword(sl, fallback="") + get_cover_image("cover", photo_kw or user_intent).
+    """
     from outputs.carriers import pptx_designer as m
 
     src = open(m.__file__, encoding="utf-8").read()
-    assert "photo_keyword(sl, fallback=user_intent)" in src, \
+    assert "photo_keyword(sl," in src, \
         "_draw_cover 에 photo_keyword 통합 누락"
-    # get_cover_image 가 photo_kw 사용
-    assert 'get_cover_image("cover", photo_kw)' in src, \
-        "get_cover_image 가 photo_kw 안 받음"
+    # user_intent 가 photo_kw 폴백으로 유지되는지
+    assert "photo_kw or user_intent" in src, \
+        "_draw_cover 의 user_intent 폴백 누락"
 
 
 # ==============================================================

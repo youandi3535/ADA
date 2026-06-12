@@ -119,26 +119,49 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     cover_sl = next((s for s in raw_slides if s.layout == "cover"), None)
     agenda_sl = next((s for s in raw_slides if s.layout == "agenda"), None)
     exec_sl = next((s for s in raw_slides if s.id == "exec_summary"), None)
+    # jh 2026-06-12 — 인사이트 종합은 목차 *앞* (BLUF: 결론→종합 인사이트→목차→본문)
+    synth_sl = next((s for s in raw_slides if s.id == "insight_synthesis"), None)
 
     # ml_pitch (및 향후 카테고리별 skeleton) 가 hypothesis/insights_derived 슬라이드를
     # 자기 plan 안에 포함. 디자이너가 추가 주입하지 않음 (중복 방지).
 
-    # Build body list (excluding cover, exec_summary, agenda — 본문 흐름만)
-    body = [s for s in raw_slides if s not in (cover_sl, agenda_sl, exec_sl)]
+    # Build body list (excluding cover, exec_summary, synthesis, agenda — 본문 흐름만)
+    body = [s for s in raw_slides if s not in (cover_sl, agenda_sl, exec_sl, synth_sl)]
 
-    # Final flat order: cover, exec_summary, agenda, body (skeleton-defined order), closing(last)
-    # ml_pitch 의 20장 구조: 1.cover / 2.exec / 3.agenda / 4~19.body / 20.closing
-    # 향후 카테고리별 skeleton 도 자기 plan 안에 hypothesis/insights 포함하므로 추가 주입 없음.
-    slides_flat = [s for s in (cover_sl, exec_sl, agenda_sl) if s is not None] + body
+    # Final flat order: cover, exec, 인사이트 종합, agenda, body, closing(last)
+    slides_flat = [s for s in (cover_sl, exec_sl, synth_sl, agenda_sl) if s is not None] + body
     # Force-rebuild Agenda's body_outline = exact list of body slide titles
     # (everything after Agenda except the very last closing slide).
+    # jh 2026-06-12 — 목표치 덱 스토리 아젠다: 슬라이드 id → 이야기 흐름 라벨.
+    # (Action Title 그대로 나열하면 목차가 아니라 결론 모음이 됨 — 목차는 *질문/주제* 톤)
+    # EDA 4장은 데이터 기반 제목(title_ko)이 더 구체적이라 맵에서 제외.
+    _AGENDA_STORY_LABELS = {
+        "hypothesis": "분석 가설 — 무엇을 물었나",
+        "p1_market": "데이터 · 도구 — 개요와 스택",
+        "p2_pain": "기술 스택",
+        "p3_alt_limits": "분석 방법 — 5단계 설계",
+        "insight_synthesis": "인사이트 종합 — 발견과 접목 범위",
+        "i1_kpi": "모델 성능 — Baseline 대비 가치",
+        "eda_findings": "SHAP — 전역 importance",
+        "error_analysis": "SHAP — 개별 케이스 해석",
+        "insights_derived": "Error Analysis — 어디서 틀리는가",
+        "as_is_to_be": "약 segment — 취약 구간 식별",
+        "i3_roi": "운영 정책 — 도입 룰",
+        "risk_mitigation": "Risk & Drift — SWOT",
+        "roadmap": "실행 로드맵 — 후속 작업",
+    }
     if agenda_sl is not None:
         body_titles = []
         for i, sl in enumerate(slides_flat):
             if sl is agenda_sl:
                 # body items start at i+1 and stop before the last (closing)
                 for j, body_sl in enumerate(slides_flat[i + 1 : -1], 1):
-                    title = (body_sl.title_ko or body_sl.id or f"슬라이드 {j}")[:60]
+                    title = (
+                        _AGENDA_STORY_LABELS.get(body_sl.id)
+                        or body_sl.title_ko
+                        or body_sl.id
+                        or f"슬라이드 {j}"
+                    )[:60]
                     body_titles.append(f"{j:02d}.  {title}")
                 break
         if body_titles:
@@ -199,13 +222,126 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
             except Exception:
                 pass
 
+    # === 편집자 QA 패스 (4단계 v1 — jh 2026-06-12) ===
+    # 덱 전체를 만들고 난 뒤 한 번 더 훑으며 텍스트 오버플로를 자동 교정.
+    # (견본과의 격차 '반복 0회' 의 첫 반복 — 결정적 기하 검사라 토큰 비용 0)
+    try:
+        _n_fixed = _qa_shrink_overflow(prs)
+        if _n_fixed:
+            import logging
+
+            logging.getLogger("pptx_designer").info("deck_qa_font_shrunk: %d boxes", _n_fixed)
+    except Exception as _e:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("pptx_designer").warning("deck_qa_failed: %s", _e)
+
     prs.save(str(out))
     return str(out)
 
 
 # ==============================================================
+# 편집자 QA — 결정적 후처리 (jh 2026-06-12)
+# ==============================================================
+
+
+def _estimate_text_height_cm(text: str, size_pt: float, box_w_cm: float) -> float:
+    """한글 기준 텍스트 높이 추정 — 글자폭 ≈ 1em, 줄간 1.35."""
+    import math
+
+    char_w = size_pt * 0.0353  # 1pt = 0.0353cm, 한글 전각 ≈ 1em
+    usable_w = max(box_w_cm - 0.4, 1.0)
+    lines = 0
+    for raw_line in (text or "").split("\n"):
+        est_w = max(len(raw_line), 1) * char_w
+        lines += max(1, math.ceil(est_w / usable_w))
+    return lines * size_pt * 0.0353 * 1.35
+
+
+def _qa_shrink_overflow(prs) -> int:
+    """모든 텍스트박스를 검사해 박스 높이를 넘치는 명시 폰트를 단계 축소.
+
+    - 명시 size 가 있는 run 만 대상 (테마 상속 run 은 추정 불가 — 보수적 스킵)
+    - 추정 높이가 박스의 115% 초과 시에만 개입 (과교정 방지)
+    - 2pt 씩, 최소 9pt 까지
+    """
+    from pptx.util import Emu, Pt
+
+    fixed = 0
+    for slide in prs.slides:
+        for sh in slide.shapes:
+            if not getattr(sh, "has_text_frame", False):
+                continue
+            try:
+                box_w = Emu(sh.width).cm
+                box_h = Emu(sh.height).cm
+            except Exception:
+                continue
+            if box_h < 0.5 or box_w < 1.0:
+                continue
+            tf = sh.text_frame
+            runs = [r for p in tf.paragraphs for r in p.runs if r.font.size is not None]
+            if not runs:
+                continue
+            text = tf.text
+            size = max(r.font.size.pt for r in runs)
+            shrunk = False
+            for _ in range(6):
+                if size <= 9:
+                    break
+                if _estimate_text_height_cm(text, size, box_w) <= box_h * 1.15:
+                    break
+                size -= 2
+                shrunk = True
+            if shrunk:
+                for r in runs:
+                    if r.font.size is not None and r.font.size.pt > size:
+                        r.font.size = Pt(size)
+                fixed += 1
+    return fixed
+
+
+# ==============================================================
 # Cover slide - full-bleed color block + huge typo + dot motif
 # ==============================================================
+
+
+def _display_intent(raw: str, max_len: int = 60) -> str:
+    """user_intent 의 표시용 핵심 추출 — 게이트 태그 suffix 제거 + 길이 제한.
+
+    jh 2026-06-12 — cover 제목이 '분석 방향: A (주제: B) (방법론: C)...' 원문
+    그대로 48pt 로 들어가 슬라이드 경계를 뚫던 결함 수정.
+    """
+    import re
+
+    s = (raw or "").strip()
+    if not s:
+        return "분석 보고서"
+    m = re.match(r"^(?:분석 방향|주제|방법론|모델 전략):\s*(.+)$", s)
+    if m:
+        s = m.group(1).strip()
+    cut = re.search(r"\s*\((?:분석 방향|주제|방법론|모델 전략):", s)
+    if cut:
+        s = s[: cut.start()].strip()
+    if len(s) > max_len:
+        s = s[: max_len - 1].rstrip() + "…"
+    return s or "분석 보고서"
+
+
+def _cover_title_size(text: str) -> int:
+    """cover 제목 길이별 폰트 — 박스 (폭 ~12.2cm × 5cm) 안에 안전하게.
+
+    jh 2026-06-12 — 견본 실측 26pt 기준 재보정. 48pt 는 한글 16자가
+    3줄로 꺾여 구도를 깨던 결함 (12.2cm 박스 = 48pt 한글 약 7자/줄).
+    """
+    n = len(text)
+    if n <= 12:
+        return 40
+    if n <= 22:
+        return 32
+    if n <= 34:
+        return 26
+    return 24
 
 
 def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: str, secondary: str):
@@ -214,24 +350,41 @@ def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: 
     # Step 7-2 — LLM 의 photo_keyword 가 user_intent 보다 우선.
     # LLMDesigner 가 데이터 신호 (도메인/카테고리/verdict) 보고 뽑은 영문 검색어를
     # Unsplash/Pexels 키워드로 사용. 힌트 없으면 user_intent 폴백.
-    photo_kw = photo_keyword(sl, fallback=user_intent)
-    cover_photo = get_cover_image("cover", photo_kw) if _VISUAL_TOOLS_AVAILABLE else None
+    photo_kw = photo_keyword(sl, fallback="")
+    # jh 2026-06-12 — get_cover_image 는 항상 범용 base 키워드("abstract business" 류)
+    # 를 앞에 붙이고, 한글 intent 는 ASCII 필터로 소거돼 결국 무관한 비즈니스 인물
+    # 사진이 나오던 결함. LLM 의 도메인 키워드가 있으면 그것만으로 직접 검색.
+    cover_photo = None
+    if _VISUAL_TOOLS_AVAILABLE:
+        if photo_kw:
+            try:
+                from tools.visual.stock_image import fetch_stock_image
+
+                cover_photo = fetch_stock_image(photo_kw)
+            except Exception:  # noqa: BLE001
+                cover_photo = None
+        if cover_photo is None:
+            cover_photo = get_cover_image("cover", photo_kw or user_intent)
 
     if cover_photo and cover_photo.exists():
-        # 풀블리드 사진 + 좌측 그라데이션 overlay (반투명 primary→secondary)
+        # jh 2026-06-12 — 견본 구도: 사진은 좌측 55% 패널에만, 우측 45% 는 흰 배경.
+        # (풀블리드 + 70% overlay 가 제목을 사진 위에 얹어 가독성·구도를 깨던 결함)
         try:
             add_image_with_overlay(
                 slide,
                 0,
                 0,
-                SLIDE_W,
+                SLIDE_W * 0.55,
                 SLIDE_H,
                 str(cover_photo),
                 overlay_color=primary,
-                overlay_alpha_pct=70,  # 70% 투명도로 텍스트 가독성
+                # jh 2026-06-12 — 진한 사진에서 글자 침몰 방지: 오버레이 강화 (사용자 지시)
+                overlay_alpha_pct=68,
             )
             # 좌측 강조 색 band
             add_color_band(slide, 0, 0, SLIDE_W * 0.02, SLIDE_H, accent)
+            # Right white area — 제목·메타는 항상 흰 패널 위 (견본 동일)
+            add_rect(slide, SLIDE_W * 0.55, 0, SLIDE_W * 0.45, SLIDE_H, "#FFFFFF")
         except Exception as _e:  # noqa: BLE001
             import logging
 
@@ -266,7 +419,8 @@ def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: 
         "ANALYSIS REPORT",
         size_pt=14,
         bold=True,
-        color_hex=accent,
+        # jh 2026-06-12 — accent(연파랑)는 사진 위에서 침몰 — 흰색 고정 (가독성)
+        color_hex="#FFFFFF",
         align="left",
         vcenter=False,
     )
@@ -285,8 +439,8 @@ def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: 
         vcenter=False,
     )
 
-    # Title (right side)
-    intent = ctx.meta.user_intent or "분석 보고서"
+    # Title (right side) — jh 2026-06-12: 태그 제거 표시용 제목 + 길이별 폰트
+    intent = _display_intent(ctx.meta.user_intent, max_len=44)
     add_text_box(
         slide,
         SLIDE_W * 0.6,
@@ -294,7 +448,7 @@ def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: 
         SLIDE_W * 0.36,
         5.0,
         intent,
-        size_pt=48,
+        size_pt=_cover_title_size(intent),
         bold=True,
         color_hex="#0F172A",
         align="left",
@@ -309,7 +463,7 @@ def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: 
         10.0,
         SLIDE_W * 0.36,
         1.0,
-        f"{ctx.meta.category.upper()}  ·  ADA v2",
+        f"{ctx.meta.category.upper()}  ·  ADA",
         size_pt=14,
         bold=True,
         color_hex=primary,
@@ -999,6 +1153,7 @@ def _draw_chart_callout(slide, sl, ctx, primary, accent, ink, muted, light_bg, r
     chart_x = 1.5
     callout_x = chart_x + chart_w + 0.5
 
+    chart_placed = False
     if sl.visual_spec:
         try:
             png = render_fn(sl.visual_spec, ctx, slide=sl)
@@ -1006,13 +1161,21 @@ def _draw_chart_callout(slide, sl, ctx, primary, accent, ink, muted, light_bg, r
                 from pptx.util import Cm
 
                 slide.shapes.add_picture(png, Cm(chart_x), Cm(4.5), width=Cm(chart_w), height=Cm(SLIDE_H - 7.0))
+                chart_placed = True
         except Exception:
             pass
+
+    # jh 2026-06-12 — 차트 미배치 시 패널을 전폭으로 확장.
+    # (SHAP·CM 미적립 슬라이드에서 좌측 절반이 통째로 빈 화면으로 나가던 결함)
+    if not chart_placed:
+        callout_x = 1.5
+        callout_w = SLIDE_W - 3.0
 
     add_rounded_rect(slide, callout_x, 4.5, callout_w, SLIDE_H - 7.0, light_bg, line_hex=primary)
     add_text_box(
         slide, callout_x + 0.5, 5.0, 0.6, 0.6, GLYPHS["bulb"], size_pt=18, color_hex=primary, align="left", vcenter=True
     )
+    # jh 2026-06-12 — 발표용 가독성: 라벨 11→13pt, 본문 11→14pt (사용자 지시)
     add_text_box(
         slide,
         callout_x + 1.3,
@@ -1020,25 +1183,51 @@ def _draw_chart_callout(slide, sl, ctx, primary, accent, ink, muted, light_bg, r
         callout_w - 1.8,
         0.8,
         "KEY INSIGHTS",
-        size_pt=11,
+        size_pt=13,
         bold=True,
         color_hex=primary,
         align="left",
         vcenter=True,
     )
-    body_text = "\n\n".join(f"-  {b}" for b in sl.body_outline[:5])
-    add_text_box(
-        slide,
-        callout_x + 0.5,
-        6.2,
-        callout_w - 1.0,
-        SLIDE_H - 9.0,
-        body_text or "-",
-        size_pt=11,
-        color_hex=ink,
-        align="left",
-        vcenter=False,
+    # jh 2026-06-12 — 목표치 덱 페어 2줄 구조: "사실" 줄 + "→ 시사점" 강조 들여쓰기 줄.
+    # 카피라이터 페어 bullet("사실 — 시사점") 을 " — " 에서 분해해 2층으로 그림.
+    _add_pair_bullets(
+        slide, callout_x + 0.5, 6.2, callout_w - 1.0, SLIDE_H - 9.0,
+        sl.body_outline[:5], ink, primary,
     )
+
+
+def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
+    """페어 bullet 리치텍스트 — 사실 13pt + '→ 시사점' 12B(primary) + 간격."""
+    from pptx.dml.color import RGBColor
+    from pptx.util import Cm, Pt
+
+    tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
+    tf = tb.text_frame
+    tf.word_wrap = True
+    _ink = RGBColor.from_string(str(ink).lstrip("#"))
+    _pri = RGBColor.from_string(str(primary).lstrip("#"))
+    first = True
+    for b in list(bullets or []):
+        s = str(b).strip().lstrip("-").strip()
+        fact, _, imp = s.partition(" — ")
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        r = p.add_run()
+        r.text = f"-  {fact.strip()}"
+        r.font.size = Pt(13)
+        r.font.color.rgb = _ink
+        if imp.strip():
+            p2 = tf.add_paragraph()
+            r2 = p2.add_run()
+            r2.text = f"     →  {imp.strip()}"
+            r2.font.size = Pt(12)
+            r2.font.bold = True
+            r2.font.color.rgb = _pri
+        gap = tf.add_paragraph()
+        rg = gap.add_run()
+        rg.text = " "
+        rg.font.size = Pt(7)
 
 
 def _draw_quote(slide, sl, primary, accent, ink, muted):
@@ -1086,7 +1275,7 @@ def _draw_agenda(slide, sl, primary, accent, ink, muted):
         SLIDE_W * 0.22,
         1.5,
         "목차",
-        size_pt=22,
+        size_pt=24,
         bold=True,
         color_hex=accent,
         align="left",
@@ -1100,7 +1289,7 @@ def _draw_agenda(slide, sl, primary, accent, ink, muted):
         SLIDE_W * 0.22,
         3.0,
         "본 보고서는\n다음 순서로\n구성됩니다.",
-        size_pt=14,
+        size_pt=15,
         color_hex="#FFFFFF",
         align="left",
         vcenter=False,
@@ -1149,7 +1338,7 @@ def _draw_agenda(slide, sl, primary, accent, ink, muted):
             bsize,
             bsize,
             f"{i + 1:02d}",
-            size_pt=11,
+            size_pt=12,
             bold=True,
             color_hex=primary,
             align="center",
@@ -1163,7 +1352,7 @@ def _draw_agenda(slide, sl, primary, accent, ink, muted):
             col_w - bsize - 0.3,
             row_h,
             text[:48],
-            size_pt=12,
+            size_pt=14,
             bold=True,
             color_hex=ink,
             align="left",
@@ -1174,7 +1363,7 @@ def _draw_agenda(slide, sl, primary, accent, ink, muted):
 
 
 def _draw_footer(slide, ctx, treat, page, total, muted, fmt_date):
-    title_short = (ctx.meta.user_intent or "보고서")[:30]
+    title_short = _display_intent(ctx.meta.user_intent, max_len=30)
     date_str = fmt_date(ctx.meta.generated_at, style="iso")
     foot_color = treat.get("footer_color", "#334155")
     foot_text = treat.get("footer_text", "INTERNAL")
@@ -1599,6 +1788,27 @@ def _prepick_designs(slides_flat: list, ctx) -> None:
             sl.preferred_template = chosen
         # 디자인 힌트 (palette/photo/icon) 도 attach — 후속 sub-step 에서 사용
         sl._design_hint = result
+
+    # jh 2026-06-12 — cover 는 prepick 스킵 대상이라 photo_keyword 힌트가 영영 없음
+    # → 본문 슬라이드 LLM 키워드 최빈값을 cover 에 전파 (도메인 사진 강제의 마지막 고리)
+    try:
+        from collections import Counter
+
+        _kws = [
+            str((getattr(s, "_design_hint", None) or {}).get("photo_keyword", "") or "").strip()
+            for s in slides_flat
+        ]
+        _kws = [k for k in _kws if k]
+        if _kws:
+            _top_kw = Counter(_kws).most_common(1)[0][0]
+            for s in slides_flat:
+                if getattr(s, "layout", "") == "cover":
+                    _hint = dict(getattr(s, "_design_hint", None) or {})
+                    if not _hint.get("photo_keyword"):
+                        _hint["photo_keyword"] = _top_kw
+                        s._design_hint = _hint
+    except Exception:  # noqa: BLE001
+        pass
 
     # 성공 요약 — 성공/실패 무관하게 흔적 1줄 (2026-06-11 침묵 사고 재발 방지)
     import logging

@@ -98,20 +98,30 @@ def test_rich_ctx_yields_20_slides(category: str, verdict: str) -> None:
 
 
 _REQUIRED_SLIDE_IDS = {
-    "cover", "agenda", "exec_summary", "hypothesis", "p2_pain", "p3_alt_limits",
+    "cover", "agenda", "exec_summary", "hypothesis", "p3_alt_limits",
     "i1_kpi", "eda_findings", "error_analysis", "insights_derived",
     "as_is_to_be", "i3_roi", "risk_mitigation", "roadmap", "closing",
+}
+
+# jh 2026-06-12 — ml_pitch S5+S6 병합으로 p2_pain 슬롯이 insight_synthesis 로 대체.
+# 그 외 3 카테고리는 p2_pain(Tech Stack) 유지 → 카테고리별 추가 필수 슬롯.
+_CATEGORY_EXTRA_SLOT = {
+    "tabular_ml": "insight_synthesis",
+    "tabular_dl": "p2_pain",
+    "timeseries": "p2_pain",
+    "anomaly_detection": "p2_pain",
 }
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("category", list(_CATEGORIES))
 def test_required_slot_ids_present(category: str) -> None:
-    """4 카테고리 모두 공통 slot ID 가 채워져 있어야 함."""
+    """4 카테고리 모두 공통 slot ID + 카테고리별 추가 슬롯이 채워져 있어야 함."""
     ctx = make_rich_ctx(category, "adopt")
     plan = _CATEGORIES[category].build(ctx, {})
     ids = _slide_ids(plan)
-    missing = _REQUIRED_SLIDE_IDS - ids
+    required = _REQUIRED_SLIDE_IDS | {_CATEGORY_EXTRA_SLOT[category]}
+    missing = required - ids
     assert not missing, f"{category}: missing slot IDs {sorted(missing)}"
 
 
@@ -177,7 +187,8 @@ def test_verdict_reject_closing_signals_no_adopt(category: str) -> None:
 def test_tech_stack_uses_category_manifest_preset(category: str) -> None:
     """Tech Stack 슬라이드 body 의 첫 항목이 카테고리 매니페스트 프리셋과 일치.
 
-    ml_pitch 는 별도 ``tech_stack`` 슬라이드, 그 외 3 카테고리는 ``p2_pain`` 에 Tech Stack 배치.
+    jh 2026-06-12 — ml_pitch 는 S5+S6 병합으로 Tech Stack 이 p1_market(데이터·도구)
+    슬라이드로 이동. 그 외 3 카테고리는 p2_pain 에 배치.
     """
     ctx = make_rich_ctx(category, "adopt")
     plan = _CATEGORIES[category].build(ctx, {})
@@ -185,12 +196,11 @@ def test_tech_stack_uses_category_manifest_preset(category: str) -> None:
     assert preset, f"manifest preset missing for {category}"
     preset_first_name = preset[0].name
 
-    # 4 카테고리 모두 Tech Stack 은 p2_pain 슬라이드에 배치.
-    # (ml_pitch 의 tech_stack 슬라이드 ID 는 EDA-3 로 재용도 됨)
-    slide = _find_slide(plan, "p2_pain")
+    tech_slide_id = "p1_market" if category == "tabular_ml" else "p2_pain"
+    slide = _find_slide(plan, tech_slide_id)
     body_joined = " ".join(slide.body_outline)
     assert preset_first_name in body_joined, (
-        f"{category}: tech stack '{preset_first_name}' missing in p2_pain body — {body_joined}"
+        f"{category}: tech stack '{preset_first_name}' missing in {tech_slide_id} body — {body_joined}"
     )
 
 

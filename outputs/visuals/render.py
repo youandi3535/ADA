@@ -90,6 +90,15 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
     accent = palette["accent"]
     secondary = palette["secondary"]
 
+    # jh 2026-06-12 — 실제 분석 차트 PNG (MinIO) 최우선.
+    # 운영 결함: EDA 슬라이드 spec 의 chart_path 가 무시되고 _render_bar 가
+    # evaluation.metrics 로 폴백 → 결측 슬라이드에 메트릭 차트가 그려졌음.
+    _chart_path = str((vs.spec or {}).get("chart_path") or "")
+    if _chart_path:
+        _local = _fetch_chart_png(_chart_path)
+        if _local:
+            return _local
+
     try:
         vtype = vs.type or ""
         if vtype == "chart_line":
@@ -119,9 +128,35 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
             return _render_kpi_single(vs, ctx, primary, plt, slide)
         if vtype == "risk_matrix":
             return _render_risk_matrix(vs, ctx, primary, plt)
+        # jh 2026-06-12 — CM 수치 기반 히트맵 (MinIO 차트 부재 시에도 S15 시각화 보장)
+        if vtype == "diagram_confusion_matrix":
+            _p = _render_cm_heatmap(vs, primary, plt)
+            if _p:
+                return _p
+        # jh 2026-06-12 — 세그먼트 성능 가로 막대 (skeleton 시점에 per_segment 가
+        # 비어 segment_perf_table 로 굳어도 carrier 시점 ctx 로 차트 보장)
+        if vtype == "segment_perf_table":
+            _segs = (vs.spec or {}).get("segments") or []
+            if not _segs:
+                _segs = list(ctx.evaluation.per_segment or [])
+            _items = [
+                (str(s.get("segment") or s.get("name") or "?"), float(s["value"]))
+                for s in _segs
+                if isinstance(s, dict) and s.get("value") is not None
+            ][:8]
+            if _items:
+                vs.spec = {**(vs.spec or {}), "items": _items}
+                return _render_hbar(vs, ctx, primary, accent, plt)
         # 기타 — KPI 카드들 또는 일반 다이어그램
         return _render_generic_box(vs, ctx, primary, plt, slide)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # jh 2026-06-12 — 무로그 실패 금지: S15·S16 차트가 조용히 사라지던 원인 추적용
+        import logging
+
+        logging.getLogger("visuals.render").warning(
+            "render_visual_failed: type=%s slide=%s err=%s: %s",
+            vs.type, getattr(slide, "id", "?"), type(exc).__name__, exc,
+        )
         return None
 
 
@@ -132,6 +167,83 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
 
 def _tmp_png() -> str:
     return tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+
+
+def _render_cm_heatmap(vs, primary: str, plt) -> Optional[str]:
+    """Confusion Matrix 2x2 히트맵 — spec.confusion_matrix 의 tn/fp/fn/tp 수치로 직접 그림.
+
+    jh 2026-06-12 — MinIO 차트 경로가 없을 때도 S15 가 시각자료 없이
+    KEY INSIGHTS 만 남던 결함의 안전망. 수치만 있으면 항상 그려진다.
+    """
+    cm = (vs.spec or {}).get("confusion_matrix") or {}
+    try:
+        tn = int(cm.get("tn") or cm.get("true_negative") or 0)
+        fp = int(cm.get("fp") or cm.get("false_positive") or 0)
+        fn = int(cm.get("fn") or cm.get("false_negative") or 0)
+        tp = int(cm.get("tp") or cm.get("true_positive") or 0)
+    except Exception:
+        return None
+    if (tn + fp + fn + tp) <= 0:
+        return None
+
+    import numpy as np
+
+    mat = np.array([[tn, fp], [fn, tp]], dtype=float)
+    fig, ax = plt.subplots(figsize=(7.2, 5.4), dpi=120)
+    fig.patch.set_facecolor("white")
+    ax.imshow(mat, cmap="Blues", vmin=0, vmax=mat.max() * 1.15)
+    labels = [["TN", "FP"], ["FN", "TP"]]
+    thresh = mat.max() * 0.55
+    for r in range(2):
+        for c in range(2):
+            color = "#FFFFFF" if mat[r, c] > thresh else "#0F172A"
+            ax.text(c, r - 0.12, labels[r][c], ha="center", va="center",
+                    fontsize=15, color=color, fontweight="bold")
+            ax.text(c, r + 0.16, f"{int(mat[r, c])}", ha="center", va="center",
+                    fontsize=26, color=color, fontweight="bold")
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(["Pred 0", "Pred 1"], fontsize=12, color="#475569")
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(["True 0", "True 1"], fontsize=12, color="#475569")
+    ax.tick_params(length=0)
+    for s in ax.spines.values():
+        s.set_visible(False)
+    if vs.title:
+        ax.set_title(_ensure_ascii(vs.title), fontsize=15, color="#0F172A", pad=12,
+                     loc="left", fontweight="bold")
+    out = _tmp_png()
+    fig.tight_layout()
+    fig.savefig(out, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def _fetch_chart_png(path: str) -> Optional[str]:
+    """chart_path → 로컬 PNG. 로컬 파일이면 그대로, s3:// 면 MinIO 다운로드.
+
+    실패 시 None — 호출측이 타입별 렌더러로 폴백 (jh 2026-06-12).
+    """
+    try:
+        from pathlib import Path
+
+        if path and not path.startswith("s3://") and Path(path).exists():
+            return str(path)
+    except Exception:
+        pass
+    try:
+        from tools.minio_tool import get_minio_client
+
+        mc = get_minio_client()
+        key = path.replace(f"s3://{mc.bucket}/", "") if path.startswith("s3://") else path
+        data = mc.download_bytes(key)
+        if not data:
+            return None
+        tmp = _tmp_png()
+        with open(tmp, "wb") as f:
+            f.write(data)
+        return tmp
+    except Exception:
+        return None
 
 
 def _ensure_ascii(text: str) -> str:
@@ -172,6 +284,37 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
     """막대 차트 — chart spec 의 items 또는 ctx.evaluation.metrics 활용."""
     spec = vs.spec or {}
     items = spec.get("items") or []
+    # jh 2026-06-12 — items 가 dict 목록({feature/name, importance/value})이면 튜플로
+    # 정규화. (S13 SHAP items 가 dict 라 i[0] 에서 죽고 메트릭 폴백 차트가
+    # "SHAP Top 5" 제목 아래 그려지던 차트-본문 불일치 결함)
+    if items and isinstance(items[0], dict):
+        items = [
+            (
+                str(d.get("feature") or d.get("name") or d.get("label") or ""),
+                float(d.get("importance") or d.get("value") or 0),
+            )
+            for d in items
+            if isinstance(d, dict)
+        ]
+        items = [(k, v) for k, v in items if k]
+    # SHAP 류 차트인데 items 가 비면 carrier 시점 ctx 에서 직접 보충
+    # (skeleton 빌드 시점에 interpretation 이 비어 있던 경우의 안전망)
+    if not items and vs.type == "chart_annotated_bar":
+        try:
+            items = [
+                (str(g.feature), float(g.importance))
+                for g in (ctx.interpretation.global_importance or [])[:5]
+            ]
+        except Exception:
+            items = []
+    # 슬라이드 고유 numbers (EDA meta) 가 metrics 폴백보다 우선.
+    # (결측 슬라이드에 val_accuracy 막대가 그려지던 주제 불일치 방지)
+    if not items:
+        items = [
+            (str(n.get("name", "")), float(n.get("value", 0)))
+            for n in (spec.get("numbers") or [])[:6]
+            if isinstance(n, dict) and isinstance(n.get("value"), (int, float))
+        ]
     if not items and ctx.evaluation.metrics:
         items = [
             (k, float(m.get("value", 0)))

@@ -71,6 +71,7 @@ def build_report_context(state: PipelineState) -> ReportContext:
     _augment_evaluation(ctx, state)
     _augment_interpretation(ctx, state)
     _augment_limitations(ctx, state)
+    _augment_from_assets(ctx, state)
     # ⑪ code 는 CodeArtifactExtractor (Phase 1.9) 가 직접 적립. 빈 상태 유지가 정상.
 
     # 4) meta 는 항상 state 의 최신값으로 덮어씀 (단일 진실원).
@@ -369,7 +370,17 @@ def _augment_interpretation(ctx: ReportContext, state: PipelineState) -> None:
         for src in sources:
             if not isinstance(src, dict):
                 continue
-            fi = src.get("feature_importance") or src.get("top_features") or src.get("importances")
+            # jh 2026-06-12 — ExplainabilityAgent 의 실제 저장 키 "shap_top_features" 추가.
+            # (키 불일치로 SHAP 이 계산되고도 ctx 에 못 들어와 S13 이 '미적립' 으로 나가던 결함)
+            fi = (
+                src.get("feature_importance")
+                or src.get("top_features")
+                or src.get("importances")
+                or src.get("shap_top_features")
+            )
+            # shap_top_features 는 (name, importance) 쌍 리스트 형식
+            if isinstance(fi, list) and fi and isinstance(fi[0], (list, tuple)) and len(fi[0]) == 2:
+                fi = [{"name": str(a), "importance": b} for a, b in fi]
             items: list[GlobalImportance] = []
             if isinstance(fi, dict):
                 for k, v in sorted(fi.items(), key=lambda kv: float(kv[1] or 0), reverse=True)[:10]:
@@ -381,9 +392,14 @@ def _augment_interpretation(ctx: ReportContext, state: PipelineState) -> None:
                 for x in fi[:10]:
                     if isinstance(x, dict):
                         try:
+                            # jh 2026-06-12 — ExplainabilityAgent 는 "feature" 키로 저장
+                            # ("name" 만 읽어 S13 이 빈 이름으로 미적립 처리되던 결함).
+                            _fname = str(x.get("name") or x.get("feature") or "")
+                            if not _fname:
+                                continue
                             items.append(
                                 GlobalImportance(
-                                    feature=str(x.get("name") or ""),
+                                    feature=_fname,
                                     importance=float(x.get("importance") or 0),
                                     method="shap",
                                 )
@@ -393,6 +409,65 @@ def _augment_interpretation(ctx: ReportContext, state: PipelineState) -> None:
             if items:
                 ctx.interpretation = Interpretation(global_importance=items)
                 return
+    except Exception:
+        pass
+
+
+def _augment_from_assets(ctx: ReportContext, state: PipelineState) -> None:
+    """category_extras 의 assets 차트 (CM 히트맵 등) 를 ctx 로 배달.
+
+    jh 2026-06-12 — 핸들러 output_extras 가 CM·calibration 차트를 MinIO 에
+    저장하고 있었으나 ctx 까지 배달이 안 돼 S15 가 빈 화면이던 결함.
+    경로의 kind 문자열 (tabular/confusion_matrix 등) 로 매핑.
+    """
+    try:
+        cat = state.category or ""
+        extras = (state.category_extras or {}).get(cat) or {}
+        charts = extras.get("charts") or extras.get("extra_charts") or []
+        for p in charts:
+            sp = str(p)
+            if "confusion_matrix" in sp:
+                cm = dict(ctx.evaluation.confusion_matrix or {})
+                cm.setdefault("chart_path", sp)
+                ctx.evaluation.confusion_matrix = cm
+            elif "calibration" in sp or "reliability" in sp:
+                cal = dict(ctx.evaluation.calibration or {})
+                cal.setdefault("chart_path", sp)
+                ctx.evaluation.calibration = cal
+
+        # jh 2026-06-12 — 분석 수치 (CM tn/fp/fn/tp · per_segment · local_examples)
+        analysis = extras.get("analysis") or {}
+        if isinstance(analysis, dict):
+            cm_nums = analysis.get("confusion_matrix")
+            if isinstance(cm_nums, dict):
+                cm = dict(ctx.evaluation.confusion_matrix or {})
+                for k, v in cm_nums.items():
+                    cm.setdefault(k, v)
+                ctx.evaluation.confusion_matrix = cm
+            if not ctx.evaluation.per_segment and isinstance(analysis.get("per_segment"), list):
+                ctx.evaluation.per_segment = list(analysis["per_segment"])
+            if not ctx.interpretation.local_examples and isinstance(analysis.get("local_examples"), list):
+                ctx.interpretation.local_examples = list(analysis["local_examples"])
+            # jh 2026-06-12 — 전역 SHAP 2중 안전망 (ExplainabilityAgent 실패 시 S13 백업)
+            gi = analysis.get("global_importance")
+            if not ctx.interpretation.global_importance and isinstance(gi, list) and gi:
+                from outputs.context.schema import GlobalImportance
+
+                items = []
+                for x in gi[:10]:
+                    if isinstance(x, dict) and x.get("name"):
+                        try:
+                            items.append(
+                                GlobalImportance(
+                                    feature=str(x["name"]),
+                                    importance=float(x.get("importance") or 0),
+                                    method="shap",
+                                )
+                            )
+                        except Exception:
+                            continue
+                if items:
+                    ctx.interpretation.global_importance = items
     except Exception:
         pass
 

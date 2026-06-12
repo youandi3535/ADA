@@ -29,7 +29,10 @@ from agents.base import BaseAgent
 _SKIP_LAYOUTS = ("cover", "agenda", "section_divider", "closing")
 
 # 글자 예산 (한글 기준) — 템플릿 박스 크기에서 도출한 보수적 상한
-_BUDGET = {"title_ko": 30, "so_what": 70, "bullet": 80}
+_BUDGET = {"title_ko": 30, "so_what": 70, "bullet": 90}
+
+# bullet 허용 범위 — "사실 — 시사점" 페어 3~5개 (초안 개수에 묶지 않음, 2026-06-12 확장)
+_BULLET_MIN, _BULLET_MAX = 2, 5
 
 _SYSTEM_PROMPT = """\
 당신은 데이터 분석 보고서의 시니어 카피라이터입니다. 자동 분석 파이프라인이 만든
@@ -39,13 +42,48 @@ _SYSTEM_PROMPT = """\
 원칙:
 1. Action Title — 제목은 명사 나열이 아니라 발견을 말한다.
    나쁨: "EDA · 주요 변수 1" / 좋음: "성별이 최대 생존 결정 변수 — 55%p 격차"
-2. 주장 → 근거 구조 — so_what 은 한 문장 주장, bullet 은 수치 근거.
+2. KEY INSIGHTS 페어 (필수) — 모든 bullet 은 "사실 (수치 인용) — 그래서 알 수 있는 것"
+   2부 구조로 쓴다. 사실만 나열하고 끝내지 말 것.
+   나쁨: "여성 생존율 74.2%"
+   좋음: "여성 74.2% vs 남성 18.9% (55%p) — 단일 변수로 최대 판별 신호"
 3. 수치 인용 제한 — 반드시 입력 data 에 존재하는 수치만 사용. 새 수치 창작 금지.
-   데이터에 수치가 없으면 정성 서술로만.
-4. 글자 예산 — title_ko ≤ 30자, so_what ≤ 70자, bullet ≤ 80자.
-   bullet 개수는 초안과 동일하게 유지.
-5. 한국어. 단, 모델명·지표명 (CatBoost, val_accuracy 등) 은 원어 유지.
-6. 초안이 이미 구체적이고 수치를 인용하면 미세 수정만.
+   재료가 부족하면 bullet 수를 줄여라. 빈 말로 채우지 말 것.
+4. bullet 은 3~5개 — 입력 data 의 재료가 허용하는 만큼 확장하라.
+   초안보다 많아도 된다 (단, 모든 추가 bullet 은 data 의 수치·사실에 근거).
+5. 글자 예산 — title_ko ≤ 30자, so_what ≤ 70자, bullet ≤ 90자.
+6. 한국어. 단, 모델명·지표명 (CatBoost, val_accuracy 등) 은 원어 유지.
+7. 초안이 이미 구체적이고 수치를 인용하면 미세 수정만.
+8. 사정거리 (필수) — role 이 "claim" 또는 "insight" 인 슬라이드는 마지막 bullet 을
+   "추론 사정거리" 문장으로 쓴다: 이 결과로 어디까지 말할 수 있고, 무엇이 더 있으면
+   다음 단계 추론이 가능한지. limitations·미적립 재료를 인용해 경계를 정직하게 긋는다.
+   예: "이 결과는 탑승 시점 변수 기준 — 구조 과정 변수(갑판 위치 등)가 있으면
+   인과 해석까지 확장 가능"
+9. 완료 시제 (필수) — 이 발표는 *끝난 분석* 의 보고다. "~확인 필요", "~권장",
+   "~예정" 같은 진행 중 권고 톤 금지. 수행된 처리와 그 *결과* 를 서술하라.
+   나쁨: "불균형 여부 별도 확인 필요" / 좋음: "타겟 38:62 — 불균형 보정 없이 학습 가능 수준"
+   예외: 사정거리 bullet (규칙 8) 과 후속 작업·로드맵 슬라이드만 미래형 허용.
+   data 에 결과가 없으면 그 항목은 다른 *확정된 사실* 로 대체하라.
+12. 인사이트 우선 (전 슬라이드 필수) — 이 덱의 주인공은 수치가 아니라 *해석*이다.
+   모든 수치는 반드시 맥락 비교(평균 대비·임계 대비·타 변수 대비)와 "그래서 무엇을
+   의미하는가"를 동반하라. 시사점이 사실의 재서술이면 실패다.
+   나쁨: "Fare SHAP 0.983 — Fare 가 가장 높음" (재서술)
+   좋음: "Fare SHAP 0.983 — 2위(0.45)의 2배, 티켓 가격이 등급·구조 접근성을 통합 대리"
+   결과값만 나열된 초안은 적극적으로 해석을 추가해 다시 써라.
+10-2. 브리지 부제 — 입력 slides 는 발표 순서다. 섹션이 전환되는 슬라이드
+   (데이터→방법, 방법→EDA, EDA→모델 성능, 해석→운영 정책)의 so_what 은
+   직전 내용을 받아 다음으로 넘기는 전환 구문으로 시작하라.
+   예: "데이터 품질을 확인했으니, 이제 어떤 방법으로 분석할지 — CatBoost + 검증 설계"
+   전환 슬라이드가 아니면 적용하지 말 것. 뒤 슬라이드 내용을 앞당겨 쓰지 말 것.
+10-1. 분석 가설 특칙 (id "hypothesis") — 각 bullet 은 정확히
+   "가설문 — 증거 (수치 인용) — 인사이트" 3분할로 쓴다. H1·01 같은 라벨 접두 금지.
+   나쁨: "H1 · 핵심 변수 영향 · Sex가 신호를 제공한다고 가설 — 입증됨"
+   좋음: "Sex 가 결정적 신호다 — 여성 74.2% vs 남성 18.9% (55%p) — 구조 우선순위가 데이터에 재현됨"
+10. Executive Summary 특칙 (id "exec_summary") — 이 장은 덱 *전체* 의 요약이다.
+   title_ko 는 "Executive Summary" 그대로 유지 (Action Title 규칙 1 적용 금지).
+   so_what 은 덱 전체를 한 문장으로: 무엇을(과제) + 어떻게(모델) + 결과(핵심 수치)
+   + 결정(verdict 에 따른 도입/보완/보류 권고)을 모두 담는다.
+   나쁨: "성별 55%p 격차가 핵심 신호 — CatBoost 가 포착" (개별 발견 요약에 불과)
+   좋음: "CatBoost 로 타이타닉 생존 79% 정확도 달성 — 임계 통과, 운영 도입 권장"
 
 출력 — STRICT JSON only (설명·서론 금지):
 {"slides": {"<slide_id>": {"title_ko": "...", "so_what": "...", "body_outline": ["...", ...]}, ...}}
@@ -175,6 +213,27 @@ class LLMCopywriter(BaseAgent):
                 "metrics": _safe(lambda: dict(ctx.evaluation.metrics or {}), {}),
                 "verdict": _safe(lambda: ctx.evaluation.verdict, ""),
                 "gate_passed": _safe(lambda: ctx.evaluation.gate_passed, None),
+                # 2026-06-12 — 인용 재료 확장 (세그먼트·CM): 페어 bullet 의 근거 공급
+                "per_segment": _safe(lambda: list(ctx.evaluation.per_segment or [])[:6], []),
+                "confusion_matrix": _safe(lambda: ctx.evaluation.confusion_matrix, None),
+            },
+            "baselines": _safe(lambda: dict(ctx.model_selection.baselines.__dict__), {}),
+            # dataclass → dict (json.dumps 안전 — 객체 그대로면 TypeError 로 전체 폴백됨)
+            "shap_top": _safe(
+                lambda: [
+                    {"feature": g.feature, "importance": g.importance}
+                    for g in (ctx.interpretation.global_importance or [])[:5]
+                ],
+                [],
+            ),
+            # jh 2026-06-12 — S14 개별 사례 재료
+            "local_examples": _safe(
+                lambda: list(ctx.interpretation.local_examples or [])[:3], []
+            ),
+            # jh 2026-06-12 — '어디까지 볼 수 있나' (사정거리) 재료: 한계·데이터 공백
+            "limitations": {
+                "model_caveats": _safe(lambda: list(ctx.limitations.model_caveats or [])[:5], []),
+                "data_gaps": _safe(lambda: list(ctx.limitations.data_gaps or [])[:5], []),
             },
         }
 
@@ -195,18 +254,34 @@ class LLMCopywriter(BaseAgent):
             draft = draft_by_id.get(sid, {})
             out: dict[str, Any] = {}
 
+            # jh 2026-06-12 — 초과 제목은 기각 대신 절단 수용.
+            # (기각 시 구식 초안 제목이 남아 새 so_what 과 불일치 — 운영 S10 실측)
             title = str(fill.get("title_ko", "") or "").strip()
-            if title and len(title) <= _BUDGET["title_ko"] + 10:
+            if title:
+                limit = _BUDGET["title_ko"] + 10
+                if len(title) > limit:
+                    cut = title[:limit]
+                    for sep in (" — ", " · ", ", ", " "):
+                        idx = cut.rfind(sep)
+                        if idx >= int(limit * 0.5):
+                            cut = cut[:idx]
+                            break
+                    title = cut.rstrip(" .,·—")
                 out["title_ko"] = title
             so_what = str(fill.get("so_what", "") or "").strip()
             if so_what and len(so_what) <= _BUDGET["so_what"] + 20:
                 out["so_what"] = so_what
 
             body = fill.get("body_outline")
-            n_draft = len(draft.get("body_outline") or [])
-            if isinstance(body, list) and body and (n_draft == 0 or len(body) == n_draft):
+            # 2026-06-12 — 초안 개수 고정 해제: 재료가 있으면 3~5개로 확장 허용.
+            # (어제 견본 수준의 KEY INSIGHTS 분량. 상한 초과는 잘라내지 않고 기각 — 안전)
+            if isinstance(body, list) and body:
                 bullets = [str(b).strip() for b in body if str(b).strip()]
-                if bullets and all(len(b) <= _BUDGET["bullet"] + 30 for b in bullets):
+                if (
+                    bullets
+                    and _BULLET_MIN <= len(bullets) <= _BULLET_MAX
+                    and all(len(b) <= _BUDGET["bullet"] + 30 for b in bullets)
+                ):
                     out["body_outline"] = bullets
 
             # 수치 출처 점검 (소프트) — 출력 수치가 입력 data 에 없으면 경고만.

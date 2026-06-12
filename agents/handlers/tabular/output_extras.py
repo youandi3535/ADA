@@ -981,12 +981,238 @@ def assets(state: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     # 차트만 있던 것에서 carrier 가 표 슬롯(PPT slide 19 모니터링 KPI 등) 을 채울 수 있게 함.
     tables = _build_operational_tables(state)
 
+    # jh 2026-06-12 — ctx 배달용 분석 수치 (S14·S15·S16 '미적립' 해소).
+    # 차트만 만들고 버리던 y_val/y_pred 를 CM 수치·세그먼트·개별 사례로 재활용.
+    try:
+        analysis = _analysis_payload(state)
+    except Exception as exc:
+        logger.warning("analysis_payload_failed: %s", exc)
+        analysis = {}
+
     return {
         "charts": charts,
         "tables": tables,
         "text_blocks": [],
+        "analysis": analysis,
         # 하위 호환 (scripts/demo/tabular_demo.py 참조)
         "extra_charts": charts,
         "category_label": label,
         "category_color": color,
     }
+
+
+def _analysis_payload(state: Any) -> dict[str, Any]:
+    """CM 수치 + 세그먼트별 정확도 + 개별 예측 사례 3건 — ReportContext 배달용.
+
+    jh 2026-06-12 — builder._augment_from_assets 가 ctx 로 매핑:
+        confusion_matrix → ctx.evaluation.confusion_matrix (tn/fp/fn/tp)
+        per_segment      → ctx.evaluation.per_segment
+        local_examples   → ctx.interpretation.local_examples (S14 가 직접 소비)
+    """
+    out: dict[str, Any] = {}
+    if not _is_classification(state):
+        return out
+    reload = _try_reload_model_and_data(state)
+    if reload is None:
+        return out
+    model_obj, X_val, y_val = reload
+
+    import numpy as np
+
+    # jh 2026-06-12 — _split_xy 가 .values(numpy) 를 반환해 X_val.columns 가
+    # 항상 없었음 → per_segment·사례별 SHAP 피처명이 통째로 스킵되던 결함.
+    # 동일 seed/stratify 로 원본 df 의 val 행을 복원해 컬럼 정보를 되살린다.
+    raw_val = None
+    feat_cols = None  # 학습 피처명 — 반드시 전처리본(df_raw) 기준 (SHAP 벡터 정합)
+    try:
+        from sklearn.model_selection import train_test_split
+
+        from agents.handlers.common.shared import load_dataframe_from_state
+
+        df_raw = load_dataframe_from_state(state)
+        tgt = state.target_column
+        if tgt and tgt in df_raw.columns:
+            y_full = df_raw[tgt].values
+            # jh 2026-06-12 — state df 는 전처리본(스케일링)이라 세그먼트 라벨이
+            # "Pclass=-1.0" 처럼 나옴 (운영 S16 실측). 원본 파일을 받아 행 순서·
+            # 타깃이 일치할 때만 라벨 소스로 교체.
+            df_label = df_raw
+            try:
+                from tools.minio_tool import get_minio_client
+
+                _mc = get_minio_client()
+                # file_id 에 확장자가 없는 경우(uuid) fmt 파싱이 uuid 전체가 되어
+                # 로드가 조용히 실패 → 라벨이 전처리본(Pclass=-2.0)으로 남던 결함
+                _fid = str(state.file_id)
+                _fmt = _fid.rsplit(".", 1)[-1].lower() if "." in _fid else "csv"
+                _df0 = _mc.load_dataframe(_fid, fmt=_fmt)
+                if (
+                    len(_df0) == len(df_raw)
+                    and tgt in _df0.columns
+                    and np.array_equal(
+                        np.asarray(_df0[tgt].values).ravel(), np.asarray(y_full).ravel()
+                    )
+                ):
+                    df_label = _df0
+            except Exception as _exc:  # noqa: BLE001
+                # warning 승격 — S16 라벨이 인코딩 값으로 남는 원인 추적용 (운영 로그 노출)
+                logger.warning("analysis_raw_file_fallback: %s: %s", type(_exc).__name__, _exc)
+            if df_label is df_raw:
+                logger.warning(
+                    "analysis_segment_label_source=preprocessed (원본 로드 실패 또는 행 불일치) file_id=%s",
+                    str(getattr(state, "file_id", "?"))[:60],
+                )
+            idx = np.arange(len(df_raw))
+            _, idx_val = train_test_split(
+                idx,
+                test_size=0.2,
+                random_state=42,
+                stratify=y_full if len(set(y_full.tolist())) <= 20 else None,
+            )
+            cand_val = df_label.drop(columns=[tgt]).iloc[idx_val].reset_index(drop=True)
+            # 안전망: 복원한 행의 타깃이 reload 한 y_val 과 일치할 때만 사용
+            if np.array_equal(
+                np.asarray(y_full[idx_val]).ravel(), np.asarray(y_val).ravel()
+            ):
+                raw_val = cand_val
+                feat_cols = list(
+                    df_raw.drop(columns=[tgt])
+                    .select_dtypes(include=[np.number, "bool"])
+                    .columns
+                )
+            else:
+                logger.warning("analysis_raw_val_mismatch: split 불일치 — 세그먼트 스킵")
+    except Exception as exc:
+        logger.debug("analysis_raw_val_failed: %s", exc)
+
+    try:
+        y_pred = model_obj.predict(X_val)
+    except Exception:
+        return out
+    yv = np.asarray(y_val).ravel()
+    yp = np.asarray(y_pred).ravel()
+
+    # 1) Confusion Matrix 수치 (이진)
+    try:
+        from sklearn.metrics import confusion_matrix
+
+        uniq = sorted(set(yv.tolist()) | set(yp.tolist()))
+        cm = confusion_matrix(yv, yp, labels=uniq)
+        if len(uniq) == 2:
+            out["confusion_matrix"] = {
+                "tn": int(cm[0, 0]), "fp": int(cm[0, 1]),
+                "fn": int(cm[1, 0]), "tp": int(cm[1, 1]),
+                "labels": [str(u) for u in uniq],
+            }
+    except Exception:
+        pass
+
+    # 2) 세그먼트별 정확도 — 카디널리티 2~6 컬럼 상위 3개
+    # jh 2026-06-12 — numpy X_val 대신 복원한 raw_val(원본 컬럼) 사용.
+    seg_df = raw_val if raw_val is not None else (X_val if hasattr(X_val, "columns") else None)
+    try:
+        if seg_df is not None:
+            correct = yv == yp
+            segs: list[dict[str, Any]] = []
+            cand = [c for c in seg_df.columns if 2 <= int(seg_df[c].nunique(dropna=True)) <= 6][:3]
+            for col in cand:
+                for v in seg_df[col].dropna().unique():
+                    mask = (seg_df[col] == v).to_numpy()
+                    n = int(mask.sum())
+                    if n >= 10:
+                        segs.append({
+                            "segment": f"{col}={v}",
+                            "metric": "accuracy",
+                            "value": round(float(correct[mask].mean()), 3),
+                            "n": n,
+                        })
+            if segs:
+                segs.sort(key=lambda s: s["value"])
+                out["per_segment"] = segs[:8]
+    except Exception:
+        pass
+
+    # 3) 개별 예측 사례 3건 — 정분류/미탐(FN)/오탐(FP) 대표 + SHAP 지역 기여 top3
+    try:
+        cases: list[dict[str, Any]] = []
+        picks: list[tuple[str, Any]] = []
+        for kind, mask in (
+            ("정분류", (yv == yp)),
+            ("미탐 (FN)", (yv > yp) if len(set(yv.tolist())) == 2 else (yv != yp)),
+            ("오탐 (FP)", (yv < yp) if len(set(yv.tolist())) == 2 else (yv != yp)),
+        ):
+            idxs = np.where(mask)[0]
+            if len(idxs):
+                picks.append((kind, int(idxs[0])))
+
+        shap_vals = None
+        _explainer = None
+        try:
+            import shap  # type: ignore
+
+            _explainer = shap.TreeExplainer(model_obj)
+            rows = X_val.iloc[[i for _, i in picks]] if hasattr(X_val, "iloc") else X_val[[i for _, i in picks]]
+            sv = _explainer.shap_values(rows)
+            shap_vals = sv[1] if isinstance(sv, list) and len(sv) == 2 else sv
+        except Exception:
+            shap_vals = None
+
+        # jh 2026-06-12 — X_val 은 numpy 라 columns 없음. 학습 피처 순서는
+        # _split_xy 의 select_dtypes(number·bool) 와 동일 — 전처리본 기준 feat_cols 사용.
+        if hasattr(X_val, "columns"):
+            feat_names = list(X_val.columns)
+        elif feat_cols:
+            feat_names = list(feat_cols)
+        else:
+            feat_names = []
+        for j, (kind, i) in enumerate(picks):
+            case: dict[str, Any] = {
+                "case": kind,
+                "actual": str(yv[i]),
+                "predicted": str(yp[i]),
+            }
+            if shap_vals is not None and feat_names:
+                try:
+                    contrib = np.asarray(shap_vals)[j].ravel()
+                    top = np.argsort(-np.abs(contrib))[:3]
+                    case["top_features"] = [
+                        {"feature": feat_names[k], "shap": round(float(contrib[k]), 3)} for k in top
+                    ]
+                except Exception:
+                    pass
+            cases.append(case)
+        if cases:
+            out["local_examples"] = cases
+
+        # 4) 전역 SHAP Top — ExplainabilityAgent 실패 시에도 S13 이 채워지는 2중 안전망
+        # (jh 2026-06-12 — 운영 덱에서 전역 SHAP 미적립 재발, explainer 재활용으로 직접 적립)
+        try:
+            if _explainer is not None and feat_names:
+                sample = X_val[:200] if not hasattr(X_val, "iloc") else X_val.iloc[:200]
+                sv_g = _explainer.shap_values(sample)
+                sv_g = sv_g[1] if isinstance(sv_g, list) and len(sv_g) == 2 else sv_g
+                arr = np.abs(np.asarray(sv_g))
+                imp = arr.mean(axis=0) if arr.ndim == 2 else arr.mean(axis=(0, 2))
+                imp = np.asarray(imp).ravel()
+                if len(imp) == len(feat_names):
+                    order = np.argsort(-imp)[:10]
+                    out["global_importance"] = [
+                        {"name": feat_names[k], "importance": round(float(imp[k]), 4)}
+                        for k in order
+                    ]
+                    logger.info("analysis_global_shap_ok: %d features", len(out["global_importance"]))
+                else:
+                    logger.warning(
+                        "analysis_global_shap_len_mismatch: imp=%d feat=%d", len(imp), len(feat_names)
+                    )
+            else:
+                logger.warning(
+                    "analysis_global_shap_skipped: explainer=%s feat_names=%d",
+                    _explainer is not None, len(feat_names),
+                )
+        except Exception as _exc:  # noqa: BLE001
+            logger.warning("analysis_global_shap_failed: %s", _exc)
+    except Exception:
+        pass
+
+    return out

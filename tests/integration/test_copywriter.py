@@ -67,23 +67,46 @@ class TestValidate:
         assert out["s1"]["title_ko"].startswith("성별")
         assert len(out["s1"]["body_outline"]) == 3
 
-    def test_rejects_wrong_bullet_count(self):
+    def test_accepts_expanded_bullets(self):
+        """2026-06-12 — 초안 3개여도 재료가 있으면 5개까지 확장 허용."""
         w = LLMCopywriter()
         out = w._validate(
-            {"s1": {"body_outline": ["하나", "둘"]}},  # 초안은 3개
+            {"s1": {"body_outline": [f"사실 {i} — 시사점 {i}" for i in range(5)]}},
+            self._payload(body_n=3),
+            self._targets(),
+        )
+        assert len(out["s1"]["body_outline"]) == 5
+
+    def test_rejects_too_many_bullets(self):
+        """6개 이상은 박스 초과 위험 — 기각 (초안 유지)."""
+        w = LLMCopywriter()
+        out = w._validate(
+            {"s1": {"body_outline": [f"b{i}" for i in range(6)]}},
             self._payload(body_n=3),
             self._targets(),
         )
         assert "body_outline" not in out.get("s1", {})
 
-    def test_rejects_overlong_title(self):
+    def test_rejects_single_bullet(self):
         w = LLMCopywriter()
         out = w._validate(
-            {"s1": {"title_ko": "가" * 60}},
+            {"s1": {"body_outline": ["하나뿐"]}},
+            self._payload(body_n=3),
+            self._targets(),
+        )
+        assert "body_outline" not in out.get("s1", {})
+
+    def test_overlong_title_clipped_not_rejected(self):
+        """2026-06-12 — 기각 시 구식 초안 제목 잔존 (제목↔소제목 불일치) → 절단 수용."""
+        w = LLMCopywriter()
+        out = w._validate(
+            {"s1": {"title_ko": "성별이 최대 생존 결정 변수 — 여성과 남성의 격차가 55%p 에 달해 모델의 1순위 판별 신호가 된다"}},
             self._payload(),
             self._targets(),
         )
-        assert "title_ko" not in out.get("s1", {})
+        title = out["s1"]["title_ko"]
+        assert len(title) <= 40
+        assert title.startswith("성별이 최대")
 
     def test_unknown_slide_id_ignored(self):
         w = LLMCopywriter()
