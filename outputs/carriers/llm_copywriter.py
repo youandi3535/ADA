@@ -29,7 +29,10 @@ from agents.base import BaseAgent
 _SKIP_LAYOUTS = ("cover", "agenda", "section_divider", "closing")
 
 # 글자 예산 (한글 기준) — 템플릿 박스 크기에서 도출한 보수적 상한
-_BUDGET = {"title_ko": 30, "so_what": 70, "bullet": 80}
+_BUDGET = {"title_ko": 30, "so_what": 70, "bullet": 90}
+
+# bullet 허용 범위 — "사실 — 시사점" 페어 3~5개 (초안 개수에 묶지 않음, 2026-06-12 확장)
+_BULLET_MIN, _BULLET_MAX = 2, 5
 
 _SYSTEM_PROMPT = """\
 당신은 데이터 분석 보고서의 시니어 카피라이터입니다. 자동 분석 파이프라인이 만든
@@ -39,13 +42,17 @@ _SYSTEM_PROMPT = """\
 원칙:
 1. Action Title — 제목은 명사 나열이 아니라 발견을 말한다.
    나쁨: "EDA · 주요 변수 1" / 좋음: "성별이 최대 생존 결정 변수 — 55%p 격차"
-2. 주장 → 근거 구조 — so_what 은 한 문장 주장, bullet 은 수치 근거.
+2. KEY INSIGHTS 페어 (필수) — 모든 bullet 은 "사실 (수치 인용) — 그래서 알 수 있는 것"
+   2부 구조로 쓴다. 사실만 나열하고 끝내지 말 것.
+   나쁨: "여성 생존율 74.2%"
+   좋음: "여성 74.2% vs 남성 18.9% (55%p) — 단일 변수로 최대 판별 신호"
 3. 수치 인용 제한 — 반드시 입력 data 에 존재하는 수치만 사용. 새 수치 창작 금지.
-   데이터에 수치가 없으면 정성 서술로만.
-4. 글자 예산 — title_ko ≤ 30자, so_what ≤ 70자, bullet ≤ 80자.
-   bullet 개수는 초안과 동일하게 유지.
-5. 한국어. 단, 모델명·지표명 (CatBoost, val_accuracy 등) 은 원어 유지.
-6. 초안이 이미 구체적이고 수치를 인용하면 미세 수정만.
+   재료가 부족하면 bullet 수를 줄여라. 빈 말로 채우지 말 것.
+4. bullet 은 3~5개 — 입력 data 의 재료가 허용하는 만큼 확장하라.
+   초안보다 많아도 된다 (단, 모든 추가 bullet 은 data 의 수치·사실에 근거).
+5. 글자 예산 — title_ko ≤ 30자, so_what ≤ 70자, bullet ≤ 90자.
+6. 한국어. 단, 모델명·지표명 (CatBoost, val_accuracy 등) 은 원어 유지.
+7. 초안이 이미 구체적이고 수치를 인용하면 미세 수정만.
 
 출력 — STRICT JSON only (설명·서론 금지):
 {"slides": {"<slide_id>": {"title_ko": "...", "so_what": "...", "body_outline": ["...", ...]}, ...}}
@@ -175,7 +182,14 @@ class LLMCopywriter(BaseAgent):
                 "metrics": _safe(lambda: dict(ctx.evaluation.metrics or {}), {}),
                 "verdict": _safe(lambda: ctx.evaluation.verdict, ""),
                 "gate_passed": _safe(lambda: ctx.evaluation.gate_passed, None),
+                # 2026-06-12 — 인용 재료 확장 (세그먼트·CM): 페어 bullet 의 근거 공급
+                "per_segment": _safe(lambda: list(ctx.evaluation.per_segment or [])[:6], []),
+                "confusion_matrix": _safe(lambda: ctx.evaluation.confusion_matrix, None),
             },
+            "baselines": _safe(lambda: dict(ctx.model_selection.baselines.__dict__), {}),
+            "shap_top": _safe(
+                lambda: list(ctx.interpretation.global_importance or [])[:5], []
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -203,10 +217,15 @@ class LLMCopywriter(BaseAgent):
                 out["so_what"] = so_what
 
             body = fill.get("body_outline")
-            n_draft = len(draft.get("body_outline") or [])
-            if isinstance(body, list) and body and (n_draft == 0 or len(body) == n_draft):
+            # 2026-06-12 — 초안 개수 고정 해제: 재료가 있으면 3~5개로 확장 허용.
+            # (어제 견본 수준의 KEY INSIGHTS 분량. 상한 초과는 잘라내지 않고 기각 — 안전)
+            if isinstance(body, list) and body:
                 bullets = [str(b).strip() for b in body if str(b).strip()]
-                if bullets and all(len(b) <= _BUDGET["bullet"] + 30 for b in bullets):
+                if (
+                    bullets
+                    and _BULLET_MIN <= len(bullets) <= _BULLET_MAX
+                    and all(len(b) <= _BUDGET["bullet"] + 30 for b in bullets)
+                ):
                     out["body_outline"] = bullets
 
             # 수치 출처 점검 (소프트) — 출력 수치가 입력 data 에 없으면 경고만.

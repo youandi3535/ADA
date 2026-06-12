@@ -3566,3 +3566,99 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
             align="left",
             vcenter=False,
         )
+
+
+# ==============================================================
+# 2026-06-11 jh — 수작업 견본 덱 레이아웃 이식 3종 (카탈로그 보강)
+# 기하는 견본 (2026-06-10 수정본) 슬라이드에서 실측한 좌표.
+# ==============================================================
+
+
+def draw_solution_overview(slide, caption, steps, specs, primary, accent, ink, muted, light_bg):
+    """견본 S8 — 좌: 파이프라인 3단계 카드 / 우: label-value 스펙 4쌍.
+
+    Args:
+        caption: 좌측 패널 상단 캡션 (예: "Solution Pipeline — 입력 → 모델 → 출력")
+        steps:   [{"label": "INPUT", "text": "..."}] 최대 3개
+        specs:   [{"label": "모델", "text": "..."}] 최대 4개
+    """
+    # 좌측 패널 (실측: 1.0,4.5 / 14.5×12.6)
+    add_rounded_rect(slide, 1.0, 4.5, 14.5, 12.6, light_bg, line_hex=primary)
+    add_text_box(slide, 1.4, 4.8, 13.8, 0.9, str(caption)[:60], size_pt=12, bold=True,
+                 color_hex=primary, align="left", vcenter=True)
+
+    n = min(len(steps), 3) or 1
+    card_w, card_h, gap = 4.2, 4.6, 0.55
+    total = n * card_w + (n - 1) * gap
+    x0 = 1.0 + (14.5 - total) / 2
+    for i, st in enumerate(steps[:3]):
+        x = x0 + i * (card_w + gap)
+        add_rounded_rect(slide, x, 8.7, card_w, card_h, "#FFFFFF", line_hex=accent)
+        add_text_box(slide, x, 9.0, card_w, 0.8, str(st.get("label", ""))[:12].upper(),
+                     size_pt=12, bold=True, color_hex=accent, align="center", vcenter=True)
+        add_text_box(slide, x + 0.3, 10.0, card_w - 0.6, card_h - 1.6, str(st.get("text", ""))[:70],
+                     size_pt=10, color_hex=ink, align="center", vcenter=False)
+        if i < n - 1:
+            add_text_box(slide, x + card_w, 10.3, gap, 1.2, "→", size_pt=16, bold=True,
+                         color_hex=primary, align="center", vcenter=True)
+
+    # 우측 스펙 (실측: 19.5, 5.1 시작 / label 1.0 + value 1.8 / step 3.0)
+    y = 5.1
+    for sp in specs[:4]:
+        add_text_box(slide, 19.5, y, 13.0, 0.9, str(sp.get("label", ""))[:20], size_pt=13,
+                     bold=True, color_hex=primary, align="left", vcenter=True)
+        add_text_box(slide, 19.5, y + 1.0, 13.0, 1.9, str(sp.get("text", ""))[:110], size_pt=11,
+                     color_hex=ink, align="left", vcenter=False)
+        y += 3.0
+
+
+def draw_lineage_2col(slide, bars, cards, primary, accent, ink, muted, light_bg):
+    """견본 S9 — 좌: lineage 단계 바 4개 / 우: 보충 설명 카드 3개.
+
+    Args:
+        bars:  [{"label": "원본 데이터", "text": "..."}] 최대 4개
+        cards: [{"label": "...", "text": "..."}] 최대 3개
+    """
+    # 좌측 바 (실측: 1.5, 4.5 + i*3.16 / 19.1×2.6)
+    for i, b in enumerate(bars[:4]):
+        y = 4.5 + i * 3.16
+        add_rounded_rect(slide, 1.5, y, 19.1, 2.6, light_bg if i % 2 == 0 else "#FFFFFF",
+                         line_hex=primary)
+        add_text_box(slide, 1.9, y + 0.3, 1.6, 2.0, f"{i + 1:02d}", size_pt=22, bold=True,
+                     color_hex=accent, align="left", vcenter=True)
+        add_text_box(slide, 3.8, y + 0.25, 16.4, 0.9, str(b.get("label", ""))[:30], size_pt=12,
+                     bold=True, color_hex=ink, align="left", vcenter=True)
+        add_text_box(slide, 3.8, y + 1.2, 16.4, 1.2, str(b.get("text", ""))[:90], size_pt=10,
+                     color_hex=muted, align="left", vcenter=False)
+
+    # 우측 카드 (실측: 21.2, 4.5 + i*4.15 / 11.1×3.8)
+    for i, c in enumerate(cards[:3]):
+        y = 4.5 + i * 4.15
+        add_rounded_rect(slide, 21.2, y, 11.1, 3.8, light_bg, line_hex=accent)
+        add_text_box(slide, 21.6, y + 0.3, 10.3, 0.8, str(c.get("label", ""))[:24], size_pt=11,
+                     bold=True, color_hex=primary, align="left", vcenter=True)
+        add_text_box(slide, 21.6, y + 1.3, 10.3, 2.2, str(c.get("text", ""))[:110], size_pt=10,
+                     color_hex=ink, align="left", vcenter=False)
+
+
+def draw_icon_columns(slide, items, primary, accent, ink, muted, light_bg):
+    """견본 S15 — N컬럼 (TAG + 라벨 + 글리프 + 본문), 2~4열 자동.
+
+    Args:
+        items: [{"tag": "DATA", "label": "데이터", "glyph": "data", "text": "..."}]
+    """
+    n = max(2, min(len(items), 4))
+    gap = 0.5
+    col_w = (SLIDE_W - 3.0 - (n - 1) * gap) / n
+    for i, it in enumerate(items[:4]):
+        x = 1.5 + i * (col_w + gap)
+        add_rounded_rect(slide, x, 5.0, col_w, 12.1, light_bg, line_hex=primary)
+        add_text_box(slide, x, 5.5, col_w, 0.9, str(it.get("tag", ""))[:14].upper(), size_pt=11,
+                     bold=True, color_hex=accent, align="center", vcenter=True)
+        add_text_box(slide, x, 6.5, col_w, 1.0, str(it.get("label", ""))[:16], size_pt=14,
+                     bold=True, color_hex=ink, align="center", vcenter=True)
+        glyph = GLYPHS.get(str(it.get("glyph", "")), GLYPHS.get("data", "")) or ""
+        add_text_box(slide, x, 8.0, col_w, 1.6, glyph, size_pt=26, color_hex=primary,
+                     align="center", vcenter=True)
+        add_text_box(slide, x + 0.4, 10.3, col_w - 0.8, 6.4, str(it.get("text", ""))[:200],
+                     size_pt=10, color_hex=ink, align="left", vcenter=False)

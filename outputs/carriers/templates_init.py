@@ -476,6 +476,12 @@ def init_registry() -> None:
     ):
         REGISTRY._specs.pop(redundant, None)
 
+    # Phase 12 — 수작업 견본 덱 레이아웃 이식 (2026-06-11 jh, 카탈로그 보강)
+    try:
+        register_phase12()
+    except Exception:
+        pass
+
 
 # ==============================================================
 # Phase 10 additions - hypothesis/insight + 5 new bento patterns
@@ -730,3 +736,134 @@ def register_phase11():
     if REGISTRY.get("swot"):
         REGISTRY._specs["swot"].fit = has_id("risk_mitigation", "risk")
         REGISTRY._specs["swot"].min_score = 80.0
+
+
+# ==============================================================
+# Phase 12 — 수작업 견본 덱 레이아웃 이식 (2026-06-11 jh)
+# 견본: 2026-06-10 수정본 20장. 기하는 실측 좌표 기반 (pptx_infographics).
+# ==============================================================
+
+
+def _split_label(line: str, fallback: str = "") -> tuple[str, str]:
+    """bullet "라벨 · 설명" / "라벨: 설명" → (label, text). 구분자 없으면 (fallback, 전체)."""
+    s = str(line).strip()
+    for sep in (" · ", "·", " — ", ": "):
+        if sep in s:
+            a, b = s.split(sep, 1)
+            if 0 < len(a.strip()) <= 24:
+                return a.strip(), b.strip()
+    return fallback, s
+
+
+def t_chart_key_insights(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """견본 주력 레이아웃 — 차트 (좌 60%) + KEY INSIGHTS 패널 (우 40%).
+
+    draw 코드는 legacy ``_draw_chart_callout`` 재사용 — 기존엔 레지스트리 미등록이라
+    REGISTRY 가 다른 템플릿으로 가로채 도달 불가였음 (카탈로그 보강 ②).
+    """
+    from outputs.carriers.pptx_designer import _draw_chart_callout
+    from outputs.visuals.render import render_visual_to_png
+
+    _draw_chart_callout(slide, sl, ctx, primary, accent, ink, muted, light_bg, render_visual_to_png)
+
+
+def t_solution_overview(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """견본 S8 — 좌: 파이프라인 3단계 / 우: 모델·입력·출력·검증 스펙."""
+    specs = []
+    for line in sl.body_outline[:4]:
+        label, text = _split_label(line, fallback=f"항목 {len(specs) + 1}")
+        specs.append({"label": label, "text": text})
+
+    step_labels = ("INPUT", "MODEL", "OUTPUT")
+    step_keys = (("입력", "데이터", "피처"), ("모델",), ("출력", "예측", "결과"))
+    steps = []
+    for lab, keys in zip(step_labels, step_keys):
+        match = next((s for s in specs if any(k in s["label"] for k in keys)), None)
+        steps.append({"label": lab, "text": (match or {}).get("text", "")[:70]})
+
+    chosen = ctx.model_selection.chosen or {}
+    caption = sl.so_what or f"Solution Pipeline — 입력 → {chosen.get('name', '모델')} → 출력"
+    I.draw_solution_overview(slide, caption[:60], steps, specs, primary, accent, ink, muted, light_bg)
+
+
+def t_lineage_2col(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """견본 S9 — 좌: lineage 단계 바 4 / 우: 보충 카드 3."""
+    parsed = [
+        dict(zip(("label", "text"), _split_label(line, fallback=f"단계 {i + 1}")))
+        for i, line in enumerate(sl.body_outline[:7])
+    ]
+    bars, cards = parsed[:4], parsed[4:7]
+    if not cards and sl.so_what:
+        cards = [{"label": "핵심", "text": sl.so_what}]
+    I.draw_lineage_2col(slide, bars, cards, primary, accent, ink, muted, light_bg)
+
+
+def t_icon_columns(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """견본 S15 — 2~4 컬럼 종합 (TAG + 라벨 + 글리프 + 본문)."""
+    tags = ("DATA", "PATTERN", "MODEL", "ACTION")
+    glyphs = ("data", "chart", "settings", "target")
+    items = []
+    for i, line in enumerate(sl.body_outline[:4]):
+        label, text = _split_label(line, fallback=tags[i].title())
+        items.append({"tag": tags[i], "label": label, "glyph": glyphs[i], "text": text})
+    I.draw_icon_columns(slide, items, primary, accent, ink, muted, light_bg)
+
+
+def register_phase12() -> None:
+    from outputs.carriers.template_registry import (
+        REGISTRY,
+        combine,
+        has_body_min,
+        matches_keywords,
+    )
+
+    if REGISTRY.get("chart_key_insights"):
+        return
+
+    def fit_chart_key_insights(sl, c):
+        # 차트 (visual_spec) 가 있어야 의미 있는 레이아웃
+        if not getattr(sl, "visual_spec", None):
+            return 0.0
+        if getattr(sl, "layout", "") == "chart_callout":
+            return 85.0
+        return 70.0 if getattr(sl, "role", "") == "evidence" else 55.0
+
+    REGISTRY.register(
+        "chart_key_insights",
+        t_chart_key_insights,
+        fit=fit_chart_key_insights,
+        tags=["chart", "evidence", "insights"],
+    )
+    REGISTRY.register(
+        "solution_overview",
+        t_solution_overview,
+        fit=combine(
+            matches_keywords("솔루션", "파이프라인", "모델 구성", "solution"),
+            has_body_min(3),
+            mode="sum",
+        ),
+        min_score=60.0,
+        tags=["solution", "architecture"],
+    )
+    REGISTRY.register(
+        "lineage_2col",
+        t_lineage_2col,
+        fit=combine(
+            matches_keywords("아키텍처", "lineage", "데이터 흐름", "전처리 흐름"),
+            has_body_min(4),
+            mode="sum",
+        ),
+        min_score=60.0,
+        tags=["architecture", "flow"],
+    )
+    REGISTRY.register(
+        "icon_columns",
+        t_icon_columns,
+        fit=combine(
+            matches_keywords("가설 입증", "인사이트", "의의", "종합", "발견"),
+            has_body_min(2),
+            mode="sum",
+        ),
+        min_score=60.0,
+        tags=["insight", "summary", "columns"],
+    )
