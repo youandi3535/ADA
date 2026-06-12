@@ -548,12 +548,22 @@ def t_hyp_evidence_insight(slide, sl, ctx, primary, accent, ink, muted, light_bg
 
     items = []
     for line in (sl.body_outline or [])[:3]:
-        # "가설 · 증거 · 인사이트" 또는 "가설 — 증거 — 인사이트" 3분할
-        parts = [p.strip() for p in re.split(r"\s+—\s+", str(line), maxsplit=2)]
+        # jh 2026-06-12 — "H1 · 제목 · 문장" 형식에서 가설 칸에 "H1" 만 들어가던 결함:
+        # H1/01 류 라벨 토큰을 먼저 제거하고, 3분할 실패 시 2분할(제목 · 문장—결과) 처리.
+        s = re.sub(r"^[-\s]*[HQ]?\d+\s*[·.:]\s*", "", str(line)).strip()
+        parts = [p.strip() for p in re.split(r"\s+—\s+", s, maxsplit=2)]
         if len(parts) < 3:
-            parts = [p.strip() for p in str(line).split("·", 2)]
+            parts = [p.strip() for p in s.split("·", 2)]
         if len(parts) == 3 and all(parts):
             items.append({"hypothesis": parts[0], "evidence": parts[1], "insight": parts[2]})
+        elif len(parts) == 2 and all(parts):
+            head, rest = parts
+            sub = [p.strip() for p in re.split(r"\s+—\s+", rest, maxsplit=1)]
+            items.append({
+                "hypothesis": head,
+                "evidence": sub[0],
+                "insight": sub[1] if len(sub) > 1 else "",
+            })
 
     if not items:
         pm = ctx.evaluation.primary_metric or {}

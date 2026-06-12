@@ -128,6 +128,11 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
             return _render_kpi_single(vs, ctx, primary, plt, slide)
         if vtype == "risk_matrix":
             return _render_risk_matrix(vs, ctx, primary, plt)
+        # jh 2026-06-12 — CM 수치 기반 히트맵 (MinIO 차트 부재 시에도 S15 시각화 보장)
+        if vtype == "diagram_confusion_matrix":
+            _p = _render_cm_heatmap(vs, primary, plt)
+            if _p:
+                return _p
         # 기타 — KPI 카드들 또는 일반 다이어그램
         return _render_generic_box(vs, ctx, primary, plt, slide)
     except Exception:
@@ -141,6 +146,55 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
 
 def _tmp_png() -> str:
     return tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+
+
+def _render_cm_heatmap(vs, primary: str, plt) -> Optional[str]:
+    """Confusion Matrix 2x2 히트맵 — spec.confusion_matrix 의 tn/fp/fn/tp 수치로 직접 그림.
+
+    jh 2026-06-12 — MinIO 차트 경로가 없을 때도 S15 가 시각자료 없이
+    KEY INSIGHTS 만 남던 결함의 안전망. 수치만 있으면 항상 그려진다.
+    """
+    cm = (vs.spec or {}).get("confusion_matrix") or {}
+    try:
+        tn = int(cm.get("tn") or cm.get("true_negative") or 0)
+        fp = int(cm.get("fp") or cm.get("false_positive") or 0)
+        fn = int(cm.get("fn") or cm.get("false_negative") or 0)
+        tp = int(cm.get("tp") or cm.get("true_positive") or 0)
+    except Exception:
+        return None
+    if (tn + fp + fn + tp) <= 0:
+        return None
+
+    import numpy as np
+
+    mat = np.array([[tn, fp], [fn, tp]], dtype=float)
+    fig, ax = plt.subplots(figsize=(7.2, 5.4), dpi=120)
+    fig.patch.set_facecolor("white")
+    ax.imshow(mat, cmap="Blues", vmin=0, vmax=mat.max() * 1.15)
+    labels = [["TN", "FP"], ["FN", "TP"]]
+    thresh = mat.max() * 0.55
+    for r in range(2):
+        for c in range(2):
+            color = "#FFFFFF" if mat[r, c] > thresh else "#0F172A"
+            ax.text(c, r - 0.12, labels[r][c], ha="center", va="center",
+                    fontsize=15, color=color, fontweight="bold")
+            ax.text(c, r + 0.16, f"{int(mat[r, c])}", ha="center", va="center",
+                    fontsize=26, color=color, fontweight="bold")
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(["Pred 0", "Pred 1"], fontsize=12, color="#475569")
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(["True 0", "True 1"], fontsize=12, color="#475569")
+    ax.tick_params(length=0)
+    for s in ax.spines.values():
+        s.set_visible(False)
+    if vs.title:
+        ax.set_title(_ensure_ascii(vs.title), fontsize=15, color="#0F172A", pad=12,
+                     loc="left", fontweight="bold")
+    out = _tmp_png()
+    fig.tight_layout()
+    fig.savefig(out, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
 
 
 def _fetch_chart_png(path: str) -> Optional[str]:

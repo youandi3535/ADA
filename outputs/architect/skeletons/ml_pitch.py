@@ -500,10 +500,12 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
     pm = ctx.evaluation.primary_metric or {}
     chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
     intent = ctx.meta.user_intent or "분석 과제"
+    # jh 2026-06-12 — "가설문 — 증거 — 인사이트" 3분할 형식 (라벨 접두 금지).
+    # carrier t_hyp_evidence_insight 가 " — " 기준으로 3칸에 분배한다.
     body = [
-        f"H1 · 핵심 변수 영향 · Top 피처가 {pm.get('name', '지표')} 에 강한 신호 제공",
-        f"H2 · 모델 적합성 · {chosen} 가 baseline 대비 우수 성과",
-        "H3 · 운영 안정성 · 분포 변화 시에도 임계 성능 유지 가능",
+        f"상위 피처가 결과를 좌우한다 — Top 피처가 {pm.get('name', '지표')} 에 강한 신호 제공 — 핵심 변수 중심 해석 전략 수립",
+        f"{chosen} 이 본 데이터에 최적이다 — baseline 대비 우수 성과로 선정 — 운영 비용 대비 효율적 모델 확보",
+        "분포 변화에도 성능이 유지된다 — 임계 성능 유지 여부를 세그먼트 검증으로 확인 — drift 모니터링 설계의 근거",
     ]
     return SlideSpec(
         id="hypothesis",
@@ -1080,20 +1082,34 @@ def _build_as_is_to_be(ctx: ReportContext) -> SlideSpec:
                 f"세그먼트 격차 {gap:.2f} 발생 — 일부 세그먼트는 보완·재학습 필요"
             )
 
+    # jh 2026-06-12 — 세그먼트 데이터가 있으면 가로 막대 차트로 시각화
+    # (segment_perf_table 은 렌더러 미지원 → generic 폴백으로 차트가 안 그려지던 결함.
+    #  목표치 덱 S14 처럼 차트 + KEY INSIGHTS 구성)
+    if seg_items:
+        _layout = "chart_callout"
+        _vs = VisualSpec(
+            type="chart_hbar",
+            title=title_ko,
+            spec={
+                "items": [(s["segment"], float(s["value"])) for s in seg_items],
+                "segments": seg_items,
+            },
+            severity="important",
+        )
+    else:
+        _layout = variant.layout if variant else "one_message"
+        _vs = VisualSpec(type="segment_perf_table", title=title_ko, spec={"segments": seg_items})
+
     return SlideSpec(
         id="as_is_to_be",
         section_id="impact",
-        layout=(variant.layout if variant else "one_message"),
+        layout=_layout,
         role="evidence",
         so_what=so_what,
         title_ko=title_ko,
         body_outline=body[:6],
         parent_message_id="impact_root",
-        visual_spec=VisualSpec(
-            type="segment_perf_table",
-            title=title_ko,
-            spec={"segments": seg_items},
-        ),
+        visual_spec=_vs,
         speaker_notes_hint=(
             "세그먼트별 성능 비교 — 분류·DL 은 per_segment, timeseries 는 계절·시간대, "
             "anomaly 는 정상/이상 클러스터. 격차 0.1 이상이면 보완 시사."
