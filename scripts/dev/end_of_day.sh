@@ -24,6 +24,11 @@
 
 set -e
 
+# ─── 어느 위치에서 실행해도 동작하도록 저장소 루트로 이동 ────────────────────
+# docker/ 등 하위 폴더에서 호출하면 .venv/·requirements/·check_scope.sh 등 루트 기준
+# 상대경로가 안 맞아 "No such file or directory" 가 난다. 루트로 이동해 방지.
+cd "$(git rev-parse --show-toplevel)" || { echo "오류: git 저장소 루트를 찾을 수 없습니다."; exit 1; }
+
 # ─── Python 실행 파일 감지 (venv / .venv 모두 지원, 크로스 플랫폼) ────────────
 # PowerShell/bash 에서 호출 시 venv PATH 가 전달되지 않으므로 프로젝트 루트의 venv 를 직접 탐색.
 # 우선순위: .venv (DEV_SETUP_GUIDE 표준) → venv (HJ 기존 환경) → 시스템 python.
