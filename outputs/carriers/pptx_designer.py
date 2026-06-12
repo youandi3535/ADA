@@ -671,13 +671,10 @@ def _draw_slide(
 ):
     layout = sl.layout
 
-    # Step 7-1 — LLM 디자인 힌트의 palette_hint 적용 (단일 진입점).
-    # LLMDesigner 가 sl._design_hint 에 attach 한 palette_hint
-    # ("default"/"warning"/"success"/"monochrome") 에 따라 primary/accent/secondary 가
-    # 일괄 변경됨. 이하 모든 sub-draw 가 변경된 팔레트를 자동으로 받음.
-    _overridden = palette_override(
-        sl, {"primary": primary, "accent": accent, "secondary": secondary}
-    )
+    # jh 2026-06-12 — palette_hint 비활성화 (사용자 지시: 덱 내 색상 통일).
+    # 슬라이드별 LLM palette_hint 가 장마다 초록/파랑/연두를 섞어 쓰던 결함.
+    # 카테고리 기본 팔레트 하나로 덱 전체 고정 (SWOT 의 시맨틱 4색은 draw 내부 고정이라 유지).
+    _overridden = {"primary": primary, "accent": accent, "secondary": secondary}
     primary = _overridden["primary"]
     accent = _overridden["accent"]
     secondary = _overridden["secondary"]

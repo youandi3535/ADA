@@ -93,11 +93,19 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
     # jh 2026-06-12 — 실제 분석 차트 PNG (MinIO) 최우선.
     # 운영 결함: EDA 슬라이드 spec 의 chart_path 가 무시되고 _render_bar 가
     # evaluation.metrics 로 폴백 → 결측 슬라이드에 메트릭 차트가 그려졌음.
+    # (v2) fetch 가 예외를 던지면 함수 전체가 죽어 히트맵 분기에 못 가던 결함 — try 보호.
     _chart_path = str((vs.spec or {}).get("chart_path") or "")
     if _chart_path:
-        _local = _fetch_chart_png(_chart_path)
-        if _local:
-            return _local
+        try:
+            _local = _fetch_chart_png(_chart_path)
+            if _local:
+                return _local
+        except Exception as _fe:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("visuals.render").warning(
+                "chart_fetch_failed: %s err=%s", _chart_path[:80], _fe
+            )
 
     try:
         vtype = vs.type or ""

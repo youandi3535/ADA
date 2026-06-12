@@ -814,7 +814,27 @@ def t_solution_overview(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 
 
 def t_lineage_2col(slide, sl, ctx, primary, accent, ink, muted, light_bg):
-    """견본 S9 — 좌: lineage 단계 바 4 / 우: 보충 카드 3."""
+    """견본 S9 — 좌: lineage 단계 바 4 / 우: 보충 카드 3.
+
+    jh 2026-06-12 — p1_market(데이터·도구 병합) 은 visual_spec.spec 에서 직접
+    재료를 가져옴: 카피라이터가 body 를 4줄로 줄여도 (bullet 상한) 좌 4단 +
+    우 3카드가 항상 채워지도록 (S6 텅 비던 결함).
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    if spec.get("overview_items") or spec.get("stack_items"):
+        bars = []
+        for k, v in list(spec.get("overview_items") or [])[:3]:
+            bars.append({"label": str(k), "text": str(v)})
+        for k, v in list(spec.get("quality_items") or [])[:1]:
+            bars.append({"label": f"품질 · {k}", "text": str(v)})
+        cards = [
+            {"label": str(k), "text": str(v)}
+            for k, v in list(spec.get("stack_items") or [])[:3]
+        ]
+        if bars:
+            I.draw_lineage_2col(slide, bars[:4], cards, primary, accent, ink, muted, light_bg)
+            return
     parsed = [
         dict(zip(("label", "text"), _split_label(line, fallback=f"단계 {i + 1}")))
         for i, line in enumerate(sl.body_outline[:7])
@@ -1000,7 +1020,19 @@ def t_case_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     for i, ex in enumerate(locals_):
         kind = str(ex.get("case") or ex.get("kind") or f"사례 {i + 1}")
         m = _re.search(r"(TN|FN|FP|TP)", kind)
-        big = m.group(1) if m else f"#{i + 1}"
+        if m:
+            big = m.group(1)
+        else:
+            # "정분류" 등 라벨에 토큰이 없으면 실제/예측 값으로 유도
+            a, p = str(ex.get("actual", "")), str(ex.get("predicted", ""))
+            if a == p and a in ("0", "1"):
+                big = "TP" if a == "1" else "TN"
+            elif a == "1" and p == "0":
+                big = "FN"
+            elif a == "0" and p == "1":
+                big = "FP"
+            else:
+                big = f"#{i + 1}"
         lines = [f"실제 {ex.get('actual', '?')} → 예측 {ex.get('predicted', '?')}"]
         for tf_ in (ex.get("top_features") or [])[:3]:
             if isinstance(tf_, dict):
@@ -1168,9 +1200,18 @@ def register_phase12() -> None:
         # 차트 (visual_spec) 가 있어야 의미 있는 레이아웃
         if not getattr(sl, "visual_spec", None):
             return 0.0
-        # jh 2026-06-12 — CM(S15)은 수치만 있으면 히트맵을 직접 그리므로 고정 라우팅
-        # (디자이너가 비차트 템플릿을 골라 S15 가 텍스트만 남던 변동성 차단)
-        if getattr(sl, "id", "") == "insights_derived":
+        # jh 2026-06-12 — 고정 라우팅 확대: preferred_template 이 게이트 직렬화에서
+        # 소실돼 (probe 는 통과, 실분석은 소실) EDA 에 split_compare 가 끼고
+        # S12 가 percentage_grid 로 새던 결함 — id 기반은 직렬화와 무관.
+        _fixed_ids = (
+            "insights_derived",   # S15 CM — 수치만 있으면 히트맵 직접 렌더
+            "i1_kpi",             # S12 성능 — baseline·지표 hbar
+            "method_model",       # S8~11 EDA 4장 — 차트+페어 고정
+            "tech_architecture",
+            "tech_stack",
+            "s3_differentiation",
+        )
+        if getattr(sl, "id", "") in _fixed_ids:
             return 96.0
         if getattr(sl, "layout", "") == "chart_callout":
             return 85.0
@@ -1193,14 +1234,21 @@ def register_phase12() -> None:
         min_score=60.0,
         tags=["solution", "architecture"],
     )
-    REGISTRY.register(
-        "lineage_2col",
-        t_lineage_2col,
-        fit=combine(
+    def fit_lineage(sl, c):
+        # jh 2026-06-12 — p1_market(데이터·도구 병합) 고정 라우팅 (직렬화 무관)
+        if getattr(sl, "id", "") == "p1_market":
+            return 96.0
+        base = combine(
             matches_keywords("아키텍처", "lineage", "데이터 흐름", "전처리 흐름"),
             has_body_min(4),
             mode="sum",
-        ),
+        )
+        return base(sl, c)
+
+    REGISTRY.register(
+        "lineage_2col",
+        t_lineage_2col,
+        fit=fit_lineage,
         min_score=60.0,
         tags=["architecture", "flow"],
     )
