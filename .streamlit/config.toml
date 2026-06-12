@@ -8,6 +8,11 @@ maxUploadSize = 100         # MB  (.env 의 MAX_UPLOAD_SIZE_MB 와 일치)
 enableCORS = false
 enableXsrfProtection = true
 headless = true
+# HJ 2026-06-12 — 수정사항이 F5 한 번으로 반영되게 하는 핵심 설정.
+#   Windows 바인드 마운트는 inotify 이벤트가 컨테이너로 전달 안 됨 → 기본 watcher 가 호스트 수정을 못 봄.
+#   poll(주기적 mtime 검사) 로 바꾸면 마운트 너머 변경도 감지 → 재시작 없이 새 코드 로드.
+fileWatcherType = "poll"    # inotify 대신 폴링 (바인드 마운트 호환)
+runOnSave = true            # 파일 변경 감지 시 자동 재실행 → 새로고침(F5)만으로 반영
 
 [theme]
 primaryColor = "#FF4B4B"

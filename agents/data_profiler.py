@@ -105,6 +105,21 @@ class DataProfilerAgent(BaseAgent):
                     return "tabular_ml", None, {}
 
             async def _domain_safe(cat, tgt):
+                # HJ 2026-06-12 — A: resume 재진입 시 도메인 분석 LLM 중복 호출 제거.
+                #   resume 는 fresh invocation 으로 full_state(data_profile 포함)를 초기 state 로 넘기므로
+                #   state.data_profile.domain_analysis 가 이미 존재. 도메인 의미(컬럼 설명·도메인·요약)는
+                #   category/target 변경과 무관 → 컬럼 구성만 같으면 그대로 재사용해도 안전(측정상 -77~204초).
+                _existing = (state.data_profile or {}).get("domain_analysis")
+                if isinstance(_existing, dict) and _existing.get("column_meanings"):
+                    try:
+                        _cm_keys = set(map(str, (_existing.get("column_meanings") or {}).keys()))
+                        _df_cols = set(map(str, df.columns))
+                        # 다른 데이터셋 오용 방지 최소 가드: 의미 키가 현재 컬럼의 부분집합일 때만 재사용
+                        if _cm_keys and _cm_keys <= _df_cols:
+                            self.logger.info("domain_analysis_reused_skip_llm", cols=len(_cm_keys))
+                            return _existing
+                    except Exception:  # noqa: BLE001
+                        pass
                 try:
                     return await self._llm_domain_analysis(df, cat, tgt, intent)
                 except Exception as e:

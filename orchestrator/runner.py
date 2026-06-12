@@ -618,6 +618,51 @@ def ping() -> str:
     return "pong"
 
 
+# HJ 2026-06-12 — C′-1: EDA 윤색 인사이트 선계산 (worker; pandas·matplotlib 보유).
+#   api 컨테이너엔 pandas 가 없어 EDA 선계산을 못 하므로 worker 로 위임한다.
+#   2단계 주제 선택 중 백그라운드 실행 → resume 시 eda_agent 노드가 캐시 재사용해
+#   _dynamic_insights(120~160초)를 스킵. 무거운 import 는 전부 함수 안(지연) — runner 모듈은 api 도 import 함.
+@celery_app.task(name="ada.g2.eda_prefetch")
+def g2_eda_prefetch_task(job_id: str) -> dict:
+    try:
+        return asyncio.run(_g2_eda_prefetch_async(job_id))
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_eda_prefetch_task_failed", job_id=job_id, error=str(e))
+        return {"status": "error"}
+
+
+async def _g2_eda_prefetch_async(job_id: str) -> dict:
+    import json as _json
+
+    from ada.core.state import PipelineState
+    from agents.eda_agent import (
+        EDAAgent,
+        _eda_insights_cache_get,
+        _eda_insights_cache_set,
+        compute_eda_rule_insights,
+    )
+    from agents.handlers.common.shared import load_dataframe_from_state
+
+    r = _get_redis()
+    raw = r.get(f"ada:full_state:{job_id}")
+    if not raw:
+        return {"status": "no_state"}
+    state = PipelineState(**_json.loads(raw))
+    # 이미 캐시돼 있으면 skip
+    if _eda_insights_cache_get(state.job_id, state.category, state.target_column):
+        return {"status": "already_cached"}
+    df = load_dataframe_from_state(state)
+    insights = compute_eda_rule_insights(df, state.target_column)
+    if not insights:
+        return {"status": "no_insights"}
+    upgraded = await EDAAgent()._dynamic_insights(
+        insights, backend="ollama", context=f"G2 EDA·{state.category}", job_id=None, key=None
+    )
+    _eda_insights_cache_set(state.job_id, state.category, state.target_column, upgraded)
+    log.info("g2_eda_prefetch_done", job_id=job_id, n=len(upgraded))
+    return {"status": "done", "n": len(upgraded)}
+
+
 # ---------------------------------------------------------------------------
 # Internal async runners
 # ---------------------------------------------------------------------------

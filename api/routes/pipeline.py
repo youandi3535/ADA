@@ -479,6 +479,56 @@ async def download_output(job_id: str, output_code: str) -> None:
 # ---------------------------------------------------------------------------
 # CS 2026-06-10 — G2 Sub-1 주제 선정 후 분석 방향 LLM 재호출
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# HJ 2026-06-12 — G2 분석 방향 백그라운드 선(先)생성 캐시.
+#   주제 5개를 사용자가 고르기 전에 미리 생성해 Redis 에 캐싱 → 선택 시 즉시 반환(대기 0).
+#   추천(첫 주제)부터 순차 생성. 직접 입력(custom)은 캐시에 없어 기존대로 동기 생성됨.
+#   캐시 구조: Redis Hash  ada:g2_dircache:{job_id}
+#     field = 주제 제목 텍스트, value = {"status":"pending"|"done"|"error","proposals":[...]}
+# ---------------------------------------------------------------------------
+_G2_DIRCACHE_TTL = 86400
+
+
+def _g2_dircache_key(job_id: str) -> str:
+    return f"ada:g2_dircache:{job_id}"
+
+
+def _g2_dircache_get(r, job_id: str, topic: str) -> dict | None:
+    """캐시에서 해당 주제 엔트리(dict) 조회. 없거나 오류면 None."""
+    import json as _json
+
+    try:
+        raw = r.hget(_g2_dircache_key(job_id), topic.strip())
+        if not raw:
+            return None
+        return _json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _g2_dircache_wait(r, job_id: str, topic: str, timeout_s: float = 175.0):
+    """prefetch 가 생성 중(pending)이면 done 될 때까지 폴링 — 중복 LLM 호출 방지.
+
+    완료되면 proposals(list) 반환, error 또는 timeout 이면 None(→ 호출측이 동기 생성 폴백).
+    """
+    import asyncio as _asyncio
+
+    waited = 0.0
+    step = 0.5
+    while waited < timeout_s:
+        await _asyncio.sleep(step)
+        waited += step
+        entry = _g2_dircache_get(r, job_id, topic)
+        if not entry:
+            continue
+        st = entry.get("status")
+        if st == "done" and entry.get("proposals"):
+            return entry["proposals"]
+        if st == "error":
+            return None
+    return None
+
+
 @router.post("/gate/G2/directions/{job_id}")
 async def propose_directions_for_topic(job_id: str, req: dict) -> dict:
     """G2 Sub-1 주제 선택 후 분석 방향 LLM 호출.
@@ -516,12 +566,25 @@ async def propose_directions_for_topic(job_id: str, req: dict) -> dict:
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"state reconstruction failed: {e}") from e
 
-    agent = AnalysisProposerAgent()
-    try:
-        new_proposals = await agent.propose_directions_with_topic(state, topic)
-    except Exception as e:  # noqa: BLE001
-        log.warning("g2_directions_endpoint_failed", error=str(e))
-        raise HTTPException(500, "direction generation failed") from e
+    # HJ 2026-06-12 — 캐시 우선: prefetch 가 이미 만든 분석 방향이면 즉시 사용(대기 0).
+    #   pending(생성 중)이면 완료까지 대기해 중복 LLM 호출을 피한다.
+    #   캐시 미스(직접 입력 등)면 기존대로 그 자리에서 동기 생성.
+    new_proposals = None
+    _cached = _g2_dircache_get(r, job_id, topic)
+    if _cached and _cached.get("status") == "done" and _cached.get("proposals"):
+        new_proposals = _cached["proposals"]
+        log.info("g2_directions_cache_hit", topic=topic[:60])
+    elif _cached and _cached.get("status") == "pending":
+        new_proposals = await _g2_dircache_wait(r, job_id, topic)
+        if new_proposals is not None:
+            log.info("g2_directions_cache_wait_hit", topic=topic[:60])
+    if new_proposals is None:
+        agent = AnalysisProposerAgent()
+        try:
+            new_proposals = await agent.propose_directions_with_topic(state, topic)
+        except Exception as e:  # noqa: BLE001
+            log.warning("g2_directions_endpoint_failed", error=str(e))
+            raise HTTPException(500, "direction generation failed") from e
 
     new_gate_responses = dict(state_dict.get("gate_responses") or {})
     new_gate_responses["G2"] = {
@@ -575,3 +638,159 @@ async def propose_directions_for_topic(job_id: str, req: dict) -> dict:
         # aupdate_state 실패해도 Redis full_state 는 갱신됐으므로 일부 fallback 동작
 
     return {"proposals": new_proposals, "topic": topic}
+
+
+async def _prefetch_eda_insights(state) -> None:
+    """C′-1 — EDA 인사이트 선계산을 worker Celery 태스크로 위임.
+
+    api 컨테이너엔 pandas 가 없어 직접 계산 불가 → worker(pandas 보유)에서 실행, 결과는 Redis 캐시.
+    resume 시 eda_agent 노드가 캐시 재사용해 _dynamic_insights(120~160초)를 스킵한다.
+    """
+    if not state.job_id:
+        return
+    try:
+        from orchestrator.runner import g2_eda_prefetch_task
+
+        g2_eda_prefetch_task.apply_async(args=[state.job_id], queue="pipeline")
+        log.info("g2_eda_prefetch_dispatched", job_id=state.job_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_eda_prefetch_dispatch_failed", error=str(e))
+
+
+async def _prefetch_methodology(state, ck_key, rec_topic) -> None:
+    """C′-2 — 추천 주제의 추천 방향(directions[0])으로 방법론 후보 선계산 → 캐시.
+
+    추천 주제의 directions 캐시에서 첫 방향 제목을 읽어 methodology LLM 을 미리 돌린다.
+    resume 시 gate_methodology 노드가 (job_id, 방향제목, category) 일치하면 재사용(63~87초 절감).
+    실패·미완은 무시 → 노드가 기존대로 그 자리에서 생성(폴백).
+    """
+    import json as _json
+
+    import redis as _redis
+
+    from agents.gates.methodology_proposer import (
+        MethodologyProposerAgent,
+        _g2_method_cache_get,
+        _g2_method_cache_set,
+    )
+
+    if not state.job_id:
+        return
+    try:
+        r = _redis.Redis.from_url(settings.redis_url)
+        raw = r.hget(ck_key, rec_topic)
+        if not raw:
+            return
+        d = _json.loads(raw)
+        props = [p for p in (d.get("proposals") or []) if isinstance(p, dict) and not p.get("is_custom")]
+        rec_dir = (props[0].get("title") or "").strip() if props else ""
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_method_prefetch_read_failed", error=str(e))
+        return
+    if not rec_dir:
+        return
+    if _g2_method_cache_get(state.job_id, rec_dir, state.category):
+        return  # 이미 캐시됨
+    try:
+        llm_opts = await MethodologyProposerAgent()._generate_for_title(state, rec_dir)
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_method_prefetch_llm_failed", error=str(e))
+        return
+    if llm_opts:
+        _g2_method_cache_set(state.job_id, rec_dir, state.category, llm_opts)
+        log.info("g2_method_prefetch_done", n=len(llm_opts), direction=rec_dir[:50])
+
+
+@router.post("/gate/G2/directions/prefetch/{job_id}")
+async def prefetch_directions_for_topics(job_id: str, req: dict) -> dict:
+    """G2 주제 5개의 분석 방향을 백그라운드 선(先)생성.
+
+    Body: {"topics": ["추천주제", "주제2", ...]}  (배열 첫번째=추천 → 제일 먼저 생성)
+
+    동작:
+      - 즉시 응답 반환(fire-and-forget). 실제 생성은 asyncio background task 가 수행.
+      - 추천부터 순차로 propose_directions_with_topic 호출 → Redis 캐시에 저장.
+      - Ollama(qwen2.5:7b, CPU)는 동시 호출 시 경합으로 더 느려지므로 반드시 '순차' 생성.
+      - 사용자가 '선택 완료' 를 누르면 /directions/{job_id} 가 이 캐시를 먼저 조회 → 즉시 응답.
+      - job 단위 Redis 락으로 중복 prefetch task 기동을 막는다.
+    """
+    import asyncio as _asyncio
+    import json as _json
+
+    import redis as _redis
+
+    from ada.core.state import PipelineState
+    from agents.gates.analysis_proposer import AnalysisProposerAgent
+
+    topics = [t.strip() for t in ((req or {}).get("topics") or []) if isinstance(t, str) and t.strip()][:5]
+    if not topics:
+        return {"status": "no_topics", "count": 0}
+
+    r = _redis.Redis.from_url(settings.redis_url)
+    raw_fs = r.get(f"ada:full_state:{job_id}")
+    if not raw_fs:
+        raise HTTPException(404, "state not found")
+    try:
+        state = PipelineState(**_json.loads(raw_fs))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"state reconstruction failed: {e}") from e
+
+    ck = _g2_dircache_key(job_id)
+    lock_key = f"{ck}:lock"
+    # job 당 1회만 prefetch 기동 (중복 task 방지). 10분 후 자동 해제.
+    if not r.set(lock_key, "1", nx=True, ex=600):
+        return {"status": "already_running", "count": len(topics)}
+
+    async def _runner() -> None:
+        rr = _redis.Redis.from_url(settings.redis_url)
+        agent = AnalysisProposerAgent()
+        try:
+            for idx, topic in enumerate(topics):  # topics[0] = 추천 → 제일 먼저
+                try:
+                    cur = rr.hget(ck, topic)
+                    if cur:
+                        try:
+                            if _json.loads(cur).get("status") == "done":
+                                continue  # 이미 생성됨 — skip
+                        except Exception:  # noqa: BLE001
+                            pass
+                    rr.hset(ck, topic, _json.dumps({"status": "pending", "topic": topic}, ensure_ascii=False))
+                    proposals = await agent.propose_directions_with_topic(state, topic)
+                    rr.hset(
+                        ck,
+                        topic,
+                        _json.dumps(
+                            {"status": "done", "topic": topic, "proposals": proposals},
+                            ensure_ascii=False,
+                            default=str,
+                        ),
+                    )
+                    log.info("g2_prefetch_done", topic=topic[:60])
+                except Exception as e:  # noqa: BLE001
+                    log.warning("g2_prefetch_topic_failed", topic=topic[:60], error=str(e))
+                    try:
+                        rr.hset(ck, topic, _json.dumps({"status": "error", "topic": topic}, ensure_ascii=False))
+                    except Exception:  # noqa: BLE001
+                        pass
+                # HJ 2026-06-12 — C′-1·C′-2: 추천 주제 directions 직후 EDA·방법론 선계산(resume-임계 최우선).
+                if idx == 0:
+                    try:
+                        await _prefetch_eda_insights(state)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("g2_eda_prefetch_failed", error=str(e))
+                    try:
+                        await _prefetch_methodology(state, ck, topic)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("g2_method_prefetch_failed", error=str(e))
+            try:
+                rr.expire(ck, _G2_DIRCACHE_TTL)
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            try:
+                rr.delete(lock_key)
+            except Exception:  # noqa: BLE001
+                pass
+
+    _asyncio.create_task(_runner())
+    return {"status": "prefetching", "count": len(topics)}

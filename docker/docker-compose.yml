@@ -238,6 +238,8 @@ services:
       - /tmp
     volumes:
       - ../frontend:/app/frontend
+      # HJ 2026-06-12 — .streamlit/config.toml 도 라이브 마운트 (poll watcher 설정이 컨테이너에 반영되도록).
+      - ../.streamlit:/app/.streamlit:ro
     deploy:
       resources:
         limits:

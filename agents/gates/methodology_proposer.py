@@ -223,6 +223,58 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
 }
 
 
+# HJ 2026-06-12 — C′-2: 방법론 후보 선계산 캐시 (prefetch ↔ 노드 공유).
+#   Redis Hash ada:g2_method:{job_id}, field = G2 선택 방향 제목, value = {status, category, proposals}.
+def _g2_method_cache_key(job_id: str) -> str:
+    return f"ada:g2_method:{job_id}"
+
+
+def _g2_method_cache_get(job_id, title, category):
+    """선계산된 방법론 후보 조회. 방향 제목 + category 일치 시에만 반환(데이터 정합)."""
+    if not job_id or not title:
+        return None
+    try:
+        import json as _json
+
+        import redis as _redis
+
+        from ada.core.config import settings
+
+        r = _redis.Redis.from_url(settings.redis_url)
+        raw = r.hget(_g2_method_cache_key(job_id), title)
+        if not raw:
+            return None
+        d = _json.loads(raw)
+        if d.get("status") == "done" and d.get("proposals") and d.get("category") == category:
+            return d["proposals"]
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _g2_method_cache_set(job_id, title, category, proposals) -> None:
+    if not job_id or not title or not proposals:
+        return
+    try:
+        import json as _json
+
+        import redis as _redis
+
+        from ada.core.config import settings
+
+        r = _redis.Redis.from_url(settings.redis_url)
+        r.hset(
+            _g2_method_cache_key(job_id),
+            title,
+            _json.dumps(
+                {"status": "done", "category": category, "proposals": proposals}, ensure_ascii=False, default=str
+            ),
+        )
+        r.expire(_g2_method_cache_key(job_id), 86400)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class MethodologyProposerAgent(BaseGate):
     """G3 — 방법론(카테고리) 권장. 본 게이트가 카테고리 변경을 제안할 수 있다."""
 
@@ -256,21 +308,77 @@ class MethodologyProposerAgent(BaseGate):
                 "methodology_locked_category": state.category,
             }
         )
-        payload = {
-            "locked_category": state.category,
-            "g2_title": g1_chosen.get("title") if g1_chosen else "",
-            "data_profile": state.data_profile,
-            "user_intent": state.user_intent,
-        }
-        # default=str — state.data_profile 에 numpy.int64·pandas.Timestamp 등 JSON 직렬화 불가능
-        # 타입이 섞여 있으면 TypeError → _base_gate 가 'LLM 실패로 fallback' 으로 잡아버리는 버그 방지.
-        user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:4000]
+        g2_title = g1_chosen.get("title") if g1_chosen else ""
         _emit(
             {
                 "methodology_status": f"카테고리 '{state.category}' 에 적합한 방법론 후보를 분석하고 있습니다…",
                 "methodology_phase": "llm",
             }
         )
+        # HJ 2026-06-12 — C′-2: prefetch 가 주제 선택 중 미리 만든 방법론 후보가 있으면 LLM 스킵(63~87초 절감).
+        #   캐시 key = (job_id, 선택 방향 제목, category). 추천 방향+동일 카테고리면 적중,
+        #   사용자가 다른 방향/카테고리 선택 시 miss → 그 자리에서 생성(폴백).
+        llm_opts = _g2_method_cache_get(state.job_id, g2_title, state.category)
+        if llm_opts:
+            self.logger.info("g3_method_cache_hit")
+        else:
+            llm_opts = await self._generate_for_title(state, g2_title)
+            if llm_opts:
+                _g2_method_cache_set(state.job_id, g2_title, state.category, llm_opts)
+
+        if llm_opts:
+            # 후보를 stage_partial 에도 노출 — 프론트 모달이 곧바로 표시
+            _emit(
+                {
+                    "methodology_status": f"방법론 후보 {len(llm_opts)}개 확정",
+                    "methodology_phase": "done",
+                    "methodology_candidates": [
+                        {
+                            "id": o.get("id"),
+                            "title": str(o.get("title", ""))[:160],
+                            "score": o.get("score"),
+                            "rationale": str(o.get("rationale", ""))[:600],
+                        }
+                        for o in llm_opts
+                    ],
+                }
+            )
+            return llm_opts + [_CUSTOM_OPTION]
+
+        base = _FALLBACK_DEFAULTS.get(
+            state.category,
+            [{"id": 1, "title": "기본 분석", "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
+        )
+        _emit(
+            {
+                "methodology_status": f"폴백 방법론 {len(base)}개 적용",
+                "methodology_phase": "fallback_applied",
+                "methodology_candidates": [
+                    {
+                        "id": o.get("id"),
+                        "title": str(o.get("title", ""))[:160],
+                        "score": o.get("score"),
+                        "rationale": str(o.get("rationale", ""))[:600],
+                    }
+                    for o in base
+                ],
+            }
+        )
+        return list(base) + [_CUSTOM_OPTION]
+
+    async def _generate_for_title(self, state: PipelineState, g2_title: str) -> list[dict[str, Any]] | None:
+        """방법론 후보 LLM 생성 (g2_title 입력). 성공 시 llm_opts(list), 실패/한자 고착 시 None.
+
+        _emit(status publish) 없음 → 노드(_propose)와 prefetch 선계산이 공유. HJ 2026-06-12 C′-2.
+        """
+        payload = {
+            "locked_category": state.category,
+            "g2_title": g2_title or "",
+            "data_profile": state.data_profile,
+            "user_intent": state.user_intent,
+        }
+        # default=str — numpy/pandas 타입이 섞여도 TypeError 방지
+        user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:4000]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
@@ -306,48 +414,10 @@ class MethodologyProposerAgent(BaseGate):
                 llm_opts = arr[: self.n_proposals]
                 for i, opt in enumerate(llm_opts, start=1):
                     opt["id"] = i
-                # 부분 후보를 stage_partial 에도 노출 — 프론트 모달이 곧바로 표시
-                _emit(
-                    {
-                        "methodology_status": f"방법론 후보 {len(llm_opts)}개 확정",
-                        "methodology_phase": "done",
-                        "methodology_candidates": [
-                            {
-                                "id": o.get("id"),
-                                "title": str(o.get("title", ""))[:160],
-                                "score": o.get("score"),
-                                # rationale — LLM 이 생성한 3줄 글머리 설명 (방식·이유·결과). 모달에서 인사이트로 표시.
-                                "rationale": str(o.get("rationale", ""))[:600],
-                            }
-                            for o in llm_opts
-                        ],
-                    }
-                )
-                return llm_opts + [_CUSTOM_OPTION]
+                return llm_opts
         except Exception as e:
             self.logger.warning("g3_llm_failed", error=str(e))
-            _emit({"methodology_status": f"LLM 실패 — fallback 사용: {str(e)[:120]}", "methodology_phase": "fallback"})
-
-        base = _FALLBACK_DEFAULTS.get(
-            state.category,
-            [{"id": 1, "title": "기본 분석", "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
-        )
-        _emit(
-            {
-                "methodology_status": f"폴백 방법론 {len(base)}개 적용",
-                "methodology_phase": "fallback_applied",
-                "methodology_candidates": [
-                    {
-                        "id": o.get("id"),
-                        "title": str(o.get("title", ""))[:160],
-                        "score": o.get("score"),
-                        "rationale": str(o.get("rationale", ""))[:600],
-                    }
-                    for o in base
-                ],
-            }
-        )
-        return list(base) + [_CUSTOM_OPTION]
+        return None
 
     def _apply_choice(
         self,
