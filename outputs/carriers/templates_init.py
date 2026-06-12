@@ -947,7 +947,8 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         )
         if not cap and i < len(whys) and isinstance(whys[i], dict):
             cap = str(whys[i].get("why") or whys[i].get("what") or "")
-        items.append({"label": label[:20], "caption": cap[:90]})
+        # draw_5step_alt_callouts 는 "title" 키를 읽음 (label 로 넘기면 "STEP n" 폴백)
+        items.append({"title": label[:20], "label": label[:20], "caption": cap[:90]})
     if not items:
         items = _items_from_body(sl, 5)
     I.draw_5step_alt_callouts(slide, items, primary, accent, ink, muted, light_bg)

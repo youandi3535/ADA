@@ -709,14 +709,14 @@ def draw_5step_alt_callouts(slide, steps, primary, accent, ink, muted, light_bg)
                 5.0,
                 1.0,
                 title,
-                size_pt=12,
+                size_pt=13,
                 bold=True,
                 color_hex=primary,
                 align="center",
                 vcenter=True,
             )
             add_text_box(
-                slide, x - 2.5, y_node - 3.2, 5.0, 2.0, caption, size_pt=9, color_hex=ink, align="center", vcenter=False
+                slide, x - 2.5, y_node - 3.2, 5.0, 2.0, caption, size_pt=11, color_hex=ink, align="center", vcenter=False
             )
         else:
             # Below (with offset for badge)
@@ -727,14 +727,14 @@ def draw_5step_alt_callouts(slide, steps, primary, accent, ink, muted, light_bg)
                 5.0,
                 1.0,
                 title,
-                size_pt=12,
+                size_pt=13,
                 bold=True,
                 color_hex=primary,
                 align="center",
                 vcenter=True,
             )
             add_text_box(
-                slide, x - 2.5, y_node + 4.0, 5.0, 2.0, caption, size_pt=9, color_hex=ink, align="center", vcenter=False
+                slide, x - 2.5, y_node + 4.0, 5.0, 2.0, caption, size_pt=11, color_hex=ink, align="center", vcenter=False
             )
 
 
