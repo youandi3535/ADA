@@ -512,11 +512,11 @@ def _titanic_ctx():
 
 
 def main(argv: list[str]) -> str:
+    import re as _re
+
     from outputs.architect.skeletons import report_skeleton
     from outputs.carriers.pdf_carrier import generate_pdf
     from outputs.context.schema import ReportContext
-
-    import re as _re
 
     arg1 = argv[1] if len(argv) > 1 else None
     explicit_out = argv[2] if len(argv) > 2 else None  # 사용자가 출력 경로 직접 지정 시 우선
