@@ -231,7 +231,8 @@
       "Read(//c/Program Files/Git/bin/**)",
       "PowerShell(Get-Command bash -All)",
       "Read(//c/Users/406호/Documents/WindowsPowerShell/**)",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "Bash(bash scripts/dev/end_of_day.sh --skip-tests --no-rebase)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git",
