@@ -201,8 +201,7 @@ def build(
         divider=True,
         slides=[
             _build_hypothesis(ctx),  # 4. 분석 가설
-            _build_market_context(ctx),  # 5. 시장·맥락
-            _build_pain_points(ctx),  # 6. 페인 포인트
+            _build_market_context(ctx),  # 5. 데이터·도구 (S5+S6 병합 — jh 2026-06-12)
         ],
     )
     sections.append(problem_section)
@@ -243,6 +242,7 @@ def build(
             _build_eda_findings(ctx),  # 13. EDA 핵심 발견 (신규)
             _build_error_analysis(ctx),  # 14. ★ Error Analysis (보강 B)
             _build_insights_derived(ctx),  # 15. 가설 입증 인사이트
+            _build_insight_synthesis(ctx),  # 16. 인사이트 종합 (jh 2026-06-12 신설)
         ],
     )
     sections.append(results_section)
@@ -555,38 +555,46 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     while len(quality_items) < 3:
         quality_items.append(("품질 확인", "추가 이슈 없음"))
 
-    # body_outline — legacy carrier 호환 (5 lines)
+    # jh 2026-06-12 — S5+S6 병합 (사용자 지시): 데이터 개요 + 기술 스택 한 장.
+    # lineage_2col (좌 4단 바 = 데이터, 우 3카드 = 도구) 로 렌더 — 확보한 슬롯엔
+    # insight_synthesis (인사이트 종합) 신설.
+    from outputs.architect.substitution_manifest import resolve_tech_stack as _rts
+
+    category = ctx.meta.category or "tabular_ml"
+    _stack = _rts(category)[:3]
     body = [
         f"규모 · {overview_items[0][1]}",
-        f"변수 타입 · {dtypes_summary}",
         f"타겟 분포 · {target_summary}",
-        f"품질 이슈 1 · {quality_items[0][0]} ({quality_items[0][1]})",
-        f"품질 이슈 2 · {quality_items[1][0]} ({quality_items[1][1]})",
-    ]
+        f"변수 타입 · {dtypes_summary}",
+        f"품질 · {quality_items[0][0]} ({quality_items[0][1]})",
+    ] + [f"{it.name} · {it.role}" for it in _stack]
 
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
-    return SlideSpec(
+    sp = SlideSpec(
         id="p1_market",
         section_id="problem",
         layout="data_overview_quality_combined",
         role="evidence",
-        so_what=f"{rows:,} 행 × {cols} 열 데이터 — {use_case} 분석에 충분한 규모와 품질 확보",
-        title_ko="데이터 개요 · 품질",
-        body_outline=body,
+        so_what=f"{rows:,} 행 × {cols} 열 — {use_case} 분석에 충분한 규모, 표준 스택으로 전 과정 재현 가능",
+        title_ko="데이터 · 도구 — 개요와 스택",
+        body_outline=body[:7],
         parent_message_id="problem_root",
         visual_spec=VisualSpec(
             type="v28_data_combined",
-            title="데이터 개요 · 품질",
+            title="데이터 · 도구",
             spec={
                 "overview_items": overview_items,
                 "quality_items": quality_items,
+                "stack_items": [(it.name, it.role) for it in _stack],
             },
         ),
         speaker_notes_hint=(
-            "데이터 *규모/타입/타겟* 을 한눈에. 하단은 *발견한 품질 이슈* — "
-            "이후 슬라이드에서 어떻게 처리했는지 (전처리·결측 보강) 의 도입부."
+            "좌측: 데이터 규모/타겟/품질 — 우측: 표준 스택 3종. "
+            "S5+S6 병합으로 확보한 슬롯은 인사이트 종합 장에 사용."
         ),
     )
+    sp.preferred_template = "lineage_2col"
+    return sp
 
 
 def _build_pain_points(ctx: ReportContext) -> SlideSpec:
@@ -1040,6 +1048,64 @@ def _build_insights_derived(ctx: ReportContext) -> SlideSpec:
             "FN > FP / FP > FN 패턴으로 임계값 조정 방향 제시."
         ),
     )
+
+
+def _build_insight_synthesis(ctx: ReportContext) -> SlideSpec:
+    """인사이트 종합 — 데이터→패턴→인사이트→접목 (jh 2026-06-12 신설).
+
+    사용자 요구: "이 데이터를 분석한 걸로 무엇을 알 수 있고, 어디까지 접목
+    가능한지" 를 덱 차원에서 종합하는 장. S5+S6 병합으로 확보한 슬롯.
+    icon_columns (DATA→PATTERN→INSIGHT→ACTION 4열) 로 렌더.
+    """
+    rows = ctx.dataset.shape.get("rows", 0)
+    cols = ctx.dataset.shape.get("cols", 0)
+    use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
+    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+    pm = ctx.evaluation.primary_metric or {}
+    pm_str = _format_pm_value(pm)
+
+    gi = list(ctx.interpretation.global_importance or [])[:3]
+    top_feats = " · ".join(getattr(g, "feature", "?") for g in gi) if gi else "상위 피처"
+
+    seg_line = ""
+    try:
+        segs = sorted(
+            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+            key=lambda s: float(s["value"]),
+        )
+        if segs:
+            seg_line = f", 단 {segs[0].get('segment', '?')} 구간은 취약"
+    except Exception:
+        pass
+
+    body = [
+        f"데이터 · {rows:,}건 × {cols}변수의 {use_case} — 패턴 학습에 충분한 표본",
+        f"패턴 · {top_feats} 가 결과를 좌우 — {chosen} 이 {pm_str} 로 포착{seg_line}",
+        "인사이트 · 결과를 결정한 구조적 요인이 데이터로 정량 입증됨 — 단순 룰로는 못 잡는 비선형·상호작용 포함",
+        "접목 · 동일 구조의 분류 과제에 즉시 이식 가능 — 운영 적용 + 취약 구간 보강 + 유사 데이터 확장 검증 순",
+    ]
+
+    sp = SlideSpec(
+        id="insight_synthesis",
+        section_id="results",
+        layout="icon_columns_4",
+        role="insight",
+        so_what="이 분석으로 무엇을 알 수 있고 어디까지 쓸 수 있는가 — 발견의 종합과 적용 범위",
+        title_ko="인사이트 종합 — 발견과 접목 범위",
+        body_outline=body,
+        parent_message_id="results_root",
+        visual_spec=VisualSpec(
+            type="v32_insight_synthesis",
+            title="인사이트 종합",
+            spec={"columns": body},
+        ),
+        speaker_notes_hint=(
+            "덱 전체의 '그래서?' 를 한 장으로 — 데이터가 말한 것(패턴), "
+            "그것이 의미하는 것(인사이트), 어디까지 쓸 수 있는지(접목)."
+        ),
+    )
+    sp.preferred_template = "icon_columns"
+    return sp
 
 
 def _build_as_is_to_be(ctx: ReportContext) -> SlideSpec:

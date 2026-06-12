@@ -1025,8 +1025,9 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
     raw_val = None
     feat_cols = None  # 학습 피처명 — 반드시 전처리본(df_raw) 기준 (SHAP 벡터 정합)
     try:
-        from agents.handlers.common.shared import load_dataframe_from_state
         from sklearn.model_selection import train_test_split
+
+        from agents.handlers.common.shared import load_dataframe_from_state
 
         df_raw = load_dataframe_from_state(state)
         tgt = state.target_column
@@ -1054,7 +1055,13 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
                 ):
                     df_label = _df0
             except Exception as _exc:  # noqa: BLE001
-                logger.debug("analysis_raw_file_fallback: %s", _exc)
+                # warning 승격 — S16 라벨이 인코딩 값으로 남는 원인 추적용 (운영 로그 노출)
+                logger.warning("analysis_raw_file_fallback: %s: %s", type(_exc).__name__, _exc)
+            if df_label is df_raw:
+                logger.warning(
+                    "analysis_segment_label_source=preprocessed (원본 로드 실패 또는 행 불일치) file_id=%s",
+                    str(getattr(state, "file_id", "?"))[:60],
+                )
             idx = np.arange(len(df_raw))
             _, idx_val = train_test_split(
                 idx,

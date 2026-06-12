@@ -119,17 +119,17 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     cover_sl = next((s for s in raw_slides if s.layout == "cover"), None)
     agenda_sl = next((s for s in raw_slides if s.layout == "agenda"), None)
     exec_sl = next((s for s in raw_slides if s.id == "exec_summary"), None)
+    # jh 2026-06-12 — 인사이트 종합은 목차 *앞* (BLUF: 결론→종합 인사이트→목차→본문)
+    synth_sl = next((s for s in raw_slides if s.id == "insight_synthesis"), None)
 
     # ml_pitch (및 향후 카테고리별 skeleton) 가 hypothesis/insights_derived 슬라이드를
     # 자기 plan 안에 포함. 디자이너가 추가 주입하지 않음 (중복 방지).
 
-    # Build body list (excluding cover, exec_summary, agenda — 본문 흐름만)
-    body = [s for s in raw_slides if s not in (cover_sl, agenda_sl, exec_sl)]
+    # Build body list (excluding cover, exec_summary, synthesis, agenda — 본문 흐름만)
+    body = [s for s in raw_slides if s not in (cover_sl, agenda_sl, exec_sl, synth_sl)]
 
-    # Final flat order: cover, exec_summary, agenda, body (skeleton-defined order), closing(last)
-    # ml_pitch 의 20장 구조: 1.cover / 2.exec / 3.agenda / 4~19.body / 20.closing
-    # 향후 카테고리별 skeleton 도 자기 plan 안에 hypothesis/insights 포함하므로 추가 주입 없음.
-    slides_flat = [s for s in (cover_sl, exec_sl, agenda_sl) if s is not None] + body
+    # Final flat order: cover, exec, 인사이트 종합, agenda, body, closing(last)
+    slides_flat = [s for s in (cover_sl, exec_sl, synth_sl, agenda_sl) if s is not None] + body
     # Force-rebuild Agenda's body_outline = exact list of body slide titles
     # (everything after Agenda except the very last closing slide).
     # jh 2026-06-12 — 목표치 덱 스토리 아젠다: 슬라이드 id → 이야기 흐름 라벨.
@@ -137,9 +137,10 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     # EDA 4장은 데이터 기반 제목(title_ko)이 더 구체적이라 맵에서 제외.
     _AGENDA_STORY_LABELS = {
         "hypothesis": "분석 가설 — 무엇을 물었나",
-        "p1_market": "데이터 — 개요 + 품질",
+        "p1_market": "데이터 · 도구 — 개요와 스택",
         "p2_pain": "기술 스택",
         "p3_alt_limits": "분석 방법 — 5단계 설계",
+        "insight_synthesis": "인사이트 종합 — 발견과 접목 범위",
         "i1_kpi": "모델 성능 — Baseline 대비 가치",
         "eda_findings": "SHAP — 전역 importance",
         "error_analysis": "SHAP — 개별 케이스 해석",
@@ -377,7 +378,8 @@ def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: 
                 SLIDE_H,
                 str(cover_photo),
                 overlay_color=primary,
-                overlay_alpha_pct=55,
+                # jh 2026-06-12 — 진한 사진에서 글자 침몰 방지: 오버레이 강화 (사용자 지시)
+                overlay_alpha_pct=68,
             )
             # 좌측 강조 색 band
             add_color_band(slide, 0, 0, SLIDE_W * 0.02, SLIDE_H, accent)
@@ -417,7 +419,8 @@ def _draw_cover(slide, sl: SlideSpec, ctx: ReportContext, primary: str, accent: 
         "ANALYSIS REPORT",
         size_pt=14,
         bold=True,
-        color_hex=accent,
+        # jh 2026-06-12 — accent(연파랑)는 사진 위에서 침몰 — 흰색 고정 (가독성)
+        color_hex="#FFFFFF",
         align="left",
         vcenter=False,
     )

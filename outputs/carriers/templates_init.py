@@ -879,15 +879,25 @@ def t_exec_summary_v32(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     if _placeholder:
         gi = list(ctx.interpretation.global_importance or [])[:3]
         if gi:
-            findings = [
-                {
+            # jh 2026-06-12 — 인사이트 중심 (사용자 지시): 순위 나열 대신
+            # 비교 맥락(점유율·배수)과 의미를 담은 sub 구성.
+            _tot = sum(float(g.importance) for g in gi) or 1.0
+            findings = []
+            for i, g in enumerate(gi):
+                _imp = float(g.importance)
+                _share = _imp / _tot
+                if i == 0 and len(gi) > 1:
+                    _rel = f"2위 {gi[1].feature} 의 {_imp / max(float(gi[1].importance), 1e-9):.1f}배 — 지배적 신호"
+                elif i > 0:
+                    _rel = f"1위 {gi[0].feature} 대비 {_imp / max(float(gi[0].importance), 1e-9):.0%} 수준 보조 신호"
+                else:
+                    _rel = "단일 핵심 신호"
+                findings.append({
                     "label": f"FINDING {i + 1:02d}",
                     "feature": str(g.feature),
-                    "big": f"{float(g.importance):.2f}",
-                    "sub": f"SHAP importance {i + 1}위\n모델 결정 기여 상위 변수",
-                }
-                for i, g in enumerate(gi)
-            ]
+                    "big": f"{_imp:.2f}",
+                    "sub": f"상위 3개 영향의 {_share:.0%}\n{_rel}",
+                })
 
     pm = ctx.evaluation.primary_metric or {}
     pm_v = pm.get("value")
@@ -911,6 +921,46 @@ def t_exec_summary_v32(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         return out
 
     method_head = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+
+    # jh 2026-06-12 — LIMITATION 이 "추가 분석 필요"×3 placeholder 로 나가던 결함:
+    # ctx.limitations 미적립 시 실데이터(취약 세그먼트·FN·결측)로 자동 구성.
+    _lim_placeholder = (not limitation_items) or all(
+        "추가 분석" in str(p) for p in limitation_items
+    )
+    if _lim_placeholder:
+        auto_lims: list[tuple[str, str]] = []
+        try:
+            segs = sorted(
+                [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+                key=lambda s: float(s["value"]),
+            )
+            if segs:
+                auto_lims.append((
+                    "취약 세그먼트",
+                    f"{segs[0].get('segment', '?')} accuracy {float(segs[0]['value']):.0%} — 보강 대상",
+                ))
+        except Exception:
+            pass
+        try:
+            cm = ctx.evaluation.confusion_matrix or {}
+            fn_, fp_ = int(cm.get("fn") or 0), int(cm.get("fp") or 0)
+            if fn_:
+                auto_lims.append(("미탐(FN)", f"{fn_}건 — 오탐({fp_}건) 대비 주요 오류 유형"))
+        except Exception:
+            pass
+        try:
+            mr = ctx.dataset.missing_rate or {}
+            top_miss = sorted(mr.items(), key=lambda kv: -float(kv[1]))[:1]
+            if top_miss and float(top_miss[0][1]) > 0.3:
+                auto_lims.append((
+                    f"{top_miss[0][0]} 결측",
+                    f"{float(top_miss[0][1]):.0%} — 정보 손실, 파생·보강 여지",
+                ))
+        except Exception:
+            pass
+        if auto_lims:
+            limitation_items = auto_lims[:3]
+
     limit_head = "한계"
     if limitation_items:
         try:
@@ -937,18 +987,29 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     steps = list(spec.get("steps") or [])
     whys = list(spec.get("whys") or [])
 
+    def _txt(v) -> str:
+        """문자열만 수용 — bool/숫자가 캡션에 'False' 로 찍히던 결함 가드."""
+        return v.strip() if isinstance(v, str) else ""
+
     items = []
     for i, s in enumerate(steps[:5]):
         if not isinstance(s, dict):
             s = {"label": str(s)}
-        label = str(s.get("label") or s.get("title") or f"단계 {i + 1}")
-        cap = str(
-            s.get("caption") or s.get("what") or s.get("why") or s.get("result") or ""
-        )
+        label = _txt(s.get("label")) or _txt(s.get("title")) or f"단계 {i + 1}"
+        cap = _txt(s.get("caption")) or _txt(s.get("what")) or _txt(s.get("why")) or _txt(s.get("result"))
         if not cap and i < len(whys) and isinstance(whys[i], dict):
-            cap = str(whys[i].get("why") or whys[i].get("what") or "")
+            cap = _txt(whys[i].get("why")) or _txt(whys[i].get("what"))
+        # rationale 원문이 길면 첫 문장만 (절단면 노출 방지)
+        if len(cap) > 70:
+            for sep in (". ", " — ", ": "):
+                idx = cap.find(sep, 25)
+                if 0 < idx < 70:
+                    cap = cap[:idx].rstrip(".")
+                    break
+            else:
+                cap = cap[:68].rstrip() + "…"
         # draw_5step_alt_callouts 는 "title" 키를 읽음 (label 로 넘기면 "STEP n" 폴백)
-        items.append({"title": label[:20], "label": label[:20], "caption": cap[:90]})
+        items.append({"title": label[:20], "label": label[:20], "caption": cap})
     if not items:
         items = _items_from_body(sl, 5)
     I.draw_5step_alt_callouts(slide, items, primary, accent, ink, muted, light_bg)
@@ -1066,6 +1127,10 @@ def register_phase12() -> None:
         # 차트 (visual_spec) 가 있어야 의미 있는 레이아웃
         if not getattr(sl, "visual_spec", None):
             return 0.0
+        # jh 2026-06-12 — CM(S15)은 수치만 있으면 히트맵을 직접 그리므로 고정 라우팅
+        # (디자이너가 비차트 템플릿을 골라 S15 가 텍스트만 남던 변동성 차단)
+        if getattr(sl, "id", "") == "insights_derived":
+            return 96.0
         if getattr(sl, "layout", "") == "chart_callout":
             return 85.0
         return 70.0 if getattr(sl, "role", "") == "evidence" else 55.0
@@ -1098,14 +1163,21 @@ def register_phase12() -> None:
         min_score=60.0,
         tags=["architecture", "flow"],
     )
-    REGISTRY.register(
-        "icon_columns",
-        t_icon_columns,
-        fit=combine(
+    def fit_icon_columns(sl, c):
+        # jh 2026-06-12 — 인사이트 종합 장은 고정 라우팅
+        if getattr(sl, "id", "") == "insight_synthesis":
+            return 96.0
+        base = combine(
             matches_keywords("가설 입증", "인사이트", "의의", "종합", "발견"),
             has_body_min(2),
             mode="sum",
-        ),
+        )
+        return base(sl, c)
+
+    REGISTRY.register(
+        "icon_columns",
+        t_icon_columns,
+        fit=fit_icon_columns,
         min_score=60.0,
         tags=["insight", "summary", "columns"],
     )
