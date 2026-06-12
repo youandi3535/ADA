@@ -640,6 +640,67 @@ async def propose_directions_for_topic(job_id: str, req: dict) -> dict:
     return {"proposals": new_proposals, "topic": topic}
 
 
+async def _prefetch_eda_insights(state) -> None:
+    """C′-1 — EDA 인사이트 선계산을 worker Celery 태스크로 위임.
+
+    api 컨테이너엔 pandas 가 없어 직접 계산 불가 → worker(pandas 보유)에서 실행, 결과는 Redis 캐시.
+    resume 시 eda_agent 노드가 캐시 재사용해 _dynamic_insights(120~160초)를 스킵한다.
+    """
+    if not state.job_id:
+        return
+    try:
+        from orchestrator.runner import g2_eda_prefetch_task
+
+        g2_eda_prefetch_task.apply_async(args=[state.job_id], queue="pipeline")
+        log.info("g2_eda_prefetch_dispatched", job_id=state.job_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_eda_prefetch_dispatch_failed", error=str(e))
+
+
+async def _prefetch_methodology(state, ck_key, rec_topic) -> None:
+    """C′-2 — 추천 주제의 추천 방향(directions[0])으로 방법론 후보 선계산 → 캐시.
+
+    추천 주제의 directions 캐시에서 첫 방향 제목을 읽어 methodology LLM 을 미리 돌린다.
+    resume 시 gate_methodology 노드가 (job_id, 방향제목, category) 일치하면 재사용(63~87초 절감).
+    실패·미완은 무시 → 노드가 기존대로 그 자리에서 생성(폴백).
+    """
+    import json as _json
+
+    import redis as _redis
+
+    from agents.gates.methodology_proposer import (
+        MethodologyProposerAgent,
+        _g2_method_cache_get,
+        _g2_method_cache_set,
+    )
+
+    if not state.job_id:
+        return
+    try:
+        r = _redis.Redis.from_url(settings.redis_url)
+        raw = r.hget(ck_key, rec_topic)
+        if not raw:
+            return
+        d = _json.loads(raw)
+        props = [p for p in (d.get("proposals") or []) if isinstance(p, dict) and not p.get("is_custom")]
+        rec_dir = (props[0].get("title") or "").strip() if props else ""
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_method_prefetch_read_failed", error=str(e))
+        return
+    if not rec_dir:
+        return
+    if _g2_method_cache_get(state.job_id, rec_dir, state.category):
+        return  # 이미 캐시됨
+    try:
+        llm_opts = await MethodologyProposerAgent()._generate_for_title(state, rec_dir)
+    except Exception as e:  # noqa: BLE001
+        log.warning("g2_method_prefetch_llm_failed", error=str(e))
+        return
+    if llm_opts:
+        _g2_method_cache_set(state.job_id, rec_dir, state.category, llm_opts)
+        log.info("g2_method_prefetch_done", n=len(llm_opts), direction=rec_dir[:50])
+
+
 @router.post("/gate/G2/directions/prefetch/{job_id}")
 async def prefetch_directions_for_topics(job_id: str, req: dict) -> dict:
     """G2 주제 5개의 분석 방향을 백그라운드 선(先)생성.
@@ -684,7 +745,7 @@ async def prefetch_directions_for_topics(job_id: str, req: dict) -> dict:
         rr = _redis.Redis.from_url(settings.redis_url)
         agent = AnalysisProposerAgent()
         try:
-            for topic in topics:  # topics[0] = 추천 → 제일 먼저
+            for idx, topic in enumerate(topics):  # topics[0] = 추천 → 제일 먼저
                 try:
                     cur = rr.hget(ck, topic)
                     if cur:
@@ -711,6 +772,16 @@ async def prefetch_directions_for_topics(job_id: str, req: dict) -> dict:
                         rr.hset(ck, topic, _json.dumps({"status": "error", "topic": topic}, ensure_ascii=False))
                     except Exception:  # noqa: BLE001
                         pass
+                # HJ 2026-06-12 — C′-1·C′-2: 추천 주제 directions 직후 EDA·방법론 선계산(resume-임계 최우선).
+                if idx == 0:
+                    try:
+                        await _prefetch_eda_insights(state)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("g2_eda_prefetch_failed", error=str(e))
+                    try:
+                        await _prefetch_methodology(state, ck, topic)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("g2_method_prefetch_failed", error=str(e))
             try:
                 rr.expire(ck, _G2_DIRCACHE_TTL)
             except Exception:  # noqa: BLE001

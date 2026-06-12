@@ -168,14 +168,15 @@ _FLOW_HTML = """
   .err{background:#fbeaea;border:1px solid #e7b7b7;color:#a33;border-radius:14px;padding:15px 20px;font-size:19px;margin:0 0 20px;}
   /* CS 2026-06-10 — G2 Sub-1 (주제 선정) 팝업 모달 */
   .topicmodal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,30,50,.45);display:flex;align-items:center;justify-content:center;z-index:9000;padding:20px;}
-  .topicmodal-inner{position:relative;background:#fff;border-radius:24px;max-width:1100px;width:100%;max-height:90vh;overflow-y:auto;padding:40px;box-shadow:0 24px 64px rgba(0,0,0,.3);}
-  .topichdr{text-align:center;}
+  /* HJ 2026-06-12 — 전체 팝업(카드) 스크롤바 제거: overflow:hidden + flex 컬럼. 헤더/푸터 고정, OPTION 영역만 내부 스크롤. */
+  .topicmodal-inner{position:relative;background:#fff;border-radius:24px;max-width:1100px;width:100%;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;padding:40px;box-shadow:0 24px 64px rgba(0,0,0,.3);}
+  .topichdr{text-align:center;flex:0 0 auto;}
   .topichdr h2{font-size:32px;font-weight:800;margin:0;color:var(--ink);}
   .topichdr .en{font-size:20px;color:#8aa0bd;font-style:italic;margin:4px 0 0;}
   .topichdr .stepline{margin-top:14px;display:inline-block;}
   .topichdr .stepchip{font-size:14px;color:#6b7c95;background:#f0f4fa;border-radius:999px;padding:4px 12px;vertical-align:middle;}
   .topichdr .desc{font-size:15px;color:#6b7c95;opacity:.85;margin-left:8px;white-space:nowrap;vertical-align:middle;}
-  .topicwrap{display:grid;grid-template-columns:1.6fr 1fr;gap:22px;margin-top:28px;}
+  .topicwrap{display:grid;grid-template-columns:1.6fr 1fr;gap:22px;margin-top:28px;flex:1 1 auto;min-height:0;}
   @media(max-width:1100px){.topicwrap{grid-template-columns:1fr;}}
   .topicrec{display:flex;flex-direction:column;gap:12px;}
   .topiccust{display:flex;flex-direction:column;}
@@ -183,11 +184,12 @@ _FLOW_HTML = """
   .topiccust .topicopt h3{margin-top:10px;}
   .topiccust textarea{width:100%;border:1px solid var(--line);border-radius:11px;padding:13px 15px;font-size:17px;font-family:inherit;color:var(--ink);min-height:200px;resize:vertical;margin-top:10px;}
   /* CS 2026-06-10 — 팝업 박스 2개 (OPTION 1 + OPTION 2) + 라디오 input */
-  .topicbox{border:2px solid #e3ecf7;border-radius:20px;background:#fff;padding:24px 26px;display:flex;flex-direction:column;}
+  .topicbox{border:2px solid #e3ecf7;border-radius:20px;background:#fff;padding:24px 26px;display:flex;flex-direction:column;min-height:0;}
   .topicbox.box-active{border-color:#1f3e5c;box-shadow:0 14px 34px rgba(31,62,92,.14);}
   .topicbox .onum{font-size:13px;letter-spacing:.13em;color:#9aa9bd;font-weight:700;}
   .topicbox h3{font-size:20px;font-weight:800;color:var(--ink);margin:8px 0 16px;}
-  .topicradios{display:flex;flex-direction:column;gap:8px;}
+  /* HJ 2026-06-12 — 추천 주제 리스트(내용박스)만 세로 스크롤. 카드 전체는 안 넘침. */
+  .topicradios{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:6px;}
   .topicradio{display:flex;align-items:flex-start;gap:11px;padding:11px 13px;border-radius:11px;cursor:pointer;transition:.12s;border:1px solid transparent;}
   .topicradio:hover{background:#f5f8fc;}
   .topicradio input[type=radio]{margin-top:5px;width:18px;height:18px;cursor:pointer;flex:none;accent-color:#1f3e5c;}
@@ -196,7 +198,7 @@ _FLOW_HTML = """
   .topicradio-custom{align-items:stretch;padding:0;flex:1;}
   .topicradio-custom input[type=radio]{margin-top:18px;margin-left:13px;}
   .topicradio-custom textarea{flex:1;border:1px solid var(--line);border-radius:11px;padding:13px 15px;font-size:15px;font-family:inherit;color:var(--ink);min-height:180px;resize:vertical;margin:8px;}
-  .topicfoot{display:flex;justify-content:flex-end;margin-top:28px;}
+  .topicfoot{display:flex;justify-content:flex-end;margin-top:28px;flex:0 0 auto;}
   .topicbtn{display:inline-flex;align-items:center;gap:8px;background:#1f3e5c;color:#fff;border:none;border-radius:999px;padding:11px 26px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer;box-shadow:0 8px 18px rgba(31,62,92,.26);}
   .topicbtn:disabled{opacity:.45;cursor:default;box-shadow:none;}
   .footer{display:flex;align-items:center;gap:16px;margin-top:28px;padding-top:24px;border-top:1px solid #eef2f8;}
@@ -219,6 +221,10 @@ _FLOW_HTML = """
     background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
     padding:9px 20px;margin-left:14px;white-space:nowrap;}
   .btn-home:hover{background:rgba(255,255,255,.20);}
+  /* HJ 2026-06-12 — '처음(시작화면)으로' 버튼: 기본 비활성(흐림), 정지(navUnlocked) 누르면 활성+흰색 채움. */
+  .btn-home:disabled{opacity:.4;cursor:default;}
+  .btn-home.engaged{background:#fff;color:#1f3e5c;border-color:#fff;box-shadow:0 6px 18px rgba(0,0,0,.18);}
+  .btn-home.engaged:hover{background:#eef4fb;}
   /* HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 진입부터 G2 proposals 도착 전까지 표시. 모달 2배+. */
   .modal-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(20,30,50,.42);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
   /* HJ 2026-06-12 — 모달 팝업 60% 축소. zoom:.6 (백드롭 .modal-overlay 는 미적용 → 풀스크린 유지). */
@@ -227,7 +233,9 @@ _FLOW_HTML = """
   .modal-card{position:relative;zoom:.6;display:flex;flex-direction:column;background:#fff;border-radius:32px;padding:56px 76px 48px;width:min(1300px,95%);max-height:150vh;overflow:hidden;box-shadow:0 40px 100px rgba(0,0,0,.55);animation:modalIn .42s cubic-bezier(.2,.85,.25,1.2);}
   .modal-card>#modal-body,.modal-card>#modal-pending-wrap,.modal-card>#modal-pb{flex:0 0 auto;}
   /* 실시간 분석 내용 박스 — 내용이 길어지면 이 영역만 세로 스크롤. 타자기 진행 시 자동 바닥 추적. */
-  #modal-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;}
+  /* HJ 2026-06-12 — 부드러운 자동추적: scroll-behavior:smooth 로 줄바뀜 시 미끄러지듯 이동.
+     overflow-anchor:none 으로 브라우저 기본 스크롤 앵커링(내용 추가 시 자동 보정)이 끼어들어 튀는 현상 차단. */
+  #modal-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;scroll-behavior:smooth;overflow-anchor:none;}
   #modal-scroll::-webkit-scrollbar{width:10px;}
   #modal-scroll::-webkit-scrollbar-thumb{background:#c7d2e0;border-radius:6px;}
   #modal-scroll::-webkit-scrollbar-thumb:hover{background:#aebccf;}
@@ -298,7 +306,7 @@ _FLOW_HTML = """
     </div>
   </div>
   <div class="shell">
-    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()">← 처음(시작화면)으로</button></div>
+    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()" disabled>← 처음(시작화면)으로</button></div>
     <div class="steps" id="steps"></div>
     <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
     <div class="card"><div class="content" id="content"></div><div id="pb-area"></div>
@@ -796,6 +804,7 @@ var _TW_DOTS_PAUSE_MS=800;
 // 추가: 카드 도형 자체도 행(row) 단위로 등장. 그 행 카드의 타이핑이 시작될 때 도형 reveal.
 // 사용자 요구: "한 줄 한 줄 사람이 직접 쓰듯 — 위에서 아래로 순서대로. 도형도 미리 안 보이고 글자랑 같이 등장".
 function _twTick(){
+  if(paused) return;  // HJ 2026-06-12 — 일시정지 중에는 타자기도 멈춰 화면을 그대로 고정.
   var els=document.querySelectorAll('span.tw[data-tw]');
   // [1차 패스] 상태 동기화 + 섹션 진행 분석 (상단 완료 / 하단 시작 여부)
   var hasTop=false, hasBot=false, topComplete=true, anyBotStarted=false;
@@ -892,19 +901,40 @@ function _twTick(){
   if(advanced) _modalScrollFollow();
 }
 // HJ 2026-06-12 — 실시간 분석 박스(#modal-scroll)가 '지금 써지고 있는 줄'을 따라가게 함.
+//   [흔들림(jitter) 수정] 이전 구현은 매 글자(약 95ms)마다 caret.scrollIntoView({block:'end'}) 를 호출했다.
+//   캐럿(.tw-caret)은 깜빡이는 inline 요소라 글자 추가 reflow 마다 위치가 미세 재계산되고, scrollIntoView 는
+//   #modal-scroll 뿐 아니라 바깥 window 까지 스크롤시켜(게다가 .modal-card zoom:.6 와 상호작용) 위아래로 튀었다.
+//   → 해결: (1) window 는 절대 건드리지 않고 sc.scrollTop 만 제어.
+//          (2) 데드존 — 캐럿이 영역 하단 여백(keepBand) 위에 편안히 보이는 동안엔 아예 스크롤하지 않음
+//              → 같은 줄을 타이핑하는 내내 화면이 전혀 안 움직인다(흔들림 0).
+//          (3) 캐럿이 그 아래로 내려가 가려질 때만 한 번 이동 + CSS scroll-behavior:smooth 로 부드럽게 미끄러짐.
+//          (4) 사용자가 위로 스크롤하면 추적 중단(읽기 방해 금지). zoom 은 캐럿으로 동적 역산해 보정.
 //   ⚠️ 바닥(scrollHeight)으로 스크롤하면 안 됨: G1 컬럼 카드는 visibility:hidden 으로 '공간만 차지'하는
 //   미작성 카드가 하단에 깔려 있어, 바닥으로 가면 빈 칸만 보이고 정작 현재 작성 줄이 화면 밖으로 밀린다.
-//   → 현재 타이핑 위치(캐럿 .tw-caret)가 들어있는 카드/행을 #modal-scroll 안에서 보이도록 스크롤한다.
-//   block:'nearest' → 이미 보이면 움직이지 않음(불필요한 점프·떨림 방지), 가려졌을 때만 최소로 따라감.
 function _modalScrollFollow(){
   var sc=document.getElementById('modal-scroll');
   if(!sc) return;
   var caret=sc.querySelector('.tw-caret');
-  if(caret && caret.scrollIntoView){
-    try{ caret.scrollIntoView({block:'nearest', inline:'nearest'}); return; }catch(_e){}
+  if(!caret){
+    // 캐럿이 없으면(타이핑 시작 전 등) 이미 바닥 근처일 때만 바닥 추적.
+    var gap=sc.scrollHeight-sc.clientHeight-sc.scrollTop;
+    if(gap<120) sc.scrollTop=sc.scrollHeight;
+    return;
   }
-  // 캐럿이 없으면(타이핑 막 시작 전 등) 바닥 추적으로 폴백.
-  sc.scrollTop=sc.scrollHeight;
+  var scR=sc.getBoundingClientRect();
+  var cR=caret.getBoundingClientRect();
+  // 사용자가 위로 스크롤해 캐럿이 영역 위로 사라졌으면 추적 중단.
+  if(cR.bottom<scR.top-4) return;
+  // zoom 보정: rect 는 화면(zoom 적용)px, scrollTop 은 레이아웃 px. 누적 zoom 을 캐럿 높이로 역산.
+  var zoom=(caret.offsetHeight>0&&cR.height>0)?(cR.height/caret.offsetHeight):1;
+  if(!(zoom>0.05)) zoom=1;
+  // 캐럿을 영역 하단에서 keepBand(30%) 만큼 띄운 지점에 유지 → 그 위에선 움직이지 않는 데드존.
+  var keepBand=scR.height*0.30;
+  var delta=cR.bottom-(scR.bottom-keepBand);  // +면 캐럿이 데드존 아래로 내려가 곧 가려짐
+  if(delta<=6) return;                         // 데드존 안 → 흔들림 없이 그대로 둠
+  var maxTop=sc.scrollHeight-sc.clientHeight;
+  var next=sc.scrollTop+delta/zoom;
+  sc.scrollTop=(next>maxTop)?maxTop:next;      // CSS scroll-behavior:smooth 가 부드럽게 이동
 }
 function _twStart(){ if(_twTimer) return; _twTimer=setInterval(_twTick,_TW_STEP_MS); }
 // HJ 2026-06-10 — 모달 내 모든 타자기 요소가 완료됐는지 확인. 분석 완료여도 타이핑 끝나기 전엔 다음 단계로 못 넘어가도록.
@@ -1119,7 +1149,7 @@ async function doResume(){
   // CS 2026-06-10 — G2 일 때 선택된 주제도 choice 에 포함
   if(tg==='G2' && window._g2_selectedTopicText){ choice.topic=window._g2_selectedTopicText; }
   const gate=tg;  // curGate() 대신 cur 기준 게이트 코드 사용
-  errMsg=''; busy=true; navUnlocked=false; render();  // 재진행 확정 → 정지 해제(정상 진행 복귀)
+  errMsg=''; busy=true; navUnlocked=false; paused=false; _pauseStart=null; render();  // 재진행 확정 → 정지 해제(정상 진행 복귀)
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
@@ -1251,6 +1281,14 @@ let _shownPct=0;
 let _progressKey=null;
 let _stageStart=null;
 let _barFlowPct=0;
+let _pauseStart=null;        // HJ 2026-06-12 — 정지(일시정지) 누른 시각(ms). 재시작 시 경과시간 보정용.
+// HJ 2026-06-12 — 일시정지 해제(재시작): 정지 동안 흐른 시간을 _stageStart 에 더해 진행률이 튀지 않고
+//   '정지한 시점부터' 자연스럽게 이어지게 한다. 폴링을 재가동해 백엔드 진행 상황을 다시 따라간다.
+function _resumeFromPause(){
+  paused=false; navUnlocked=false;
+  if(_pauseStart){ if(_stageStart) _stageStart+=(Date.now()-_pauseStart); _pauseStart=null; }
+  if(jobId && !isCompleted() && !isFailed()) startPolling();
+}
 let _lastSignalAt=null;      // 마지막 백엔드 신호 수신 시각(ms)
 let _lastSignalPct=null;     // 마지막으로 수신한 단계 내 진행률
 let _estimatedTotal=null;    // 예상 총 소요 시간(초) — eta_sec 전용, pct 역산 금지
@@ -1618,6 +1656,10 @@ function _modalShouldBeActive(){
   //   → cur===3 한정, 단계 분석이 15초 이상 진행되면 pct 무관하게 모달 노출 (아래 lastSubmittedGate 가드 유지).
   const _stageElapsedMs=_stageStart?(Date.now()-_stageStart):0;
   const _g4ModalFallback=(cur===3 && _stageElapsedMs>=15000);
+  // HJ 2026-06-12 — 사용자 요구: 모든 단계 모달은 진행률 41% 이상에서만 노출. (G3 즉시 노출 _postSubmitAnalyzing 제거)
+  //   이전 세션이 cur>=2 를 '제출 즉시 모달'로 우회시켜 G3 진행 시 팝업이 0% 에 바로 떴다 → 제거.
+  //   41% 전에는 본문 인라인 로딩만 보이고, 카드 regress 는 contentGate 의 _agStaleLow 가드가 막는다.
+  //   G4(cur===3)만 41% 도달이 늦어 위 _g4ModalFallback(15초)로 별도 노출.
   if(cur>=0 && cur<=5 && _shownPct<41 && !_g4ModalFallback) return false;
   if(cur===0){
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
@@ -1700,9 +1742,9 @@ function modalTopicArea(d){
     }
   }
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
-    +(domain?'<div class="twrow" style="font-size:28px;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">도메인</span> &nbsp;<b>'+twSpan(domain,'g1-domain')+'</b></div>':'')
-    +(summary?'<div class="twrow" style="margin-top:14px;font-size:26px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">데이터셋</span> &nbsp;'+twSpan(summary,'g1-summary')+'</div>':'')
-    +(tInsight?'<div class="twrow" style="margin-top:14px;font-size:26px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+twSpan(tInsight,'g1-tinsight')+'</div>':'')
+    +(domain?'<div class="twrow" style="font-size:22px;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">도메인</span> &nbsp;<b style="color:#1f3e5c">'+twSpan(domain,'g1-domain')+'</b></div>':'')
+    +(summary?'<div class="twrow" style="margin-top:14px;font-size:22px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">데이터셋</span> &nbsp;'+twSpan(summary,'g1-summary')+'</div>':'')
+    +(tInsight?'<div class="twrow" style="margin-top:14px;font-size:22px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.7">타깃 인사이트</span> &nbsp;'+twSpan(tInsight,'g1-tinsight')+'</div>':'')
     +cmHtml
     +'</div>';
 }
@@ -1780,7 +1822,7 @@ function _labelRow(label, value, opts){
   //   라벨(span opacity:.7) 은 row 가 reveal 될 때 함께 등장.
   var key=opts.twk||('lr-'+cur+'-'+label);
   var v=twSpan(String(value),key);
-  return '<div class="twrow" style="margin-top:'+(opts.mt==null?14:opts.mt)+'px;font-size:'+(opts.fs||26)+'px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+  return '<div class="twrow" style="margin-top:'+(opts.mt==null?14:opts.mt)+'px;font-size:'+(opts.fs||22)+'px;line-height:1.5;opacity:0;visibility:hidden;transition:opacity .3s ease">'
     +'<span style="opacity:.7">'+esc(label)+'</span> &nbsp;'
     +(opts.bold?('<b>'+v+'</b>'):v)
     +'</div>';
@@ -1792,7 +1834,7 @@ function _stageBox(titleEmoji, titleText, rows){
   // HJ 2026-06-12 — 사용자 요구로 팝업 줄 수 제한 해제(제한 없음). 모든 row 를 그대로 렌더.
   // HJ 2026-06-10 — 박스 제목도 twrow + twSpan 으로 — 가장 먼저 등장+타이핑되고 그 다음 row 들이 순차 reveal.
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
-    +'<div class="twrow" style="font-weight:700;color:#0f172a;margin-bottom:6px;font-size:32px;opacity:0;visibility:hidden;transition:opacity .3s ease">'+titleEmoji+' '+twSpan(titleText,'sbtitle-'+cur+'-'+titleText)+'</div>'
+    +'<div class="twrow" style="font-weight:700;color:#1f3e5c;margin-bottom:6px;font-size:32px;opacity:0;visibility:hidden;transition:opacity .3s ease">'+titleEmoji+' '+twSpan(titleText,'sbtitle-'+cur+'-'+titleText)+'</div>'
     +body+'</div>';
 }
 // HJ 2026-06-11 — G3~G6 모달 콘텐츠 공용 헬퍼.
@@ -1820,13 +1862,13 @@ function _modalSection(emoji, title, items, opts){
   var twkPrefix = opts.twk || ('sec-'+cur+'-'+title);
   var parts = [];
   // 섹션 헤더 (G2 그룹 헤더와 동일 스타일)
-  parts.push('<div class="twrow" style="margin-top:'+mt+'px;font-size:24px;font-weight:700;color:#0f172a;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+  parts.push('<div class="twrow" style="margin-top:'+mt+'px;font-size:24px;font-weight:700;color:#1f3e5c;opacity:0;visibility:hidden;transition:opacity .3s ease">'
     + emoji + ' ' + twSpan(title, twkPrefix+'-hdr')
     + '</div>');
   // 들여쓴 불릿 항목들
   items.forEach(function(item, j){
     if(item==null || item==='') return;
-    parts.push('<div class="twrow" style="margin-top:8px;font-size:21px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+    parts.push('<div class="twrow" style="margin-top:8px;font-size:22px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
       + '<span style="opacity:.45;margin-right:10px;font-weight:700">•</span>'
       + twSpan(String(item), twkPrefix+'-'+j)
       + '</div>');
@@ -1852,18 +1894,42 @@ function _modalGroupedInsights(insights, emojiMap, twkPrefix, firstMt){
   var parts = [];
   order.forEach(function(prefix){
     var em = (emojiMap && emojiMap[prefix]) || '🔬';
-    parts.push('<div class="twrow" style="margin-top:'+(firstGrp?firstMt:28)+'px;font-size:24px;font-weight:700;color:#0f172a;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+    parts.push('<div class="twrow" style="margin-top:'+(firstGrp?firstMt:28)+'px;font-size:24px;font-weight:700;color:#1f3e5c;opacity:0;visibility:hidden;transition:opacity .3s ease">'
       + em + ' ' + twSpan(prefix, twkPrefix+'-hdr-'+prefix)
       + '</div>');
     firstGrp = false;
     groups[prefix].forEach(function(val, j){
-      parts.push('<div class="twrow" style="margin-top:8px;font-size:21px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+      parts.push('<div class="twrow" style="margin-top:8px;font-size:22px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
         + '<span style="opacity:.45;margin-right:10px;font-weight:700">•</span>'
         + twSpan(val, twkPrefix+'-'+prefix+'-'+j)
         + '</div>');
     });
   });
   return parts.join('');
+}
+// HJ 2026-06-12 — 5초 후 백엔드 실시간 글이 오기 전 '빈 시간'을 단계별 진행 안내 문구로 채운다.
+//   백엔드 stage_partial 실시간 글이 도착하면 _stageHasLive()=true → 안내 문구 대신 실제 글이 표시된다.
+const STAGE_LIVE_HINTS={
+  1:['데이터 분포와 기초 통계를 살펴보는 중입니다','결측치 비율과 패턴을 계산하는 중입니다','변수 간 상관관계를 분석하는 중입니다','클래스 균형(불균형)을 확인하는 중입니다','데이터에 맞는 방법론 후보를 평가하는 중입니다'],
+  2:['결측치·이상치 처리 방안을 검토하는 중입니다','범주형 변수 인코딩 전략을 고르는 중입니다','스케일링·분포 변환 필요성을 분석하는 중입니다','파생 피처 후보를 탐색하는 중입니다','데이터 누수(leakage) 위험을 점검하는 중입니다'],
+  3:['후보 모델을 선정하는 중입니다','하이퍼파라미터 탐색 공간을 정의하는 중입니다','교차검증으로 모델을 학습·평가하는 중입니다','지표를 집계해 모델을 비교하는 중입니다'],
+  4:['모델 성능을 평가 데이터로 검증하는 중입니다','SHAP으로 주요 피처 기여도를 분석하는 중입니다','오류 사례와 개선점을 정리하는 중입니다','핵심 인사이트를 도출하는 중입니다'],
+  5:['분석 결과를 종합하는 중입니다','리포트 본문을 합성하는 중입니다','시각화 자료를 생성하는 중입니다','산출물 파일을 만드는 중입니다']
+};
+function _liveHintRows(c){
+  var hs=STAGE_LIVE_HINTS[c]||[];
+  return hs.map(function(h,i){
+    return '<div class="twrow" style="margin-top:'+(i===0?28:10)+'px;font-size:22px;line-height:1.55;color:#5b6b80;opacity:0;visibility:hidden;transition:opacity .3s ease"><span style="opacity:.4;margin-right:10px">•</span>'+twSpan(h,'live-hint-'+c+'-'+i)+'</div>';
+  }).join('');
+}
+function _stageHasLive(c, sp){
+  sp=sp||{};
+  if(c===1) return !!((sp.eda_insights&&sp.eda_insights.length)||(sp.methodology_candidates&&sp.methodology_candidates.length));
+  if(c===2) return !!((sp.g3_insights&&sp.g3_insights.length)||sp.g3_rationale||(Array.isArray(sp.g3_leakage_risks)&&sp.g3_leakage_risks.length)||sp.fe_after_count!=null);
+  if(c===3) return !!((sp.g4_model_insights&&sp.g4_model_insights.length)||(sp.g4_hpo_insights&&sp.g4_hpo_insights.length)||(sp.g4_train_insights&&sp.g4_train_insights.length));
+  if(c===4) return !!((sp.g5_eval_insights&&sp.g5_eval_insights.length)||(sp.g5_shap_insights&&sp.g5_shap_insights.length)||(sp.g5_final_insights&&sp.g5_final_insights.length));
+  if(c===5) return !!(sp.g6_output_insights&&sp.g6_output_insights.length);
+  return false;
 }
 function modalInsightArea(d){
   // HJ 2026-06-11 — 모달 표시 후 5초 경과 전에는 콘텐츠 숨김 (호출처가 cur 별 placeholder 노출).
@@ -1887,7 +1953,7 @@ function modalInsightArea(d){
     if(dp.target_dtype) r.push(_labelRow('타깃 자료형', dp.target_dtype, {mt:8}));
     if(dp.class_distribution&&typeof dp.class_distribution==='object'){
       const cd=dp.class_distribution, ks=Object.keys(cd).slice(0,4);
-      if(ks.length) r.push(_labelRow('클래스 분포', ks.map(function(k){return k+': '+cd[k];}).join(', '), {mt:8}));
+      if(ks.length) r.push(_labelRow('클래스 분포', ks.map(function(k){return k+': '+fmtNum(cd[k]);}).join(', '), {mt:8}));
     }
     const sp=(d&&d.stage_partial)||{};
     // HJ 2026-06-11 — EDA 현재 상태(✨ 2차 분석 업그레이드 멘트 포함)를 인사이트 위에 항상 표시.
@@ -1913,13 +1979,13 @@ function modalInsightArea(d){
       _order.forEach(function(prefix){
         var em=_emoji[prefix]||'🔍';
         // 섹션 헤더 (굵게, 큰 spacer로 이전 그룹과 분리)
-        r.push('<div class="twrow" style="margin-top:'+(_firstGrp?36:28)+'px;font-size:24px;font-weight:700;color:#0f172a;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+        r.push('<div class="twrow" style="margin-top:'+(_firstGrp?36:28)+'px;font-size:24px;font-weight:700;color:#1f3e5c;opacity:0;visibility:hidden;transition:opacity .3s ease">'
           +em+' '+twSpan(prefix,'eda-hdr-'+prefix)
           +'</div>');
         _firstGrp=false;
         // 그룹 항목 (불릿 + 들여쓰기, 좁은 간격)
         _groups[prefix].forEach(function(val,j){
-          r.push('<div class="twrow" style="margin-top:8px;font-size:21px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+          r.push('<div class="twrow" style="margin-top:8px;font-size:22px;line-height:1.55;padding-left:24px;opacity:0;visibility:hidden;transition:opacity .3s ease">'
             +'<span style="opacity:.45;margin-right:10px;font-weight:700">•</span>'
             +twSpan(val,'eda-'+prefix+'-'+j)
             +'</div>');
@@ -1930,7 +1996,7 @@ function modalInsightArea(d){
     if(sp.eda_charts_count!=null) r.push(_labelRow('▶ 차트 생성', sp.eda_charts_count+'종', {bold:true, mt:14}));
     // === 방법론 후보 — 섹션 헤더 + 들여쓴 불릿 구조로 통일 ===
     if(Array.isArray(sp.methodology_candidates)&&sp.methodology_candidates.length){
-      r.push('<div class="twrow" style="margin-top:40px;font-size:24px;font-weight:700;color:#0f172a;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+      r.push('<div class="twrow" style="margin-top:40px;font-size:24px;font-weight:700;color:#1f3e5c;opacity:0;visibility:hidden;transition:opacity .3s ease">'
         +'🧪 '+twSpan('방법론 후보','meth-hdr')
         +'</div>');
       sp.methodology_candidates.forEach(function(c,i){
@@ -1942,7 +2008,7 @@ function modalInsightArea(d){
           +'</div>');
         // 후보 설명 (한 단계 더 들여쓰기)
         if(c.rationale){
-          r.push('<div class="twrow" style="margin-top:4px;font-size:20px;line-height:1.55;padding-left:48px;color:#475569;opacity:0;visibility:hidden;transition:opacity .3s ease">'
+          r.push('<div class="twrow" style="margin-top:4px;font-size:22px;line-height:1.55;padding-left:48px;color:#475569;opacity:0;visibility:hidden;transition:opacity .3s ease">'
             +'<span style="opacity:.55;margin-right:8px">└</span>'
             +twSpan(String(c.rationale),'meth-rat-'+i)
             +'</div>');
@@ -1952,6 +2018,7 @@ function modalInsightArea(d){
       r.push(_labelRow('▶ 방법론', sp.methodology_status, {fs:22, mt:14}));
     }
     if(d.eda_summary) r.push(_labelRow('EDA 요약', typeof d.eda_summary==='string'?d.eda_summary:JSON.stringify(d.eda_summary).slice(0,200), {fs:22, mt:18}));
+    if(!_stageHasLive(1, sp)) r.push(_liveHintRows(1));
     return _stageBox('📊','EDA · 방법론 분석', r);
   }
   // 3단계 (G3 — 전처리·피처 분석)
@@ -2019,6 +2086,7 @@ function modalInsightArea(d){
       // 진행 중 라이브 메시지 (handler 실행 중)
       r.push(_modalSection('🌱','파생 피처 생성', ['원본 '+sp.fe_before_count+'개 컬럼에 변환 적용 중…'], {mt:28, twk:'g3-deriv'}));
     }
+    if(!_stageHasLive(2, sp)) r.push(_liveHintRows(2));
     return _stageBox('🧪','전처리 · 피처 분석', r);
   }
   // 4단계 (G4 — 모델 학습)
@@ -2076,6 +2144,7 @@ function modalInsightArea(d){
         r.push(_modalSection('📊','학습 메트릭', ks.map(function(k){return k+': '+fmtNum(m[k]);}), {mt:14, twk:'g4-met'}));
       }
     }
+    if(!_stageHasLive(3, sp)) r.push(_liveHintRows(3));
     return _stageBox('🏋️','모델 학습', r);
   }
   // 5단계 (G5 — 평가·인사이트)
@@ -2126,6 +2195,7 @@ function modalInsightArea(d){
     if(d.insights&&typeof d.insights==='string'&&d.insights.length>20){
       r.push(_modalSection('📝','인사이트', _toBullets(d.insights, 500), {mt:28, twk:'g5-ins'}));
     }
+    if(!_stageHasLive(4, sp)) r.push(_liveHintRows(4));
     return _stageBox('📈','평가 · 인사이트', r);
   }
   // 6단계 (G6 — 리포트·산출물)
@@ -2161,6 +2231,7 @@ function modalInsightArea(d){
     if(d.insights&&typeof d.insights==='string'&&d.insights.length>20){
       r.push(_modalSection('📝','포함될 인사이트', _toBullets(d.insights, 400), {mt:28, twk:'g6-ins'}));
     }
+    if(!_stageHasLive(5, sp)) r.push(_liveHintRows(5));
     return _stageBox('📦','리포트 · 산출물', r);
   }
   return '';
@@ -2212,7 +2283,13 @@ function contentGate(){
   // HJ 2026-06-10 — 모달 활성 시 카드 본문은 헤더만. 모달이 분석 내용을 보여주므로 중복 제거.
   if(inModalLoading()) return gateHeader(tg);
   // 방금 제출한 게이트이고 다음 게이트 미도착(분석 중) → 캐시 proposals 재표시 방지
-  if(lastSubmittedGate===tg && !ag){ return gateHeader(tg)+loadingBlock(); }
+  // HJ 2026-06-12 — G3 진행 시 G3 선택카드로 regress 하는 버그 fix.
+  //   resume 재실행 중 backend(schema_validator)가 stale 이전 게이트 'G2' 를 publish 하면 ag='G2'.
+  //   cur=2(tg='G3') 에선 ag='G2'<'G3' 라 기존 `!ag` 가드를 못 타고 d=gateCache['G3'] → G3 카드 regress.
+  //   제출한 게이트(tg)로 분석 중인데 ag 가 그보다 '낮은' stale 게이트면 카드 대신 로딩 표시.
+  //   (cur=1 은 stale ag='G2'===tg 라 이 조건에 안 걸려 기존 동작 그대로 — G2 무영향.)
+  var _agStaleLow = !ag || (/^G[2-6]$/.test(ag) && parseInt(ag.slice(1),10) < parseInt(tg.slice(1),10));
+  if(lastSubmittedGate===tg && _agStaleLow){ return gateHeader(tg)+loadingBlock(); }
   // 실시간: ag===tg면 gateData, 뒤로가기 등 이전 단계: 캐시 사용
   // stale: resume 직후 analyzing() 미확인 구간은 이전 gate_data 무시
   const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
@@ -2380,7 +2457,7 @@ function content(i){
 }
 function primaryLabel(){
   if(busy) return '… 처리 중';
-  if(paused) return '▶ 계속';
+  if(paused) return '▶ 재시작';
   if(cur===0) return '⬆ 업로드';
   if(cur===LAST) return '📥 완료';
   // HJ 2026-06-11 — 정지(navUnlocked) 눌림 중에는 어느 단계든 '재진행' 표기.
@@ -2529,6 +2606,9 @@ function render(){
   //   눌려 있어야만 이전/다음 단계 활성. 기본은 잠금(비활성). 정지 버튼은 진행 옆에 항상 노출.
   stop.style.display='inline-flex';
   stop.classList.toggle('engaged', navUnlocked);
+  // HJ 2026-06-12 — '처음(시작화면)으로' 버튼도 정지(navUnlocked) 연동: 기본 비활성, 정지 누르면 활성+흰색 채움.
+  var home=document.getElementById('homeBtn');
+  if(home){ home.disabled=!navUnlocked; home.classList.toggle('engaged', navUnlocked); }
   if(cur>=0 && cur<=5){
     prev.disabled=!navUnlocked;
     next.disabled=!navUnlocked || (cur>=maxReached);
@@ -2646,10 +2726,22 @@ document.getElementById('prevBtn').onclick=function(){
   }
 };
 document.getElementById('nextBtn').onclick=function(){ _suppressG1Advance=false; if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
-document.getElementById('stopBtn').onclick=function(){ navUnlocked=!navUnlocked; render(); };
+document.getElementById('stopBtn').onclick=function(){
+  navUnlocked=!navUnlocked;
+  // HJ 2026-06-12 — 분석 진행(로딩) 중 정지 → 화면 일시정지(폴링·타자기 정지, 진행 표시 고정).
+  //   게이트(카드 선택) 화면에선 기존처럼 네비게이션 토글만. 다시 누르면 해제(재시작).
+  var loading=analyzing()||!!lastSubmittedGate;
+  if(navUnlocked && loading){
+    paused=true; _pauseStart=Date.now();
+    if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } polling=false;
+  } else if(!navUnlocked && paused){
+    _resumeFromPause();
+  }
+  render();
+};
 document.getElementById('primaryBtn').onclick=function(){
   if(busy) return;
-  if(paused){ paused=false; render(); if(analyzing()) startPolling(); return; }
+  if(paused){ _resumeFromPause(); render(); return; }
   if(cur===0){ _suppressG1Advance=false; doUpload(); return; }
   if(cur>=1 && cur<=5){ doResume(); return; }
 };
