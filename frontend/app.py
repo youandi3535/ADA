@@ -340,7 +340,8 @@ const STAGE_TRANSITION_DESC={
   2:{ko:'EDA를 분석 중입니다',en:'Running EDA analysis'},
   3:{ko:'전처리·피처 엔지니어링 중입니다',en:'Running preprocessing & feature engineering'},
   4:{ko:'모델 학습 중입니다',en:'Training models'},
-  5:{ko:'평가·인사이트 분석 중입니다',en:'Running evaluation & insight analysis'}
+  5:{ko:'평가·인사이트 분석 중입니다',en:'Running evaluation & insight analysis'},
+  6:{ko:'산출물을 생성 중입니다',en:'Generating outputs'}
 };
 // CS 2026-06-10 — 카테고리별 헤더 매핑 (h2 + en + desc).
 // 우선 G2 정적(cur=1) + G2→G3 로딩(cur=2) 만 적용. 나머지 게이트는 본인 확인 후 일괄.
@@ -352,6 +353,34 @@ const GATE_HEADER_BY_CATEGORY={
       timeseries:{h2:'어떤 시계열 데이터의 분석 방향으로 진행할까요?',en:'Choose your time series analysis direction',desc:'정상성·자기상관·계절성 등 시계열 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
       anomaly_detection:{h2:'어떤 이상탐지 데이터의 분석 방향으로 진행할까요?',en:'Choose your anomaly detection analysis direction',desc:'분포·outlier 후보·tail 등 이상탐지 데이터 파악을 마쳤습니다. 분석 방향을 선택해주세요.'},
       _default:{h2:'어떤 데이터의 분석 방향으로 진행할까요?',en:'Choose your data analysis direction',desc:'데이터 특성 파악을 마쳤습니다. 분석 방향을 선택해주세요.'}
+    },
+    2:{
+      tabular_ml:{h2:'어떤 정형 ML 데이터의 방법론으로 진행할까요?',en:'Choose your tabular ML methodology',desc:'분포·상관관계·도메인 등 정형 ML EDA 분석을 마쳤습니다. 진행할 방법론을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 방법론으로 진행할까요?',en:'Choose your tabular DL methodology',desc:'분포·상관관계·도메인 등 정형 DL EDA 분석을 마쳤습니다. 진행할 방법론을 선택해주세요.'},
+      timeseries:{h2:'어떤 시계열 데이터의 방법론으로 진행할까요?',en:'Choose your time series methodology',desc:'분포·상관관계·도메인 등 시계열 EDA 분석을 마쳤습니다. 진행할 방법론을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 방법론으로 진행할까요?',en:'Choose your anomaly detection methodology',desc:'분포·상관관계·도메인 등 이상탐지 EDA 분석을 마쳤습니다. 진행할 방법론을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 방법론으로 진행할까요?',en:'Choose your methodology',desc:'분포·상관관계·도메인 등 EDA 분석을 마쳤습니다. 진행할 방법론을 선택해주세요.'}
+    },
+    3:{
+      tabular_ml:{h2:'어떤 정형 ML 데이터의 모델 전략으로 진행할까요?',en:'Choose your tabular ML model strategy',desc:'인코딩·스케일링·피처 생성 등 정형 ML 전처리·피처링을 마쳤습니다. 진행할 모델 전략을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 모델 전략으로 진행할까요?',en:'Choose your tabular DL model strategy',desc:'인코딩·스케일링·피처 생성 등 정형 DL 전처리·피처링을 마쳤습니다. 진행할 모델 전략을 선택해주세요.'},
+      timeseries:{h2:'어떤 시계열 데이터의 모델 전략으로 진행할까요?',en:'Choose your time series model strategy',desc:'인코딩·스케일링·피처 생성 등 시계열 전처리·피처링을 마쳤습니다. 진행할 모델 전략을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 모델 전략으로 진행할까요?',en:'Choose your anomaly detection model strategy',desc:'인코딩·스케일링·피처 생성 등 이상탐지 전처리·피처링을 마쳤습니다. 진행할 모델 전략을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 모델 전략으로 진행할까요?',en:'Choose your model strategy',desc:'인코딩·스케일링·피처 생성 등 전처리·피처링을 마쳤습니다. 진행할 모델 전략을 선택해주세요.'}
+    },
+    4:{
+      tabular_ml:{h2:'어떤 정형 ML 데이터의 모델 선택으로 진행할까요?',en:'Choose your tabular ML model selection',desc:'후보 모델 학습·하이퍼파라미터 탐색 등 정형 ML 모델 학습을 마쳤습니다. 사용할 모델을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 모델 선택으로 진행할까요?',en:'Choose your tabular DL model selection',desc:'후보 모델 학습·하이퍼파라미터 탐색 등 정형 DL 모델 학습을 마쳤습니다. 사용할 모델을 선택해주세요.'},
+      timeseries:{h2:'어떤 시계열 데이터의 모델 선택으로 진행할까요?',en:'Choose your time series model selection',desc:'후보 모델 학습·하이퍼파라미터 탐색 등 시계열 모델 학습을 마쳤습니다. 사용할 모델을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 모델 선택으로 진행할까요?',en:'Choose your anomaly detection model selection',desc:'후보 모델 학습·하이퍼파라미터 탐색 등 이상탐지 모델 학습을 마쳤습니다. 사용할 모델을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 모델 선택으로 진행할까요?',en:'Choose your model selection',desc:'후보 모델 학습·하이퍼파라미터 탐색 등 모델 학습을 마쳤습니다. 사용할 모델을 선택해주세요.'}
+    },
+    5:{
+      tabular_ml:{h2:'어떤 정형 ML 데이터의 산출물을 원하나요?',en:'Choose your tabular ML deliverables',desc:'교차검증·성능 비교 등 정형 ML 모델 튜닝·평가를 마쳤습니다. 원하는 산출물을 선택해주세요.'},
+      tabular_dl:{h2:'어떤 정형 DL 데이터의 산출물을 원하나요?',en:'Choose your tabular DL deliverables',desc:'교차검증·성능 비교 등 정형 DL 모델 튜닝·평가를 마쳤습니다. 원하는 산출물을 선택해주세요.'},
+      timeseries:{h2:'어떤 시계열 데이터의 산출물을 원하나요?',en:'Choose your time series deliverables',desc:'교차검증·성능 비교 등 시계열 모델 튜닝·평가를 마쳤습니다. 원하는 산출물을 선택해주세요.'},
+      anomaly_detection:{h2:'어떤 이상탐지 데이터의 산출물을 원하나요?',en:'Choose your anomaly detection deliverables',desc:'교차검증·성능 비교 등 이상탐지 모델 튜닝·평가를 마쳤습니다. 원하는 산출물을 선택해주세요.'},
+      _default:{h2:'어떤 데이터의 산출물을 원하나요?',en:'Choose your deliverables',desc:'교차검증·성능 비교 등 모델 튜닝·평가를 마쳤습니다. 원하는 산출물을 선택해주세요.'}
     }
   },
   loading:{
@@ -363,11 +392,39 @@ const GATE_HEADER_BY_CATEGORY={
       _default:{h2:'데이터의 EDA 작업 중입니다',en:'G2 — Data EDA',desc:'데이터에 맞는 EDA와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'}
     },
     2:{
-      tabular_ml:{h2:'정형 ML 데이터의 EDA 작업 중입니다',en:'G2 — Tabular ML Data EDA',desc:'분포·결측·상관관계·클래스 균형 등 정형 ML EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
-      tabular_dl:{h2:'정형 DL 데이터의 EDA 작업 중입니다',en:'G2 — Tabular DL Data EDA',desc:'고차원 시각화·피처 상호작용 등 정형 DL EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
-      timeseries:{h2:'시계열 데이터의 EDA 작업 중입니다',en:'G2 — Time Series Data EDA',desc:'정상성 검정·자기상관·계절성 분해 등 시계열 특화 EDA를 진행하고 방법론 후보를 평가하는 중입니다.'},
-      anomaly_detection:{h2:'이상탐지 데이터의 EDA 작업 중입니다',en:'G2 — Anomaly Detection Data EDA',desc:'이상탐지 신호·contamination 추정·heavy-tail 분석을 진행하고 방법론 후보를 평가하는 중입니다.'},
-      _default:{h2:'데이터의 EDA 작업 중입니다',en:'G2 — Data EDA',desc:'데이터 특성에 맞는 EDA를 진행하고 방법론 후보를 평가하는 중입니다.'}
+      tabular_ml:{h2:'정형 ML 데이터의 EDA 분석 중입니다',en:'G2 - Tabular ML Data EDA',desc:'업로드하신 정형 ML 데이터에 대해 분포·결측·상관관계·클래스 균형 분석과 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 EDA 분석 중입니다',en:'G2 - Tabular DL Data EDA',desc:'업로드하신 정형 DL 데이터에 대해 고차원 시각화·피처 상호작용 분석과 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      timeseries:{h2:'시계열 데이터의 EDA 분석 중입니다',en:'G2 - Time Series Data EDA',desc:'업로드하신 시계열 데이터에 대해 정상성 검정·자기상관·계절성 분해와 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 EDA 분석 중입니다',en:'G2 - Anomaly Detection Data EDA',desc:'업로드하신 이상탐지 데이터에 대해 신호·contamination 추정·heavy-tail 분석과 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'},
+      _default:{h2:'데이터의 EDA 분석 중입니다',en:'G2 - Data EDA',desc:'업로드하신 데이터에 대해 EDA를 진행하고 방법론 후보를 평가하는 중입니다. 끝나면 자동으로 방법론 추천이 표시됩니다.'}
+    },
+    3:{
+      tabular_ml:{h2:'정형 ML 데이터의 전처리 및 피처링 중입니다',en:'G3 - Tabular ML Data Preprocessing & Feature Engineering',desc:'업로드하신 정형 ML 데이터에 대해 인코딩·스케일링·결측치 처리·피처 생성을 진행하며 모델 전략 후보를 검토하는 중입니다. 검토가 끝나면 모델 전략 추천을 자동으로 보여드립니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 전처리 및 피처링 중입니다',en:'G3 - Tabular DL Data Preprocessing & Feature Engineering',desc:'업로드하신 정형 DL 데이터에 대해 임베딩·정규화·텐서 변환을 진행하며 모델 전략 후보를 검토하는 중입니다. 검토가 끝나면 모델 전략 추천을 자동으로 보여드립니다.'},
+      timeseries:{h2:'시계열 데이터의 전처리 및 피처링 중입니다',en:'G3 - Time Series Data Preprocessing & Feature Engineering',desc:'업로드하신 시계열 데이터에 대해 결측 보간·차분·시차(lag)·롤링 피처 생성을 진행하며 모델 전략 후보를 검토하는 중입니다. 검토가 끝나면 모델 전략 추천을 자동으로 보여드립니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 전처리 및 피처링 중입니다',en:'G3 - Anomaly Detection Data Preprocessing & Feature Engineering',desc:'업로드하신 이상탐지 데이터에 대해 정규화·피처 스케일링·이상 점수 후보 피처 생성을 진행하며 모델 전략 후보를 검토하는 중입니다. 검토가 끝나면 모델 전략 추천을 자동으로 보여드립니다.'},
+      _default:{h2:'데이터의 전처리 및 피처링 중입니다',en:'G3 - Data Preprocessing & Feature Engineering',desc:'업로드하신 데이터에 대해 전처리·피처 엔지니어링을 진행하며 모델 전략 후보를 검토하는 중입니다. 검토가 끝나면 모델 전략 추천을 자동으로 보여드립니다.'}
+    },
+    4:{
+      tabular_ml:{h2:'정형 ML 데이터의 모델학습 및 하이퍼파라미터 작업을 진행 중입니다',en:'G4 - Tabular ML Model Training & Hyperparameter Tuning',desc:'업로드하신 정형 ML 데이터로 후보 모델 학습과 하이퍼파라미터 탐색을 진행하며 모델 후보를 비교하는 중입니다. 비교가 끝나면 모델 선택 추천을 자동으로 보여드립니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 모델학습 및 하이퍼파라미터 작업을 진행 중입니다',en:'G4 - Tabular DL Model Training & Hyperparameter Tuning',desc:'업로드하신 정형 DL 데이터로 신경망 후보 모델 학습과 하이퍼파라미터 탐색을 진행하며 모델 후보를 비교하는 중입니다. 비교가 끝나면 모델 선택 추천을 자동으로 보여드립니다.'},
+      timeseries:{h2:'시계열 데이터의 모델학습 및 하이퍼파라미터 작업을 진행 중입니다',en:'G4 - Time Series Model Training & Hyperparameter Tuning',desc:'업로드하신 시계열 데이터로 예측 모델 학습과 하이퍼파라미터 탐색을 진행하며 모델 후보를 비교하는 중입니다. 비교가 끝나면 모델 선택 추천을 자동으로 보여드립니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 모델학습 및 하이퍼파라미터 작업을 진행 중입니다',en:'G4 - Anomaly Detection Model Training & Hyperparameter Tuning',desc:'업로드하신 이상탐지 데이터로 이상탐지 모델 학습과 하이퍼파라미터 탐색을 진행하며 모델 후보를 비교하는 중입니다. 비교가 끝나면 모델 선택 추천을 자동으로 보여드립니다.'},
+      _default:{h2:'데이터의 모델학습 및 하이퍼파라미터 작업을 진행 중입니다',en:'G4 - Model Training & Hyperparameter Tuning',desc:'업로드하신 데이터로 모델 학습과 하이퍼파라미터 탐색을 진행하며 모델 후보를 비교하는 중입니다. 비교가 끝나면 모델 선택 추천을 자동으로 보여드립니다.'}
+    },
+    5:{
+      tabular_ml:{h2:'정형 ML 데이터의 모델 튜닝 및 평가를 진행 중입니다',en:'G5 - Tabular ML Model Tuning & Evaluation',desc:'선택하신 정형 ML 모델로 교차검증·성능 비교·설명가능성 분석을 진행하며 산출물 후보를 준비하는 중입니다. 준비가 끝나면 산출물 선택지를 자동으로 보여드립니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 모델 튜닝 및 평가를 진행 중입니다',en:'G5 - Tabular DL Model Tuning & Evaluation',desc:'선택하신 정형 DL 모델로 검증 성능 비교·설명가능성 분석을 진행하며 산출물 후보를 준비하는 중입니다. 준비가 끝나면 산출물 선택지를 자동으로 보여드립니다.'},
+      timeseries:{h2:'시계열 데이터의 모델 튜닝 및 평가를 진행 중입니다',en:'G5 - Time Series Model Tuning & Evaluation',desc:'선택하신 시계열 모델로 교차검증·예측 성능 비교를 진행하며 산출물 후보를 준비하는 중입니다. 준비가 끝나면 산출물 선택지를 자동으로 보여드립니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 모델 튜닝 및 평가를 진행 중입니다',en:'G5 - Anomaly Detection Model Tuning & Evaluation',desc:'선택하신 이상탐지 모델로 임계값 튜닝·탐지 성능 비교를 진행하며 산출물 후보를 준비하는 중입니다. 준비가 끝나면 산출물 선택지를 자동으로 보여드립니다.'},
+      _default:{h2:'데이터의 모델 튜닝 및 평가를 진행 중입니다',en:'G5 - Model Tuning & Evaluation',desc:'선택하신 모델로 튜닝·평가를 진행하며 산출물 후보를 준비하는 중입니다. 준비가 끝나면 산출물 선택지를 자동으로 보여드립니다.'}
+    },
+    6:{
+      tabular_ml:{h2:'정형 ML 데이터의 산출물 생성 중입니다',en:'G6 - Tabular ML Output Generation',desc:'선택하신 산출물을 바탕으로 정형 ML 분석 인사이트를 정리하는 중입니다. 정리가 끝나면 최종 산출물이 자동으로 생성됩니다.'},
+      tabular_dl:{h2:'정형 DL 데이터의 산출물 생성 중입니다',en:'G6 - Tabular DL Output Generation',desc:'선택하신 산출물을 바탕으로 정형 DL 분석 인사이트를 정리하는 중입니다. 정리가 끝나면 최종 산출물이 자동으로 생성됩니다.'},
+      timeseries:{h2:'시계열 데이터의 산출물 생성 중입니다',en:'G6 - Time Series Output Generation',desc:'선택하신 산출물을 바탕으로 시계열 분석 인사이트를 정리하는 중입니다. 정리가 끝나면 최종 산출물이 자동으로 생성됩니다.'},
+      anomaly_detection:{h2:'이상탐지 데이터의 산출물 생성 중입니다',en:'G6 - Anomaly Detection Output Generation',desc:'선택하신 산출물을 바탕으로 이상탐지 분석 인사이트를 정리하는 중입니다. 정리가 끝나면 최종 산출물이 자동으로 생성됩니다.'},
+      _default:{h2:'데이터의 산출물 생성 중입니다',en:'G6 - Output Generation',desc:'선택하신 산출물을 바탕으로 분석 인사이트를 정리하는 중입니다. 정리가 끝나면 최종 산출물이 자동으로 생성됩니다.'}
     }
   }
 };
