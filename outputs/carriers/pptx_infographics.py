@@ -3462,12 +3462,12 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
         text_c = "#FFFFFF" if i % 2 == 0 else primary
         # Chevron arrow
         add_chevron(slide, x, phase_y, chev_w, phase_h, c)
-        # Phase label
+        # Phase label — x+0.9: 첫 글자가 chevron 왼끝에 물리지 않게
         add_text_box(
             slide,
-            x + 0.5,
+            x + 0.9,
             phase_y + 0.25,
-            chev_w - 1.5,
+            chev_w - 1.9,
             0.9,
             f"PHASE {i + 1:02d}",
             size_pt=11,
@@ -3479,9 +3479,9 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
         # Title
         add_text_box(
             slide,
-            x + 0.5,
+            x + 0.9,
             phase_y + 1.15,
-            chev_w - 1.5,
+            chev_w - 1.9,
             1.2,
             str(item.get("title", "")).strip()[:30],
             size_pt=14,
