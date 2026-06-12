@@ -7,13 +7,17 @@ solution_overview / lineage_2col / icon_columns (신규).
 from __future__ import annotations
 
 import pytest
-from pptx import Presentation
-from pptx.util import Cm
 
 from outputs.architect.plan import SlideSpec, VisualSpec
 from outputs.carriers.template_registry import REGISTRY
 from outputs.carriers.templates_init import _split_label, init_registry
 from outputs.context.schema import ReportContext
+
+# CI 등 python-pptx 미설치 환경에서는 이 모듈 전체 skip (collection 차단 방지).
+# 런타임 carrier 코드는 pptx 를 함수 내부에서 lazy import 하므로 무관. jh 2026-06-12.
+_pptx = pytest.importorskip("pptx")
+Presentation = _pptx.Presentation
+Cm = pytest.importorskip("pptx.util").Cm
 
 PALETTE = ("#0F4C81", "#2E86AB", "#0B1F33", "#5B7C99", "#F4F7FA")  # primary/accent/ink/muted/light_bg
 
