@@ -272,14 +272,14 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                 "g2_pending",
                 "topic_proposals",  # CS 2026-06-10 — G2 Sub-1 주제 후보 forward
                 # HJ 2026-06-11 — G3~G6 모달 콘텐츠용 풍부 필드 추가:
-                "chosen_recipe",          # G2 선택 결과 = G3 모달 첫 행
-                "user_intent",            # G1 사용자 의도 = G2 이후 화면 컨텍스트
-                "preprocessing_strategy", # G3 strategist 결과 = G4 모달
-                "feature_engineering",    # G3 strategist 결과 = G4 모달
-                "preprocessing_plan",     # G3 plan steps
-                "candidate_models",       # G4 model_selection 결과 = G5 모달
-                "best_params",            # G4 tuner 결과 = G5 모달
-                "explainability",         # G5 결과 = G6 모달
+                "chosen_recipe",  # G2 선택 결과 = G3 모달 첫 행
+                "user_intent",  # G1 사용자 의도 = G2 이후 화면 컨텍스트
+                "preprocessing_strategy",  # G3 strategist 결과 = G4 모달
+                "feature_engineering",  # G3 strategist 결과 = G4 모달
+                "preprocessing_plan",  # G3 plan steps
+                "candidate_models",  # G4 model_selection 결과 = G5 모달
+                "best_params",  # G4 tuner 결과 = G5 모달
+                "explainability",  # G5 결과 = G6 모달
             ):
                 v = _gd.get(k)
                 if v is not None:
@@ -287,7 +287,11 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                     # job.category(이미 _persist_detection 으로 정확히 갱신됨)를
                     # 다시 "pending" 으로 덮어써서 아래 휴리스틱이 tabular_ml 로
                     # 강제 확정시키는 문제 방지.
-                    if k == "category" and (not v or v == "pending") and data.get("category") not in (None, "", "pending"):
+                    if (
+                        k == "category"
+                        and (not v or v == "pending")
+                        and data.get("category") not in (None, "", "pending")
+                    ):
                         continue
                     data[k] = v
             # output_paths: gate_data 값이 있으면 DB 값을 덮어씀 (완료 후 저장된 게 정확)
@@ -296,24 +300,67 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     except Exception:  # noqa: BLE001
         pass
 
-    # CS 2026-06-11 — category 누락/pending 보정.
-    # data_profiler 완료 전에 _save_g2_screen_ready 가 실행되면 Redis 에 category="pending"
-    # 또는 None 이 저장될 수 있고, 그 결과 frontend gateHeader 가 _default 로 떨어진다.
-    # data_profile 기반 휴리스틱으로 4 카테고리 중 하나를 강제 보장 → 어떤 데이터든 정상 표시.
+    # CS 2026-06-12 — data_profiler 가 카테고리 확정 즉시(G1 초반) 기록한 1회성 고정 키.
+    # ada:gate_data 의 category 가 아직 없거나(0~수초) "pending" 이어도, 이 키는 detection
+    # 시점에 한 번만 쓰여 이후 절대 덮어쓰이지 않으므로 휴리스틱보다 먼저, 최우선으로 신뢰한다.
+    if not data.get("category") or data.get("category") == "pending":
+        try:
+            import redis as _redis3
+
+            from ada.core.config import settings as _s3
+
+            _rc3 = _redis3.Redis.from_url(_s3.redis_url, decode_responses=True)
+            _pinned = _rc3.get(f"ada:category:{job_id}")
+            if _pinned:
+                data["category"] = _pinned
+        except Exception:  # noqa: BLE001
+            pass
+
+    # CS 2026-06-12 — category 누락/pending 보정 (보수적 휴리스틱 v2).
+    # 본인 의도: "강제는 최후 수단", "유연하게 들어오는 데이터로 인지".
+    # 강한 신호만 매칭하고 모호한 케이스는 "pending" 유지 →
+    # frontend gateHeader/modalHtml 의 prefetchResult.category 폴백 (Ollama LLM 결과) 사용.
+    #
+    # 4 카테고리 안전 매트릭스:
+    #   - 시계열: date_col 결정적 신호 → timeseries
+    #   - 이상탐지: 사용자 의도 키워드 (anomaly/outlier/사기 등) → anomaly_detection
+    #   - 정형 DL: target + 고차원 (rows>=50k AND cols>=20) → tabular_dl
+    #   - 정형 ML: target + 데이터 있음 (그 외) → tabular_ml
+    #   - 모호 (target 미박힘 + 신호 없음): pending 유지 → prefetch 폴백
+    #
+    # 이전(2026-06-11) 휴리스틱의 위험 시나리오 제거:
+    #   X 정형 ML (rows>=500, target 미박힘) → anomaly_detection 오분류
+    #   X 정형 DL (cols<20, rows>=50k) → tabular_ml 오분류
     if not data.get("category") or data.get("category") == "pending":
         _dp = data.get("data_profile") or {}
         _date_col = _dp.get("date_col") or _dp.get("detected_time_col")
-        _has_target = bool(data.get("target_column") or _dp.get("has_target") or _dp.get("detected_target"))
+        _target = data.get("target_column") or _dp.get("detected_target")
+        _has_target = bool(_target)
         _rows = int(_dp.get("rows") or (_dp.get("shape") or {}).get("rows") or 0)
         _cols = int(_dp.get("cols") or (_dp.get("shape") or {}).get("cols") or 0)
+        _intent = (data.get("user_intent") or "").lower()
+        _anomaly_keywords = (
+            "이상탐지",
+            "이상 탐지",
+            "anomaly",
+            "outlier",
+            "novelty",
+            "사기",
+            "fraud",
+            "이탈",
+            "비정상",
+        )
+        _has_anomaly_intent = any(k in _intent for k in _anomaly_keywords)
+
         if _date_col:
-            data["category"] = "timeseries"
-        elif not _has_target and _rows >= 500:
-            data["category"] = "anomaly_detection"
-        elif _rows >= 50_000 and _cols >= 20:
-            data["category"] = "tabular_dl"
-        else:
-            data["category"] = "tabular_ml"
+            data["category"] = "timeseries"  # 시계열: date_col 결정적
+        elif _has_anomaly_intent:
+            data["category"] = "anomaly_detection"  # 이상탐지: 명시 의도 키워드
+        elif _has_target and _rows >= 50_000 and _cols >= 20:
+            data["category"] = "tabular_dl"  # 정형 DL: target + 고차원
+        elif _has_target and _rows > 0:
+            data["category"] = "tabular_ml"  # 정형 ML: target + 데이터
+        # 그 외 → "pending" 유지 → frontend prefetchResult.category 폴백 작동
 
     try:
         rows = (await db.scalars(select(Output).where(Output.job_id == job.id))).all()
