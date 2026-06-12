@@ -695,8 +695,17 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     else:
         bg_parts.append(f"'{target}' {verb}{_josa(verb, 'obj')} 수작업·경험에서 데이터 표준화로 전환할 필요가 분명하다.")
     # 데이터 구성 + 결측 (압축형) + 규모 판단 (압축형)
-    bg_parts.append(f"분석 대상은 {where}{n_rows:,}건·{comp_txt}, {miss_txt}.")
+    bg_parts.append(f"분석 대상은 {where}{n_rows:,}건·{comp_txt}.")
     bg_parts.append(sample_txt + ".")
+    if is_anom:
+        _stake = "옳게 잡으면 다운타임·품질 손실과 점검 부하를 줄이고, 놓치면 그 비용이 그대로 쌓인다."
+    elif is_ts:
+        _stake = "정확히 예측하면 재고·인력·리드타임 낭비를 줄이고, 빗나가면 그 손실을 현장이 떠안는다."
+    elif is_reg:
+        _stake = "정밀히 추정하면 가격·자원 배분의 손실을 줄이고, 틀리면 그 비용이 누적된다."
+    else:
+        _stake = "옳게 가려내면 한정된 자원을 가장 중요한 대상에 집중하고, 놓치면 그 비용을 현장과 대상이 떠안는다."
+    bg_parts.append("이 판단의 판돈은 작지 않다. " + _stake)  # [판돈] 의사결정 stake
     background = " ".join(bg_parts)
 
     # ── 분석 목적 (과제가 아니라 성과로)
@@ -727,7 +736,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         q_list.append("둘째, 예측이 얼마나 빗나가며, 현업이 허용하는 오차 범위 안에 드는 경우는 얼마나 되는가?")
         q_list.append("셋째, 크게 빗나가는 상황은 언제이며, 그 위험을 어떻게 관리할 것인가?")
     q_list.append(f"넷째, 세그먼트·구간별로 '{target}' 양상이 달라 다르게 대응해야 하는가?")
-    questions = "<br/>".join(q_list)
+    questions = "이 판단은 다음으로 쪼개진다.<br/>" + "<br/>".join(q_list)
 
     # ── 분석 범위 (+ 한계 선제)
     scope_parts = [f"분석은 {n_rows:,}행 × {n_cols}열을 대상으로 {cat} 관점의 {verb}에 한정한다."]
@@ -768,10 +777,12 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         sc_parts.append("현업이 허용하는 오차 범위 안에 드는 비율로 실무 적합성을 가린다.")
     # 3) 안정성 (운영에 쓸 수 있는가) — 약어 없이
     sc_parts.append("끝으로 한 번의 좋은 점수가 아니라, 시기·집단을 바꿔도 일관되게 유지되는지로 운영에 쓸 수 있는지 판단한다.")
+    # [풍부화] 안 하면의 비용(cost of inaction)
+    sc_parts.append("도입이 늦을수록 일관성 없는 기존 방식의 오류·지연 비용이 누적된다.")
     # [C13 Falsifiability룰] 반증 조건 — 못 넘으면 도입 의미 없음
     sc_parts.append(
-        f"[반증] 이 기준을 못 넘으면 모델 도입 효용이 없다 — "
-        f"{n_feat}개 입력 변수 외 후보를 추가했을 때 +2%p 이내 개선이면 현재 변수 구성으로 충분."
+        "<br/>거꾸로, 입력 변수를 더 늘려도 개선이 +2%p 이내라면 현재 구성으로 충분하다는 뜻이며, "
+        "그 선을 못 넘는 모델은 도입할 이유가 없다."
     )
     success = " ".join(sc_parts)
 
@@ -799,27 +810,51 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     impact_parts.append("핵심 변수를 근거로 데이터 수집 우선순위와 프로세스 개선까지 후속 액션으로 연결한다.")
 
     driving = _driving_question(_f, target)  # 핵펀치 — 진짜 알고 싶은 것 한 줄
+
+    # [B9 Headline=Message] 헤드라인 = 의사결정 질문(모델링 질문 아님). 카테고리 분기.
+    if not (n_feat and n_rows):
+        _head = "프로젝트 정의 (목적·범위·성공 기준)"
+    elif is_anom:
+        _head = "이상탐지를 운영 점검 체계로 도입할 가치가 있는가"
+    elif is_ts:
+        _head = f"'{target}' 예측을 계획 수립에 도입할 가치가 있는가"
+    elif is_reg:
+        _head = f"'{target}' 추정 모델을 의사결정에 도입할 가치가 있는가"
+    else:
+        _head = f"'{target}' 판정 모델을 운영에 도입할 가치가 있는가"
+
+    # [풍부화 §1] 이해관계자 — 괄호 태그(승인/실행 등) 금지, 산문으로. 카테고리 분기.
+    if is_anom:
+        _stk_mid = "경보를 받아 점검하는 운영팀이 대응을 맡고, 놓친 이상과 헛경보의 비용은 점검 대상에게 돌아간다"
+    elif is_ts:
+        _stk_mid = "예측으로 계획하는 수요·재고·인력 부서가 이를 실행하며, 과·소 예측의 비용은 공급·고객 접점에 돌아간다"
+    elif is_reg:
+        _stk_mid = "추정으로 가격·자원·리스크를 정하는 실무팀이 이를 실행하며, 과대·과소 추정의 비용은 그 대상에게 돌아간다"
+    else:
+        _stk_mid = f"판정을 받아 처리하는 실무팀이 일상 운영을 맡고, 오판의 영향은 '{target}' 판정 대상에게 돌아간다"
+    stakeholders = (
+        "도입 여부와 적용 범위는 운영·사업 책임자가 효익과 위험을 따져 결정한다. "
+        + _stk_mid + ". "
+        "데이터·MLOps가 모델 적재와 재학습·모니터링을 책임지며, 리스크·컴플라이언스가 공정성과 규제 적합성을 점검한다."
+    )
     slide = SlideSpec(
         id="overview",
         section_id="overview",
         layout="one_message",
         role="claim",
-        so_what=driving,
-        title_ko=(  # [B9 Headline=Message] 라벨형 → 결론형, 동적
-            # (a) "변수" → "입력 변수" 로 명확화 (전체 컬럼 12개 vs 입력 9개 혼동 차단)
-            # (a) 조사 _josa() 로 받침 자동 처리 — 'Survived' 같은 영문도 정확
-            f"{n_feat}개 입력 변수로 {n_rows:,}건 '{target}'{_josa(target, 'obj')} 정확히 가려낼 수 있는가"
-            if n_feat and n_rows else "프로젝트 정의 (목적·범위·성공 기준)"
-        ),
+        so_what=f"무엇이 '{target}'{_josa(target, 'obj')} 좌우하는가, 그리고 그 신호가 단순 기준을 의미 있게 넘는가. 이 둘이 도입 가치를 가른다.",
+        title_ko=_head,
         prose_blocks=[
             # [C12 ConfidenceStamp룰] 추정만 (추정) 명시 · 확실은 기본(무표기)
             # [C3 독자페르소나룰] 본 보고서의 독자·용도 (표지와 동일 문장)
             ["독자·용도", _reader_persona(ctx)],
             ["분석 배경", background],
+            ["이해관계자", stakeholders],
             ["분석 목적", objective],
             ["세부 질문", questions],
             ["분석 범위", scope],
             ["성공 기준 (추정)", success],
+            ["", "이 도입 가치는 데이터가 이 질문에 답할 수 있을 때만 성립한다. 표본·변수·품질이 그걸 받쳐주는지를 다음 장에서 먼저 따진다."],
             # [70/30룰] 기대 효과는 §8 결론으로 이관 — §1 에서 결론 미리 노출 금지
         ],
     )
@@ -1216,11 +1251,9 @@ def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
                     [
                         "한계 · 카운터내러티브",
                         # [C7 CounterNarrative룰] 가장 강한 반대 논거 + 반박
-                        "<b>표본 한계:</b> 891명 · 단일 사건 (1912년) — 시대·상황 외삽 제한적, "
-                        "결정 신뢰구간에 5%p 마진 적용 권고.<br/>"
-                        "<b>반대 논거:</b> '단일 사건 데이터로 일반화 불가' — 그러나 성별·등급 효과는 "
-                        "다른 재난 사례(세월호·페리 침몰 통계)에서도 재현된 패턴, 핵심 발견 안정성 확보.<br/>"
-                        "<b>외부 검증:</b> 운영 1·3·6개월 시점 동일 변수 영향력 재확인 — 임계 이탈 시 재학습."
+                        "<b>표본 한계:</b> 단일 데이터셋·제한된 기간이라 시대·상황 외삽에 한계가 있어, 결정 신뢰구간에 보수적 마진을 권고한다.<br/>"
+                        "<b>반대 논거:</b> '단일 데이터로 일반화 불가'라는 반론이 있으나, 핵심 변수의 효과가 다른 기간·유사 사례에서도 재현되면 발견의 안정성은 확보된다.<br/>"
+                        "<b>외부 검증:</b> 운영 1·3·6개월 시점에 동일 변수의 영향력을 재확인하고, 임계 이탈 시 재학습한다."
                     ],
                 ],
             )

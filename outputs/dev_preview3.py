@@ -339,7 +339,7 @@ def _titanic_ctx():
             },
         ),
         domain=DomainContext(
-            inferred_industry="역사 데이터 (재난·사회 분석)",
+            inferred_industry="역사 재난 데이터",
             inferred_use_case="생존 결정 요인 규명 및 예측",
             glossary=glossary,
         ),
