@@ -53,6 +53,22 @@ _SYSTEM_PROMPT = """\
 5. 글자 예산 — title_ko ≤ 30자, so_what ≤ 70자, bullet ≤ 90자.
 6. 한국어. 단, 모델명·지표명 (CatBoost, val_accuracy 등) 은 원어 유지.
 7. 초안이 이미 구체적이고 수치를 인용하면 미세 수정만.
+8. 사정거리 (필수) — role 이 "claim" 또는 "insight" 인 슬라이드는 마지막 bullet 을
+   "추론 사정거리" 문장으로 쓴다: 이 결과로 어디까지 말할 수 있고, 무엇이 더 있으면
+   다음 단계 추론이 가능한지. limitations·미적립 재료를 인용해 경계를 정직하게 긋는다.
+   예: "이 결과는 탑승 시점 변수 기준 — 구조 과정 변수(갑판 위치 등)가 있으면
+   인과 해석까지 확장 가능"
+9. 완료 시제 (필수) — 이 발표는 *끝난 분석* 의 보고다. "~확인 필요", "~권장",
+   "~예정" 같은 진행 중 권고 톤 금지. 수행된 처리와 그 *결과* 를 서술하라.
+   나쁨: "불균형 여부 별도 확인 필요" / 좋음: "타겟 38:62 — 불균형 보정 없이 학습 가능 수준"
+   예외: 사정거리 bullet (규칙 8) 과 후속 작업·로드맵 슬라이드만 미래형 허용.
+   data 에 결과가 없으면 그 항목은 다른 *확정된 사실* 로 대체하라.
+10. Executive Summary 특칙 (id "exec_summary") — 이 장은 덱 *전체* 의 요약이다.
+   title_ko 는 "Executive Summary" 그대로 유지 (Action Title 규칙 1 적용 금지).
+   so_what 은 덱 전체를 한 문장으로: 무엇을(과제) + 어떻게(모델) + 결과(핵심 수치)
+   + 결정(verdict 에 따른 도입/보완/보류 권고)을 모두 담는다.
+   나쁨: "성별 55%p 격차가 핵심 신호 — CatBoost 가 포착" (개별 발견 요약에 불과)
+   좋음: "CatBoost 로 타이타닉 생존 79% 정확도 달성 — 임계 통과, 운영 도입 권장"
 
 출력 — STRICT JSON only (설명·서론 금지):
 {"slides": {"<slide_id>": {"title_ko": "...", "so_what": "...", "body_outline": ["...", ...]}, ...}}
@@ -187,9 +203,23 @@ class LLMCopywriter(BaseAgent):
                 "confusion_matrix": _safe(lambda: ctx.evaluation.confusion_matrix, None),
             },
             "baselines": _safe(lambda: dict(ctx.model_selection.baselines.__dict__), {}),
+            # dataclass → dict (json.dumps 안전 — 객체 그대로면 TypeError 로 전체 폴백됨)
             "shap_top": _safe(
-                lambda: list(ctx.interpretation.global_importance or [])[:5], []
+                lambda: [
+                    {"feature": g.feature, "importance": g.importance}
+                    for g in (ctx.interpretation.global_importance or [])[:5]
+                ],
+                [],
             ),
+            # jh 2026-06-12 — S14 개별 사례 재료
+            "local_examples": _safe(
+                lambda: list(ctx.interpretation.local_examples or [])[:3], []
+            ),
+            # jh 2026-06-12 — '어디까지 볼 수 있나' (사정거리) 재료: 한계·데이터 공백
+            "limitations": {
+                "model_caveats": _safe(lambda: list(ctx.limitations.model_caveats or [])[:5], []),
+                "data_gaps": _safe(lambda: list(ctx.limitations.data_gaps or [])[:5], []),
+            },
         }
 
     # ------------------------------------------------------------------
@@ -209,8 +239,19 @@ class LLMCopywriter(BaseAgent):
             draft = draft_by_id.get(sid, {})
             out: dict[str, Any] = {}
 
+            # jh 2026-06-12 — 초과 제목은 기각 대신 절단 수용.
+            # (기각 시 구식 초안 제목이 남아 새 so_what 과 불일치 — 운영 S10 실측)
             title = str(fill.get("title_ko", "") or "").strip()
-            if title and len(title) <= _BUDGET["title_ko"] + 10:
+            if title:
+                limit = _BUDGET["title_ko"] + 10
+                if len(title) > limit:
+                    cut = title[:limit]
+                    for sep in (" — ", " · ", ", ", " "):
+                        idx = cut.rfind(sep)
+                        if idx >= int(limit * 0.5):
+                            cut = cut[:idx]
+                            break
+                    title = cut.rstrip(" .,·—")
                 out["title_ko"] = title
             so_what = str(fill.get("so_what", "") or "").strip()
             if so_what and len(so_what) <= _BUDGET["so_what"] + 20:

@@ -124,3 +124,100 @@ class TestSmokeRender:
         sl = _slide_spec(body_outline=["인사이트 1", "인사이트 2"])
         REGISTRY.get("chart_key_insights").draw(slide, sl, self._ctx(), *PALETTE)
         assert len(slide.shapes) >= 3
+
+    def test_chart_key_insights_panel_fullwidth_when_no_chart(self):
+        """2026-06-12 — 차트 미배치 시 패널 전폭 확장 (좌측 절반 공백 결함)."""
+        from pptx.util import Emu
+
+        init_registry()
+        slide, _ = _blank_slide()
+        sl = _slide_spec(body_outline=["인사이트 1", "인사이트 2"])
+        REGISTRY.get("chart_key_insights").draw(slide, sl, self._ctx(), *PALETTE)
+        widths = [Emu(sh.width).cm for sh in slide.shapes if Emu(sh.width).cm > 20]
+        assert widths, "전폭(>20cm) 패널이 없음 — 빈 절반 결함 재발"
+
+
+class TestVisualFixes20260612:
+    """운영 첫 덱 결함 회귀 — cover 제목 폭발 / 문장 절단 / chevron 반복."""
+
+    def test_display_intent_strips_tags(self):
+        from outputs.carriers.pptx_designer import _display_intent
+
+        raw = "분석 방향: 고객 가치 예측: 생존자 분류 (주제: 이커머스 인사이트) (방법론: 앙상블) (모델 전략: 부스팅)"
+        assert _display_intent(raw) == "고객 가치 예측: 생존자 분류"
+
+    def test_display_intent_plain_passthrough(self):
+        from outputs.carriers.pptx_designer import _display_intent
+
+        assert _display_intent("타이타닉 생존 분석") == "타이타닉 생존 분석"
+        assert _display_intent("") == "분석 보고서"
+
+    def test_display_intent_truncates(self):
+        from outputs.carriers.pptx_designer import _display_intent
+
+        out = _display_intent("가" * 100, max_len=44)
+        assert len(out) <= 44
+
+    def test_cover_title_size_shrinks(self):
+        from outputs.carriers.pptx_designer import _cover_title_size
+
+        assert _cover_title_size("짧은 제목") == 48
+        assert _cover_title_size("가" * 44) == 26
+
+    def test_clip_sentence_no_midword_cut(self):
+        from outputs.carriers.templates_init import _clip_sentence
+
+        s = "데이터 특성 기반 점수 매트릭스로 상위 3종 자동 선정, 고카디널리티 변수 처리 강점이 결정적이었으며 추가 검증 예정"
+        out = _clip_sentence(s, 40)
+        assert len(out) <= 41
+        assert out.endswith("…")
+        assert not out.rstrip("…").endswith(("데이", "매트"))  # 단어 중간 절단 아님 (공백 경계)
+
+    def test_qa_shrink_overflow(self):
+        """편집자 QA v1 — 박스보다 큰 텍스트의 폰트 자동 축소."""
+        from pptx.util import Cm, Pt
+
+        from outputs.carriers.pptx_designer import _qa_shrink_overflow
+
+        slide, prs = _blank_slide()
+        box = slide.shapes.add_textbox(Cm(1), Cm(1), Cm(8), Cm(2))
+        p = box.text_frame.paragraphs[0]
+        run = p.add_run()
+        run.text = "아주 긴 한국어 문장이 박스를 가득 넘쳐 흐르는 경우를 시뮬레이션 합니다 " * 3
+        run.font.size = Pt(24)
+        fixed = _qa_shrink_overflow(prs)
+        assert fixed >= 1
+        assert run.font.size.pt < 24
+
+    def test_qa_leaves_fitting_text_alone(self):
+        from pptx.util import Cm, Pt
+
+        from outputs.carriers.pptx_designer import _qa_shrink_overflow
+
+        slide, prs = _blank_slide()
+        box = slide.shapes.add_textbox(Cm(1), Cm(1), Cm(20), Cm(5))
+        run = box.text_frame.paragraphs[0].add_run()
+        run.text = "짧은 제목"
+        run.font.size = Pt(24)
+        _qa_shrink_overflow(prs)
+        assert run.font.size.pt == 24
+
+    def test_chevron_dedupes_identical_justifications(self):
+        from types import SimpleNamespace
+
+        from outputs.carriers.templates_init import t_chevron_5
+
+        init_registry()
+        slide, _ = _blank_slide()
+        ctx = ReportContext()
+        same = "데이터 특성 기반 점수 매트릭스로 상위 3종 자동 선정"
+        ctx.model_selection.candidates = [
+            SimpleNamespace(name="CatBoost", why_tried=same, family="boosting", score=0.788),
+            SimpleNamespace(name="LightGBM", why_tried=same, family="boosting", score=0.771),
+            SimpleNamespace(name="RandomForest", why_tried=same, family="bagging", score=0.745),
+        ]
+        sl = _slide_spec(id="p3_alt_limits")
+        t_chevron_5(slide, sl, ctx, *PALETTE)
+        texts = " ".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        assert texts.count(same[:20]) == 0, "동일 사유 반복이 여전히 렌더됨"
+        assert "score 0.788" in texts

@@ -90,6 +90,15 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
     accent = palette["accent"]
     secondary = palette["secondary"]
 
+    # jh 2026-06-12 — 실제 분석 차트 PNG (MinIO) 최우선.
+    # 운영 결함: EDA 슬라이드 spec 의 chart_path 가 무시되고 _render_bar 가
+    # evaluation.metrics 로 폴백 → 결측 슬라이드에 메트릭 차트가 그려졌음.
+    _chart_path = str((vs.spec or {}).get("chart_path") or "")
+    if _chart_path:
+        _local = _fetch_chart_png(_chart_path)
+        if _local:
+            return _local
+
     try:
         vtype = vs.type or ""
         if vtype == "chart_line":
@@ -134,6 +143,34 @@ def _tmp_png() -> str:
     return tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
 
 
+def _fetch_chart_png(path: str) -> Optional[str]:
+    """chart_path → 로컬 PNG. 로컬 파일이면 그대로, s3:// 면 MinIO 다운로드.
+
+    실패 시 None — 호출측이 타입별 렌더러로 폴백 (jh 2026-06-12).
+    """
+    try:
+        from pathlib import Path
+
+        if path and not path.startswith("s3://") and Path(path).exists():
+            return str(path)
+    except Exception:
+        pass
+    try:
+        from tools.minio_tool import get_minio_client
+
+        mc = get_minio_client()
+        key = path.replace(f"s3://{mc.bucket}/", "") if path.startswith("s3://") else path
+        data = mc.download_bytes(key)
+        if not data:
+            return None
+        tmp = _tmp_png()
+        with open(tmp, "wb") as f:
+            f.write(data)
+        return tmp
+    except Exception:
+        return None
+
+
 def _ensure_ascii(text: str) -> str:
     """한국어 폰트 없을 때 라벨 안 깨지게 영문 변환 — 핵심 한국어→영문 매핑.
 
@@ -172,6 +209,14 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
     """막대 차트 — chart spec 의 items 또는 ctx.evaluation.metrics 활용."""
     spec = vs.spec or {}
     items = spec.get("items") or []
+    # jh 2026-06-12 — 슬라이드 고유 numbers (EDA meta) 가 metrics 폴백보다 우선.
+    # (결측 슬라이드에 val_accuracy 막대가 그려지던 주제 불일치 방지)
+    if not items:
+        items = [
+            (str(n.get("name", "")), float(n.get("value", 0)))
+            for n in (spec.get("numbers") or [])[:6]
+            if isinstance(n, dict) and isinstance(n.get("value"), (int, float))
+        ]
     if not items and ctx.evaluation.metrics:
         items = [
             (k, float(m.get("value", 0)))

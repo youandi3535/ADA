@@ -1029,7 +1029,8 @@ def _build_insights_derived(ctx: ReportContext) -> SlideSpec:
         visual_spec=VisualSpec(
             type=(variant.visual_type if variant else "diagram_confusion_matrix"),
             title=title_ko,
-            spec={"confusion_matrix": cm},
+            # jh 2026-06-12 — assets 가 만든 실제 CM 히트맵 PNG 를 1순위로 사용
+            spec={"confusion_matrix": cm, "chart_path": str(cm.get("chart_path") or "")},
             severity="important",
         ),
         speaker_notes_hint=(

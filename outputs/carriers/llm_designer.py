@@ -51,7 +51,7 @@ Return STRICT JSON only:
 {
   "chosen_template": "<name from candidates>",
   "palette_hint": "default|warning|success|monochrome",
-  "photo_keyword": "<2-4 English keywords for stock photo, or empty>",
+  "photo_keyword": "<2-4 English keywords for stock photo. MUST describe the DATA's subject domain (e.g. Titanic survival -> 'ocean ship vintage', retail sales -> 'retail store shelves'). NEVER generic business/office/people imagery. Empty if no domain noun applies.>",
   "icon_concept": "<one concept name like 'kpi', 'warning', 'data', or empty>",
   "fallback_reason": "<empty if good fit, else 1-line reason this is suboptimal>"
 }

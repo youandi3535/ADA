@@ -70,6 +70,11 @@ class ReportComposerAgent(BaseAgent):
             cat_extras = {**state.category_extras}
             cat_extras.setdefault(state.category, {}).update(extras)
 
+            # HJ 2026-06-12 (jh 대행) — assets 차트 (CM·SHAP·calibration) 가 carrier 에
+            # 배달되도록 병합본 state 를 generator 에 전달. 기존엔 원본 state 가 넘어가
+            # output_extras 산출물이 PPT 에 도달하지 못했음 (S15 빈 화면 원인).
+            state_for_gen = state.with_update(category_extras=cat_extras)
+
             results: dict[str, str] = {}
 
             async def _gen(code: str) -> tuple[str, str | None]:
@@ -90,7 +95,7 @@ class ReportComposerAgent(BaseAgent):
                         eval_result=state.eval_result,
                     )
                     if "state" in sig.parameters:
-                        kwargs["state"] = state
+                        kwargs["state"] = state_for_gen
                     path = await asyncio.to_thread(gen.generate, **kwargs)
                     return code, path
                 except Exception as e:

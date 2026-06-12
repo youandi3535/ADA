@@ -595,7 +595,7 @@ def draw_as_is_to_be(slide, as_is, to_be, primary, accent, ink, muted, light_bg)
         )
         # Text
         add_text_box(
-            slide, 3.5, y, col_w - 1.7, 1.2, str(pt)[:60], size_pt=11, color_hex="#E2E8F0", align="left", vcenter=True
+            slide, 3.5, y, col_w - 1.7, 1.2, str(pt)[:70], size_pt=14, color_hex="#E2E8F0", align="left", vcenter=True
         )
 
     # TO-BE column (highlighted)
@@ -638,8 +638,8 @@ def draw_as_is_to_be(slide, as_is, to_be, primary, accent, ink, muted, light_bg)
             y,
             col_w - 1.7,
             1.2,
-            str(pt)[:60],
-            size_pt=11,
+            str(pt)[:70],
+            size_pt=14,
             bold=True,
             color_hex="#FFFFFF",
             align="left",
@@ -774,8 +774,19 @@ def draw_thank_you_closing(slide, ctx, primary, accent, ink, muted):
     )
     # Accent line
     add_rect(slide, SLIDE_W * 0.35, SLIDE_H * 0.66, 6.0, 0.15, accent)
-    # Footer info
-    intent = (ctx.meta.user_intent or "분석 보고서")[:50]
+    # Footer info — jh 2026-06-12: 게이트 태그 suffix 제거 (S20 푸터가
+    # "(주제: ... 데이터로 " 처럼 중간 절단되던 결함, cover 와 동일 규칙)
+    import re as _re
+
+    intent = (ctx.meta.user_intent or "분석 보고서").strip()
+    _m = _re.match(r"^(?:분석 방향|주제|방법론|모델 전략):\s*(.+)$", intent)
+    if _m:
+        intent = _m.group(1).strip()
+    _cut = _re.search(r"\s*\((?:분석 방향|주제|방법론|모델 전략):", intent)
+    if _cut:
+        intent = intent[: _cut.start()].strip()
+    if len(intent) > 50:
+        intent = intent[:49].rstrip() + "…"
     add_text_box(
         slide,
         SLIDE_W * 0.35,
@@ -794,7 +805,7 @@ def draw_thank_you_closing(slide, ctx, primary, accent, ink, muted):
         SLIDE_H * 0.77,
         SLIDE_W * 0.55,
         1.0,
-        f"생성  ·  {(ctx.meta.generated_at or '')[:10]}  ·  ADA v2",
+        f"생성  ·  {(ctx.meta.generated_at or '')[:10]}  ·  ADA",
         size_pt=11,
         color_hex="#E2E8F0",
         align="left",
@@ -1043,7 +1054,7 @@ def draw_chevron_strategies(slide, items, primary, accent, ink, muted, light_bg)
             chevron_w - 0.8,
             1.0,
             str(item.get("title", "")).strip()[:24],
-            size_pt=13,
+            size_pt=16,
             bold=True,
             color_hex=text_color,
             align="center",
@@ -1057,7 +1068,7 @@ def draw_chevron_strategies(slide, items, primary, accent, ink, muted, light_bg)
             chevron_w - 1.0,
             4.0,
             str(item.get("caption", ""))[:120],
-            size_pt=10,
+            size_pt=12,
             color_hex=ink,
             align="center",
             vcenter=False,
@@ -1159,7 +1170,8 @@ def draw_big_stats(slide, items, primary, accent, ink, muted, light_bg):
         # 고정 128pt 는 "79%" 같은 3자도 카드 폭 초과 줄바꿈 (probe 실측) →
         # 카드 폭 (avail/n) 과 글자 수에서 안전 폰트 도출.
         _val = str(item.get("value", "0"))
-        _size = {1: 128, 2: 128, 3: 110, 4: 92, 5: 76, 6: 64}.get(len(_val), 54)
+        # jh 2026-06-12 — 견본 실측 120pt(3자) 기준 상향.
+        _size = {1: 128, 2: 128, 3: 120, 4: 96, 5: 80, 6: 66}.get(len(_val), 56)
         add_text_box(
             slide,
             x,
@@ -1183,7 +1195,7 @@ def draw_big_stats(slide, items, primary, accent, ink, muted, light_bg):
             card_w - 1.0,
             1.5,
             str(item.get("label", "")).upper()[:40],
-            size_pt=14,
+            size_pt=16,
             bold=True,
             color_hex=label_color,
             align="center",
@@ -1197,7 +1209,7 @@ def draw_big_stats(slide, items, primary, accent, ink, muted, light_bg):
             card_w - 1.0,
             card_h - 11.5,
             str(item.get("caption", ""))[:120],
-            size_pt=10,
+            size_pt=13,
             color_hex=label_color,
             align="center",
             vcenter=False,
@@ -2004,7 +2016,7 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
             3.0,
             3.0,
             labels[i],
-            size_pt=64,
+            size_pt=72,
             bold=True,
             color_hex="#FFFFFF",
             align="left",
@@ -2018,7 +2030,7 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
             cell_w - 4.5,
             1.2,
             names[i].upper(),
-            size_pt=14,
+            size_pt=18,
             bold=True,
             color_hex="#FFFFFF",
             align="left",
@@ -2032,26 +2044,52 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
             1.2,
             1.2,
             glyphs[i],
-            size_pt=18,
+            size_pt=24,
             color_hex="#FFFFFF",
             align="center",
             vcenter=True,
         )
-        # Bullets
-        pts = (items[i].get("points", []) if i < len(items) else [])[:3]
-        body = "\n\n".join(f"- {p[:60]}" for p in pts) if pts else "(추가 분석 필요)"
-        add_text_box(
-            slide,
-            x + 0.5,
-            y + 3.5,
-            cell_w - 1.0,
-            cell_h - 4.0,
-            body,
-            size_pt=10,
-            color_hex="#FFFFFF",
-            align="left",
-            vcenter=False,
-        )
+        # Bullets — jh 2026-06-12 견본 구조: 첫 항목은 16B 헤드라인, 나머지는 11pt 세부
+        import re as _re
+
+        pts = [
+            _re.sub(r"^[-\s]*[SWOT]\s*[·:]\s*", "", str(p)).strip()
+            for p in (items[i].get("points", []) if i < len(items) else [])
+        ][:3]
+        # 페어 bullet 1개뿐이면 " — " 에서 분할해 헤드라인+세부 2층 구성
+        if len(pts) == 1 and " — " in pts[0]:
+            _head, _det = pts[0].split(" — ", 1)
+            pts = [_head.strip(), _det.strip()]
+        if pts:
+            add_text_box(
+                slide,
+                x + 0.5,
+                y + 3.2,
+                cell_w - 1.0,
+                1.1,
+                f"{labels[i]} · {str(pts[0])[:46]}",
+                size_pt=16,
+                bold=True,
+                color_hex="#FFFFFF",
+                align="left",
+                vcenter=False,
+            )
+        detail = "\n".join(f"·  {str(p)[:70]}" for p in pts[1:]) if len(pts) > 1 else ""
+        if not pts:
+            detail = "(추가 분석 필요)"
+        if detail:
+            add_text_box(
+                slide,
+                x + 0.5,
+                y + 4.4,
+                cell_w - 1.0,
+                cell_h - 4.7,
+                detail,
+                size_pt=11,
+                color_hex="#FFFFFF",
+                align="left",
+                vcenter=False,
+            )
 
 
 def draw_funnel_chart(slide, stages, primary, accent, ink, muted, light_bg):
@@ -2331,7 +2369,7 @@ def draw_split_compare(slide, left, right, primary, accent, ink, muted, light_bg
         half - 1.5,
         3.0,
         str(left.get("headline", ""))[:80],
-        size_pt=14,
+        size_pt=16,
         color_hex="#E2E8F0",
         align="left",
         vcenter=False,
@@ -2353,7 +2391,7 @@ def draw_split_compare(slide, left, right, primary, accent, ink, muted, light_bg
             vcenter=True,
         )
         add_text_box(
-            slide, 2.0, y, half - 2.5, 1.0, str(pt)[:60], size_pt=11, color_hex="#FFFFFF", align="left", vcenter=True
+            slide, 2.0, y, half - 2.5, 1.0, str(pt)[:70], size_pt=14, color_hex="#FFFFFF", align="left", vcenter=True
         )
     # Center divider with VS
     add_oval(slide, half - 1.2, SLIDE_H / 2 - 0.5, 2.4, 2.4, "#FFFFFF")
@@ -2394,7 +2432,7 @@ def draw_split_compare(slide, left, right, primary, accent, ink, muted, light_bg
         half - 2.0,
         3.0,
         str(right.get("headline", ""))[:80],
-        size_pt=14,
+        size_pt=16,
         color_hex=ink,
         align="left",
         vcenter=False,
@@ -2416,7 +2454,7 @@ def draw_split_compare(slide, left, right, primary, accent, ink, muted, light_bg
             vcenter=True,
         )
         add_text_box(
-            slide, half + 2.0, y, half - 2.5, 1.0, str(pt)[:60], size_pt=11, color_hex=ink, align="left", vcenter=True
+            slide, half + 2.0, y, half - 2.5, 1.0, str(pt)[:70], size_pt=14, color_hex=ink, align="left", vcenter=True
         )
 
 
@@ -2807,7 +2845,7 @@ def draw_hypothesis_evidence_insight(slide, items, primary, accent, ink, muted, 
     for i, (lab_en, lab_ko, gly) in enumerate(headers):
         cx = margin_x + i * (col_w + 0.6)
         add_rect(slide, cx, h_y, col_w, 1.5, primary)
-        add_text_box(slide, cx + 0.5, h_y, 1.5, 1.5, gly, size_pt=18, color_hex="#FFFFFF", align="center", vcenter=True)
+        add_text_box(slide, cx + 0.5, h_y, 1.5, 1.5, gly, size_pt=22, color_hex="#FFFFFF", align="center", vcenter=True)
         add_text_box(
             slide,
             cx + 2.0,
@@ -2815,7 +2853,7 @@ def draw_hypothesis_evidence_insight(slide, items, primary, accent, ink, muted, 
             col_w - 2.5,
             1.5,
             f"{lab_en}\n{lab_ko}",
-            size_pt=12,
+            size_pt=15,
             bold=True,
             color_hex="#FFFFFF",
             align="left",
@@ -2859,7 +2897,7 @@ def draw_hypothesis_evidence_insight(slide, items, primary, accent, ink, muted, 
                 col_w - 0.8,
                 row_h - 0.6,
                 str(text)[:200],
-                size_pt=10,
+                size_pt=16,
                 color_hex=tc,
                 align="left",
                 vcenter=True,
@@ -2874,7 +2912,7 @@ def draw_hypothesis_evidence_insight(slide, items, primary, accent, ink, muted, 
                 0.5,
                 0.6,
                 GLYPHS["arrow_r"],
-                size_pt=14,
+                size_pt=18,
                 bold=True,
                 color_hex=accent,
                 align="center",
@@ -3533,7 +3571,7 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
             up_card_w - 2.8,
             0.8,
             f"UPGRADE  {i + 1:02d}",
-            size_pt=10,
+            size_pt=11,
             bold=True,
             color_hex=muted,
             align="left",
@@ -3547,7 +3585,7 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
             up_card_w - 2.8,
             0.9,
             str(item.get("title", "")).strip()[:30],
-            size_pt=13,
+            size_pt=15,
             bold=True,
             color_hex=primary,
             align="left",
@@ -3561,10 +3599,82 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
             up_card_w - 1.0,
             up_h - 3.0,
             str(item.get("caption", ""))[:120],
-            size_pt=10,
+            size_pt=12,
             color_hex=ink,
             align="left",
             vcenter=False,
+        )
+
+
+def draw_exec_summary_v32(slide, findings, boxes, primary, accent, ink, muted, light_bg):
+    """Executive Summary v32 — 목표치 덱 S3 실측 이식 (jh 2026-06-12).
+
+    상단: 3 FINDING 카드 (라벨 10B / 빅수치 46B / 이름 14B+밑줄 / 세부 10pt 3줄)
+    하단: METHOD·PERFORMANCE·LIMITATION 3박스 (라벨 10B / 핵심값 18B / 세부 11pt 3줄)
+    PERFORMANCE 박스만 primary 솔리드 강조.
+
+    Args:
+        findings: [{label, big, feature(이름), sub(세부 줄들 str|list)}] ×3
+        boxes: [(label, headline, [lines])] ×3 — index 1 이 강조 박스
+    """
+    margin_x = 1.5
+    gap = 0.5
+    card_w = (SLIDE_W - 2 * margin_x - 2 * gap) / 3
+
+    # ── Row 1: FINDING 카드 3개 ──
+    y1, h1 = 4.4, 6.8
+    for i, f in enumerate((findings or [])[:3]):
+        x = margin_x + i * (card_w + gap)
+        add_rounded_rect(slide, x, y1, card_w, h1, "#FFFFFF", line_hex=primary)
+        add_rect(slide, x + 0.3, y1, card_w - 0.6, 0.12, accent)
+        add_text_box(
+            slide, x + 0.6, y1 + 0.4, card_w - 1.2, 0.7,
+            str(f.get("label", f"FINDING {i + 1:02d}")),
+            size_pt=10, bold=True, color_hex=muted, align="left", vcenter=True,
+        )
+        add_text_box(
+            slide, x + 0.6, y1 + 1.1, card_w - 1.2, 2.3,
+            str(f.get("big", "-"))[:12],
+            size_pt=46, bold=True, color_hex=primary, align="left", vcenter=True,
+        )
+        add_text_box(
+            slide, x + 0.6, y1 + 3.5, card_w - 1.2, 0.9,
+            str(f.get("feature", ""))[:20],
+            size_pt=14, bold=True, color_hex=ink, align="left", vcenter=True,
+        )
+        add_rect(slide, x + 0.6, y1 + 4.4, 2.5, 0.06, accent)
+        sub = f.get("sub", "")
+        sub_lines = sub if isinstance(sub, list) else [s for s in str(sub).split("\n") if s]
+        add_text_box(
+            slide, x + 0.6, y1 + 4.7, card_w - 1.2, h1 - 5.0,
+            "\n".join(str(s)[:40] for s in sub_lines[:3]),
+            size_pt=10, color_hex=muted, align="left", vcenter=False,
+        )
+
+    # ── Row 2: METHOD / PERFORMANCE / LIMITATION ──
+    y2, h2 = 11.7, 5.0
+    for i, (label, headline, lines) in enumerate((boxes or [])[:3]):
+        x = margin_x + i * (card_w + gap)
+        solid = i == 1
+        bg = primary if solid else "#FFFFFF"
+        add_rounded_rect(slide, x, y2, card_w, h2, bg, line_hex=None if solid else primary)
+        add_text_box(
+            slide, x + 0.6, y2 + 0.35, card_w - 1.2, 0.7,
+            str(label).upper(),
+            size_pt=10, bold=True,
+            color_hex="#BFDBFE" if solid else muted, align="left", vcenter=True,
+        )
+        add_text_box(
+            slide, x + 0.6, y2 + 1.0, card_w - 1.2, 1.0,
+            str(headline)[:24],
+            size_pt=18, bold=True,
+            color_hex="#FFFFFF" if solid else ink, align="left", vcenter=True,
+        )
+        add_text_box(
+            slide, x + 0.6, y2 + 2.1, card_w - 1.2, h2 - 2.5,
+            "\n".join(str(ln)[:42] for ln in (lines or [])[:3]),
+            size_pt=11,
+            color_hex="#E2E8F0" if solid else ink, align="left", vcenter=False,
         )
 
 

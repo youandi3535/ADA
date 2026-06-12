@@ -151,7 +151,7 @@ footer.report-footer {{ border-top: 1px solid #CBD5E1; margin-top: 32px; padding
 </div>
 
 <footer class="report-footer">
-  <span>ADA v2 · {ctx.meta.job_id}</span>
+  <span>ADA · {ctx.meta.job_id}</span>
   <span class="classification">{treatment.get("footer_text", "")}</span>
 </footer>
 

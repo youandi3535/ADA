@@ -120,9 +120,40 @@ def t_cube_3d(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     I.draw_cube_3d(slide, items, primary, accent, ink, muted, light_bg)
 
 
+def _clip_sentence(s: str, limit: int = 80) -> str:
+    """문장·구 경계에서 절단 — '데이터 ar' 식 단어 중간 절단 방지 (jh 2026-06-12)."""
+    s = str(s or "").strip()
+    if len(s) <= limit:
+        return s
+    cut = s[:limit]
+    for sep in (". ", " — ", " · ", ", ", " "):
+        idx = cut.rfind(sep)
+        if idx >= int(limit * 0.5):
+            return cut[:idx].rstrip(" .,·—") + "…"
+    return cut.rstrip() + "…"
+
+
 def t_chevron_5(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     cands = ctx.model_selection.candidates or []
-    items = [{"title": (c.name or "")[:20], "caption": (c.why_tried or "")[:80]} for c in cands[:5]]
+    caps = [str(getattr(c, "why_tried", "") or "") for c in cands[:5]]
+    # jh 2026-06-12 — 후보 전원이 동일한 전역 선정 사유를 공유하면 (운영 실측)
+    # 같은 문장 N회 반복 대신 후보 고유 정보 (family·score) 로 캡션 구성.
+    if cands and len(set(caps)) <= 1:
+        items = []
+        for c in cands[:5]:
+            bits = []
+            fam = str(getattr(c, "family", "") or "")
+            sc = getattr(c, "score", None)
+            if fam:
+                bits.append(fam)
+            if isinstance(sc, (int, float)):
+                bits.append(f"score {sc:.3f}")
+            items.append({"title": (c.name or "")[:20], "caption": " · ".join(bits) or "후보 모델"})
+    else:
+        items = [
+            {"title": (c.name or "")[:20], "caption": _clip_sentence(cap, 80)}
+            for c, cap in zip(cands[:5], caps)
+        ]
     if not items:
         items = _items_from_body(sl, 5)
     I.draw_chevron_strategies(slide, items, primary, accent, ink, muted, light_bg)
@@ -215,13 +246,12 @@ def t_mini_stats(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 
 
 def t_swot(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    # jh 2026-06-12 — [:60] 절단 제거: 카피라이터 페어 bullet 이 draw 의
+    # 2층(헤드라인 46 + 세부 70) 분할에 닿기 전에 잘려 "다중 지표 임" 류
+    # 토막 문장이 나오던 결함. 길이 제어는 draw_swot_matrix 가 담당.
     items = []
     for line in sl.body_outline[:4]:
-        if ":" in line:
-            k, v = line.split(":", 1)
-            items.append({"points": [v.strip()[:60]]})
-        else:
-            items.append({"points": [line[:60]]})
+        items.append({"points": [str(line).strip()[:130]]})
     while len(items) < 4:
         items.append({"points": ["분석 추가 필요"]})
     I.draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg)
@@ -511,24 +541,45 @@ def t_five_why(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 
 
 def t_hyp_evidence_insight(slide, sl, ctx, primary, accent, ink, muted, light_bg):
-    pm = ctx.evaluation.primary_metric or {}
-    items = [
-        {
-            "hypothesis": "고객 인구통계 변수가 결과에 영향",
-            "evidence": f"{pm.get('name', '지표')} {pm.get('value', '-')} 분포·SHAP top 3 확인",
-            "insight": "연령·지역 세그먼트별 차별화 전략 필요",
-        },
-        {
-            "hypothesis": "최근 행동 패턴이 예측력 향상",
-            "evidence": "Last 30-day 활동 변수 상위 importance",
-            "insight": "실시간 행동 데이터 파이프라인 구축 권장",
-        },
-        {
-            "hypothesis": "단순 모델로도 충분한 성능",
-            "evidence": f"{(ctx.model_selection.chosen or {}).get('name', 'Model')} baseline 차이 5%p",
-            "insight": "운영 비용 대비 효율적 모델 선정",
-        },
-    ]
+    """jh 2026-06-12 — 하드코딩 보일러플레이트("Last 30-day 활동 변수" 등 데이터와
+    무관한 문구가 S4 에 그대로 출력) 제거. 카피라이터 재료(body_outline) 우선,
+    없으면 실데이터(SHAP·primary_metric) 기반 폴백."""
+    import re
+
+    items = []
+    for line in (sl.body_outline or [])[:3]:
+        # "가설 · 증거 · 인사이트" 또는 "가설 — 증거 — 인사이트" 3분할
+        parts = [p.strip() for p in re.split(r"\s+—\s+", str(line), maxsplit=2)]
+        if len(parts) < 3:
+            parts = [p.strip() for p in str(line).split("·", 2)]
+        if len(parts) == 3 and all(parts):
+            items.append({"hypothesis": parts[0], "evidence": parts[1], "insight": parts[2]})
+
+    if not items:
+        pm = ctx.evaluation.primary_metric or {}
+        gi = ctx.interpretation.global_importance or []
+        chosen_name = (ctx.model_selection.chosen or {}).get("name", "Model")
+        top3 = [g for g in gi[:3]]
+        if top3:
+            for g in top3:
+                items.append({
+                    "hypothesis": f"{g.feature} 가 결정적 신호",
+                    "evidence": f"SHAP importance {float(g.importance):.2f}",
+                    "insight": f"{g.feature} 기준 세그먼트 분해 검토 권장",
+                })
+        else:
+            items = [
+                {
+                    "hypothesis": "상위 피처가 결과를 좌우",
+                    "evidence": f"{pm.get('name', '지표')} {pm.get('value', '-')} · SHAP top 3 확인 필요",
+                    "insight": "피처 중요도 적립 후 세그먼트 전략 수립",
+                },
+                {
+                    "hypothesis": f"{chosen_name} 이 후보 중 최적",
+                    "evidence": f"{pm.get('name', '지표')} {pm.get('value', '-')} 로 후보 중 1위",
+                    "insight": "운영 비용 대비 효율적 모델 선정",
+                },
+            ]
     I.draw_hypothesis_evidence_insight(slide, items, primary, accent, ink, muted, light_bg)
 
 
@@ -665,7 +716,12 @@ def register_phase10() -> None:
     REGISTRY.register(
         "stats_with_delta",
         t_stats_with_delta,
-        fit=combine(has_metrics(2), matches_keywords("증감", "개선", "향상")),
+        # jh 2026-06-12 — has_metrics(2) 단독이 모든 슬라이드에서 60점을 줘
+        # EDA 슬라이드 (S8) 까지 후보에 올라 제목↔본문 불일치 유발 → 성능 슬라이드 한정
+        fit=combine(
+            has_id("i1_kpi", "e4_performance", "model_perf", "reason_perf"),
+            matches_keywords("성능", "baseline", "지표 비교"),
+        ),
         tags=["kpi", "delta"],
     )
     REGISTRY.register(
@@ -782,7 +838,9 @@ def t_solution_overview(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         steps.append({"label": lab, "text": (match or {}).get("text", "")[:70]})
 
     chosen = ctx.model_selection.chosen or {}
-    caption = sl.so_what or f"Solution Pipeline — 입력 → {chosen.get('name', '모델')} → 출력"
+    # jh 2026-06-12 — so_what 은 헤더 부제로 이미 출력됨. caption 재사용 시
+    # 같은 문장이 두 번 찍히던 결함 (S6) → 견본의 고정 파이프라인 캡션 사용.
+    caption = f"Solution Pipeline — 입력 → {chosen.get('name', '모델')} → 출력"
     I.draw_solution_overview(slide, caption[:60], steps, specs, primary, accent, ink, muted, light_bg)
 
 
@@ -796,6 +854,52 @@ def t_lineage_2col(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     if not cards and sl.so_what:
         cards = [{"label": "핵심", "text": sl.so_what}]
     I.draw_lineage_2col(slide, bars, cards, primary, accent, ink, muted, light_bg)
+
+
+def t_exec_summary_v32(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """목표치 덱 S3 — Executive Summary (3 FINDING + METHOD/PERF/LIMITATION).
+
+    재료: sl.visual_spec.spec (skeleton _build_exec_summary_ml 이 적립).
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    findings = spec.get("findings") or []
+
+    pm = ctx.evaluation.primary_metric or {}
+    pm_v = pm.get("value")
+    if isinstance(pm_v, float) and pm_v < 1:
+        perf_head = f"{pm_v:.3f}"
+    else:
+        perf_head = str(pm_v if pm_v is not None else "-")
+
+    method_items = list(spec.get("method_items") or [])
+    perf_items = list(spec.get("perf_items") or [])
+    limitation_items = list(spec.get("limitation_items") or [])
+
+    def _lines(pairs):
+        out = []
+        for p in pairs[:3]:
+            try:
+                k, v = p
+                out.append(str(v) if str(v) else str(k))
+            except Exception:
+                out.append(str(p))
+        return out
+
+    method_head = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+    limit_head = "한계"
+    if limitation_items:
+        try:
+            limit_head = str(limitation_items[0][0])
+        except Exception:
+            limit_head = str(limitation_items[0])
+
+    boxes = [
+        ("METHOD", method_head, _lines(method_items)),
+        ("PERFORMANCE", perf_head, _lines(perf_items)),
+        ("LIMITATION", limit_head, _lines(limitation_items)),
+    ]
+    I.draw_exec_summary_v32(slide, findings, boxes, primary, accent, ink, muted, light_bg)
 
 
 def t_icon_columns(slide, sl, ctx, primary, accent, ink, muted, light_bg):
@@ -866,4 +970,23 @@ def register_phase12() -> None:
         ),
         min_score=60.0,
         tags=["insight", "summary", "columns"],
+    )
+
+    # jh 2026-06-12 — 목표치 덱 S3 이식: Executive Summary 전용 레이아웃.
+    # skeleton 이 exec_summary_v32 visual_spec (findings/method/perf/limitation)
+    # 을 만들고 있었으나 carrier 템플릿이 없어 big_stats 로 폴백되던 결함.
+    def fit_exec_summary(sl, c):
+        vs = getattr(sl, "visual_spec", None)
+        if getattr(vs, "type", "") == "exec_summary_v32":
+            return 98.0
+        if getattr(sl, "id", "") == "exec_summary":
+            return 90.0
+        return 0.0
+
+    REGISTRY.register(
+        "exec_summary_v32",
+        t_exec_summary_v32,
+        fit=fit_exec_summary,
+        min_score=85.0,
+        tags=["summary", "executive"],
     )
