@@ -150,11 +150,17 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
         "risk_mitigation": "Risk & Drift — SWOT",
         "roadmap": "실행 로드맵 — 후속 작업",
     }
-    if agenda_sl is not None:
+    def _rebuild_agenda() -> None:
+        """목차 항목 재구성 — 카피라이터 적용 *후* 호출해야 본문 제목과 일치.
+
+        jh 2026-06-12 — 초안 제목으로 목차를 굳혀 본문(카피라이터 제목)과
+        불일치하던 결함 수정 (스토리 라벨 우선, EDA 는 최종 제목).
+        """
+        if agenda_sl is None:
+            return
         body_titles = []
         for i, sl in enumerate(slides_flat):
             if sl is agenda_sl:
-                # body items start at i+1 and stop before the last (closing)
                 for j, body_sl in enumerate(slides_flat[i + 1 : -1], 1):
                     title = (
                         _AGENDA_STORY_LABELS.get(body_sl.id)
@@ -166,6 +172,8 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
                 break
         if body_titles:
             agenda_sl.body_outline = body_titles
+
+    _rebuild_agenda()
 
     # Section ID list for chapter numbering on dividers
     section_idx = {}
@@ -195,6 +203,9 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
         logging.getLogger("pptx_designer").warning(
             "prefill_copy_failed_keep_draft: %s", _e, exc_info=True
         )
+
+    # jh 2026-06-12 — 카피라이터가 제목을 다듬은 뒤 목차를 최종 제목으로 재구성
+    _rebuild_agenda()
 
     # === LLM 디자인 일괄 선택 (Step 6-3) ===
     # 각 슬라이드의 후보 N개를 LLM 한테 보여주고 1개 선택 받음.
@@ -287,7 +298,8 @@ def _qa_shrink_overflow(prs) -> int:
             size = max(r.font.size.pt for r in runs)
             shrunk = False
             for _ in range(6):
-                if size <= 9:
+                # jh 2026-06-12 — 발표용 하한 11pt (9pt 까지 내려가 "글씨 작다" 지적)
+                if size <= 11:
                     break
                 if _estimate_text_height_cm(text, size, box_w) <= box_h * 1.15:
                     break
@@ -1202,13 +1214,19 @@ def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
     from pptx.dml.color import RGBColor
     from pptx.util import Cm, Pt
 
+    from pptx.enum.text import MSO_ANCHOR
+
     tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
     tf = tb.text_frame
     tf.word_wrap = True
+    # jh 2026-06-12 — 세로 중앙 정렬 (글이 적어도 허전하지 않게, 사용자 지시)
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     _ink = RGBColor.from_string(str(ink).lstrip("#"))
     _pri = RGBColor.from_string(str(primary).lstrip("#"))
     first = True
-    for b in list(bullets or []):
+    # jh 2026-06-12 — 빈 줄 단락 대신 space_after 로 간격 (deck_qa 가 줄 수를
+    # 과대평가해 본문을 9pt 까지 축소하던 결함), bullet 상한 5→4.
+    for b in list(bullets or [])[:4]:
         s = str(b).strip().lstrip("-").strip()
         fact, _, imp = s.partition(" — ")
         p = tf.paragraphs[0] if first else tf.add_paragraph()
@@ -1217,6 +1235,7 @@ def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
         r.text = f"-  {fact.strip()}"
         r.font.size = Pt(13)
         r.font.color.rgb = _ink
+        last_p = p
         if imp.strip():
             p2 = tf.add_paragraph()
             r2 = p2.add_run()
@@ -1224,10 +1243,8 @@ def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
             r2.font.size = Pt(12)
             r2.font.bold = True
             r2.font.color.rgb = _pri
-        gap = tf.add_paragraph()
-        rg = gap.add_run()
-        rg.text = " "
-        rg.font.size = Pt(7)
+            last_p = p2
+        last_p.space_after = Pt(10)
 
 
 def _draw_quote(slide, sl, primary, accent, ink, muted):
@@ -1753,6 +1770,10 @@ def _prepick_designs(slides_flat: list, ctx) -> None:
     for sl in slides_flat:
         # cover/agenda/section_divider 는 hardcoded path 라 LLM 스킵
         if getattr(sl, "layout", "") in ("cover", "agenda", "section_divider"):
+            continue
+        # jh 2026-06-12 — skeleton 이 고정한 템플릿은 LLM 이 덮어쓰지 않음
+        # (S6 lineage_2col 고정이 prepick 에서 소실되던 결함)
+        if getattr(sl, "preferred_template", None):
             continue
         candidates = REGISTRY.candidates_for(sl, ctx, top_n=7)
         if not candidates:

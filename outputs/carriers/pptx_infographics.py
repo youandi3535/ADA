@@ -2052,8 +2052,11 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
         # Bullets — jh 2026-06-12 견본 구조: 첫 항목은 16B 헤드라인, 나머지는 11pt 세부
         import re as _re
 
-        # 라벨 접두 제거 — "S ·", "강점(S) ·", "W · 약점(W) ·" 류 중복 방지 (2회 적용)
-        _lbl_pat = r"^[-\s]*(?:[SWOT]|강점|약점|기회|위협)\s*(?:\([SWOT]\))?\s*[·:]\s*"
+        # 라벨 접두 제거 — "S ·", "S(강점) ·", "W · 약점(W) ·" 류 중복 방지 (2회 적용)
+        _lbl_pat = (
+            r"^[-\s]*(?:[SWOT]|강점|약점|기회|위협)\s*"
+            r"(?:\((?:[SWOT]|강점|약점|기회|위협)\))?\s*[·:]\s*"
+        )
         pts = [
             _re.sub(_lbl_pat, "", _re.sub(_lbl_pat, "", str(p))).strip()
             for p in (items[i].get("points", []) if i < len(items) else [])
@@ -2259,8 +2262,8 @@ def draw_price_compare_3(slide, items, primary, accent, ink, muted, light_bg):
                 y_card + 5.8 + j * 1.0,
                 card_w - 1.0,
                 0.9,
-                f"- {ln[:40]}",
-                size_pt=10,
+                f"- {ln[:44]}",
+                size_pt=12,
                 color_hex="#E2E8F0" if is_highlight else ink,
                 align="left",
                 vcenter=True,
@@ -3767,10 +3770,11 @@ def draw_icon_columns(slide, items, primary, accent, ink, muted, light_bg):
         add_rounded_rect(slide, x, 5.0, col_w, 12.1, light_bg, line_hex=primary)
         add_text_box(slide, x, 5.5, col_w, 0.9, str(it.get("tag", ""))[:14].upper(), size_pt=11,
                      bold=True, color_hex=accent, align="center", vcenter=True)
-        add_text_box(slide, x, 6.5, col_w, 1.0, str(it.get("label", ""))[:16], size_pt=14,
+        add_text_box(slide, x, 6.5, col_w, 1.0, str(it.get("label", ""))[:16], size_pt=16,
                      bold=True, color_hex=ink, align="center", vcenter=True)
         glyph = GLYPHS.get(str(it.get("glyph", "")), GLYPHS.get("data", "")) or ""
-        add_text_box(slide, x, 8.0, col_w, 1.6, glyph, size_pt=26, color_hex=primary,
+        add_text_box(slide, x, 8.0, col_w, 1.6, glyph, size_pt=28, color_hex=primary,
                      align="center", vcenter=True)
-        add_text_box(slide, x + 0.4, 10.3, col_w - 0.8, 6.4, str(it.get("text", ""))[:200],
-                     size_pt=10, color_hex=ink, align="left", vcenter=False)
+        # jh 2026-06-12 — 본문 10→13pt + 세로 중앙 (인사이트 종합 글씨 작고 짧다 지적)
+        add_text_box(slide, x + 0.4, 10.0, col_w - 0.8, 6.7, str(it.get("text", ""))[:220],
+                     size_pt=13, color_hex=ink, align="left", vcenter=True)

@@ -873,11 +873,16 @@ def t_exec_summary_v32(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     limitation_items = list(spec.get("limitation_items") or [])
 
     def _lines(pairs):
+        # jh 2026-06-12 — 소제목 누락("53개 추가"만 남던 결함) → "소제목 · 내용" 형식
         out = []
         for p in pairs[:3]:
             try:
                 k, v = p
-                out.append(str(v) if str(v) else str(k))
+                k, v = str(k).strip(), str(v).strip()
+                if k and v and not v.startswith(k):
+                    out.append(f"{k} · {v}")
+                else:
+                    out.append(v or k)
             except Exception:
                 out.append(str(p))
         return out
@@ -950,8 +955,11 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     whys = list(spec.get("whys") or [])
 
     def _txt(v) -> str:
-        """문자열만 수용 — bool/숫자가 캡션에 'False' 로 찍히던 결함 가드."""
-        return v.strip() if isinstance(v, str) else ""
+        """문자열만 수용 — bool/숫자 및 문자열화된 'False' 류 캡션 차단."""
+        if not isinstance(v, str):
+            return ""
+        v = v.strip()
+        return "" if v.lower() in ("false", "true", "none", "nan", "null", "-") else v
 
     items = []
     for i, s in enumerate(steps[:5]):
@@ -977,6 +985,37 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     I.draw_5step_alt_callouts(slide, items, primary, accent, ink, muted, light_bg)
 
 
+def t_case_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S14 개별 예측 사례 3건 — 3열 카드 시각화 (jh 2026-06-12).
+
+    텍스트 페어만 있던 S14 에 시각 구조 부여: 사례 유형(TN/FN/FP) 빅라벨 +
+    실제→예측 + 사례별 SHAP 기여 상위 3. 가운데(FN) 카드 강조.
+    """
+    import re as _re
+
+    locals_ = [
+        ex for ex in (ctx.interpretation.local_examples or []) if isinstance(ex, dict)
+    ][:3]
+    items = []
+    for i, ex in enumerate(locals_):
+        kind = str(ex.get("case") or ex.get("kind") or f"사례 {i + 1}")
+        m = _re.search(r"(TN|FN|FP|TP)", kind)
+        big = m.group(1) if m else f"#{i + 1}"
+        lines = [f"실제 {ex.get('actual', '?')} → 예측 {ex.get('predicted', '?')}"]
+        for tf_ in (ex.get("top_features") or [])[:3]:
+            if isinstance(tf_, dict):
+                try:
+                    lines.append(f"{tf_.get('feature', '?')} {float(tf_.get('shap', 0)):+.2f}")
+                except Exception:
+                    continue
+        items.append({"tier": f"사례 {i + 1} · {kind}", "value": big, "lines": lines})
+    if not items:
+        # 재료 없으면 body 텍스트 폴백 (정직 표기 유지)
+        for i, b in enumerate((sl.body_outline or [])[:3]):
+            items.append({"tier": f"사례 {i + 1}", "value": f"#{i + 1}", "lines": [str(b)[:80]]})
+    I.draw_price_compare_3(slide, items, primary, accent, ink, muted, light_bg)
+
+
 def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     """S17 도입 정책 — 정책 항목 세로 카드 (운영임계/모니터링/Owner...).
 
@@ -986,11 +1025,51 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     vs = getattr(sl, "visual_spec", None)
     spec = dict(getattr(vs, "spec", None) or {})
     pairs = list(spec.get("policy_items") or [])
+
+    # jh 2026-06-12 — "S17 인사이트 적다" 지적: 빈약한 캡션을 ctx 실데이터로 보강
+    pm = ctx.evaluation.primary_metric or {}
+    _pm_v = pm.get("value")
+    _opt_thr = None
+    try:
+        _m = (ctx.evaluation.metrics or {}).get("val_optimal_threshold") or {}
+        _opt_thr = _m.get("value")
+    except Exception:
+        pass
+    _worst_seg = ""
+    try:
+        _segs = sorted(
+            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+            key=lambda s: float(s["value"]),
+        )
+        if _segs:
+            _worst_seg = f"{_segs[0].get('segment', '')} (acc {float(_segs[0]['value']):.2f})"
+    except Exception:
+        pass
+    _fn = 0
+    try:
+        _fn = int((ctx.evaluation.confusion_matrix or {}).get("fn") or 0)
+    except Exception:
+        pass
+
+    def _enrich(title: str, cap: str) -> str:
+        if len(cap) >= 18:
+            return cap
+        if "임계" in title and isinstance(_pm_v, (int, float)):
+            extra = f" — {pm.get('name', '지표')} {_pm_v:.3f} 기준선, 하회 시 재학습 트리거"
+            if isinstance(_opt_thr, (int, float)):
+                extra += f" · 분류 임계값 {_opt_thr:.3f} 적용"
+            return (cap or "운영 기준") + extra
+        if "모니터링" in title and _worst_seg:
+            return (cap or "상시 감시") + f" — 취약 구간 {_worst_seg} 집중 추적"
+        if "KPI" in title.upper() and _fn:
+            return (cap or "") + f" — 미탐(FN) {_fn}건 축소가 1차 목표"
+        return cap
+
     items = []
     for p in pairs[:5]:
         try:
             k, v = p
-            items.append({"title": str(k)[:30], "caption": str(v)[:120]})
+            items.append({"title": str(k)[:30], "caption": _enrich(str(k), str(v))[:120]})
         except Exception:
             items.append({"title": str(p)[:30], "caption": ""})
     biz = spec.get("biz_kpi")
@@ -1178,6 +1257,13 @@ def register_phase12() -> None:
         fit=has_id("i3_roi"),
         min_score=80.0,
         tags=["policy", "action"],
+    )
+    REGISTRY.register(
+        "case_cards_3",
+        t_case_cards,
+        fit=has_id("error_analysis"),
+        min_score=80.0,
+        tags=["cases", "interpretation"],
     )
     REGISTRY.register(
         "roadmap_upgrades",

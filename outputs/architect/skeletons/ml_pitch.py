@@ -833,10 +833,24 @@ def _build_kpi_with_baseline(ctx: ReportContext) -> SlideSpec:
         f"({tone.accent})"
     )
 
-    return SlideSpec(
+    # jh 2026-06-12 — "점수 4개 다 69%" percentage_grid 결함:
+    # v28_model_perf 는 렌더러 미지원이라 디자이너가 정수 반올림 그리드를 고름.
+    # baseline 막대 + 다양한 메트릭(roc_auc·mcc 포함)을 hbar 차트로 직접 렌더 +
+    # 페어 인사이트 패널 고정 (chart_key_insights).
+    chart_items: list[tuple[str, float]] = []
+    for bar in bars:
+        v = bar.get("value")
+        if isinstance(v, (int, float)):
+            chart_items.append((str(bar.get("label", "?")), float(v)))
+    for name, m in list((ctx.evaluation.metrics or {}).items()):
+        val = m.get("value") if isinstance(m, dict) else None
+        if isinstance(val, (int, float)) and name != pm_name and len(chart_items) < 6:
+            chart_items.append((name, float(val)))
+
+    sp = SlideSpec(
         id="i1_kpi",
         section_id="results",
-        layout="model_perf_baseline_grouped",
+        layout="chart_callout",
         role="evidence",
         so_what=so_what,
         title_ko="모델 성능 · Baseline 비교",
@@ -844,9 +858,10 @@ def _build_kpi_with_baseline(ctx: ReportContext) -> SlideSpec:
         required_refs=primary_metric_ref(ctx),
         parent_message_id="results_root",
         visual_spec=VisualSpec(
-            type="v28_model_perf",
-            title=f"Baseline 비교 — {pm_name}",
+            type="chart_hbar",
+            title=f"성능 비교 — {pm_name} 외 주요 지표",
             spec={
+                "items": chart_items,
                 "metric": pm_name,
                 "metric_value": pm.get("value"),
                 "bars": bars,
@@ -861,6 +876,8 @@ def _build_kpi_with_baseline(ctx: ReportContext) -> SlideSpec:
             "metric_category_compatible=False 면 typed schema 경고 — fallback 변형 검토."
         ),
     )
+    sp.preferred_template = "chart_key_insights"
+    return sp
 
 
 def _build_eda_findings(ctx: ReportContext) -> SlideSpec:
@@ -1078,11 +1095,24 @@ def _build_insight_synthesis(ctx: ReportContext) -> SlideSpec:
     except Exception:
         pass
 
+    # jh 2026-06-12 — "글이 짧다" 지적: 각 열 2문장(사실 + 의미) 구조로 확장
     body = [
-        f"데이터 · {rows:,}건 × {cols}변수의 {use_case} — 패턴 학습에 충분한 표본",
-        f"패턴 · {top_feats} 가 결과를 좌우 — {chosen} 이 {pm_str} 로 포착{seg_line}",
-        "인사이트 · 결과를 결정한 구조적 요인이 데이터로 정량 입증됨 — 단순 룰로는 못 잡는 비선형·상호작용 포함",
-        "접목 · 동일 구조의 분류 과제에 즉시 이식 가능 — 운영 적용 + 취약 구간 보강 + 유사 데이터 확장 검증 순",
+        (
+            f"데이터 · {rows:,}건 × {cols}변수의 {use_case}. "
+            "타겟 레이블이 완전해 패턴 학습에 충분하며 전 과정이 표준 스택으로 재현 가능하다"
+        ),
+        (
+            f"패턴 · {top_feats} 가 결과를 좌우한다. "
+            f"{chosen} 이 {pm_str} 로 이 구조를 포착했다{seg_line or ' — 상위 변수 의존이 뚜렷하다'}"
+        ),
+        (
+            "인사이트 · 결과를 결정한 구조적 요인이 데이터로 정량 입증됐다. "
+            "단순 룰로는 못 잡는 비선형·상호작용까지 모델이 흡수해 해석 가능한 형태로 분해된다"
+        ),
+        (
+            "접목 · 동일 구조의 분류 과제(고객 이탈·승인 심사 등)에 즉시 이식 가능하다. "
+            "운영 적용 → 취약 구간 보강 → 유사 데이터 확장 검증 순으로 적용 범위를 넓힌다"
+        ),
     ]
 
     sp = SlideSpec(

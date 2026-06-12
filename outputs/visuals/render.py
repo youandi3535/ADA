@@ -129,7 +129,8 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
         if vtype == "risk_matrix":
             return _render_risk_matrix(vs, ctx, primary, plt)
         # jh 2026-06-12 — CM 수치 기반 히트맵 (MinIO 차트 부재 시에도 S15 시각화 보장)
-        if vtype == "diagram_confusion_matrix":
+        # belt: 타입이 달라도 spec 에 confusion_matrix 수치가 있으면 무조건 그림
+        if vtype == "diagram_confusion_matrix" or (vs.spec or {}).get("confusion_matrix"):
             _p = _render_cm_heatmap(vs, primary, plt)
             if _p:
                 return _p
