@@ -303,12 +303,18 @@ def t_team_4(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 
 
 def t_split_compare(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    # jh 2026-06-12 — "ADA 자동화" 영업 디폴트 제거 (S8 에 홍보 문구가 끼던 결함).
+    # 분석 보고서 톤의 중립 라벨 + 재료 없으면 정직 표기.
     half = len(sl.body_outline) // 2 or 2
-    left = {"label": "AS-IS", "headline": "기존 방식", "points": sl.body_outline[:half] or ["수작업 분석"]}
+    left = {
+        "label": "BEFORE",
+        "headline": "개선 전",
+        "points": sl.body_outline[:half] or ["비교 항목 미적립"],
+    }
     right = {
-        "label": "TO-BE",
-        "headline": "ADA 자동화",
-        "points": sl.body_outline[half : half * 2] or ["AI 자동화 + 재현 가능"],
+        "label": "AFTER",
+        "headline": "개선 후",
+        "points": sl.body_outline[half : half * 2] or ["비교 항목 미적립"],
     }
     I.draw_split_compare(slide, left, right, primary, accent, ink, muted, light_bg)
 
