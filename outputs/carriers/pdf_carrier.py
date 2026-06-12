@@ -283,7 +283,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     cover_brand_sub = PS("CoverBrandSub", fontName="Helvetica", fontSize=9, leading=12, textColor=_BLUE_PALE)
     cover_class = PS("CoverCls", fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=colors.white, alignment=TA_RIGHT)
     cover_label = PS("CoverLbl", fontName="Helvetica-Bold", fontSize=10, leading=14, textColor=_GRAY)
-    cover_title = PS("CoverTitle", fontName=_KG, fontSize=28, leading=36, textColor=_NAVY, spaceBefore=8, spaceAfter=6)
+    cover_title = PS("CoverTitle", fontName=_KG, fontSize=26, leading=34, textColor=_NAVY, spaceBefore=8, spaceAfter=6)  # [B28] 표지 26pt (2026-06-12 룰 기준 정정, 28→26)
     cover_subtitle = PS("CoverSub", fontName=_KS, fontSize=14, leading=20, textColor=_GRAY)
     cover_meta_key = PS("CoverK", fontName=_KG, fontSize=10, leading=14, textColor=_GRAY)
     cover_meta_val = PS("CoverV", fontName=_KS, fontSize=11, leading=15, textColor=black)
@@ -404,6 +404,16 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
 
         # (5) 슬로건 — 사이트 메인 카피, 평문 (좌측 액센트 라인 없음 — 사용자 확정)
         flow.append(Paragraph("다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로", cover_slogan))
+
+        # [C3 독자페르소나룰] 독자·용도 한 줄 — 표지 명시 (§1 분석 개요와 동일 문장)
+        try:
+            from outputs.architect.skeletons.report_skeleton import _reader_persona as _rp
+            _persona_txt = _rp(ctx)
+        except Exception:
+            _persona_txt = ""
+        if _persona_txt:
+            flow.append(Spacer(1, 0.35 * cm))
+            flow.append(Paragraph(_persona_txt, cover_footer))
 
         # (6) 푸터 (페이지 하단 푸시) — 위에 옅은 구분선
         flow.append(Spacer(1, 3.0 * cm))
@@ -596,20 +606,21 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
 
                             with PI.open(png) as im:
                                 ar = im.width / im.height
-                            # [B6 EDA페이지룰] 페이지당 2개 강제 — width 14cm / height 상한 6.0cm
-                            w_cm = 14.0
+                            # [B6 EDA페이지룰] 페이지당 2개 강제 — width 13cm / height 상한 4.8cm
+                            # (섹션 헤딩 + 차트 2개가 첫 페이지에도 확실히 같이 들어가도록 높이 축소)
+                            w_cm = 13.0
                             h_cm = w_cm / ar
-                            if h_cm > 6.0:
-                                h_cm = 6.0
+                            if h_cm > 4.8:
+                                h_cm = 4.8
                                 w_cm = h_cm * ar
-                            sl_flow.append(Spacer(1, 0.3 * cm))
+                            sl_flow.append(Spacer(1, 0.2 * cm))
                             sl_flow.append(Image(png, width=w_cm * cm, height=h_cm * cm))
                             if vs.caption:
                                 sl_flow.append(Paragraph(vs.caption, cap))
                             has_img = True
                     except Exception:
                         pass
-                sl_flow.append(Spacer(1, 0.4 * cm))
+                sl_flow.append(Spacer(1, 0.25 * cm))
                 # [B6 EDA페이지룰] 차트 슬라이드 페이지당 2개 강제
                 # 홀수 번째(1·3·5번): 페이지 상단에서 시작하도록 보장. 짝수 번째(2·4번): 같은 페이지에 이어 붙이고 끝낸 후 PageBreak.
                 if has_img:
@@ -625,7 +636,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 else:
                     flow.extend(sl_flow)
                     _just_broke = False
-            if not _just_broke:  # 직전에 분할했으면 빈 페이지 방지
+            # [부록압축 2026-06-12] 부록 섹션끼리 PageBreak 생략 → 9.1~9.4 밀집
+            if not _just_broke and sec.kind != "appendix":
                 flow.append(PageBreak())
         return flow
 

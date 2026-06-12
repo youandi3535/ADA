@@ -88,4 +88,5 @@ spacy==3.7.4
 python-pptx==0.6.23          # OUT-01  PPT 발표자료     (outputs/ppt.py)
 reportlab==4.2.0             # OUT-02  PDF 리포트       (outputs/pdf.py)
 cairosvg==2.7.1              # HJ 2026-06-08 — Lucide·unDraw SVG → PNG (tools/visual/svg_tool.py)
+pymupdf==1.27.2.3            # NY 2026-06-12 — outputs/dev_golden.py 비주얼 골든(표지·목차 픽셀 회귀)용 PDF 래스터라이저
 # Stock image API 는 stdlib (urllib) 만 사용 — 추가 의존성 0
