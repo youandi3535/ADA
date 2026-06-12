@@ -73,8 +73,10 @@ _FLOW_HTML = """
   html,body{margin:0;height:100%;}
   body{min-height:100%;background:linear-gradient(160deg,#2b4a6b 0%,#243f5c 58%,#1c3450 100%);
     font-family:'Pretendard','Inter',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--ink);}
+  /* HJ 2026-06-12 — 1~7단계 flow 화면 크기 = 기존 0.75 의 90% → 0.675.
+     (첫 시작화면=랜딩 은 Streamlit 위젯이라 .shell 을 안 써서 그대로 유지됨.) */
   .shell{width:100%;max-width:1440px;margin:0 auto;padding:34px 40px 48px;min-height:100%;
-    display:flex;flex-direction:column;justify-content:center;zoom:1.25;}
+    display:flex;flex-direction:column;justify-content:center;zoom:0.675;}
   .brand{display:flex;align-items:center;gap:18px;color:#bcd2ec;margin-bottom:26px;}
   .brand .globe{font-size:38px;}
   .brand .nm{font-size:21px;letter-spacing:.26em;font-weight:700;}
@@ -212,13 +214,24 @@ _FLOW_HTML = """
     background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
     padding:7px 18px;margin-left:auto;margin-right:12px;white-space:nowrap;}
   .btn-new:hover{background:rgba(255,255,255,.20);}
-  .btn-home{font-family:inherit;font-size:15px;font-weight:600;border-radius:999px;cursor:pointer;
+  /* HJ 2026-06-12 — 옆의 status(대기) 배지와 글자 크기(21px)·박스 높이(padding 9px) 통일. */
+  .btn-home{font-family:inherit;font-size:21px;font-weight:600;border-radius:999px;cursor:pointer;
     background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
-    padding:7px 18px;margin-left:14px;white-space:nowrap;}
+    padding:9px 20px;margin-left:14px;white-space:nowrap;}
   .btn-home:hover{background:rgba(255,255,255,.20);}
   /* HJ 2026-06-10 G1 분석 팝업 (revision 2) — G1 진입부터 G2 proposals 도착 전까지 표시. 모달 2배+. */
   .modal-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(20,30,50,.42);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
-  .modal-card{position:relative;background:#fff;border-radius:32px;padding:56px 76px 48px;width:min(1300px,95%);max-height:88vh;overflow-y:auto;box-shadow:0 40px 100px rgba(0,0,0,.55);animation:modalIn .42s cubic-bezier(.2,.85,.25,1.2);}
+  /* HJ 2026-06-12 — 모달 팝업 60% 축소. zoom:.6 (백드롭 .modal-overlay 는 미적용 → 풀스크린 유지). */
+  /* HJ 2026-06-12 — 외부 스크롤바 제거(overflow:hidden) + flex 컬럼. 제목/현재작업/진행바는 고정,
+     실시간 분석 영역(#modal-scroll)만 내부 스크롤. 최대 높이 = 화면의 90% (zoom .6 보정: 150vh×.6≈90vh). */
+  .modal-card{position:relative;zoom:.6;display:flex;flex-direction:column;background:#fff;border-radius:32px;padding:56px 76px 48px;width:min(1300px,95%);max-height:150vh;overflow:hidden;box-shadow:0 40px 100px rgba(0,0,0,.55);animation:modalIn .42s cubic-bezier(.2,.85,.25,1.2);}
+  .modal-card>#modal-body,.modal-card>#modal-pending-wrap,.modal-card>#modal-pb{flex:0 0 auto;}
+  /* 실시간 분석 내용 박스 — 내용이 길어지면 이 영역만 세로 스크롤. 타자기 진행 시 자동 바닥 추적. */
+  #modal-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;}
+  #modal-scroll::-webkit-scrollbar{width:10px;}
+  #modal-scroll::-webkit-scrollbar-thumb{background:#c7d2e0;border-radius:6px;}
+  #modal-scroll::-webkit-scrollbar-thumb:hover{background:#aebccf;}
+  #modal-scroll::-webkit-scrollbar-track{background:transparent;}
   /* HJ 2026-06-10 — 모달 닫기 버튼 (분석은 백그라운드 유지, 팝업만 숨김) */
   .modal-close{position:absolute;top:18px;right:22px;width:44px;height:44px;border-radius:50%;border:none;background:rgba(31,62,92,.08);color:#1f3e5c;font-size:24px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s,transform .15s;z-index:5;}
   .modal-close:hover{background:rgba(31,62,92,.18);transform:scale(1.08);}
@@ -268,14 +281,15 @@ _FLOW_HTML = """
     z-index:9999;background:#dbe7f6;flex-direction:column;align-items:center;justify-content:center;
     overflow-y:auto;padding:40px 20px;font-family:'Pretendard','Inter',-apple-system,sans-serif;">
     <!-- 히어로 카드 (원본 ada_hero.png 대체 — Python fallback 과 동일한 스타일) -->
-    <div style="max-width:960px;width:100%;border-radius:34px;padding:80px 64px;
+    <!-- HJ 2026-06-12 — 랜딩 콘텐츠 60% 축소 (오버레이 백드롭은 풀스크린 유지). -->
+    <div style="zoom:.6;max-width:960px;width:100%;border-radius:34px;padding:80px 64px;
       background:linear-gradient(160deg,#2b4a6b 0%,#3f5d7e 100%);color:#e6eef8;text-align:center;
       box-shadow:0 32px 80px rgba(31,62,92,.34);margin-bottom:44px;">
       <div style="font-size:18px;letter-spacing:.30em;opacity:.85;font-weight:600">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</div>
       <div style="font-size:160px;line-height:1.0;margin:24px 0 4px">🌐</div>
     </div>
     <!-- 텍스트 + 버튼 -->
-    <div style="text-align:center;">
+    <div style="text-align:center;zoom:.6;">
       <div style="font-size:72px;font-weight:800;color:#19395a;margin:0 0 18px">ADA Studio</div>
       <div style="font-size:24px;color:#52647d;margin:0 0 40px">다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로!</div>
       <button onclick="startFromLanding()" style="font-family:inherit;font-size:20px;font-weight:600;
@@ -284,7 +298,7 @@ _FLOW_HTML = """
     </div>
   </div>
   <div class="shell">
-    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()">← 처음으로</button></div>
+    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()">← 처음(시작화면)으로</button></div>
     <div class="steps" id="steps"></div>
     <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
     <div class="card"><div class="content" id="content"></div><div id="pb-area"></div>
@@ -302,13 +316,13 @@ _FLOW_HTML = """
     <div class="modal-card">
       <button class="modal-close" id="modalCloseBtn" title="팝업 닫기 (분석은 계속 진행)" onclick="dismissModal()">✕</button>
       <div class="modal-close-hint">분석은 백그라운드 계속</div>
-      <div id="modal-body"></div><div id="modal-insight"></div><div id="modal-pending-wrap"></div><div id="modal-pb"></div>
+      <div id="modal-body"></div><div id="modal-scroll"><div id="modal-insight"></div></div><div id="modal-pending-wrap"></div><div id="modal-pb"></div>
     </div>
   </div>
   <!-- HJ 2026-06-11 — 모달 ✕ 닫은 후 화면 가운데에 표시되는 '다시 열기' 버튼. 1~6단계 모두 지원.
        render() 가 modalDismissed && _shouldModalBeShown() 시점에만 display:flex 토글.
        2026-06-11 수정 — 우측 하단 floating → 화면 가운데, 크기 2배 (눈에 띄는 큰 박스 버튼). -->
-  <button id="reopenModalBtn" onclick="reopenModal()" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:500;
+  <button id="reopenModalBtn" onclick="reopenModal()" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.6);z-index:500;
     background:#1f3e5c;color:#fff;border:none;border-radius:24px;padding:28px 48px;font-size:34px;font-weight:600;font-family:inherit;
     cursor:pointer;box-shadow:0 20px 48px rgba(31,62,92,.4);align-items:center;justify-content:center;gap:16px;transition:transform .15s,box-shadow .2s">
     🔍 분석 모달 다시 열기
@@ -449,6 +463,7 @@ let topicCustomText='';          // 직접 입력 textarea 값
 let g2DirectionsBusy=false;      // endpoint 호출 중 표시용
 let g2DirectionsStartedAt=null;  // HJ 2026-06-11 — busy 시작 시각(ms). 버튼 라벨에 경과초 표시용.
 let g2DirectionsReady=false;     // endpoint 응답 받았는지 (resume 가드)
+let _g2PrefetchedJob=null;       // HJ 2026-06-12 — 분석 방향 백그라운드 선생성을 job 당 1회만 발사하기 위한 가드.
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
 let gateCache={};  // {G2: gateData, G3: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
@@ -466,6 +481,22 @@ let topicDismissed=false;
 let _topicDismissedCur=-1;
 function dismissTopic(){ topicDismissed=true; _topicDismissedCur=cur; try{render();}catch(e){} }
 function reopenTopicPopup(){ topicDismissed=false; try{render();}catch(e){} }
+// HJ 2026-06-12 — G2 분석 방향 백그라운드 선(先)생성 트리거.
+//   주제 팝업이 뜨는 순간, 5개 주제(추천이 배열 첫번째)를 prefetch 엔드포인트로 1회 발사(fire-and-forget).
+//   백엔드가 추천부터 순차 생성해 Redis 캐시에 저장 → 사용자가 '선택 완료' 누르면 즉시 응답(대기 0).
+//   직접 입력(custom)은 캐시에 없어 기존대로 그 자리에서 생성된다.
+//   job 당 1회만 발사(_g2PrefetchedJob 가드). 새 분석(jobId 변경)이면 자동 재발사.
+function _g2FirePrefetch(d){
+  if(!jobId || _g2PrefetchedJob===jobId) return;
+  var tps=(d&&d.topic_proposals)||[];
+  if(!tps.length) return;
+  var topics=tps.slice(0,5).map(function(t){return (t&&t.title)||'';}).filter(function(s){return !!s;});
+  if(!topics.length) return;
+  _g2PrefetchedJob=jobId;  // 먼저 세팅 → render 반복 중 중복 발사 방지
+  try{
+    api('/pipeline/gate/G2/directions/prefetch/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topics:topics})}).catch(function(){});
+  }catch(e){}
+}
 // HJ 2026-06-11 — 모달 표시 후 콘텐츠 작성 시작까지 최소 대기(ms).
 //   • 모달이 처음 떴을 때 잠시 "분석 중" placeholder 만 보여주고, 5초 후부터 실제 분석 내용을 작성한다.
 //   • 만약 5초 경과 시점에 데이터가 아직 도착 안 했으면 placeholder 유지 → 데이터 도착 즉시(다음 render 주기) 자동 작성.
@@ -519,6 +550,12 @@ function _nextGateArrived(){
   if(!lastSubmittedGate || !g) return false;
   return parseInt(g.slice(1),10) > parseInt(lastSubmittedGate.slice(1),10);
 }
+// HJ 2026-06-12 — 6단계(G6) 완료 race fix.
+//   G6 는 다음 게이트가 없어 isCompleted() 로 종료되는데, 팝업의 실시간 분석 타이핑이 끝나기 전에
+//   완료 신호가 오면 모달이 즉시 닫히고 7단계(완료 페이지)로 점프해버린다.
+//   다른 단계의 "_typingHoldComplete() 전까지 전진 금지" 원칙을 G6 완료에도 동일 적용한다.
+//   이 hold 동안: ① 모달 유지 ② 진행률 95% 고정 ③ 마지막 마일스톤 active(파랑) 유지.
+function _g6TypingHold(){ return cur===5 && isCompleted() && !_typingHoldComplete(); }
 
 // ── F5 새로고침 복원용 스토리지 유틸 ────────────────────────────
 // 1순위: URL 해시(#ada=…) — window.parent.history.replaceState 로 기록.
@@ -556,15 +593,16 @@ function startFromLanding(){
   resetAll();
 }
 function goToStart(){
+  // HJ 2026-06-12 — '처음(시작화면)으로': 모든 단계에서 시작화면(랜딩)으로.
+  //   부모 reload 만으로 충분 — Streamlit 은 페이지 reload 시 새 세션이라 session_state(studio_started) 가
+  //   자동 초기화되고, clearState() 가 URL 을 pathname 으로(flow=1 제거) 바꾸므로 reload 후 랜딩이 뜬다.
+  //   ※ 이전의 ?reset=1 + 서버 reset 처리(st.rerun) 는 reload 직후 'SessionInfo before initialized' 에러를 유발 → 제거.
   try{ if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } }catch(e){}
   try{ clearState(); }catch(e){}
   try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
   try{ window.parent.history.replaceState({}, '', window.parent.location.pathname); }catch(e){}
-  try{
-    window.parent.location.href = window.parent.location.origin + window.parent.location.pathname + '?reset=1';
-  }catch(e){
-    window.location.reload();
-  }
+  try{ window.parent.location.reload(); return; }catch(e){}
+  try{ window.location.reload(); }catch(e){}
 }
 function resetAll(){
   clearState();
@@ -850,6 +888,23 @@ function _twTick(){
       if(rw._twrVis!==false){ rw._twrVis=false; rw.style.opacity='0'; rw.style.visibility='hidden'; }
     }
   }
+  // HJ 2026-06-12 — 타자기가 한 글자라도 전진하면 분석 박스를 바닥으로 추적 → '현재 작성 중인 줄'이 항상 보이게.
+  if(advanced) _modalScrollFollow();
+}
+// HJ 2026-06-12 — 실시간 분석 박스(#modal-scroll)가 '지금 써지고 있는 줄'을 따라가게 함.
+//   ⚠️ 바닥(scrollHeight)으로 스크롤하면 안 됨: G1 컬럼 카드는 visibility:hidden 으로 '공간만 차지'하는
+//   미작성 카드가 하단에 깔려 있어, 바닥으로 가면 빈 칸만 보이고 정작 현재 작성 줄이 화면 밖으로 밀린다.
+//   → 현재 타이핑 위치(캐럿 .tw-caret)가 들어있는 카드/행을 #modal-scroll 안에서 보이도록 스크롤한다.
+//   block:'nearest' → 이미 보이면 움직이지 않음(불필요한 점프·떨림 방지), 가려졌을 때만 최소로 따라감.
+function _modalScrollFollow(){
+  var sc=document.getElementById('modal-scroll');
+  if(!sc) return;
+  var caret=sc.querySelector('.tw-caret');
+  if(caret && caret.scrollIntoView){
+    try{ caret.scrollIntoView({block:'nearest', inline:'nearest'}); return; }catch(_e){}
+  }
+  // 캐럿이 없으면(타이핑 막 시작 전 등) 바닥 추적으로 폴백.
+  sc.scrollTop=sc.scrollHeight;
 }
 function _twStart(){ if(_twTimer) return; _twTimer=setInterval(_twTick,_TW_STEP_MS); }
 // HJ 2026-06-10 — 모달 내 모든 타자기 요소가 완료됐는지 확인. 분석 완료여도 타이핑 끝나기 전엔 다음 단계로 못 넘어가도록.
@@ -1135,7 +1190,8 @@ async function poll(){
   // lastSubmittedGate 와 현재 게이트가 같으면 계속 폴링.
   // 분석 중(curGate=null)에는 유지 — 새 게이트 등장 시에만 클리어.
   // 실패·완료 시 stale 가드 즉시 해제 — 이전 단계 캐시 proposals 복원 가능하게
-  if(isFailed()||isCompleted()){ lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; }
+  // HJ 2026-06-12 — G6 타이핑 hold 중에는 lastSubmittedGate 유지 (모달 활성 조건 보존).
+  if(isFailed()||(isCompleted()&&!_g6TypingHold())){ lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; }
   // resume 후 analyzing() 통과 확인 — staleRun(renderBody 의 이전 gate_data 무시) 보호용.
   if(lastSubmittedGate && analyzing()) _sawAnalyzingAfterSubmit=true;
   // HJ 2026-06-11 버그픽스: 진행 완료(다음 단계 전진) 판정을 '게이트 번호 비교 + 모달 hold 완료' 로.
@@ -1202,7 +1258,8 @@ let _completing=false;       // 완료 신호 수신 → 100% 애니메이션 �
 let _estimatedFromEta=false; // eta_sec 로 _estimatedTotal 설정됐으면 true (pct override 방지)
 
 function _stageProgress(){
-  const key=(isFailed()?'FAIL':(isCompleted()||cur===LAST)?'DONE':'G'+(cur+1));
+  // HJ 2026-06-12 — G6 타이핑 hold 중에는 진행키를 'G6' 로 유지 (DONE 전환 시 _shownPct 0 리셋 방지).
+  const key=(isFailed()?'FAIL':_g6TypingHold()?'G6':(isCompleted()||cur===LAST)?'DONE':'G'+(cur+1));
   if(_progressKey!==key){
     _progressKey=key;
     _shownPct=0; _stageStart=Date.now(); _barFlowPct=0;
@@ -1210,7 +1267,8 @@ function _stageProgress(){
     _estimatedTotal=null; _completing=false; _estimatedFromEta=false;
   }
   if(isFailed()){ _barFlowPct=0; return 0; }
-  if(isCompleted()||cur===LAST){ _shownPct=100; _barFlowPct=100; return 100; }
+  // HJ 2026-06-12 — G6 타이핑 hold 중에는 100% 점프 금지 (아래 일반 경로에서 95% 고정 유지).
+  if((isCompleted()||cur===LAST)&&!_g6TypingHold()){ _shownPct=100; _barFlowPct=100; return 100; }
   if(cur===0&&!jobId){ _shownPct=0; _stageStart=null; _barFlowPct=0; return 0; }
   // jobId 도착(G1 분석 시작) 시 stageStart 기산점 — 항상 클라이언트 Date.now() 사용
   // (eta_base_ts 는 서버 시간 → 시계 차이로 elapsed 왜곡 발생 → 사용 금지)
@@ -1230,9 +1288,10 @@ function _stageProgress(){
     }
   }
   if(_completing){
-    // 팝업 로딩 중(proposals 미도착) → 99% 억제. proposals 도착 시 modal 닫히고 그 때 100%.
+    // 팝업 로딩 중(proposals 미도착) → 95% 억제. proposals 도착 시 modal 닫히고 그 때 100%.
     // 완료 = 2단계로 실제 전환되는 시점. modal 닫힌 후에만 100%/'완료' 표시.
-    const _cap=inModalLoading()?99:100;
+    // HJ 2026-06-12 — 모달 로딩 캡 99→95. 마지막 마일스톤이 active(진행중) 로 보이도록 일관화.
+    const _cap=inModalLoading()?95:100;
     _shownPct=Math.min(_cap,_shownPct+10);
     _barFlowPct=_shownPct;
     return Math.round(_shownPct);
@@ -1338,7 +1397,9 @@ function progressBar(forceShow){
   // 마일스톤 세그먼트 — 단계의 agent 리스트가 곧 바의 구조.
   const flow=_curAgentFlow();
   let activeIdx=_curMilestoneIdx();
-  if(_completing||p>=100) activeIdx=flow.length;  // 완료 시 모든 칸 done
+  // HJ 2026-06-12 — 모달 로딩 중(95% hold)에는 마지막 칸을 active(파랑)로 유지.
+  //   실제 완료(모달 닫힘 후 p>=100) 시에만 전체 done(녹색).
+  if(p>=100 || (_completing && !inModalLoading())) activeIdx=flow.length;
   let barHtml='';
   if(flow.length){
     const segs=flow.map(function(ag,i){
@@ -1547,9 +1608,17 @@ function g2TopicCards(d){
 function _modalShouldBeActive(){
   if(!jobId) return false;
   if(isFailed()) return false;
-  if(isCompleted()) return false;
+  // HJ 2026-06-12 — G6 는 완료돼도 팝업 타이핑이 끝나기 전이면 모달 유지 (조기 종료·7단계 점프 방지).
+  if(isCompleted() && !_g6TypingHold()) return false;
   // 1~6단계(cur=0~5) 모달은 진행률 41% 이상에서만 노출. 초반 40% 까지는 본문 카드 표시. (원래 동작 유지)
-  if(cur>=0 && cur<=5 && _shownPct<41) return false;
+  // HJ 2026-06-12 — 4단계(G4 모델학습) 팝업 미표시 버그 fix.
+  //   G4 는 backend 글로벌 진행 [50,85] 에 매핑되는데, 튜닝 종료 시점 글로벌 64% = 단계 40%(=(64-50)/35)
+  //   로 41% 게이트 '직전'에 걸린다. 41% 돌파는 학습(글로벌 82%) 종료 시점이라, 그때는 이미 다음 게이트가
+  //   도착해 모달 창이 스킵됨. 게다가 240s 추정치 탓에 시간 기반 폴백도 너무 느리다.
+  //   → cur===3 한정, 단계 분석이 15초 이상 진행되면 pct 무관하게 모달 노출 (아래 lastSubmittedGate 가드 유지).
+  const _stageElapsedMs=_stageStart?(Date.now()-_stageStart):0;
+  const _g4ModalFallback=(cur===3 && _stageElapsedMs>=15000);
+  if(cur>=0 && cur<=5 && _shownPct<41 && !_g4ModalFallback) return false;
   if(cur===0){
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
     if(_p0.length && curGate()==='G2' && _typingHoldComplete()) return false;
@@ -1720,14 +1789,7 @@ function _labelRow(label, value, opts){
 function _stageBox(titleEmoji, titleText, rows){
   var body=(rows||[]).filter(function(s){return !!s;}).join('');
   if(!body) return '';
-  // HJ 2026-06-11 — 사용자 요구: 팝업 글 최대 15줄(전 단계 공통). 각 .twrow=1줄.
-  //   초과분은 잘라 '… 생략' 표시. (모달은 라이브 피드 — 잘린 항목은 다음 카드 선택 화면에서 전체 확인 가능.)
-  var _MAX_LINES=15;
-  var _segs=body.split('<div class="twrow"');
-  if(_segs.length-1 > _MAX_LINES){
-    body=(_segs[0]||'')+_segs.slice(1,_MAX_LINES+1).map(function(s){return '<div class="twrow"'+s;}).join('')
-      +'<div class="twrow" style="margin-top:12px;font-size:18px;color:#94a3b8;opacity:0;visibility:hidden;transition:opacity .3s ease">'+twSpan('… 외 항목 생략 (최대 15줄)','sbmore-'+cur)+'</div>';
-  }
+  // HJ 2026-06-12 — 사용자 요구로 팝업 줄 수 제한 해제(제한 없음). 모든 row 를 그대로 렌더.
   // HJ 2026-06-10 — 박스 제목도 twrow + twSpan 으로 — 가장 먼저 등장+타이핑되고 그 다음 row 들이 순차 reveal.
   return '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:30px 36px;margin-bottom:20px">'
     +'<div class="twrow" style="font-weight:700;color:#0f172a;margin-bottom:6px;font-size:32px;opacity:0;visibility:hidden;transition:opacity .3s ease">'+titleEmoji+' '+twSpan(titleText,'sbtitle-'+cur+'-'+titleText)+'</div>'
@@ -2161,6 +2223,8 @@ function contentGate(){
   // g2SubStage='topic' + topic_proposals 도착했을 때만 팝업 모달 표시.
   // topic_proposals 없으면 (백그라운드 prefetch 미완료) → G1 모달 / 로딩 유지.
   if(g==='G2' && g2SubStage==='topic' && (d.topic_proposals||[]).length){
+    // HJ 2026-06-12 — 팝업 표시 즉시 5개 분석 방향 백그라운드 선생성 1회 발사(추천부터).
+    _g2FirePrefetch(d);
     // HJ 2026-06-11 — cur 변경 시 topicDismissed 자동 해제 (modalDismissed 와 동일 패턴).
     if(topicDismissed && _topicDismissedCur!==cur){ topicDismissed=false; }
     // 사용자가 ✕ 로 팝업 닫음 — 본문에 "다시 열기" 버튼만 표시. 주제 선택은 필수이므로 진행 불가 안내.
@@ -2653,10 +2717,12 @@ def _flow_screen() -> None:
 # F5 새로고침 시 URL 쿼리 파라미터로 flow 상태 복원
 # ── 처음으로 버튼 — 전체 세션 초기화 후 랜딩 복귀 ──
 if st.query_params.get("reset") == "1":
+    # HJ 2026-06-12 — 하위호환(혹시 남은 ?reset=1 URL). st.rerun() 제거:
+    #   reload 직후 rerun 은 'SessionInfo before initialized' 에러를 유발한다.
+    #   세션·쿼리만 정리하면 그대로 진행되어 studio_started 없음 → 아래에서 랜딩이 렌더된다.
     for k in list(st.session_state.keys()):
         del st.session_state[k]
     st.query_params.clear()
-    st.rerun()
 
 if st.query_params.get("flow") == "1":
     st.session_state["studio_started"] = True
@@ -2666,48 +2732,80 @@ if not st.session_state.get("studio_started"):
     # F5 복원은 saveState() 가 URL 해시(#ada=…)에 상태를 기록하고,
     # F5 후 ?flow=1 이 URL 에 남아 Python 이 자동으로 플로우 화면을 보여주는 방식으로 처리.
     # (height=0 redirect iframe 제거 → Streamlit iframe 경고 감소)
+    # HJ 2026-06-12 — 스플릿 대시보드 랜딩 (밝은 배경 · 모노크롬 A · 좌 텍스트 / 우 분석 대시보드).
     st.markdown(
         """
         <style>
-        .block-container {
-            min-height: calc(100vh - 4rem);
-            display: flex; flex-direction: column; justify-content: center;
-        }
+        [data-testid="stAppViewContainer"]{background:#f4f6fa;}
+        [data-testid="stHeader"]{background:transparent;}
+        .block-container{min-height:calc(100vh - 4rem);max-width:1060px;
+            display:flex;flex-direction:column;justify-content:center;}
+        /* HJ 2026-06-12 — st.columns(vertical_alignment=) 는 1.36+ 전용. 1.35 호환 위해 CSS 로 세로 중앙 정렬. */
+        [data-testid="stHorizontalBlock"]{align-items:center;}
+        div.stButton > button{background:#2f6fed;color:#ffffff;border:none;border-radius:11px;
+            font-weight:600;font-size:1.02rem;padding:.72rem 0;width:100%;
+            box-shadow:0 12px 28px rgba(47,111,237,.28);transition:transform .12s,background .15s;}
+        div.stButton > button:hover{background:#1f5fd8;transform:translateY(-1px);}
         </style>
         """,
         unsafe_allow_html=True,
     )
-    if os.path.exists(_HERO):
-        st.image(_HERO, use_column_width=True)
-    else:
+    _L, _R = st.columns([1.05, 0.95], gap="large")
+    with _L:
         st.markdown(
             """
-            <div style="max-width:960px;margin:0 auto;border-radius:34px;padding:104px 64px;
-                        background:linear-gradient(160deg,#2b4a6b 0%,#3f5d7e 100%);color:#e6eef8;text-align:center;
-                        box-shadow:0 32px 80px rgba(31,62,92,.34)">
-              <div style="font-size:20px;letter-spacing:.30em;opacity:.85;font-weight:600">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</div>
-              <div style="font-size:200px;line-height:1.0;margin:28px 0 6px">🌐</div>
+            <div style="text-align:left;">
+              <div style="display:flex;align-items:center;gap:11px;">
+                <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+                  <path d="M10 38 L24 10 L38 38" stroke="#15273d" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+                  <path d="M16.5 30 L31.5 30" stroke="#15273d" stroke-width="2.6" stroke-linecap="round"/>
+                </svg>
+                <span style="font-size:1.7rem;font-weight:700;color:#15273d;">ada <span style="color:#2f6fed;">studio</span></span>
+              </div>
+              <div style="margin-top:14px;display:inline-block;background:#e8f1fe;color:#1d5fd6;font-size:.8rem;font-weight:600;letter-spacing:.06em;padding:5px 14px;border-radius:999px;">AI 데이터 분석 에이전트</div>
+              <div style="color:#64718a;font-size:1rem;margin-top:22px;line-height:1.6;">숫자만 가득한 데이터 어떻게 처리해야 할지 막막하셨나요?<br>분석에 몇 주, 몇 달째 붙잡혀 계셨나요?<br>데이터를 분석하고 PPT, PDF 등으로 만드는데 골치 아프셨나요?</div>
+              <div style="color:#2f6fed;font-size:1.2rem;font-weight:700;margin-top:18px;">이제, 끝났습니다!</div>
+              <div style="font-size:2.45rem;font-weight:800;color:#15273d;line-height:1.24;margin-top:6px;">3명이,<br>3주 걸릴 프로젝트를,<br><span style="color:#2f6fed;">30분</span> 만에.</div>
+              <div style="color:#6b7787;font-size:1.04rem;margin-top:14px;">몇 번의 선택이면, 원본 데이터가 <span style="color:#2f6fed;font-weight:700;">&ldquo;전문가 인사이트&rdquo;</span>로 바뀝니다.</div>
+              <div style="color:#9aa6b5;font-size:.78rem;margin-top:12px;">(소요 시간은 데이터 규모에 따라 달라질 수 있습니다.)</div>
+              <div style="height:20px;"></div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-    st.markdown(
-        """
-        <div style="text-align:center;margin-top:44px">
-          <div style="font-size:76px;font-weight:800;color:#19395a">ADA Studio</div>
-          <div style="font-size:26px;color:#52647d;margin-top:18px">
-            다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로!</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.write("")
-    _bc = st.columns([2, 1, 2])
-    with _bc[1]:
-        if st.button("✦  시작", type="primary", use_container_width=True):
+        if st.button("지금 시작하기", type="primary", use_container_width=True):
             st.session_state["studio_started"] = True
             st.session_state["_fresh_start"] = True
             st.query_params["flow"] = "1"
             st.rerun()
+    with _R:
+        st.markdown(
+            """
+            <div style="background:#ffffff;border:1px solid #e6ebf3;border-radius:18px;padding:22px;box-shadow:0 18px 44px rgba(31,55,99,.10);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
+                <span style="font-size:.95rem;font-weight:600;color:#15273d;">분석 리포트(예시)</span>
+                <span style="background:#e3f7ef;color:#0f9d6a;font-size:.74rem;font-weight:600;padding:3px 11px;border-radius:999px;">● 완료</span>
+              </div>
+              <div style="display:flex;align-items:flex-end;gap:9px;height:104px;margin-bottom:18px;">
+                <div style="flex:1;height:38%;background:#bcd5f7;border-radius:5px;"></div>
+                <div style="flex:1;height:60%;background:#7faaf0;border-radius:5px;"></div>
+                <div style="flex:1;height:46%;background:#bcd5f7;border-radius:5px;"></div>
+                <div style="flex:1;height:78%;background:#4f8aec;border-radius:5px;"></div>
+                <div style="flex:1;height:96%;background:#2f6fed;border-radius:5px;"></div>
+              </div>
+              <div style="display:flex;gap:10px;">
+                <div style="flex:1;background:#e8f1fe;border-radius:11px;padding:12px 13px;">
+                  <div style="color:#1d5fd6;font-size:1.5rem;font-weight:800;">94%</div>
+                  <div style="color:#5a7596;font-size:.76rem;margin-top:2px;">예측 정확도</div>
+                </div>
+                <div style="flex:1;background:#efeafb;border-radius:11px;padding:12px 13px;">
+                  <div style="color:#6d49c4;font-size:1.5rem;font-weight:800;">28</div>
+                  <div style="color:#6a5e86;font-size:.76rem;margin-top:2px;">핵심 피처</div>
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 else:
     _flow_screen()
