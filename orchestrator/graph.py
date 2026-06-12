@@ -167,9 +167,11 @@ def route_after_validation(state: PipelineState) -> str:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
-    if state.validation and state.validation.get("is_valid"):
-        return "gate_direction"
-    return "error_recovery"
+    # CS 2026-06-12 — schema_validator 는 검증 실패 시에도 category 를 강제
+    # 변경하지 않고 warning 만 추가한 뒤 error=None + next_agent="gate_direction"
+    # 으로 진행시킨다 (22accff). validation.is_valid 만 보면 이 soft-fail 케이스가
+    # 무조건 error_recovery 로 빠져 "최대 자동 재시도 횟수 초과" 루프를 탔다.
+    return state.next_agent or "error_recovery"
 
 
 def route_after_feature_engineer(state: PipelineState) -> str:

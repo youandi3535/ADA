@@ -141,8 +141,15 @@ class DataProfilerAgent(BaseAgent):
                 if category not in ("timeseries", "anomaly_detection"):
                     _intent_lc = (intent or "").lower()
                     _anomaly_keywords = (
-                        "이상탐지", "이상 탐지", "anomaly", "outlier", "novelty",
-                        "사기", "fraud", "이탈", "비정상",
+                        "이상탐지",
+                        "이상 탐지",
+                        "anomaly",
+                        "outlier",
+                        "novelty",
+                        "사기",
+                        "fraud",
+                        "이탈",
+                        "비정상",
                     )
                     _hits = [k for k in _anomaly_keywords if k in _intent_lc or k in (intent or "")]
                     if _hits and not target_column:
@@ -395,8 +402,15 @@ class DataProfilerAgent(BaseAgent):
         except Exception:  # noqa: BLE001
             _rows = _cols_n = 0
         _anomaly_keywords = (
-            "이상탐지", "이상 탐지", "anomaly", "outlier", "novelty",
-            "사기", "fraud", "이탈", "비정상",
+            "이상탐지",
+            "이상 탐지",
+            "anomaly",
+            "outlier",
+            "novelty",
+            "사기",
+            "fraud",
+            "이탈",
+            "비정상",
         )
         _intent_lc = (intent or "").lower()
         _anomaly_hits = [k for k in _anomaly_keywords if k in _intent_lc or k in (intent or "")]
@@ -450,8 +464,15 @@ class DataProfilerAgent(BaseAgent):
             try:
                 _intent_lc = (intent or "").lower()
                 _anomaly_keywords = (
-                    "이상탐지", "이상 탐지", "anomaly", "outlier", "novelty",
-                    "사기", "fraud", "이탈", "비정상",
+                    "이상탐지",
+                    "이상 탐지",
+                    "anomaly",
+                    "outlier",
+                    "novelty",
+                    "사기",
+                    "fraud",
+                    "이탈",
+                    "비정상",
                 )
                 _hits = [k for k in _anomaly_keywords if k in _intent_lc or k in (intent or "")]
                 if _hits and not target_column:
@@ -460,7 +481,9 @@ class DataProfilerAgent(BaseAgent):
                         original=category,
                         intent_hits=_hits[:3],
                     )
-                    reason = f"intent 키워드({', '.join(_hits[:2])}) + target 없음 + LLM 누락 → 이상탐지 보정 (최후 수단)"
+                    reason = (
+                        f"intent 키워드({', '.join(_hits[:2])}) + target 없음 + LLM 누락 → 이상탐지 보정 (최후 수단)"
+                    )
                     category = "anomaly_detection"
                     target_column = None
                     anomaly_override = True
@@ -595,6 +618,21 @@ class DataProfilerAgent(BaseAgent):
                 await self.session.flush()
         except Exception as e:
             self.logger.warning("persist_detection_failed", error=str(e))
+
+        # CS 2026-06-12 — 카테고리 확정 즉시(G1 초반) 전용 Redis 키에 1회성 기록.
+        # ada:gate_data 는 schema_validator 완료(10~35초 후) 까지 비어있어 gate_detail 이
+        # 그 사이 "pending" → 휴리스틱/제네릭으로 표시됨. 이 키는 이후 어떤 단계가 덮어써도
+        # 영향받지 않는 고정 값으로, gate_detail 이 최우선으로 참조해 0~수초 내 정확한
+        # 카테고리를 frontend 에 전달한다.
+        try:
+            import redis as _redis  # noqa: WPS433
+
+            from ada.core.config import settings as _s  # noqa: WPS433
+
+            _r = _redis.Redis.from_url(_s.redis_url)
+            _r.set(f"ada:category:{state.job_id}", category, ex=86400)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ==============================================================
