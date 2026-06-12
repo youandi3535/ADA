@@ -1010,6 +1010,69 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         items = _items_from_body(sl, 5)
     I.draw_5step_alt_callouts(slide, items, primary, accent, ink, muted, light_bg)
 
+    # jh 2026-06-12 — "시각자료·설명 부족" (사용자): 하단에 WHY 카드 3개 추가
+    # (단계별 무엇을/왜/결과 — 목표치 S7 의 단계 상세 카드 이식)
+    _cards = []
+    for w in whys[:3]:
+        if not isinstance(w, dict):
+            continue
+        _h = _txt(w.get("header")) or _txt(w.get("what")) or "단계"
+        _why = _txt(w.get("why"))
+        _res = _txt(w.get("result"))
+        if _why or _res:
+            _cards.append((_h[:24], _why[:80], _res[:60]))
+    if _cards:
+        _cw = (I.SLIDE_W - 3.0 - (len(_cards) - 1) * 0.5) / len(_cards)
+        _cy = 13.2
+        for _i, (_h, _why, _res) in enumerate(_cards):
+            _cx = 1.5 + _i * (_cw + 0.5)
+            I.add_rounded_rect(slide, _cx, _cy, _cw, 3.9, light_bg, line_hex=primary)
+            I.add_text_box(slide, _cx + 0.4, _cy + 0.25, _cw - 0.8, 0.8,
+                           _h, size_pt=13, bold=True, color_hex=primary, align="left", vcenter=True)
+            I.add_text_box(slide, _cx + 0.4, _cy + 1.1, _cw - 0.8, 1.8,
+                           _why, size_pt=11, color_hex=ink, align="left", vcenter=False)
+            if _res:
+                I.add_text_box(slide, _cx + 0.4, _cy + 2.95, _cw - 0.8, 0.8,
+                               f"→ {_res}", size_pt=11, bold=True, color_hex=primary, align="left", vcenter=True)
+
+
+def t_background_questions(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S6 — 분석 배경·세 가지 질문 (Q 가 주인공, 데이터는 하단 한 줄).
+
+    jh 2026-06-12 — "데이터 설명은 한 장 가치 없음" (사용자) → 질문 중심 전환.
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    items = []
+    for q, a in list(spec.get("questions") or [])[:3]:
+        items.append({"title": f"Q. {str(q)[:34]}", "caption": str(a)[:90]})
+    dl = spec.get("data_line")
+    if isinstance(dl, (list, tuple)) and dl:
+        items.append({"title": "데이터 · 도구", "caption": f"{dl[0]} — {dl[1] if len(dl) > 1 else ''}"[:110]})
+    if not items:
+        items = _items_from_body(sl, 4)
+    I.draw_numbered_rows(slide, items[:4], primary, accent, ink, muted, light_bg)
+
+
+def t_insight_synthesis_panel(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S3 발견 종합 — 인사이트(좌 大)·접목(우)·근거(하단 한 줄).
+
+    jh 2026-06-12 — 데이터/패턴 균등 4열 대신 인사이트·접목 비중 확대 (사용자 지시).
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    insights = [
+        (str(h), str(d)) for h, d in (spec.get("insights") or []) if str(h).strip()
+    ][:3]
+    applications = [str(a) for a in (spec.get("applications") or []) if str(a).strip()][:4]
+    evidence = str(spec.get("evidence") or "")
+    if not insights:
+        # 폴백 — body 페어에서 구성
+        for b in (sl.body_outline or [])[:3]:
+            h, _, d = str(b).partition(" — ")
+            insights.append((h.strip()[:40], d.strip()))
+    I.draw_insight_synthesis(slide, insights, applications, evidence, primary, accent, ink, muted, light_bg)
+
 
 def t_case_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     """S14 개별 예측 사례 3건 — 3열 카드 시각화 (jh 2026-06-12).
@@ -1046,12 +1109,35 @@ def t_case_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg):
                     lines.append(f"{tf_.get('feature', '?')} {float(tf_.get('shap', 0)):+.2f}")
                 except Exception:
                     continue
-        items.append({"tier": f"사례 {i + 1} · {kind}", "value": big, "lines": lines})
+        # jh 2026-06-12 — S15(집계)와 차별화: 개별 승객의 '이야기' 라벨 + 해석 줄
+        _story = {
+            "TN": ("정확히 걸러냄", "비생존 신호가 일관되게 작동"),
+            "TP": ("정확히 살림", "생존 신호가 일관되게 작동"),
+            "FN": ("생존자를 놓침", "생존 신호가 다른 변수에 묻혀 억제됨"),
+            "FP": ("잘못 살림", "생존 신호가 과대 작동해 오판"),
+        }.get(big, (kind, ""))
+        lines.append(f"→ {_story[1]}" if _story[1] else "")
+        lines = [ln for ln in lines if ln]
+        items.append({
+            "tier": f"사례 {i + 1} · {_story[0]} ({big})",
+            "value": big,
+            "lines": lines,
+        })
     if not items:
         # 재료 없으면 body 텍스트 폴백 (정직 표기 유지)
         for i, b in enumerate((sl.body_outline or [])[:3]):
             items.append({"tier": f"사례 {i + 1}", "value": f"#{i + 1}", "lines": [str(b)[:80]]})
     I.draw_price_compare_3(slide, items, primary, accent, ink, muted, light_bg)
+    # 하단 공통 인사이트 스트립 — 카드 3개를 관통하는 한 줄
+    _tail = next(
+        (str(b) for b in reversed(sl.body_outline or []) if "사정거리" in str(b) or "공통" in str(b)),
+        "",
+    )
+    if _tail:
+        I.add_text_box(
+            slide, 1.5, I.SLIDE_H - 1.9, I.SLIDE_W - 3.0, 1.2,
+            _tail[:120], size_pt=12, color_hex=muted, align="left", vcenter=True,
+        )
 
 
 def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
@@ -1090,8 +1176,7 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         pass
 
     def _enrich(title: str, cap: str) -> str:
-        if len(cap) >= 18:
-            return cap
+        # jh 2026-06-12 — 길이 무관 항상 보강 (S17 인사이트 빈약 재지적)
         if "임계" in title and isinstance(_pm_v, (int, float)):
             extra = f" — {pm.get('name', '지표')} {_pm_v:.3f} 기준선, 하회 시 재학습 트리거"
             if isinstance(_opt_thr, (int, float)):
@@ -1241,9 +1326,7 @@ def register_phase12() -> None:
         tags=["solution", "architecture"],
     )
     def fit_lineage(sl, c):
-        # jh 2026-06-12 — p1_market(데이터·도구 병합) 고정 라우팅 (직렬화 무관)
-        if getattr(sl, "id", "") == "p1_market":
-            return 96.0
+        # (2차 개편) p1_market 은 background_questions 로 이동 — lineage 고정 해제
         base = combine(
             matches_keywords("아키텍처", "lineage", "데이터 흐름", "전처리 흐름"),
             has_body_min(4),
@@ -1318,6 +1401,29 @@ def register_phase12() -> None:
         fit=has_id("error_analysis"),
         min_score=80.0,
         tags=["cases", "interpretation"],
+    )
+
+    # jh 2026-06-12 (2차 개편) — 배경·질문 / 인사이트 종합 패널 고정 라우팅 (97 > 96)
+    def fit_background(sl, c):
+        return 97.0 if getattr(sl, "id", "") == "p1_market" else 0.0
+
+    REGISTRY.register(
+        "background_questions",
+        t_background_questions,
+        fit=fit_background,
+        min_score=90.0,
+        tags=["background", "questions"],
+    )
+
+    def fit_synthesis_panel(sl, c):
+        return 97.0 if getattr(sl, "id", "") == "insight_synthesis" else 0.0
+
+    REGISTRY.register(
+        "insight_synthesis_panel",
+        t_insight_synthesis_panel,
+        fit=fit_synthesis_panel,
+        min_score=90.0,
+        tags=["insight", "synthesis"],
     )
     REGISTRY.register(
         "roadmap_upgrades",

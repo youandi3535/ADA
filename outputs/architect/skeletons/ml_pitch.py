@@ -555,46 +555,58 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     while len(quality_items) < 3:
         quality_items.append(("품질 확인", "추가 이슈 없음"))
 
-    # jh 2026-06-12 — S5+S6 병합 (사용자 지시): 데이터 개요 + 기술 스택 한 장.
-    # lineage_2col (좌 4단 바 = 데이터, 우 3카드 = 도구) 로 렌더 — 확보한 슬롯엔
-    # insight_synthesis (인사이트 종합) 신설.
+    # jh 2026-06-12 (2차 개편, 사용자 지시) — "데이터 설명은 한 장 가치가 없다"
+    # → 이 장을 *분석 배경·질문* 으로 전환. Q1~Q3 가 주인공, 데이터·도구는
+    # 마지막 행 한 줄로 격하 (목표치 덱 S4 '분석 배경+질문' 이식).
     from outputs.architect.substitution_manifest import resolve_tech_stack as _rts
 
     category = ctx.meta.category or "tabular_ml"
     _stack = _rts(category)[:3]
-    body = [
-        f"규모 · {overview_items[0][1]}",
-        f"타겟 분포 · {target_summary}",
-        f"변수 타입 · {dtypes_summary}",
-        f"품질 · {quality_items[0][0]} ({quality_items[0][1]})",
-    ] + [f"{it.name} · {it.role}" for it in _stack]
-
+    _stack_names = "·".join(it.name.split("/")[0].strip() for it in _stack)
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
-    sp = SlideSpec(
+    target = ctx.dataset.detected_target or "타겟"
+    _miss = quality_items[0][0] if quality_items else "결측"
+
+    questions = [
+        (
+            f"{target} 을 가장 강하게 결정하는 변수는 무엇인가",
+            "EDA 격차 분석과 SHAP 전역 중요도로 답한다 (S8~S13)",
+        ),
+        (
+            f"{use_case[:24]} 의 구조가 데이터에 실제로 재현되는가",
+            "집단 간 격차·상관·비선형 효과를 정량 확인한다 (S8~S11)",
+        ),
+        (
+            "모델은 어떤 케이스에서 약하고, 운영에 어떻게 반영하나",
+            "개별 사례·오류 집계·세그먼트 분해로 취약 구간을 짚는다 (S14~S17)",
+        ),
+    ]
+    data_line = (
+        f"{rows:,}건 × {cols}변수 · 타겟 {target} · 주요 결측 {_miss}",
+        f"{_stack_names} 표준 스택 — 전 과정 재현 가능",
+    )
+
+    body = [f"{q} · {a}" for q, a in questions] + [f"데이터 · {data_line[0]} — {data_line[1]}"]
+
+    return SlideSpec(
         id="p1_market",
         section_id="problem",
-        layout="data_overview_quality_combined",
-        role="evidence",
-        so_what=f"{rows:,} 행 × {cols} 열 — {use_case} 분석에 충분한 규모, 표준 스택으로 전 과정 재현 가능",
-        title_ko="데이터 · 도구 — 개요와 스택",
-        body_outline=body[:7],
+        layout="background_questions",
+        role="claim",
+        so_what=f"이 분석이 답하려는 세 가지 질문 — 데이터는 {rows:,}건 × {cols}변수로 검증",
+        title_ko="분석 배경 — 세 가지 질문",
+        body_outline=body[:4],
         parent_message_id="problem_root",
         visual_spec=VisualSpec(
-            type="v28_data_combined",
-            title="데이터 · 도구",
-            spec={
-                "overview_items": overview_items,
-                "quality_items": quality_items,
-                "stack_items": [(it.name, it.role) for it in _stack],
-            },
+            type="v32_background_questions",
+            title="분석 배경 · 질문",
+            spec={"questions": questions, "data_line": data_line},
         ),
         speaker_notes_hint=(
-            "좌측: 데이터 규모/타겟/품질 — 우측: 표준 스택 3종. "
-            "S5+S6 병합으로 확보한 슬롯은 인사이트 종합 장에 사용."
+            "왜 이 분석인가 — Q1~Q3 이 주인공. 각 질문이 어느 슬라이드에서 "
+            "답해지는지 연결. 데이터·도구는 하단 한 줄로만."
         ),
     )
-    sp.preferred_template = "lineage_2col"
-    return sp
 
 
 def _build_pain_points(ctx: ReportContext) -> SlideSpec:
@@ -1115,26 +1127,54 @@ def _build_insight_synthesis(ctx: ReportContext) -> SlideSpec:
         ),
     ]
 
+    # jh 2026-06-12 — 제목은 예시 문구가 아니라 *실제 종합 결론* (사용자 지적).
+    # 구성도 데이터/패턴 균등 4열 대신 인사이트·접목 중심으로 재설계.
+    if gi:
+        _t1 = getattr(gi[0], "feature", "핵심 변수")
+        title_ko = f"{_t1} 등 상위 변수가 결과를 구조적으로 결정 — {pm_str} 로 정량 입증"
+    else:
+        title_ko = f"{use_case} — 구조적 결정 요인 정량 입증"
+
+    insights = [
+        (
+            f"{top_feats} 가 판단의 주축",
+            f"{chosen} 이 {pm_str} 로 포착 — 단순 룰로 못 잡는 비선형·상호작용까지 흡수{seg_line}",
+        ),
+        (
+            "결정 요인이 해석 가능한 형태로 분해됨",
+            "변수별 기여(SHAP)·오류 유형(CM)·취약 구간(세그먼트)까지 근거 추적 가능",
+        ),
+    ]
+    applications = [
+        "운영 적용 — 임계·모니터링·재학습 룰로 즉시 전환",
+        "취약 구간 보강 — 소표본·고결측 세그먼트 피처 보강",
+        "동일 구조 과제 이식 — 고객 이탈·승인 심사 등 이진 분류 확장",
+    ]
+    evidence = f"근거 · {rows:,}건 × {cols}변수 — 타겟 완전, 표준 스택 재현 가능"
+
     sp = SlideSpec(
         id="insight_synthesis",
         section_id="results",
-        layout="icon_columns_4",
+        layout="insight_synthesis_panel",
         role="insight",
-        so_what="이 분석으로 무엇을 알 수 있고 어디까지 쓸 수 있는가 — 발견의 종합과 적용 범위",
-        title_ko="인사이트 종합 — 발견과 접목 범위",
+        so_what="이 발견이 의미하는 것과 적용 범위 — 인사이트 중심 종합",
+        title_ko=title_ko,
         body_outline=body,
         parent_message_id="results_root",
         visual_spec=VisualSpec(
             type="v32_insight_synthesis",
             title="인사이트 종합",
-            spec={"columns": body},
+            spec={
+                "insights": insights,
+                "applications": applications,
+                "evidence": evidence,
+            },
         ),
         speaker_notes_hint=(
-            "덱 전체의 '그래서?' 를 한 장으로 — 데이터가 말한 것(패턴), "
-            "그것이 의미하는 것(인사이트), 어디까지 쓸 수 있는지(접목)."
+            "덱 전체의 '그래서?' — 인사이트(좌 크게)와 접목 범위(우)가 주인공, "
+            "데이터·패턴은 하단 근거 한 줄로 격하."
         ),
     )
-    sp.preferred_template = "icon_columns"
     return sp
 
 

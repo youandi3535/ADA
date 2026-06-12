@@ -137,7 +137,7 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     # EDA 4장은 데이터 기반 제목(title_ko)이 더 구체적이라 맵에서 제외.
     _AGENDA_STORY_LABELS = {
         "hypothesis": "분석 가설 — 무엇을 물었나",
-        "p1_market": "데이터 · 도구 — 개요와 스택",
+        "p1_market": "분석 배경 — 세 가지 질문",
         "p2_pain": "기술 스택",
         "p3_alt_limits": "분석 방법 — 5단계 설계",
         "insight_synthesis": "인사이트 종합 — 발견과 접목 범위",
@@ -1291,7 +1291,8 @@ def _draw_agenda(slide, sl, primary, accent, ink, muted):
         "목차",
         size_pt=24,
         bold=True,
-        color_hex=accent,
+        # jh 2026-06-12 — accent(연파랑)가 파랑 그라데이션 위에서 흐림 (사용자 재지적)
+        color_hex="#FFFFFF",
         align="left",
         vcenter=False,
     )
