@@ -1040,9 +1040,11 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
                 from tools.minio_tool import get_minio_client
 
                 _mc = get_minio_client()
-                _df0 = _mc.load_dataframe(
-                    state.file_id, fmt=state.file_id.rsplit(".", 1)[-1].lower()
-                )
+                # file_id 에 확장자가 없는 경우(uuid) fmt 파싱이 uuid 전체가 되어
+                # 로드가 조용히 실패 → 라벨이 전처리본(Pclass=-2.0)으로 남던 결함
+                _fid = str(state.file_id)
+                _fmt = _fid.rsplit(".", 1)[-1].lower() if "." in _fid else "csv"
+                _df0 = _mc.load_dataframe(_fid, fmt=_fmt)
                 if (
                     len(_df0) == len(df_raw)
                     and tgt in _df0.columns
@@ -1191,8 +1193,18 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
                         {"name": feat_names[k], "importance": round(float(imp[k]), 4)}
                         for k in order
                     ]
-        except Exception:
-            pass
+                    logger.info("analysis_global_shap_ok: %d features", len(out["global_importance"]))
+                else:
+                    logger.warning(
+                        "analysis_global_shap_len_mismatch: imp=%d feat=%d", len(imp), len(feat_names)
+                    )
+            else:
+                logger.warning(
+                    "analysis_global_shap_skipped: explainer=%s feat_names=%d",
+                    _explainer is not None, len(feat_names),
+                )
+        except Exception as _exc:  # noqa: BLE001
+            logger.warning("analysis_global_shap_failed: %s", _exc)
     except Exception:
         pass
 

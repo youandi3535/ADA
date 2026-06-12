@@ -1634,8 +1634,8 @@ def draw_linked_circles_4(slide, items, primary, accent, ink, muted, light_bg):
             cy + 0.5,
             circle_d,
             1.2,
-            str(item.get("title", ""))[:18],
-            size_pt=12,
+            str(item.get("title", ""))[:24],
+            size_pt=14,
             bold=True,
             color_hex="#FFFFFF",
             align="center",
@@ -1648,8 +1648,8 @@ def draw_linked_circles_4(slide, items, primary, accent, ink, muted, light_bg):
             cy + circle_d / 2 + 0.6,
             circle_d,
             2.5,
-            str(item.get("caption", ""))[:80],
-            size_pt=9,
+            str(item.get("caption", ""))[:90],
+            size_pt=11,
             color_hex=ink,
             align="center",
             vcenter=False,
@@ -2052,8 +2052,10 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
         # Bullets — jh 2026-06-12 견본 구조: 첫 항목은 16B 헤드라인, 나머지는 11pt 세부
         import re as _re
 
+        # 라벨 접두 제거 — "S ·", "강점(S) ·", "W · 약점(W) ·" 류 중복 방지 (2회 적용)
+        _lbl_pat = r"^[-\s]*(?:[SWOT]|강점|약점|기회|위협)\s*(?:\([SWOT]\))?\s*[·:]\s*"
         pts = [
-            _re.sub(r"^[-\s]*[SWOT]\s*[·:]\s*", "", str(p)).strip()
+            _re.sub(_lbl_pat, "", _re.sub(_lbl_pat, "", str(p))).strip()
             for p in (items[i].get("points", []) if i < len(items) else [])
         ][:3]
         # 페어 bullet 1개뿐이면 " — " 에서 분할해 헤드라인+세부 2층 구성

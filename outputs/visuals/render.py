@@ -133,9 +133,30 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
             _p = _render_cm_heatmap(vs, primary, plt)
             if _p:
                 return _p
+        # jh 2026-06-12 — 세그먼트 성능 가로 막대 (skeleton 시점에 per_segment 가
+        # 비어 segment_perf_table 로 굳어도 carrier 시점 ctx 로 차트 보장)
+        if vtype == "segment_perf_table":
+            _segs = (vs.spec or {}).get("segments") or []
+            if not _segs:
+                _segs = list(ctx.evaluation.per_segment or [])
+            _items = [
+                (str(s.get("segment") or s.get("name") or "?"), float(s["value"]))
+                for s in _segs
+                if isinstance(s, dict) and s.get("value") is not None
+            ][:8]
+            if _items:
+                vs.spec = {**(vs.spec or {}), "items": _items}
+                return _render_hbar(vs, ctx, primary, accent, plt)
         # 기타 — KPI 카드들 또는 일반 다이어그램
         return _render_generic_box(vs, ctx, primary, plt, slide)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # jh 2026-06-12 — 무로그 실패 금지: S15·S16 차트가 조용히 사라지던 원인 추적용
+        import logging
+
+        logging.getLogger("visuals.render").warning(
+            "render_visual_failed: type=%s slide=%s err=%s: %s",
+            vs.type, getattr(slide, "id", "?"), type(exc).__name__, exc,
+        )
         return None
 
 
@@ -263,7 +284,30 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
     """막대 차트 — chart spec 의 items 또는 ctx.evaluation.metrics 활용."""
     spec = vs.spec or {}
     items = spec.get("items") or []
-    # jh 2026-06-12 — 슬라이드 고유 numbers (EDA meta) 가 metrics 폴백보다 우선.
+    # jh 2026-06-12 — items 가 dict 목록({feature/name, importance/value})이면 튜플로
+    # 정규화. (S13 SHAP items 가 dict 라 i[0] 에서 죽고 메트릭 폴백 차트가
+    # "SHAP Top 5" 제목 아래 그려지던 차트-본문 불일치 결함)
+    if items and isinstance(items[0], dict):
+        items = [
+            (
+                str(d.get("feature") or d.get("name") or d.get("label") or ""),
+                float(d.get("importance") or d.get("value") or 0),
+            )
+            for d in items
+            if isinstance(d, dict)
+        ]
+        items = [(k, v) for k, v in items if k]
+    # SHAP 류 차트인데 items 가 비면 carrier 시점 ctx 에서 직접 보충
+    # (skeleton 빌드 시점에 interpretation 이 비어 있던 경우의 안전망)
+    if not items and vs.type == "chart_annotated_bar":
+        try:
+            items = [
+                (str(g.feature), float(g.importance))
+                for g in (ctx.interpretation.global_importance or [])[:5]
+            ]
+        except Exception:
+            items = []
+    # 슬라이드 고유 numbers (EDA meta) 가 metrics 폴백보다 우선.
     # (결측 슬라이드에 val_accuracy 막대가 그려지던 주제 불일치 방지)
     if not items:
         items = [

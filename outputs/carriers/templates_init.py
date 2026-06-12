@@ -485,11 +485,8 @@ def init_registry() -> None:
         register_phase10()
     except Exception:
         pass
-    # Phase 11 batch — roadmap with upgrades, etc.
-    try:
-        register_phase11()
-    except Exception:
-        pass
+    # jh 2026-06-12 — register_phase11 은 정의가 없는 좀비 호출이었음 (NameError 를
+    # except 가 삼켜 roadmap_with_upgrades 등이 영영 미등록). phase12 에서 정식 등록.
     # Curate to exactly 30 — drop redundant/near-duplicate templates
     for redundant in (
         "stats_grid",
@@ -874,6 +871,23 @@ def t_exec_summary_v32(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     vs = getattr(sl, "visual_spec", None)
     spec = dict(getattr(vs, "spec", None) or {})
     findings = spec.get("findings") or []
+    # jh 2026-06-12 — skeleton 빌드 시점에 interpretation 이 비어 findings 가
+    # placeholder("-") 로 굳던 결함 → carrier 시점 ctx 에서 재구성 (안전망)
+    _placeholder = (not findings) or all(
+        str((f or {}).get("big", "-")) in ("-", "") for f in findings
+    )
+    if _placeholder:
+        gi = list(ctx.interpretation.global_importance or [])[:3]
+        if gi:
+            findings = [
+                {
+                    "label": f"FINDING {i + 1:02d}",
+                    "feature": str(g.feature),
+                    "big": f"{float(g.importance):.2f}",
+                    "sub": f"SHAP importance {i + 1}위\n모델 결정 기여 상위 변수",
+                }
+                for i, g in enumerate(gi)
+            ]
 
     pm = ctx.evaluation.primary_metric or {}
     pm_v = pm.get("value")
@@ -912,6 +926,118 @@ def t_exec_summary_v32(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     I.draw_exec_summary_v32(slide, findings, boxes, primary, accent, ink, muted, light_bg)
 
 
+def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S7 분석 방법 — 5단계 노드 + 캡션 (목표치 S7 구성).
+
+    jh 2026-06-12 — v28_method_flow spec 은 렌더러가 없어 chevron(모델 3장 껍데기)
+    으로 새던 결함. spec.steps/whys 재료를 5step 노드로 직접 배치.
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    steps = list(spec.get("steps") or [])
+    whys = list(spec.get("whys") or [])
+
+    items = []
+    for i, s in enumerate(steps[:5]):
+        if not isinstance(s, dict):
+            s = {"label": str(s)}
+        label = str(s.get("label") or s.get("title") or f"단계 {i + 1}")
+        cap = str(
+            s.get("caption") or s.get("what") or s.get("why") or s.get("result") or ""
+        )
+        if not cap and i < len(whys) and isinstance(whys[i], dict):
+            cap = str(whys[i].get("why") or whys[i].get("what") or "")
+        items.append({"label": label[:20], "caption": cap[:90]})
+    if not items:
+        items = _items_from_body(sl, 5)
+    I.draw_5step_alt_callouts(slide, items, primary, accent, ink, muted, light_bg)
+
+
+def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S17 도입 정책 — 정책 항목 세로 카드 (운영임계/모니터링/Owner...).
+
+    jh 2026-06-12 — 정책 재료가 멀쩡한데 percentage_grid(같은 달성률 4번)가
+    가로채던 결함. policy_items 를 step 카드로 직접 배치.
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    pairs = list(spec.get("policy_items") or [])
+    items = []
+    for p in pairs[:5]:
+        try:
+            k, v = p
+            items.append({"title": str(k)[:30], "caption": str(v)[:120]})
+        except Exception:
+            items.append({"title": str(p)[:30], "caption": ""})
+    biz = spec.get("biz_kpi")
+    if isinstance(biz, dict) and biz.get("name"):
+        items.append({
+            "title": "비즈니스 KPI",
+            "caption": f"{biz.get('name', '')} {biz.get('estimated_value', '')}{biz.get('unit', '')}",
+        })
+    if not items:
+        items = _items_from_body(sl, 4)
+    I.draw_step_cards_vertical(slide, items[:4], primary, accent, ink, muted, light_bg)
+
+
+def t_roadmap_upgrades(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S19 실행 로드맵 — PHASE 3 + UPGRADE 3 (목표치 S19 구성).
+
+    jh 2026-06-12 — draw_roadmap_with_upgrades 가 미등록(좀비 phase11)이라
+    구이미지 코드로만 그려지고 UPGRADE 가 1개에 머물던 결함. 정식 등록 +
+    실데이터 기반 고도화 카드 3종 구성.
+    """
+    import re
+
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    raw_phases = [str(p) for p in (spec.get("phases") or []) if str(p).strip()]
+
+    body = list(getattr(sl, "body_outline", None) or [])
+    # body: "1. Phase ..." 단계 줄 + 모니터링/재학습 줄
+    caps = [
+        re.sub(r"^\d+\.\s*", "", b) for b in body if re.match(r"^\d+\.\s*", str(b))
+    ]
+    extra = [b for b in body if not re.match(r"^\d+\.\s*", str(b))]
+
+    phases = []
+    for i, ph in enumerate((raw_phases or caps or ["Phase 1", "Phase 2", "Phase 3"])[:3]):
+        cap = ""
+        if i < len(caps) and raw_phases:
+            cap = caps[i]
+        elif i < len(extra):
+            cap = str(extra[i])
+        phases.append({"title": str(ph)[:28], "caption": str(cap)[:80]})
+
+    # UPGRADE 3종 — 실데이터 기반 (재학습 / 취약 세그먼트 보강 / 앙상블)
+    upgrades = []
+    _re_line = next((str(b) for b in extra if "재학습" in str(b)), "")
+    upgrades.append({
+        "title": "재학습 트리거",
+        "caption": _re_line.split("·", 1)[-1].strip() if _re_line else "분기별 정기 또는 drift > 0.1 시 자동 재학습",
+    })
+    try:
+        segs = sorted(
+            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+            key=lambda s: float(s["value"]),
+        )
+        if segs:
+            upgrades.append({
+                "title": "취약 세그먼트 보강",
+                "caption": f"{segs[0].get('segment', '?')} (acc {float(segs[0]['value']):.2f}) 구간 피처 보강·재검증",
+            })
+    except Exception:
+        pass
+    if len(upgrades) < 2:
+        upgrades.append({"title": "피처 보강", "caption": "결측 상위 변수 파생·외부 데이터 결합 검토"})
+    chosen = (ctx.model_selection.chosen or {}).get("name", "")
+    upgrades.append({
+        "title": "모델 앙상블",
+        "caption": f"{chosen or '선정 모델'} + 차점 후보 stacking 으로 추가 향상 여지",
+    })
+    I.draw_roadmap_with_upgrades(slide, phases, upgrades[:3], primary, accent, ink, muted, light_bg)
+
+
 def t_icon_columns(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     """견본 S15 — 2~4 컬럼 종합 (TAG + 라벨 + 글리프 + 본문)."""
     tags = ("DATA", "PATTERN", "MODEL", "ACTION")
@@ -928,6 +1054,7 @@ def register_phase12() -> None:
         REGISTRY,
         combine,
         has_body_min,
+        has_id,
         matches_keywords,
     )
 
@@ -999,4 +1126,28 @@ def register_phase12() -> None:
         fit=fit_exec_summary,
         min_score=85.0,
         tags=["summary", "executive"],
+    )
+
+    # jh 2026-06-12 — 재료는 있는데 잘못된 템플릿이 가로채던 3장 (S7·S17·S19)
+    # 슬라이드 id 고정 매칭으로 결정적 라우팅 (디자이너 LLM 변동성 차단).
+    REGISTRY.register(
+        "method_5step",
+        t_method_5step,
+        fit=has_id("p3_alt_limits"),
+        min_score=80.0,
+        tags=["method", "process"],
+    )
+    REGISTRY.register(
+        "policy_steps",
+        t_policy_steps,
+        fit=has_id("i3_roi"),
+        min_score=80.0,
+        tags=["policy", "action"],
+    )
+    REGISTRY.register(
+        "roadmap_upgrades",
+        t_roadmap_upgrades,
+        fit=has_id("roadmap"),
+        min_score=80.0,
+        tags=["roadmap", "action"],
     )
