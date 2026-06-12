@@ -1,4 +1,4 @@
-"""frontend/app.py — ADA Studio (단일 플로우 UI).
+"""frontend/app.py — ada studio (단일 플로우 UI).
 
 1) 랜딩(스플래시) → Start
 2) 업로드 → 5게이트(HITL) → 산출물 : 확정 디자인(다크 히어로·진행도 스텝퍼·카드)을
@@ -25,7 +25,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="ADA Studio — Adaptive AutoAI",
+    page_title="ada studio — AI 데이터 분석 에이전트",
     page_icon="🪄",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -293,12 +293,14 @@ _FLOW_HTML = """
     <div style="zoom:.6;max-width:960px;width:100%;border-radius:34px;padding:80px 64px;
       background:linear-gradient(160deg,#2b4a6b 0%,#3f5d7e 100%);color:#e6eef8;text-align:center;
       box-shadow:0 32px 80px rgba(31,62,92,.34);margin-bottom:44px;">
-      <div style="font-size:18px;letter-spacing:.30em;opacity:.85;font-weight:600">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</div>
-      <div style="font-size:160px;line-height:1.0;margin:24px 0 4px">🌐</div>
+      <svg width="148" height="148" viewBox="0 0 48 48" fill="none" style="display:block;margin:16px auto 6px">
+        <path d="M10 38 L24 10 L38 38" stroke="#e6eef8" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M16.5 30 L31.5 30" stroke="#e6eef8" stroke-width="2.3" stroke-linecap="round"/>
+      </svg>
     </div>
     <!-- 텍스트 + 버튼 -->
     <div style="text-align:center;zoom:.6;">
-      <div style="font-size:72px;font-weight:800;color:#19395a;margin:0 0 18px">ADA Studio</div>
+      <div style="font-size:72px;font-weight:800;color:#19395a;margin:0 0 18px">ada <span style="color:#2f6fed;">studio</span></div>
       <div style="font-size:24px;color:#52647d;margin:0 0 40px">다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로!</div>
       <button onclick="startFromLanding()" style="font-family:inherit;font-size:20px;font-weight:600;
         border:none;border-radius:999px;cursor:pointer;background:#1f3e5c;color:#fff;
@@ -306,7 +308,7 @@ _FLOW_HTML = """
     </div>
   </div>
   <div class="shell">
-    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()" disabled>← 처음(시작화면)으로</button></div>
+    <div class="brand"><svg width="42" height="42" viewBox="0 0 48 48" fill="none" style="flex:0 0 auto"><path d="M10 38 L24 10 L38 38" stroke="#dce8f7" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/><path d="M16.5 30 L31.5 30" stroke="#dce8f7" stroke-width="2.6" stroke-linecap="round"/></svg><span class="nm" style="letter-spacing:.04em;font-size:29px;">ada&nbsp;<span style="color:#6fa8ff;">studio</span></span><span style="background:#e8f1fe;color:#1d5fd6;font-size:1.12rem;font-weight:600;letter-spacing:.06em;padding:7px 20px;border-radius:999px;flex:0 0 auto;">AI 데이터 분석 에이전트</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()" disabled>← 처음(시작화면)으로</button></div>
     <div class="steps" id="steps"></div>
     <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
     <div class="card"><div class="content" id="content"></div><div id="pb-area"></div>
@@ -2854,14 +2856,14 @@ if not st.session_state.get("studio_started"):
         st.markdown(
             """
             <div style="text-align:left;">
-              <div style="display:flex;align-items:center;gap:11px;">
+              <div style="display:flex;align-items:center;gap:13px;flex-wrap:wrap;">
                 <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
                   <path d="M10 38 L24 10 L38 38" stroke="#15273d" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
                   <path d="M16.5 30 L31.5 30" stroke="#15273d" stroke-width="2.6" stroke-linecap="round"/>
                 </svg>
                 <span style="font-size:1.7rem;font-weight:700;color:#15273d;">ada <span style="color:#2f6fed;">studio</span></span>
+                <span style="background:#e8f1fe;color:#1d5fd6;font-size:.8rem;font-weight:600;letter-spacing:.06em;padding:5px 14px;border-radius:999px;">AI 데이터 분석 에이전트</span>
               </div>
-              <div style="margin-top:14px;display:inline-block;background:#e8f1fe;color:#1d5fd6;font-size:.8rem;font-weight:600;letter-spacing:.06em;padding:5px 14px;border-radius:999px;">AI 데이터 분석 에이전트</div>
               <div style="color:#64718a;font-size:1rem;margin-top:22px;line-height:1.6;">숫자만 가득한 데이터 어떻게 처리해야 할지 막막하셨나요?<br>분석에 몇 주, 몇 달째 붙잡혀 계셨나요?<br>데이터를 분석하고 PPT, PDF 등으로 만드는데 골치 아프셨나요?</div>
               <div style="color:#2f6fed;font-size:1.2rem;font-weight:700;margin-top:18px;">이제, 끝났습니다!</div>
               <div style="font-size:2.45rem;font-weight:800;color:#15273d;line-height:1.24;margin-top:6px;">3명이,<br>3주 걸릴 프로젝트를,<br><span style="color:#2f6fed;">30분</span> 만에.</div>

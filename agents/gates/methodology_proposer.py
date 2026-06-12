@@ -74,17 +74,10 @@ def _has_non_korean_options(options: list[dict[str, Any]]) -> bool:
 
 
 SYSTEM_PROMPT = (
-    "You are an AutoML methodology specialist.\n\n"
-    "The user has already chosen an analysis direction in the previous gate (G2). "
-    "That choice fixes the analytical CATEGORY for this run. "
-    "Your job is NOT to re-decide the category — your job is to offer two concrete "
-    "methodology options WITHIN that fixed category.\n\n"
-    "Input JSON keys you will receive:\n"
-    "  - locked_category: tabular_ml | tabular_dl | timeseries | anomaly_detection "
-    "(the user's G2 decision; treat as immutable)\n"
-    "  - g2_title: the G2 option title the user picked (Korean)\n"
-    "  - data_profile: rows, cols, dtypes, target info\n"
-    "  - user_intent: original user goal (Korean free text)\n\n"
+    "당신은 AutoML 방법론 전문가. G2 에서 정해진 분석 CATEGORY 는 고정(immutable). "
+    "카테고리 재결정 금지 — 그 카테고리 안에서 서로 다른 구체적 방법론 2개만 제안.\n"
+    "입력 JSON: locked_category(고정 카테고리), g2_title(G2 선택 방향), "
+    "rows·cols·dtypes·target 등 데이터 프로파일, user_intent(사용자 목표).\n\n"
     "## 절대 강제 사항\n"
     "1. 두 옵션 모두 locked_category 안에 머무를 것. 카테고리 점프 금지.\n"
     "   locked_category=tabular_ml 이면 anomaly_detection / timeseries / tabular_dl 안을 절대 제안하지 말 것.\n\n"
@@ -103,20 +96,23 @@ SYSTEM_PROMPT = (
     "       Option 2 = 딥러닝 재구성 (AutoEncoder / TranAD / AnomalyTransformer)\n\n"
     "3. 위 분기 축 외 조합 금지 (예: tabular_ml 인데 한쪽에 이상탐지 끼우기).\n"
     "4. Option 1 score 는 0.80~0.95, Option 2 는 0.60~0.78.\n\n"
-    "## rationale 작성 규칙 (3줄 글머리)\n"
-    "한국어. 정확히 3줄. 각 줄 '• ' 로 시작.\n"
-    "  • 방식: 구체 알고리즘 1~3개 명시 (15~30자)\n"
-    "  • 이유: data_profile + g2_title 에서 가져온 근거 (15~30자)\n"
-    "  • 결과: 사용자가 얻을 인사이트·지표 (15~30자)\n"
+    "## rationale 작성 규칙 (6줄 글머리)\n"
+    "한국어. 정확히 6줄. 각 줄 '• ' 로 시작, 각 줄 12~18자.\n"
+    "  • 목표: 이 방법론으로 달성할 분석 목표\n"
+    "  • 방법: 핵심 알고리즘 1~3개\n"
+    "  • 결과: 사용자가 얻을 인사이트·지표\n"
+    "  • 장점: 이 방법론의 강점·차별성\n"
+    "  • 단점: 한계·주의점\n"
+    "  • 기대: 기대 효과·성능 지표\n"
     "줄 사이는 반드시 '\\n' 개행. JSON 안에서 "
-    '"rationale": "• 방식: ...\\n• 이유: ...\\n• 결과: ..."\n\n'
+    '"rationale": "• 목표: ...\\n• 방법: ...\\n• 결과: ...\\n• 장점: ...\\n• 단점: ...\\n• 기대: ..."\n\n'
     "## 출력 (마크다운 금지, JSON array of 2 objects)\n"
     '[{"id":1, "title":"한국어 제목 (계열명 포함)", '
     '"category":"<locked_category 그대로>", '
-    '"rationale":"• 방식: ...\\n• 이유: ...\\n• 결과: ...", "score":0.80},\n'
+    '"rationale":"• 목표: ...\\n• 방법: ...\\n• 결과: ...\\n• 장점: ...\\n• 단점: ...\\n• 기대: ...", "score":0.80},\n'
     ' {"id":2, "title":"한국어 제목 (대조 계열)", '
     '"category":"<locked_category 그대로>", '
-    '"rationale":"• 방식: ...\\n• 이유: ...\\n• 결과: ...", "score":0.65}]'
+    '"rationale":"• 목표: ...\\n• 방법: ...\\n• 결과: ...\\n• 장점: ...\\n• 단점: ...\\n• 기대: ...", "score":0.65}]'
 )
 
 KOREAN_RETRY_HINT = (
@@ -137,9 +133,12 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "id": 1,
             "title": "정형 ML 분류/회귀 앙상블",
             "rationale": (
-                "타겟 컬럼의 분포와 피처 구성이 정형 ML에 적합하며, "
-                "Logistic Regression, Random Forest, XGBoost 등 앙상블 모델을 활용해 높은 예측 정확도를 기대할 수 있습니다. "
-                "교차 검증과 하이퍼파라미터 최적화를 통해 안정적이고 해석 가능한 예측 모델을 제공합니다."
+                "• 목표: 타겟값 고정밀 분류·회귀 예측\n"
+                "• 방법: XGBoost·RandomForest 앙상블\n"
+                "• 결과: 교차검증 기반 안정적 예측 모델\n"
+                "• 장점: 높은 정확도·피처 해석 용이\n"
+                "• 단점: 하이퍼파라미터 튜닝 비용 발생\n"
+                "• 기대: 견고한 예측 성능·중요도 지표"
             ),
             "score": 0.9,
         },
@@ -147,9 +146,12 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "id": 2,
             "title": "SHAP 기반 피처 중요도 분석",
             "rationale": (
-                "SHAP 값과 피처 중요도 분석을 결합하여 예측에 영향을 미치는 핵심 변수를 식별합니다. "
-                "단순 예측을 넘어 어떤 요인이 결과를 결정하는지 해석 가능한 인사이트를 제공하며, "
-                "비즈니스 의사결정에 직접 활용할 수 있는 변수 중요도 리포트를 생성합니다."
+                "• 목표: 예측을 좌우하는 핵심 변수 규명\n"
+                "• 방법: SHAP 값·피처 중요도 결합\n"
+                "• 결과: 변수별 영향도 정량 리포트\n"
+                "• 장점: 예측 근거 해석·신뢰 확보\n"
+                "• 단점: 계산 비용·해석 전문성 필요\n"
+                "• 기대: 의사결정에 쓰는 중요도 인사이트"
             ),
             "score": 0.6,
         },
@@ -159,9 +161,12 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "id": 1,
             "title": "TabTransformer 딥러닝 학습",
             "rationale": (
-                "범주형 피처가 많은 정형 데이터에 TabTransformer를 적용하여 "
-                "어텐션 메커니즘으로 피처 간 복잡한 상호작용을 학습합니다. "
-                "기존 트리 기반 모델보다 비선형 패턴을 더 정확하게 포착하며, 대규모 데이터에서 강점을 발휘합니다."
+                "• 목표: 복잡한 비선형 패턴 학습\n"
+                "• 방법: TabTransformer 어텐션 모델\n"
+                "• 결과: 피처 상호작용 반영 예측\n"
+                "• 장점: 트리 모델 대비 표현력 우위\n"
+                "• 단점: 학습 시간·데이터량 요구\n"
+                "• 기대: 대규모 정형 데이터 고성능"
             ),
             "score": 0.8,
         },
@@ -169,9 +174,12 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "id": 2,
             "title": "FTTransformer 수치 임베딩 비교",
             "rationale": (
-                "수치형 피처를 임베딩으로 변환하는 FTTransformer를 사용하여 TabTransformer와 성능을 비교합니다. "
-                "두 모델의 교차 검증 결과를 기반으로 최적 아키텍처를 자동 선정하며, "
-                "각 모델의 예측 신뢰도와 피처 기여도를 함께 제공합니다."
+                "• 목표: 최적 딥러닝 구조 선정\n"
+                "• 방법: FTTransformer 수치 임베딩\n"
+                "• 결과: 모델 비교·자동 아키텍처 선정\n"
+                "• 장점: 수치형 표현력·기여도 제공\n"
+                "• 단점: 튜닝 복잡·자원 소모\n"
+                "• 기대: 검증된 최적 모델·신뢰도"
             ),
             "score": 0.7,
         },
@@ -181,9 +189,12 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "id": 1,
             "title": "단기 시계열 예측 (LSTM/Prophet)",
             "rationale": (
-                "시계열 데이터의 추세와 계절성 패턴을 분석하여 Prophet 또는 LSTM 기반 단기 예측 모델을 구축합니다. "
-                "1~30일 구간의 미래 값 예측과 신뢰 구간을 함께 제공하며, "
-                "계절성·휴일 효과 등 외부 요인을 자동으로 반영합니다."
+                "• 목표: 단기 미래 값 예측\n"
+                "• 방법: Prophet·LSTM 예측 모델\n"
+                "• 결과: 1~30일 예측값·신뢰구간\n"
+                "• 장점: 추세·계절성 자동 반영\n"
+                "• 단점: 장기 예측 정확도 한계\n"
+                "• 기대: 수요·지표 사전 대응력"
             ),
             "score": 0.8,
         },
@@ -191,9 +202,12 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "id": 2,
             "title": "이상 시점 탐지 (변동성 분석)",
             "rationale": (
-                "시계열 내 변동성이 비정상적으로 큰 구간을 Isolation Forest와 통계적 기법으로 탐지합니다. "
-                "정상 패턴을 학습한 후 이탈 시점과 이상치 구간을 자동으로 표시하며, "
-                "원인 피처와 이상 발생 패턴에 대한 해석 리포트를 제공합니다."
+                "• 목표: 비정상 변동 시점 탐지\n"
+                "• 방법: IsolationForest·통계 기법\n"
+                "• 결과: 이상 시점·구간 자동 표시\n"
+                "• 장점: 정상 패턴 학습 후 이탈 포착\n"
+                "• 단점: 임계값 설정 민감성\n"
+                "• 기대: 원인 피처·이상 패턴 해석"
             ),
             "score": 0.6,
         },
@@ -203,9 +217,12 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "id": 1,
             "title": "Isolation Forest 이상치 점수화",
             "rationale": (
-                "Isolation Forest와 AutoEncoder를 결합하여 샘플별 이상 점수를 산출합니다. "
-                "정상/이상 임계값을 자동 설정하고 이상 비율과 핵심 이상 피처를 시각화하며, "
-                "실시간 모니터링에 바로 적용 가능한 경량 모델을 제공합니다."
+                "• 목표: 샘플별 이상 점수화\n"
+                "• 방법: IsolationForest·AutoEncoder\n"
+                "• 결과: 임계값 자동·이상 비율 시각화\n"
+                "• 장점: 경량·실시간 모니터링 적합\n"
+                "• 단점: 고차원서 성능 저하 가능\n"
+                "• 기대: 즉시 적용 가능한 탐지 모델"
             ),
             "score": 0.85,
         },
@@ -213,9 +230,12 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
             "id": 2,
             "title": "정상 분포 학습 기반 탐지",
             "rationale": (
-                "정상 데이터 분포를 학습한 후 분포에서 크게 벗어난 샘플을 이상치로 판별합니다. "
-                "One-Class SVM과 GMM을 비교하여 데이터 특성에 맞는 최적 탐지 모델을 자동 선정하며, "
-                "각 이상치의 원인 피처와 이상 강도를 함께 리포트합니다."
+                "• 목표: 정상 분포 이탈 판별\n"
+                "• 방법: One-Class SVM·GMM 학습\n"
+                "• 결과: 최적 탐지 모델 자동 선정\n"
+                "• 장점: 데이터 특성 맞춤 탐지\n"
+                "• 단점: 정상 정의·분포 가정 의존\n"
+                "• 기대: 이상 강도·원인 피처 리포트"
             ),
             "score": 0.7,
         },
@@ -318,11 +338,34 @@ class MethodologyProposerAgent(BaseGate):
         # HJ 2026-06-12 — C′-2: prefetch 가 주제 선택 중 미리 만든 방법론 후보가 있으면 LLM 스킵(63~87초 절감).
         #   캐시 key = (job_id, 선택 방향 제목, category). 추천 방향+동일 카테고리면 적중,
         #   사용자가 다른 방향/카테고리 선택 시 miss → 그 자리에서 생성(폴백).
+        # HJ 2026-06-12 — 병목 진단용 구간 타이밍 로깅 (cache 조회 / LLM 생성 / 전체).
+        #   cache_hit  → G3 시점 LLM 미호출(선이동 적중). 병목은 G2 prefetch 쪽.
+        #   cache_miss → llm_ms 가 실제 생성 시간. 내부 분해는 base.py 의 ollama_timing 로그 참조.
+        import time as _time
+
+        _t0 = _time.perf_counter()
         llm_opts = _g2_method_cache_get(state.job_id, g2_title, state.category)
+        _cache_ms = round((_time.perf_counter() - _t0) * 1000, 1)
         if llm_opts:
-            self.logger.info("g3_method_cache_hit")
+            self.logger.info(
+                "g3_timing",
+                phase="cache_hit",
+                cache_lookup_ms=_cache_ms,
+                llm_ms=0.0,
+                total_ms=round((_time.perf_counter() - _t0) * 1000, 1),
+            )
         else:
+            _t1 = _time.perf_counter()
             llm_opts = await self._generate_for_title(state, g2_title)
+            _llm_ms = round((_time.perf_counter() - _t1) * 1000, 1)
+            self.logger.info(
+                "g3_timing",
+                phase="cache_miss_generate",
+                cache_lookup_ms=_cache_ms,
+                llm_ms=_llm_ms,
+                total_ms=round((_time.perf_counter() - _t0) * 1000, 1),
+                generated=bool(llm_opts),
+            )
             if llm_opts:
                 _g2_method_cache_set(state.job_id, g2_title, state.category, llm_opts)
 
@@ -371,14 +414,27 @@ class MethodologyProposerAgent(BaseGate):
 
         _emit(status publish) 없음 → 노드(_propose)와 prefetch 선계산이 공유. HJ 2026-06-12 C′-2.
         """
+        # HJ 2026-06-12 — 입력 토큰 축소(생성 실패 방지). data_profile 통째(≈3200t)는 LLM JSON 생성을
+        #   실패시켜 76초 헛돌이를 유발 → gate 결정에 필요한 핵심 필드만 추출(G2 _propose 동일 패턴).
+        #   sample_rows·numeric_stats·domain_analysis 전체 등 무거운 필드 제외.
+        dp = state.data_profile or {}
+        domain = dp.get("domain_analysis") or {}
         payload = {
             "locked_category": state.category,
             "g2_title": g2_title or "",
-            "data_profile": state.data_profile,
-            "user_intent": state.user_intent,
+            "user_intent": (state.user_intent or "")[:500],
+            "rows": dp.get("rows"),
+            "cols": dp.get("cols"),
+            "columns": (dp.get("columns") or [])[:30],
+            "dtypes": {k: v for k, v in list((dp.get("dtypes") or {}).items())[:30]},
+            "target_column": state.target_column,
+            "target_dtype": dp.get("target_dtype"),
+            "class_distribution": dp.get("class_distribution"),
+            "domain": domain.get("domain"),
+            "dataset_summary": (domain.get("dataset_summary") or "")[:300],
         }
         # default=str — numpy/pandas 타입이 섞여도 TypeError 방지
-        user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:4000]
+        user_payload = json.dumps(payload, ensure_ascii=False, default=str)[:2500]
         try:
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,

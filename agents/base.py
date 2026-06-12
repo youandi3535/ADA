@@ -558,6 +558,27 @@ class BaseAgent(abc.ABC):
             try:
                 with _ur.urlopen(req, timeout=180) as resp:
                     data = _json.loads(resp.read())
+                # HJ 2026-06-12 — Ollama 네이티브 타이밍 메트릭 로깅 (병목 진단).
+                #   load=콜드스타트(모델 로딩), prompt_eval=입력 처리, eval=토큰 생성.
+                #   나노초→밀리초 환산. 어느 구간이 wall-clock 을 먹는지 식별용.
+                try:
+                    _ns = 1_000_000  # ns→ms
+                    _ec = int(data.get("eval_count", 0) or 0)
+                    _ed = int(data.get("eval_duration", 0) or 0)
+                    self.logger.info(
+                        "ollama_timing",
+                        agent=self.__class__.__name__,
+                        model=model,
+                        total_ms=round(int(data.get("total_duration", 0) or 0) / _ns, 1),
+                        load_ms=round(int(data.get("load_duration", 0) or 0) / _ns, 1),
+                        prompt_eval_ms=round(int(data.get("prompt_eval_duration", 0) or 0) / _ns, 1),
+                        prompt_tokens=int(data.get("prompt_eval_count", 0) or 0),
+                        eval_ms=round(_ed / _ns, 1),
+                        eval_tokens=_ec,
+                        tok_per_sec=round(_ec / (_ed / 1_000_000_000), 1) if _ed > 0 else 0.0,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 return data.get("message", {}).get("content", "") or ""
             except (_ue.URLError, TimeoutError, OSError, ValueError) as e:
                 self.logger.error("ollama_call_failed", error=str(e), model=model)
