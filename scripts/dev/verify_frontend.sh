@@ -82,8 +82,11 @@ if [ "$DOCKER_OK" -eq 1 ]; then
 
   # ── [4] 변경 반영 확인 (grep 패턴 — 인자 있을 때만) ──────
   if [ -n "$PATTERN" ]; then
-    CNT="$(docker exec "$CONTAINER" grep -c -- "$PATTERN" "$CONT_FILE" 2>/dev/null || echo 0)"
-    if [ "${CNT:-0}" -ge 1 ]; then
+    # grep -c 는 0건일 때 "0" 출력 + exit 1 → 뒤에 `|| echo 0` 을 붙이면 "0\n0" 두 줄이 되어
+    # 정수 비교 실패(integer expression expected). 대입 실패 시 CNT=0 으로 단일 값 보장.
+    CNT="$(docker exec "$CONTAINER" grep -c -- "$PATTERN" "$CONT_FILE" 2>/dev/null)" || CNT=0
+    CNT="${CNT//[^0-9]/}"; CNT="${CNT:-0}"
+    if [ "$CNT" -ge 1 ]; then
       add "4" "변경 반영 (컨테이너 grep '$PATTERN')" "${CNT}건 검출 ✓"; ok
     else
       add "4" "변경 반영 (컨테이너 grep '$PATTERN')" "0건 — 미반영 의심 ✗"; ng
