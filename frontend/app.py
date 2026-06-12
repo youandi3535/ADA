@@ -538,11 +538,18 @@ function _typingHoldComplete(){
     // 정확한 3초 시점 재렌더 보장. 모달 닫힘 직후 cur 전진 + stale 해제를 즉시 수행 (다음 poll 2.5s 기다리지 않음).
     setTimeout(function(){
       try{
-        // hold 완료 시점(이 콜백 등록 = _twAllDoneAt 설정 시점 기준 3초 후)에 다음 게이트가 와있으면 전진.
-        if(_nextGateArrived()){
-          lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; follow=true;
+        // HJ 2026-06-12 — 이 콜백은 '템플릿 타이핑 완료' 시점에 예약된다. 그 뒤 LLM 수정 내용이
+        //   추가 도착하면 _miEl 교체로 _twAllDone()=false → 다시 타이핑이 시작된다. 이때 예약 당시
+        //   기준 3초가 지나도 타이핑은 미완이므로, 재확인 없이 전진하면 G3 분석 글 작성 도중 G4 로
+        //   점프(화면 흔들림+조기 전환)하는 버그가 난다. → 콜백 발화 시점에 _typingHoldComplete() 를
+        //   다시 평가해, '진짜 타이핑 완료 + 3초 hold 경과' 일 때만 다음 단계로 전진한다.
+        //   (미완이면 전진 보류, 이후 새 타이핑 완료 시 재예약된 콜백이 처리.)
+        if(_typingHoldComplete()){
+          if(_nextGateArrived()){
+            lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; follow=true;
+          }
+          if(follow && frontier>cur){ cur=Math.max(cur,frontier); }
         }
-        if(follow && frontier>cur){ cur=Math.max(cur,frontier); }
         render();
       }catch(_e){}
     }, POST_TYPING_HOLD_MS+50);
@@ -2656,7 +2663,7 @@ function render(){
       if(_pbEl) _pbEl.innerHTML=progressBar(true);  // HJ 2026-06-11 — 모달 내부 진행바는 isGateLoading 무관 항상 표시(사라짐 버그 fix)
       // [3] insight 영역 — modalInsightArea 가 모달 콘텐츠 생성. modalDismissed 와 무관하게 새 데이터 도착 시 갱신.
       var _miEl=document.getElementById('modal-insight');
-      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();}}
+      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){var _msc=document.getElementById('modal-scroll');var _mst=_msc?_msc.scrollTop:0;_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;if(_msc)_msc.scrollTop=_mst;_twTick();}}
       // [3.5] 타자기 엔진 — modalDismissed 여도 setInterval 계속 도는 핵심.
       //   _twTick 가 span.tw[data-tw] 들을 95ms 마다 1글자씩 채움. 모달 숨겨져 있어도 DOM 은 살아있어 글자 누적.
       //   사용자가 다시 열면 그동안 그려진 글자가 그대로 보임.
