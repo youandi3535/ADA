@@ -132,13 +132,35 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     slides_flat = [s for s in (cover_sl, exec_sl, agenda_sl) if s is not None] + body
     # Force-rebuild Agenda's body_outline = exact list of body slide titles
     # (everything after Agenda except the very last closing slide).
+    # jh 2026-06-12 — 목표치 덱 스토리 아젠다: 슬라이드 id → 이야기 흐름 라벨.
+    # (Action Title 그대로 나열하면 목차가 아니라 결론 모음이 됨 — 목차는 *질문/주제* 톤)
+    # EDA 4장은 데이터 기반 제목(title_ko)이 더 구체적이라 맵에서 제외.
+    _AGENDA_STORY_LABELS = {
+        "hypothesis": "분석 가설 — 무엇을 물었나",
+        "p1_market": "데이터 — 개요 + 품질",
+        "p2_pain": "기술 스택",
+        "p3_alt_limits": "분석 방법 — 5단계 설계",
+        "i1_kpi": "모델 성능 — Baseline 대비 가치",
+        "eda_findings": "SHAP — 전역 importance",
+        "error_analysis": "SHAP — 개별 케이스 해석",
+        "insights_derived": "Error Analysis — 어디서 틀리는가",
+        "as_is_to_be": "약 segment — 취약 구간 식별",
+        "i3_roi": "운영 정책 — 도입 룰",
+        "risk_mitigation": "Risk & Drift — SWOT",
+        "roadmap": "실행 로드맵 — 후속 작업",
+    }
     if agenda_sl is not None:
         body_titles = []
         for i, sl in enumerate(slides_flat):
             if sl is agenda_sl:
                 # body items start at i+1 and stop before the last (closing)
                 for j, body_sl in enumerate(slides_flat[i + 1 : -1], 1):
-                    title = (body_sl.title_ko or body_sl.id or f"슬라이드 {j}")[:60]
+                    title = (
+                        _AGENDA_STORY_LABELS.get(body_sl.id)
+                        or body_sl.title_ko
+                        or body_sl.id
+                        or f"슬라이드 {j}"
+                    )[:60]
                     body_titles.append(f"{j:02d}.  {title}")
                 break
         if body_titles:
@@ -1164,19 +1186,45 @@ def _draw_chart_callout(slide, sl, ctx, primary, accent, ink, muted, light_bg, r
         align="left",
         vcenter=True,
     )
-    body_text = "\n\n".join(f"-  {b}" for b in sl.body_outline[:5])
-    add_text_box(
-        slide,
-        callout_x + 0.5,
-        6.2,
-        callout_w - 1.0,
-        SLIDE_H - 9.0,
-        body_text or "-",
-        size_pt=14,
-        color_hex=ink,
-        align="left",
-        vcenter=False,
+    # jh 2026-06-12 — 목표치 덱 페어 2줄 구조: "사실" 줄 + "→ 시사점" 강조 들여쓰기 줄.
+    # 카피라이터 페어 bullet("사실 — 시사점") 을 " — " 에서 분해해 2층으로 그림.
+    _add_pair_bullets(
+        slide, callout_x + 0.5, 6.2, callout_w - 1.0, SLIDE_H - 9.0,
+        sl.body_outline[:5], ink, primary,
     )
+
+
+def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
+    """페어 bullet 리치텍스트 — 사실 13pt + '→ 시사점' 12B(primary) + 간격."""
+    from pptx.dml.color import RGBColor
+    from pptx.util import Cm, Pt
+
+    tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
+    tf = tb.text_frame
+    tf.word_wrap = True
+    _ink = RGBColor.from_string(str(ink).lstrip("#"))
+    _pri = RGBColor.from_string(str(primary).lstrip("#"))
+    first = True
+    for b in list(bullets or []):
+        s = str(b).strip().lstrip("-").strip()
+        fact, _, imp = s.partition(" — ")
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        r = p.add_run()
+        r.text = f"-  {fact.strip()}"
+        r.font.size = Pt(13)
+        r.font.color.rgb = _ink
+        if imp.strip():
+            p2 = tf.add_paragraph()
+            r2 = p2.add_run()
+            r2.text = f"     →  {imp.strip()}"
+            r2.font.size = Pt(12)
+            r2.font.bold = True
+            r2.font.color.rgb = _pri
+        gap = tf.add_paragraph()
+        rg = gap.add_run()
+        rg.text = " "
+        rg.font.size = Pt(7)
 
 
 def _draw_quote(slide, sl, primary, accent, ink, muted):
