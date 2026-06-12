@@ -739,50 +739,12 @@ def register_phase10() -> None:
     )
 
 
-def t_roadmap_upgrades(slide, sl, ctx, primary, accent, ink, muted, light_bg):
-    """Split body into Phase items + 고도화 items, render split layout."""
-    phases = []
-    upgrades = []
-    for line in sl.body_outline:
-        if "·" in line:
-            k, v = line.split("·", 1)
-        elif ":" in line:
-            k, v = line.split(":", 1)
-        else:
-            k, v = line, ""
-        head = k.strip()
-        body = v.strip()
-        head_lower = head.lower()
-        if head.startswith("Phase") or "phase" in head_lower or "단계" in head:
-            phases.append({"title": head[:30], "caption": body[:120]})
-        elif "고도화" in head or "upgrade" in head_lower or "디벨롭" in head or "확장" in head:
-            upgrades.append({"title": head[:30], "caption": body[:120]})
-        else:
-            # First half → phases, second half → upgrades
-            (phases if len(phases) < 3 else upgrades).append({"title": head[:30], "caption": body[:120]})
-    if not phases:
-        phases = [
-            {"title": "Phase 1 (0~30일)", "caption": "파일럿 운영"},
-            {"title": "Phase 2 (30~90일)", "caption": "운영 전환"},
-            {"title": "Phase 3 (90일+)", "caption": "확장·자동화"},
-        ]
-    if not upgrades:
-        upgrades = [
-            {"title": "추가 피처", "caption": "행동·실시간 신호 연동"},
-            {"title": "앙상블 확장", "caption": "멀티 모델 + 개인화"},
-            {"title": "A/B 인프라", "caption": "도메인 룰 결합 운영"},
-        ]
-    I.draw_roadmap_with_upgrades(slide, phases[:3], upgrades[:3], primary, accent, ink, muted, light_bg)
-
-
 def register_phase11():
     from outputs.carriers.template_registry import REGISTRY, has_id
 
-    if REGISTRY.get("roadmap_upgrades"):
-        return
-    REGISTRY.register(
-        "roadmap_upgrades", t_roadmap_upgrades, fit=has_id("roadmap", "long_term"), min_score=90.0, tags=["roadmap"]
-    )
+    # jh 2026-06-12 — roadmap_upgrades 정의·등록은 register_phase12 로 일원화 (F811 중복 제거).
+    # register_phase11 은 호출되지 않는 좀비지만 (init_registry 미참조), 향후 재활성화 시
+    # 잔여 tightening 만 유효하도록 roadmap 잔재만 걷어냄.
     # Tighten horizontal_progress so it doesn't grab roadmap
     if REGISTRY.get("horizontal_progress"):
         REGISTRY._specs["horizontal_progress"].fit = has_id("progress_status", "kpi_progress")

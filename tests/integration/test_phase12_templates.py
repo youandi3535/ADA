@@ -161,8 +161,9 @@ class TestVisualFixes20260612:
     def test_cover_title_size_shrinks(self):
         from outputs.carriers.pptx_designer import _cover_title_size
 
-        assert _cover_title_size("짧은 제목") == 48
-        assert _cover_title_size("가" * 44) == 26
+        # jh 2026-06-12 — 사이즈 사다리 재보정(48→40) 동기화: 짧은 제목 40, 34자 초과 24
+        assert _cover_title_size("짧은 제목") == 40
+        assert _cover_title_size("가" * 44) == 24
 
     def test_clip_sentence_no_midword_cut(self):
         from outputs.carriers.templates_init import _clip_sentence
