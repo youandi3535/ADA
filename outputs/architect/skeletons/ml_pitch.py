@@ -1123,23 +1123,19 @@ def _build_insight_synthesis(ctx: ReportContext) -> SlideSpec:
     except Exception:
         pass
 
-    # jh 2026-06-12 — "글이 짧다" 지적: 각 열 2문장(사실 + 의미) 구조로 확장
+    # body_outline — 카피라이터(규칙 12-3) 입력 골격. *현실 함의* 로 변환됨.
+    # 발견 수치를 재료로 담되, head 는 도메인 의미 방향으로.
     body = [
         (
-            f"데이터 · {rows:,}건 × {cols}변수의 {use_case}. "
-            "타겟 레이블이 완전해 패턴 학습에 충분하며 전 과정이 표준 스택으로 재현 가능하다"
+            f"{use_case} 의 결과를 가른 본질적 요인 — {top_feats} 의 격차가 "
+            f"현실에서 의미하는 바를 해석"
         ),
         (
-            f"패턴 · {top_feats} 가 결과를 좌우한다. "
-            f"{chosen} 이 {pm_str} 로 이 구조를 포착했다{seg_line or ' — 상위 변수 의존이 뚜렷하다'}"
+            f"데이터가 입증한 구조·현상 — {seg_line.lstrip(', ') or '집단 간 뚜렷한 차이'} 가 "
+            "드러내는 정책·사회·행동 차원의 증거"
         ),
         (
-            "인사이트 · 결과를 결정한 구조적 요인이 데이터로 정량 입증됐다. "
-            "단순 룰로는 못 잡는 비선형·상호작용까지 모델이 흡수해 해석 가능한 형태로 분해된다"
-        ),
-        (
-            "접목 · 동일 구조의 분류 과제(고객 이탈·승인 심사 등)에 즉시 이식 가능하다. "
-            "운영 적용 → 취약 구간 보강 → 유사 데이터 확장 검증 순으로 적용 범위를 넓힌다"
+            "이 분석의 활용 가치 — 의사결정 근거·사회 구조 해석·유사 과제 확장"
         ),
     ]
 
@@ -1151,22 +1147,27 @@ def _build_insight_synthesis(ctx: ReportContext) -> SlideSpec:
     else:
         title_ko = f"{use_case} — 구조적 결정 요인 정량 입증"
 
+    # jh 2026-06-12 — S3 는 모델 내부(SHAP·변수)가 아니라 *이 분석이 현실에서
+    # 무엇을 알려주는가*(도메인 함의) 가 핵심 (사용자 지적). skeleton 은 발견 재료를
+    # 골격으로 넘기고, 카피라이터(규칙 12-3)가 user_intent·도메인 보고 현실 함의로 변환.
+    industry = ctx.domain.inferred_industry or ""
+    domain_interp = getattr(ctx.domain, "inferred_interpretation", "") or ""
     insights = [
         (
-            f"{top_feats} 가 판단의 주축",
-            f"{chosen} 이 {pm_str} 로 포착 — 단순 룰로 못 잡는 비선형·상호작용까지 흡수{seg_line}",
+            f"{use_case} 의 결과를 가른 본질적 요인이 드러났다",
+            f"{top_feats} 의 격차가 핵심 — 이 패턴이 {industry or '해당 도메인'} 에서 의미하는 현실적 함의로 해석",
         ),
         (
-            "결정 요인이 해석 가능한 형태로 분해됨",
-            "변수별 기여(SHAP)·오류 유형(CM)·취약 구간(세그먼트)까지 근거 추적 가능",
+            "데이터가 입증한 구조·현상",
+            domain_interp or f"{seg_line.lstrip(', ') or '집단 간 뚜렷한 차이'} — 정책·사회·행동 차원의 증거",
         ),
     ]
     applications = [
-        "운영 적용 — 임계·모니터링·재학습 룰로 즉시 전환",
-        "취약 구간 보강 — 소표본·고결측 세그먼트 피처 보강",
-        "동일 구조 과제 이식 — 고객 이탈·승인 심사 등 이진 분류 확장",
+        f"{industry or '현업'} 의사결정 — 분석 결과를 정책·운영 판단의 근거로",
+        "사회·구조 해석 — 발견된 패턴이 드러내는 불평등·행동 양식 등의 증명",
+        "유사 과제 확장 — 동일 구조의 분류 문제로 분석 틀 이식",
     ]
-    evidence = f"근거 · {rows:,}건 × {cols}변수 — 타겟 완전, 표준 스택 재현 가능"
+    evidence = f"근거 · {rows:,}건 × {cols}변수의 {use_case} — 타겟 완전, 표준 스택 재현 가능"
 
     sp = SlideSpec(
         id="insight_synthesis",

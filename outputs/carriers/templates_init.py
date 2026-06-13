@@ -1077,16 +1077,19 @@ def t_insight_synthesis_panel(slide, sl, ctx, primary, accent, ink, muted, light
     """
     vs = getattr(sl, "visual_spec", None)
     spec = dict(getattr(vs, "spec", None) or {})
-    insights = [
-        (str(h), str(d)) for h, d in (spec.get("insights") or []) if str(h).strip()
-    ][:3]
     applications = [str(a) for a in (spec.get("applications") or []) if str(a).strip()][:4]
     evidence = str(spec.get("evidence") or "")
+    # jh 2026-06-12 — 카피라이터가 도메인 함의로 다듬은 body_outline 우선 (규칙 12-3).
+    # body 의 처음 2줄(현실 함의)을 insights 로, spec.insights 는 폴백.
+    insights = []
+    for b in (sl.body_outline or [])[:2]:
+        h, _, d = str(b).partition(" — ")
+        if h.strip():
+            insights.append((h.strip()[:46], d.strip()))
     if not insights:
-        # 폴백 — body 페어에서 구성
-        for b in (sl.body_outline or [])[:3]:
-            h, _, d = str(b).partition(" — ")
-            insights.append((h.strip()[:40], d.strip()))
+        insights = [
+            (str(h), str(d)) for h, d in (spec.get("insights") or []) if str(h).strip()
+        ][:3]
     # SHAP 미니바 재료 (좌측 하단 시각화)
     top_features = []
     try:

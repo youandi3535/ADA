@@ -3758,8 +3758,8 @@ def draw_insight_synthesis(slide, insights, applications, evidence, primary, acc
 
     # 좌측 — 인사이트 패널 (번호 뱃지 + 하단 SHAP 미니바)
     add_rounded_rect(slide, 1.5, y0, left_w, h0, light_bg, line_hex=primary)
-    add_text_box(slide, 2.1, y0 + 0.4, left_w - 1.2, 0.8, "INSIGHTS — 무엇을 알 수 있나",
-                 size_pt=13, bold=True, color_hex=primary, align="left", vcenter=True)
+    add_text_box(slide, 2.1, y0 + 0.4, left_w - 1.2, 0.8, "이 분석이 밝힌 것",
+                 size_pt=14, bold=True, color_hex=primary, align="left", vcenter=True)
     _ins = (insights or [])[:2]
     iy = y0 + 1.5
     for i, (head, detail) in enumerate(_ins, 1):
@@ -3791,8 +3791,8 @@ def draw_insight_synthesis(slide, insights, applications, evidence, primary, acc
 
     # 우측 — 접목(APPLICATION) 카드 (단계 화살표로 연결)
     add_rounded_rect(slide, right_x, y0, right_w, h0, primary)
-    add_text_box(slide, right_x + 0.6, y0 + 0.4, right_w - 1.2, 0.8, "APPLICATION — 어디까지 쓰나",
-                 size_pt=13, bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
+    add_text_box(slide, right_x + 0.6, y0 + 0.4, right_w - 1.2, 0.8, "활용 가치",
+                 size_pt=14, bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
     _apps = (applications or [])[:3]
     ay = y0 + 1.6
     _step = (h0 - 1.8) / max(len(_apps), 1)
