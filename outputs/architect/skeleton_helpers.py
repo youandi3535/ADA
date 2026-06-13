@@ -227,7 +227,7 @@ def build_eda_slide_from_chart(
     )
     ref_id = getattr(chart, "ref_id", None)
 
-    return SlideSpec(
+    sp = SlideSpec(
         id=slide_id,
         section_id=section_id,
         layout=(variant.layout if variant else "chart_callout"),
@@ -254,6 +254,10 @@ def build_eda_slide_from_chart(
             "KEY INSIGHTS 는 callouts → numbers → finding 순서로 자동 채워짐."
         ),
     )
+    # jh 2026-06-12 — EDA 슬라이드는 차트+KEY INSIGHTS 고정 (LLM 디자이너가
+    # body 의 "74.2% vs 18.9%" 의 'vs' 를 보고 split_compare 로 가로채던 결함 차단).
+    sp.preferred_template = "chart_key_insights"
+    return sp
 
 
 def build_eda_placeholder(

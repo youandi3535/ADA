@@ -1765,12 +1765,34 @@ def _prepick_designs(slides_flat: list, ctx) -> None:
     designer = LLMDesigner()
     tasks: list = []
     task_slides: list = []
+    # jh 2026-06-12 — id 기반 디자인 고정 (직렬화 무관, preferred_template 소실 대응).
+    # 이 슬라이드들은 차트·전용 레이아웃이 *결정적*이라 LLM 변동성을 차단한다.
+    # (EDA 의 'vs' 가 split_compare 를 부르고, CM 이 비차트로 새던 결함의 근본 차단)
+    _DESIGN_LOCKED = {
+        "p1_market": "background_questions",      # S6 분석 배경
+        "method_model": "chart_key_insights",     # S8 EDA
+        "tech_architecture": "chart_key_insights",  # S9 EDA
+        "tech_stack": "chart_key_insights",       # S10 EDA
+        "s3_differentiation": "chart_key_insights",  # S11 EDA
+        "i1_kpi": "chart_key_insights",           # S12 성능
+        "eda_findings": "chart_key_insights",     # S13 SHAP
+        "error_analysis": "case_cards_3",         # S14 사례
+        "insights_derived": "chart_key_insights",  # S15 CM
+        "as_is_to_be": "chart_key_insights",      # S16 세그먼트
+        "i3_roi": "policy_steps",                 # S17 정책
+        "roadmap": "roadmap_upgrades",            # S19 로드맵
+        "insight_synthesis": "insight_synthesis_panel",  # S3 종합
+    }
     for sl in slides_flat:
         # cover/agenda/section_divider 는 hardcoded path 라 LLM 스킵
         if getattr(sl, "layout", "") in ("cover", "agenda", "section_divider"):
             continue
-        # jh 2026-06-12 — skeleton 이 고정한 템플릿은 LLM 이 덮어쓰지 않음
-        # (S6 lineage_2col 고정이 prepick 에서 소실되던 결함)
+        # id 고정 슬라이드 — LLM 스킵, 결정적 템플릿 강제
+        _locked = _DESIGN_LOCKED.get(getattr(sl, "id", ""))
+        if _locked and REGISTRY.get(_locked):
+            sl.preferred_template = _locked
+            continue
+        # skeleton 이 고정한 템플릿도 LLM 이 덮어쓰지 않음
         if getattr(sl, "preferred_template", None):
             continue
         candidates = REGISTRY.candidates_for(sl, ctx, top_n=7)

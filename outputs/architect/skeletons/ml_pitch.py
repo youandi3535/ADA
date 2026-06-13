@@ -555,56 +555,62 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     while len(quality_items) < 3:
         quality_items.append(("품질 확인", "추가 이슈 없음"))
 
-    # jh 2026-06-12 (2차 개편, 사용자 지시) — "데이터 설명은 한 장 가치가 없다"
-    # → 이 장을 *분석 배경·질문* 으로 전환. Q1~Q3 가 주인공, 데이터·도구는
-    # 마지막 행 한 줄로 격하 (목표치 덱 S4 '분석 배경+질문' 이식).
-    from outputs.architect.substitution_manifest import resolve_tech_stack as _rts
-
-    category = ctx.meta.category or "tabular_ml"
-    _stack = _rts(category)[:3]
-    _stack_names = "·".join(it.name.split("/")[0].strip() for it in _stack)
+    # jh 2026-06-12 (3차 개편, 사용자 지시) — "이 PPT 를 *왜* 만들었나(분석 목적)
+    # + KPI 결과 + 분석 접근" 이 초반에 와야 한다. 데이터·도구는 S7(방법) 으로 이관.
+    # 구성: 상단 목적(왜) / 중단 Q1~Q3 / 하단 KPI 결과 한 줄.
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
+    intent = (ctx.meta.user_intent or use_case).strip()
     target = ctx.dataset.detected_target or "타겟"
-    _miss = quality_items[0][0] if quality_items else "결측"
+    pm = ctx.evaluation.primary_metric or {}
+    pm_name, pm_val = pm.get("name", "정확도"), pm.get("value")
+    verdict = (ctx.evaluation.verdict or "").lower()
+    _verdict_ko = {"adopt": "운영 도입 권장", "iterate": "보완 후 재평가", "reject": "도입 보류"}.get(verdict, "판정")
+    biz = ctx.meta.business_context or ""
+
+    # 목적 — "왜 이 분석인가" (user_intent + 도메인). 영업 X, 분석 동기 O.
+    purpose = (
+        f"{intent} — {target} 를 좌우하는 요인을 데이터로 규명하고, "
+        f"재현 가능한 모델로 정량 검증하기 위한 분석"
+    )
+    if biz:
+        purpose = f"{biz} — {purpose}"
 
     questions = [
         (
             f"{target} 을 가장 강하게 결정하는 변수는 무엇인가",
-            "EDA 격차 분석과 SHAP 전역 중요도로 답한다 (S8~S13)",
+            "EDA 격차 분석 + SHAP 전역 중요도 (S8~S13)",
         ),
         (
-            f"{use_case[:24]} 의 구조가 데이터에 실제로 재현되는가",
-            "집단 간 격차·상관·비선형 효과를 정량 확인한다 (S8~S11)",
+            "그 구조가 데이터에 실제로 재현되는가",
+            "집단 격차·상관·비선형 효과 정량 확인 (S8~S11)",
         ),
         (
-            "모델은 어떤 케이스에서 약하고, 운영에 어떻게 반영하나",
-            "개별 사례·오류 집계·세그먼트 분해로 취약 구간을 짚는다 (S14~S17)",
+            "모델은 어디서 약하고 운영에 어떻게 반영하나",
+            "사례·오류 집계·세그먼트 분해 (S14~S17)",
         ),
     ]
-    data_line = (
-        f"{rows:,}건 × {cols}변수 · 타겟 {target} · 주요 결측 {_miss}",
-        f"{_stack_names} 표준 스택 — 전 과정 재현 가능",
-    )
+    _pm_str = (f"{pm_val:.3f}" if isinstance(pm_val, float) and pm_val < 1 else str(pm_val)) if pm_val is not None else "—"
+    kpi_line = f"분석 결과 · {pm_name} {_pm_str} → {_verdict_ko}"
 
-    body = [f"{q} · {a}" for q, a in questions] + [f"데이터 · {data_line[0]} — {data_line[1]}"]
+    body = [purpose] + [f"{q} · {a}" for q, a in questions] + [kpi_line]
 
     return SlideSpec(
         id="p1_market",
         section_id="problem",
         layout="background_questions",
         role="claim",
-        so_what=f"이 분석이 답하려는 세 가지 질문 — 데이터는 {rows:,}건 × {cols}변수로 검증",
-        title_ko="분석 배경 — 세 가지 질문",
-        body_outline=body[:4],
+        so_what=f"왜 이 분석인가 — {target} 결정 요인 규명, {pm_name} {_pm_str} 로 {_verdict_ko}",
+        title_ko="분석 배경 — 목적과 핵심 질문",
+        body_outline=body[:5],
         parent_message_id="problem_root",
         visual_spec=VisualSpec(
             type="v32_background_questions",
-            title="분석 배경 · 질문",
-            spec={"questions": questions, "data_line": data_line},
+            title="분석 배경 · 목적",
+            spec={"purpose": purpose, "questions": questions, "kpi_line": kpi_line},
         ),
         speaker_notes_hint=(
-            "왜 이 분석인가 — Q1~Q3 이 주인공. 각 질문이 어느 슬라이드에서 "
-            "답해지는지 연결. 데이터·도구는 하단 한 줄로만."
+            "왜 이 분석인가(목적) — 상단. Q1~Q3 + 각 답 위치 — 중단. "
+            "KPI 결과·판정 — 하단. 데이터·도구는 S7(방법) 으로 이관."
         ),
     )
 
@@ -680,16 +686,25 @@ def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
     # body_outline — legacy carrier 호환 (5 단계 라벨)
     body = [f"단계 {i+1} · {s['label']}" for i, s in enumerate(steps)]
 
+    # jh 2026-06-12 — S6 에서 이관된 데이터·도구 한 줄 (사용자 지시: 방법 장에 흡수)
+    rows = ctx.dataset.shape.get("rows", 0)
+    cols = ctx.dataset.shape.get("cols", 0)
+    target = ctx.dataset.detected_target or "타겟"
+    from outputs.architect.substitution_manifest import resolve_tech_stack as _rts
+
+    _stack = _rts(ctx.meta.category or "tabular_ml")[:4]
+    _stack_names = " · ".join(it.name.split("/")[0].strip() for it in _stack)
+    data_tools_line = f"데이터 {rows:,}건 × {cols}변수 (타겟 {target}) · 도구 {_stack_names}"
+
     return SlideSpec(
         id="p3_alt_limits",
         section_id="limits",
         layout="method_flow_with_why",
         role="evidence",
         so_what=(
-            "5단계 분석 방법 — 각 단계의 *선택 이유* 와 *정량 결과* 를 함께 추적, "
-            "재현 가능성 + 의사결정 트레이스 보존"
+            "전처리부터 평가까지 5단계 — 각 단계의 선택 이유와 정량 결과를 함께 추적"
         ),
-        title_ko="분석 방법",
+        title_ko="분석 방법 — 5단계와 데이터·도구",
         body_outline=body[:5],
         parent_message_id="problem_root",
         visual_spec=VisualSpec(
@@ -698,6 +713,7 @@ def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
             spec={
                 "steps": steps,
                 "whys": whys,
+                "data_tools_line": data_tools_line,
             },
         ),
         speaker_notes_hint=(

@@ -3595,6 +3595,43 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
         )
 
 
+def draw_background_brief(slide, purpose, questions, kpi_line, primary, accent, ink, muted, light_bg):
+    """분석 배경 — 상단 목적 배너 / 중단 Q1~Q3 카드 / 하단 KPI 결과 스트립.
+
+    jh 2026-06-12 — '왜 이 분석인가(목적) + 핵심 질문 + KPI 결과' 도입부.
+    """
+    # 상단 — 목적 배너 (primary 솔리드, 흰 글씨)
+    add_rounded_rect(slide, 1.5, 4.5, SLIDE_W - 3.0, 2.4, primary)
+    add_text_box(slide, 2.1, 4.75, SLIDE_W - 4.2, 0.7, "분석 목적 · WHY",
+                 size_pt=12, bold=True, color_hex="#BFDBFE", align="left", vcenter=True)
+    add_text_box(slide, 2.1, 5.5, SLIDE_W - 4.2, 1.3, str(purpose)[:130],
+                 size_pt=15, bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
+
+    # 중단 — 질문 3 카드
+    n = min(len(questions), 3)
+    gap = 0.5
+    cw = (SLIDE_W - 3.0 - (max(n, 1) - 1) * gap) / max(n, 1)
+    qy, qh = 7.5, 6.2
+    for i in range(n):
+        q, a = questions[i]
+        x = 1.5 + i * (cw + gap)
+        add_rounded_rect(slide, x, qy, cw, qh, light_bg, line_hex=primary)
+        add_oval(slide, x + 0.5, qy + 0.5, 1.4, 1.4, accent)
+        add_text_box(slide, x + 0.5, qy + 0.5, 1.4, 1.4, f"Q{i + 1}",
+                     size_pt=16, bold=True, color_hex="#FFFFFF", align="center", vcenter=True)
+        add_text_box(slide, x + 0.5, qy + 2.2, cw - 1.0, 2.4, str(q)[:60],
+                     size_pt=15, bold=True, color_hex=ink, align="left", vcenter=False)
+        add_rect(slide, x + 0.5, qy + 4.5, cw - 1.0, 0.05, accent)
+        add_text_box(slide, x + 0.5, qy + 4.7, cw - 1.0, 1.3, f"→ {str(a)[:50]}",
+                     size_pt=12, color_hex=primary, align="left", vcenter=False)
+
+    # 하단 — KPI 결과 스트립
+    if kpi_line:
+        add_rounded_rect(slide, 1.5, qy + qh + 0.4, SLIDE_W - 3.0, 1.3, "#F1F5F9")
+        add_text_box(slide, 2.1, qy + qh + 0.4, SLIDE_W - 4.2, 1.3, str(kpi_line)[:90],
+                     size_pt=14, bold=True, color_hex=primary, align="left", vcenter=True)
+
+
 def draw_insight_synthesis(slide, insights, applications, evidence, primary, accent, ink, muted, light_bg):
     """발견 종합 — 좌 60% 인사이트(大) / 우 40% 접목 / 하단 근거 한 줄.
 

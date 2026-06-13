@@ -423,10 +423,19 @@ def init_registry() -> None:
 
     # ---- Comparison ----
     REGISTRY.register("as_is_to_be", t_as_is_to_be, fit=has_layout("comparison_before_after"), tags=["compare"])
+    def fit_split_compare(sl, c):
+        # jh 2026-06-12 — evidence(EDA·해석) 슬라이드 제외 + 제목에 명시적 대비어만
+        if getattr(sl, "role", "") == "evidence":
+            return 0.0
+        title = getattr(sl, "title_ko", "") or ""
+        if any(k in title for k in ("AS-IS", "TO-BE", "전후", "개선 전", "대비", " vs ")):
+            return 75.0
+        return 0.0
+
     REGISTRY.register(
         "split_compare",
         t_split_compare,
-        fit=combine(matches_keywords("vs", "비교", "vs."), has_body_min(2)),
+        fit=fit_split_compare,
         tags=["compare"],
     )
     REGISTRY.register("strategy_4", t_strategy_4, fit=has_id("s3_differentiation"), tags=["strategy"])
@@ -1010,6 +1019,12 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         items = _items_from_body(sl, 5)
     I.draw_5step_alt_callouts(slide, items, primary, accent, ink, muted, light_bg)
 
+    # jh 2026-06-12 — S6 에서 이관된 데이터·도구 한 줄 (헤더 부제 아래)
+    _dt = str(spec.get("data_tools_line") or "")
+    if _dt:
+        I.add_text_box(slide, 1.5, 3.95, I.SLIDE_W - 3.0, 0.7, _dt,
+                       size_pt=12, bold=True, color_hex=muted, align="left", vcenter=True)
+
     # jh 2026-06-12 — "시각자료·설명 부족" (사용자): 하단에 WHY 카드 3개 추가
     # (단계별 무엇을/왜/결과 — 목표치 S7 의 단계 상세 카드 이식)
     _cards = []
@@ -1037,21 +1052,22 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 
 
 def t_background_questions(slide, sl, ctx, primary, accent, ink, muted, light_bg):
-    """S6 — 분석 배경·세 가지 질문 (Q 가 주인공, 데이터는 하단 한 줄).
+    """S6 — 분석 배경: 목적(왜) + Q1~Q3 + KPI 결과.
 
-    jh 2026-06-12 — "데이터 설명은 한 장 가치 없음" (사용자) → 질문 중심 전환.
+    jh 2026-06-12 — "이 PPT 를 왜 만들었나(목적)·KPI·분석 접근이 초반에 와야"
+    (사용자). 상단 목적 배너 + 중단 질문 3 + 하단 KPI 결과 스트립.
     """
     vs = getattr(sl, "visual_spec", None)
     spec = dict(getattr(vs, "spec", None) or {})
-    items = []
-    for q, a in list(spec.get("questions") or [])[:3]:
-        items.append({"title": f"Q. {str(q)[:34]}", "caption": str(a)[:90]})
-    dl = spec.get("data_line")
-    if isinstance(dl, (list, tuple)) and dl:
-        items.append({"title": "데이터 · 도구", "caption": f"{dl[0]} — {dl[1] if len(dl) > 1 else ''}"[:110]})
-    if not items:
-        items = _items_from_body(sl, 4)
-    I.draw_numbered_rows(slide, items[:4], primary, accent, ink, muted, light_bg)
+    purpose = str(spec.get("purpose") or sl.so_what or "")
+    questions = list(spec.get("questions") or [])
+    kpi_line = str(spec.get("kpi_line") or "")
+    if not questions:
+        # 폴백 — body 에서 질문 유도
+        for b in (sl.body_outline or [])[1:4]:
+            q, _, a = str(b).partition(" · ")
+            questions.append((q, a))
+    I.draw_background_brief(slide, purpose, questions[:3], kpi_line, primary, accent, ink, muted, light_bg)
 
 
 def t_insight_synthesis_panel(slide, sl, ctx, primary, accent, ink, muted, light_bg):
