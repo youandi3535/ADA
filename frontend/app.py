@@ -325,10 +325,13 @@ _FLOW_HTML = """
   <div id="modalOverlay" class="modal-overlay" style="display:none">
     <div class="modal-card">
       <button class="modal-close" id="modalCloseBtn" title="팝업 닫기 (분석은 계속 진행)" onclick="dismissModal()">✕</button>
-      <div class="modal-close-hint">분석은 백그라운드 계속</div>
       <div id="modal-body"></div><div id="modal-scroll"><div id="modal-insight"></div></div><div id="modal-pending-wrap"></div><div id="modal-pb"></div>
     </div>
   </div>
+  <!-- HJ 2026-06-13 — G5 롤백(무인 자동 재시도) 안내 미니팝업. 우하단 고정 — 메인 모달 작성 글에 간섭 없음. -->
+  <div id="rollbackBanner" style="display:none;position:fixed;right:24px;bottom:24px;z-index:99999;max-width:344px;background:#fff5f5;border:2px solid #e23b3b;border-radius:14px;box-shadow:0 12px 34px rgba(180,30,30,.30);padding:16px 18px;font-family:'Pretendard','Inter',-apple-system,sans-serif;"></div>
+  <!-- HJ 2026-06-13 — G5 baseline 미달 선택 팝업: 화면 중앙 오버레이(백드롭 + 가운데 카드). -->
+  <div id="baselineChoiceOverlay" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(18,28,42,.62);align-items:center;justify-content:center;padding:24px;font-family:'Pretendard','Inter',-apple-system,sans-serif;"></div>
   <!-- HJ 2026-06-11 — 모달 ✕ 닫은 후 화면 가운데에 표시되는 '다시 열기' 버튼. 1~6단계 모두 지원.
        render() 가 modalDismissed && _shouldModalBeShown() 시점에만 display:flex 토글.
        2026-06-11 수정 — 우측 하단 floating → 화면 가운데, 크기 2배 (눈에 띄는 큰 박스 버튼). -->
@@ -477,6 +480,7 @@ let g2DirectionsReady=false;     // endpoint 응답 받았는지 (resume 가드)
 let _g2PrefetchedJob=null;       // HJ 2026-06-12 — 분석 방향 백그라운드 선생성을 job 당 1회만 발사하기 위한 가드.
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
+let _g5ContinueChosen=false;  // HJ 2026-06-13 — G5 baseline 미달 선택 팝업에서 '계속 진행' 누름 여부
 let gateCache={};  // {G2: gateData, G3: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
 let _sawAnalyzingAfterSubmit=false;  // resume 후 analyzing() 상태를 거쳤는지 — stale gate 차단
 // HJ 2026-06-10 — 모달 닫기 (사용자가 ✕ 누름). 같은 cur 동안만 유효, 다음 단계 진입 시 자동 reset.
@@ -629,7 +633,7 @@ function resetAll(){
   if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
-  gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={};
+  gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={}; _g5ContinueChosen=false;
   _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;
   render();
 }
@@ -1678,7 +1682,10 @@ function _modalShouldBeActive(){
   //   시간 기반(15초) 폴백 전면 제거 — 늦게 뜨든 일찍 뜨든 모든 단계
   //   (cur 0~5)에서 _shownPct 가 41% 에 도달해야만 모달 노출. 41% 미만에서는 본문 카드만 표시한다.
   //   (lastSubmittedGate 가드(아래 cur>=1 분기)는 유지되어 stale 단계로 새지 않는다.)
-  if(cur>=0 && cur<=5 && _shownPct<41) return false;
+  // HJ 2026-06-13 — 롤백(무인 자동 재시도) 중에는 41% 임계를 우회해 모달을 띄운다.
+  //   진행이 길어지는 롤백 구간에서 사용자가 빈 화면만 보지 않도록(진행 상태 가시화).
+  const _rbActive=!!(((gateData&&gateData.stage_partial)||{}).rollback_active);
+  if(cur>=0 && cur<=5 && _shownPct<41 && !_rbActive) return false;
   if(cur===0){
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
     if(_p0.length && curGate()==='G2' && _typingHoldComplete()) return false;
@@ -2293,6 +2300,35 @@ function modalHtml(){
   }
   return body;
 }
+// HJ 2026-06-13 — G5 baseline 미달 선택 팝업(화면 중앙 오버레이 #baselineChoiceOverlay 내부 카드).
+//   4단계 baseline 리루프 3회 소진 후에도 진짜 모델이 기준선(Dummy)을 못 이긴 경우,
+//   두 갈래(계속/처음으로)를 빨강 강조로 제시. updateBaselineChoice() 가 표시·숨김 제어.
+function updateBaselineChoice(){
+  const el=document.getElementById('baselineChoiceOverlay');
+  if(!el) return;
+  const atG5=((curGate()==='G5')||(cur===4));
+  const active=atG5 && !!(gateData&&gateData.baseline_not_beaten) && !_g5ContinueChosen
+    && !!jobId && !isFailed() && !isCompleted();
+  if(!active){ if(el.style.display!=='none') el.style.display='none'; el._sig=null; return; }
+  const props=((gateData&&gateData.proposals)||[]).filter(function(p){return !p.is_custom;});
+  const sig=props.slice(0,2).map(function(p){return p.title;}).join('|');
+  if(el._sig!==sig){ el._sig=sig; el.innerHTML=baselineChoicePopup(props); }
+  el.style.display='flex';
+}
+function baselineChoicePopup(llmProps){
+  const names=(llmProps||[]).filter(function(p){return !p.is_custom;}).slice(0,2)
+    .map(function(p){return p.title;}).filter(function(s){return !!s;});
+  const nameTxt=names.length?names.map(esc).join(', '):'상위 모델';
+  return '<div style="background:#fff5f5;border:2px solid #e23b3b;border-radius:20px;padding:34px 40px;max-width:720px;width:100%;box-shadow:0 28px 70px rgba(0,0,0,.45);animation:cmIn .3s ease">'
+    +'<div style="font-size:25px;font-weight:800;color:#c62828;margin-bottom:14px">⚠ 모델이 기준선(Dummy)을 끝내 못 이겼습니다</div>'
+    +'<div style="font-size:18px;color:#3a4a5e;line-height:1.65;margin-bottom:22px">전처리·피처링까지 거슬러 <b>3회 자동 재시도</b>했지만, 학습한 모델들이 단순 기준선(Dummy)조차 넘지 못했습니다. 데이터 신호가 약하거나 타깃·피처 설정의 재검토가 필요할 수 있습니다. 어떻게 진행할까요?</div>'
+    +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+    +'<button onclick="_g5ContinueChosen=true;try{render();}catch(e){}" style="flex:1;min-width:260px;background:#1f3e5c;color:#fff;border:none;border-radius:14px;padding:20px 24px;font-size:19px;font-weight:700;cursor:pointer;text-align:left">계속 진행 ▶'
+    +'<div style="font-size:14px;font-weight:500;opacity:.85;margin-top:7px">더미 제외 상위 2개 모델('+nameTxt+') 중에서 선택</div></button>'
+    +'<button onclick="goToStart()" style="flex:1;min-width:260px;background:#fff;color:#c62828;border:2px solid #e23b3b;border-radius:14px;padding:20px 24px;font-size:19px;font-weight:700;cursor:pointer;text-align:left">처음으로 돌아가기 ↺'
+    +'<div style="font-size:14px;font-weight:500;opacity:.85;margin-top:7px">작업을 끝내고 시작 화면에서 새로 시작</div></button>'
+    +'</div></div>';
+}
 function contentGate(){
   const tg='G'+(cur+1);           // 사용자가 보고 싶은 게이트 (cur 기준). cur=1→G2 ... cur=5→G6
   const ag=curGate();             // 백엔드 현재 게이트
@@ -2348,6 +2384,8 @@ function contentGate(){
   // filter out backend-injected custom placeholder — customCard is added separately below
   const llmProps=props.filter(function(p){ return !p.is_custom; });
   if(!llmProps.length){ return gateHeader(g)+loadingBlock(); }
+  // HJ 2026-06-13 — G5 baseline 미달 선택은 화면 중앙 오버레이(#baselineChoiceOverlay)로
+  //   표시(updateBaselineChoice). 여기 본문은 G5 카드를 그대로 깔아두고 오버레이가 그 위를 덮는다.
   let recId=llmProps.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, llmProps[0]).id;
   if(selId===null || selGate!==g){ selId=recId; selGate=g; }
   let cards=llmProps.map(function(p,i){ return propCard(p,i,recId); }).join('');
@@ -2481,6 +2519,39 @@ function primaryLabel(){
   if(cur>=1 && cur<=5 && (navUnlocked || cur<frontier)) return '🔄 재진행 ▸';
   return '진행 ▸';
 }
+// HJ 2026-06-13 — 자동 리루프(4·5단계) 진행 배너 갱신. stage_partial.rollback_active 기반(통합 스키마).
+//   우하단 고정 — 메인 모달 본문에 간섭하지 않고 1·2·3차 롤백 단계·사유를 빨강 강조로 안내한다.
+function updateRollbackBanner(){
+  const el=document.getElementById('rollbackBanner');
+  if(!el) return;
+  const sp=(gateData&&gateData.stage_partial)||{};
+  const active=!!sp.rollback_active && !!jobId && !isFailed() && !isCompleted();
+  if(!active){ el.style.display='none'; el._sig=null; return; }
+  const stage=+sp.rollback_stage||5;
+  const tier=+sp.rollback_tier||0;
+  const max=+sp.rollback_max||3;
+  const desc=sp.rollback_desc||(tier+'차 롤백');
+  const reason=sp.rollback_reason||(stage===4?'기준선(Dummy) 미달':'평가 임계 성능 미달');
+  const etaSec=+sp.rollback_eta_sec||0;
+  const etaTxt=etaSec>=60?('약 '+Math.round(etaSec/60)+'분'):(etaSec>0?('약 '+etaSec+'초'):'잠시');
+  const stageLabel=stage===4?'4단계 · 모델 학습(기준선 초과 목표)':'5단계 · 평가(임계 성능 목표)';
+  const sig=stage+'|'+tier+'|'+max+'|'+desc+'|'+reason+'|'+etaSec;
+  if(el._sig===sig){ el.style.display='block'; return; }  // 내용 동일 → 재렌더 생략(깜빡임 방지)
+  el._sig=sig;
+  let dots='';
+  for(let i=1;i<=max;i++){
+    const on=i<=tier;
+    dots+='<span style="font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;'+(on?'background:#e23b3b;color:#fff':'background:#f1dada;color:#c08a8a')+'">'+i+'차</span>';
+  }
+  el.innerHTML='<div style="font-size:16px;font-weight:800;color:#c62828;margin-bottom:4px">⚠ 자동 재시도(롤백) 진행 중</div>'
+    +'<div style="font-size:12px;font-weight:700;color:#9a5a5a;margin-bottom:9px">'+esc(stageLabel)+'</div>'
+    +'<div style="display:flex;gap:7px;margin-bottom:10px">'+dots+'</div>'
+    +'<div style="font-size:15px;font-weight:700;color:#1f3e5c;margin-bottom:5px">'+esc(desc)+'</div>'
+    +'<div style="font-size:13px;color:#9a5a5a;margin-bottom:5px">사유: '+esc(reason)+'</div>'
+    +'<div style="font-size:13px;color:#9a5a5a;margin-bottom:8px">예상 추가 시간: <b>'+etaTxt+'</b></div>'
+    +'<div style="font-size:12px;color:#8a98ad;line-height:1.45">조건을 만족할 때까지 자동으로 보강·재학습합니다. 화면은 그대로 두셔도 됩니다(현재 단계 유지).</div>';
+  el.style.display='block';
+}
 function render(){
   // CS 2026-06-10 — 모든 textarea/input 포커스 보존 (polling render 시 포커스·커서 잃지 않게)
   // 주제 팝업 textarea (topiccust-ta), 분석 방향 직접 입력 (cust), G1 의도 입력 (intentInput) 등
@@ -2514,6 +2585,8 @@ function render(){
   var _ce=document.getElementById('content');
   if(_ce._last!==_nc){_ce._last=_nc;_ce.innerHTML=_nc;}
   document.getElementById('pb-area').innerHTML=progressBar();
+  try{ updateRollbackBanner(); }catch(e){}
+  try{ updateBaselineChoice(); }catch(e){}
   // loadMsg·agentLabel 은 DOM 파괴 없이 직접 갱신 (innerHTML 리셋 방지 → SVG 애니메이션 유지)
   var _lmEl=document.getElementById('lmsg');
   if(_lmEl) _lmEl.textContent=loadMsg()+'…';

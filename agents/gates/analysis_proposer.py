@@ -40,7 +40,8 @@ SYSTEM_PROMPT = (
     "- 두 옵션은 반드시 서로 다른 category.\n"
     "- EDA·시각화는 방향 아님 (단계임).\n"
     "- 한국어만, 한자(漢字·汉字)·중국어 금지.\n"
-    "- 카드 1장당 rationale 6줄, 각 줄 12~18자:\n"
+    "- 카드 1장당 rationale 6줄, 각 줄 12~20자. 제목·각 줄 모두 완결된 한국어 구로 작성하고, "
+    "단어·음절을 생략하거나 중간에서 끊지 말 것(예: '생존률'→'생', '분석'→'분' 으로 줄이기 금지):\n"
     "  • 목표: <분석 목표>\n"
     "  • 방법: <핵심 알고리즘>\n"
     "  • 결과: <산출 인사이트>\n"
@@ -48,7 +49,7 @@ SYSTEM_PROMPT = (
     "  • 단점: <한계·주의>\n"
     "  • 기대: <기대 효과·지표>\n\n"
     "[각 카드 필드]\n"
-    "  id, title(한국어 10~20자), rationale(위 6줄), score(0~1),\n"
+    "  id, title(한국어 12~28자, 완결된 구·중간에 끊지 말 것), rationale(위 6줄), score(0~1),\n"
     "  category: tabular_ml|tabular_dl|timeseries|anomaly_detection,\n"
     "  approach: supervised_classification|supervised_regression|unsupervised_clustering"
     "|anomaly_detection|time_series_forecasting|supervised_other,\n"
@@ -319,12 +320,9 @@ class AnalysisProposerAgent(BaseGate):
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                # HJ 2026-06-09 — G1 단축: 1500 → 900 → 800.
-                # 카드 2개 × rationale 6줄 (typical, worst 8줄). 실측 화면 카드 출력 ~550t.
-                # cap 800: 6줄 typical 마진 40%, 8줄 worst (~700t) 마진 14% — P99 cap 미도달.
-                # 잘려도 _safe_parse_json_array → _FALLBACK_DEFAULTS 폴백.
-                # 추가 단축: -8s.
-                max_tokens=800,
+                # HJ 2026-06-13 — 글자 잘림 수정: 완결 구 강제로 줄·제목이 길어져 800 cap 에서
+                #   마지막 줄(기대)·제목이 절단되던 문제 → 1100 으로 상향(프리페치라 대기시간 영향 0).
+                max_tokens=1100,
                 temperature=0.3,
                 json_mode=True,
             )
@@ -338,7 +336,7 @@ class AnalysisProposerAgent(BaseGate):
                     raw2 = await self._call_llm(
                         system_prompt=SYSTEM_PROMPT,
                         user_prompt=retry_user,
-                        max_tokens=600,
+                        max_tokens=900,
                         temperature=0.2,
                         json_mode=True,
                     )
@@ -452,7 +450,8 @@ class AnalysisProposerAgent(BaseGate):
             raw = await self._call_llm(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                max_tokens=800,
+                # HJ 2026-06-13 — 글자 잘림 수정: 완결 구 강제로 800 cap 절단 방지 (프리페치라 영향 0).
+                max_tokens=1100,
                 temperature=0.3,
                 json_mode=True,
             )
@@ -464,7 +463,7 @@ class AnalysisProposerAgent(BaseGate):
                     raw2 = await self._call_llm(
                         system_prompt=SYSTEM_PROMPT,
                         user_prompt=retry_user,
-                        max_tokens=600,
+                        max_tokens=900,
                         temperature=0.2,
                         json_mode=True,
                     )

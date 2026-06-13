@@ -83,6 +83,13 @@ class SupervisorAgent(BaseAgent):
 
             return state.with_update(
                 task=task,  # "auto" 가능 — data_profiler 가 최종 결정
+                # HJ 2026-06-13 — 파이프라인 진입(첫 시작·재시작 공통) 시 게이트 자동통과 카운터 리셋.
+                #   auto_error_handler 가 오류를 auto-resolve 하고 supervisor 로 재시작할 때
+                #   re_loop/baseline_re_loop 잔여가 남으면 G2~G4 게이트가 자동통과(사용자 선택 스킵)된다.
+                #   error_recovery 경로는 이미 리셋하지만 auto_error_handler→supervisor 경로는 미차단이라
+                #   진입점인 여기서 단일 지점 차단. supervisor 는 롤백 루프에 포함되지 않으므로 항상 안전.
+                re_loop_count=0,
+                baseline_re_loop_count=0,
                 next_agent="intent_elicitor",
             )
 

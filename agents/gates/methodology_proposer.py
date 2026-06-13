@@ -95,9 +95,11 @@ SYSTEM_PROMPT = (
     "       Option 1 = 고전 앙상블 (IsolationForest / LOF / OneClassSVM)\n"
     "       Option 2 = 딥러닝 재구성 (AutoEncoder / TranAD / AnomalyTransformer)\n\n"
     "3. 위 분기 축 외 조합 금지 (예: tabular_ml 인데 한쪽에 이상탐지 끼우기).\n"
-    "4. Option 1 score 는 0.80~0.95, Option 2 는 0.60~0.78.\n\n"
+    "4. Option 1 score 는 0.80~0.95, Option 2 는 0.60~0.78.\n"
+    "5. title 은 완결된 한국어(계열명 포함, 12~30자). 단어·음절 생략·중간 끊김 금지.\n\n"
     "## rationale 작성 규칙 (6줄 글머리)\n"
-    "한국어. 정확히 6줄. 각 줄 '• ' 로 시작, 각 줄 12~18자.\n"
+    "한국어. 정확히 6줄. 각 줄 '• ' 로 시작, 각 줄 12~20자. "
+    "단어·음절을 생략하거나 중간에서 끊지 말 것('생존률'→'생', '분석'→'분' 금지).\n"
     "  • 목표: 이 방법론으로 달성할 분석 목표\n"
     "  • 방법: 핵심 알고리즘 1~3개\n"
     "  • 결과: 사용자가 얻을 인사이트·지표\n"
@@ -452,7 +454,7 @@ class MethodologyProposerAgent(BaseGate):
                     raw2 = await self._call_llm(
                         system_prompt=SYSTEM_PROMPT,
                         user_prompt=retry_user,
-                        max_tokens=700,
+                        max_tokens=1000,
                         temperature=0.2,
                         json_mode=True,
                     )

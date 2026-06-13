@@ -778,6 +778,8 @@ def _save_gate_data(job_id: str, final_dict: dict) -> None:
             "feature_engineering": final_dict.get("feature_engineering"),  # G3 결과 = G4 화면 표시
             "preprocessing_plan": final_dict.get("preprocessing_plan"),  # G3 plan steps
             "candidate_models": final_dict.get("candidate_models"),  # G4 결과 = G5 화면 표시
+            # HJ 2026-06-13 — 4단계 baseline 3회 미달 시 G5 에서 "계속/처음으로" 선택 팝업 트리거 플래그.
+            "baseline_not_beaten": final_dict.get("baseline_not_beaten"),
             "best_params": final_dict.get("best_params"),  # G4 튜닝 결과 = G5 화면 표시
             "explainability": final_dict.get("explainability"),  # G5 결과 = G6 화면 표시
         }

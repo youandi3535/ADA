@@ -280,6 +280,7 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                 "candidate_models",  # G4 model_selection 결과 = G5 모달
                 "best_params",  # G4 tuner 결과 = G5 모달
                 "explainability",  # G5 결과 = G6 모달
+                "baseline_not_beaten",  # HJ 2026-06-13 — G5 "계속/처음으로" 선택 팝업 트리거
             ):
                 v = _gd.get(k)
                 if v is not None:

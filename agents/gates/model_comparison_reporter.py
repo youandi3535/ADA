@@ -37,7 +37,13 @@ class ModelComparisonReporterAgent(BaseGate):
         }.get(state.category, "val_f1")
         direction = "min" if objective_metric == "val_rmse" else "max"
 
-        models = list(state.trained_models or [])
+        # HJ 2026-06-13 — baseline(Dummy/LR 등)은 G5 추천 카드에서 제외. baseline 은 비교용이지
+        #   사용자가 채택할 최종 모델이 아니다(특히 baseline 미달 케이스에서 Dummy 가 1·2위로 떠
+        #   "더미 제외 상위 2개" 요구를 어기는 것 방지). metrics_aggregator 와 동일 키 사용.
+        _cat_key = "tabular" if state.category.startswith("tabular") else state.category
+        _extras = (getattr(state, "category_extras", None) or {}).get(_cat_key, {})
+        _baseline_names = {str(n) for n in (_extras.get("baseline_model_names") or [])}
+        models = [m for m in (state.trained_models or []) if m.get("model_name") not in _baseline_names]
 
         def _key(m: dict[str, Any]) -> float:
             v = (m.get("metrics") or {}).get(objective_metric)

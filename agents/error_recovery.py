@@ -81,6 +81,11 @@ class ErrorRecoveryAgent(BaseAgent):
                 "insights": user_message,
                 "error": None,
                 "next_agent": next_agent,
+                # HJ 2026-06-13 — retry=supervisor 재시작(새 분석 사이클)이므로 게이트 자동통과
+                #   카운터를 리셋한다. 안 하면 직전 re_loop/baseline_re_loop 잔여로 G2~G4 게이트가
+                #   자동통과돼 사용자 선택이 스킵된다.
+                "re_loop_count": 0,
+                "baseline_re_loop_count": 0,
             }
             if fallback == "downgrade_models" and state.model_candidates:
                 transformer = {
