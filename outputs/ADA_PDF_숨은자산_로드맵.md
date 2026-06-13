@@ -29,8 +29,8 @@
 - [x] **재검증 주기** → §7 운영적용 · 7/3 · `limitations.revalidation_window` · "(예: 분기)" 하드코딩→실제 값(폴백 안전). ✅ 2026-06-13 (에이전트 연결 5번) — 🟢 quick-win 5개 전부 완료
 
 ### 🟡 중간
-- [ ] **로컬 설명(SHAP 사례)** → §6 · 8/5 · `interpretation.local_examples` · "이 건은 X 때문에 Y" 사례 3개 (현재 ML변형만)
-- [ ] **분포 변화 위험** → §8 · 7/4 · `limitations.distribution_shift_risk` · 드리프트 시나리오 + 트리거
+- [x] **로컬 설명(SHAP 사례)** → §6 본문(1~2건)+부록 9.1(전체 3건) · 8/5 · `interpretation.local_examples` · "근거 때문에 Y 예측"(오분류 사례 포함). ✅ 2026-06-13 (에이전트 연결 7번) — 코드+픽스처 신규
+- [x] **분포 변화 위험** → §7 운영적용(재검증 옆) · 7/4 · `limitations.distribution_shift_risk` · detected 시 드리프트 트리거 규칙. ✅ 2026-06-13 (에이전트 연결 6번)
 - [ ] **세그먼트별 성능표** → §5 · 7/4 · `evaluation.per_segment` · 슬라이스별 성능(현재 상위 2개만)
 - [ ] **가설검정 유의성** → §3 · 6/3 · `eda.hypothesis_tests` · p-value 주석(기술→추론)
 - [ ] **클래스 불균형 처리** → §4 · 6/3 · `handlers/tabular` · "소수 4:1 가중" 지표 선택 근거

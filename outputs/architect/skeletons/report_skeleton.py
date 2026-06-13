@@ -1970,6 +1970,32 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
     if who_sents:
         blocks.append(["누구에 집중하나 (추정)", " ".join(who_sents)])  # [C12]
 
+    # [로드맵1 로컬 설명] 개별 예측 사례 — interpretation.local_examples(조건부): "근거 때문에 Y 예측"
+    _lx = (interp.local_examples or []) if interp else []
+    _case_sents = []
+    for ex in _lx:
+        if not isinstance(ex, dict):
+            continue
+        _cbs = ex.get("contributions") or []
+        _feats = ", ".join(
+            f"{_feat_label(ctx, str(c.get('feature', '')))} {c.get('value', '')}"
+            for c in _cbs[:2] if isinstance(c, dict) and c.get("feature")
+        )
+        if not _feats:
+            continue
+        _pred = ex.get("prediction", "-")
+        _true = ex.get("true", "-")
+        if _pred == _true:
+            _case_sents.append(f"'{_pred}' 예측 (근거: {_feats})")
+        else:
+            _case_sents.append(f"'{_pred}' 예측했으나 실제 '{_true}' (근거: {_feats}, 오분류)")
+    if _case_sents:
+        _nc = 1 if audience_register(ctx)["depth"] == "decision" else 2
+        _ltxt = "예측을 개별 사례로 트레이스하면, " + "; ".join(_case_sents[:_nc]) + "."
+        if len(_case_sents) > _nc:
+            _ltxt += " 전체 사례는 부록 9.1에 있다."
+        blocks.append(["개별 예측 사례 (추정)", _ltxt])
+
     # ── 5) 가장 큰 레버 (→ §7 자연 이행)
     proj = _scenario_projection(ctx)
     lever_sent = ""
@@ -2085,6 +2111,24 @@ def _build_appendix(ctx: ReportContext) -> list[SectionSpec]:
                 _sd_lines.append(_t.rstrip("."))
         if _sd_lines:
             repro_blocks.append(["세그먼트 동인", " / ".join(_sd_lines) + "."])
+    # [로드맵1] 개별 예측 사례 전체 — 부록(예측/실제 + 근거)
+    _lx_a = (ctx.interpretation.local_examples or []) if ctx.interpretation else []
+    if _lx_a:
+        _lx_lines = []
+        for ex in _lx_a:
+            if not isinstance(ex, dict):
+                continue
+            _cbs = ex.get("contributions") or []
+            _fe = ", ".join(
+                f"{_feat_label(ctx, str(c.get('feature', '')))} {c.get('value', '')}"
+                for c in _cbs[:3] if isinstance(c, dict) and c.get("feature")
+            )
+            _p = ex.get("prediction", "-")
+            _t = ex.get("true", "-")
+            _ok = "정확" if _p == _t else "오분류"
+            _lx_lines.append(f"예측 '{_p}'/실제 '{_t}'({_ok}), 근거 {_fe}")
+        if _lx_lines:
+            repro_blocks.append(["개별 예측 사례", " / ".join(_lx_lines) + "."])
     sec_repro = make_section("appx_repro", "재현 정보", "appendix", [SlideSpec(
         id="appx_repro", section_id="appx_repro", layout="one_message", role="meta",
         so_what="동일 조건에서 본문 수치 재현", title_ko="재현 정보",
@@ -2273,6 +2317,14 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
         _rev = (ctx.limitations.revalidation_window or "").strip() if ctx.limitations else ""
         _rev_txt = f"{_rev} 재검증 주기" if _rev else "정기 재검증 주기"
         ops_sents.append(f"운영에는 '{chosen}' 모델을 {mdisp} 기준으로 적용하되, 분포 변화에 대응할 {_rev_txt}를 함께 둔다.")
+        # [로드맵2 분포 변화 위험] distribution_shift_risk 감지 시 드리프트 트리거 규칙(조건부·없으면 스킵)
+        _shift = (ctx.limitations.distribution_shift_risk or {}) if ctx.limitations else {}
+        if isinstance(_shift, dict) and _shift.get("detected"):
+            _ev_txt = str(_shift.get("evidence") or "").strip().rstrip(".")
+            if _ev_txt:
+                ops_sents.append(f"{_ev_txt}. 이에 드리프트 감지 시 정기 주기와 별개로 즉시 재학습을 트리거한다.")
+            else:
+                ops_sents.append("운영 중 입력 분포 드리프트가 감지되면 정기 주기와 별개로 즉시 재학습을 트리거한다.")
     elif chosen and chosen != "-":
         ops_sents.append(f"'{chosen}' 모델 후보를 우선 검증한 뒤 운영 적용 여부를 결정한다.")
     if drv:

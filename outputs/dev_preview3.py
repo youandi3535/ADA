@@ -490,6 +490,11 @@ def _titanic_ctx():
                 {"insight": "3등 객실 남성 청년이 최고 위험군 — 표본 347명 중 86.5%가 사망"},
                 {"insight": "1등 객실 여성·아동이 최저 위험군 — 96.8% 생존"},
             ],
+            local_examples=[
+                {"prediction": "사망", "true": "사망", "contributions": [{"feature": "Sex", "value": "남성"}, {"feature": "Pclass", "value": "3등"}, {"feature": "Age", "value": "22세"}]},
+                {"prediction": "생존", "true": "생존", "contributions": [{"feature": "Sex", "value": "여성"}, {"feature": "Pclass", "value": "1등"}]},
+                {"prediction": "생존", "true": "사망", "contributions": [{"feature": "Pclass", "value": "3등"}, {"feature": "Sex", "value": "여성"}, {"feature": "Age", "value": "28세"}]},
+            ],
         ),
         limitations=Limitations(
             model_caveats=[
@@ -502,6 +507,7 @@ def _titanic_ctx():
                 LimitationItem(description="객실 정확 위치(갑판·구역)가 결측되어 물리적 구조 기회 차이를 정량화하지 못한다"),
             ],
             revalidation_window="6개월",
+            distribution_shift_risk={"detected": True, "evidence": "학습 표본이 1912년 단일 항해라 다른 시대·상황 적용 시 입력 분포가 달라질 수 있다"},
         ),
         meta=Meta(
             category="tabular_ml",
