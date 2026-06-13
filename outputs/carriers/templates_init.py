@@ -1179,6 +1179,18 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     spec = dict(getattr(vs, "spec", None) or {})
     pairs = list(spec.get("policy_items") or [])
 
+    # jh 2026-06-13 — S3·S19 처럼 카피라이터가 다듬은 body_outline("{제목} · {내용}")
+    # 우선 파싱 (LLM 도메인 변환본). 실패 시 spec.policy_items 폴백.
+    _cw_pairs = []
+    for b in (getattr(sl, "body_outline", None) or []):
+        s = str(b).strip()
+        if " · " in s:
+            k, v = s.split(" · ", 1)
+            if k.strip() and v.strip():
+                _cw_pairs.append((k.strip(), v.strip()))
+    if len(_cw_pairs) >= 2:
+        pairs = _cw_pairs
+
     # jh 2026-06-12 — "S17 인사이트 적다" 지적: 빈약한 캡션을 ctx 실데이터로 보강
     pm = ctx.evaluation.primary_metric or {}
     _pm_v = pm.get("value")
@@ -1292,13 +1304,17 @@ def t_roadmap_upgrades(slide, sl, ctx, primary, accent, ink, muted, light_bg):
             txt = txt.replace("핵심 발견 등", f"{_top_feat} 등")
         return txt
 
+    # jh 2026-06-13 — S3 처럼 카피라이터가 다듬은 body_outline 을 action 으로 우선.
+    # (skeleton spec.phases 는 period/title/gate/output 구조만 제공, action 은 LLM 변환본)
+    _cw_body = [str(b).strip() for b in (getattr(sl, "body_outline", None) or []) if str(b).strip()]
     phases = []
     for i, p in enumerate(raw[:3]):
         if isinstance(p, dict) and (p.get("action") or p.get("gate")):
+            _action = _cw_body[i] if i < len(_cw_body) else str(p.get("action", ""))
             phases.append({
                 "period": str(p.get("period", f"단계 {i + 1}")),
                 "title": str(p.get("title", "")),
-                "action": _fix(str(p.get("action", ""))),
+                "action": _fix(_action),
                 "gate": str(p.get("gate", "")),
                 "output": str(p.get("output", "")),
             })

@@ -25,6 +25,34 @@ SLIDE_W = 33.867
 SLIDE_H = 19.05
 
 
+def _add_paragraphs(slide, x, y, w, h, lines, size_pt=12, color_hex="#0F172A",
+                    bold=False, space_after_pt=8):
+    """여러 줄을 단락 간격(space_after)과 함께 한 텍스트박스에 — 가독성용.
+
+    jh 2026-06-12 — 빽빽한 caption 을 문장 단위로 끊어 단락 간격 부여.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Cm, Pt
+
+    tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
+    tf = tb.text_frame
+    tf.word_wrap = True
+    _col = RGBColor.from_string(str(color_hex).lstrip("#"))
+    first = True
+    for ln in lines:
+        if not str(ln).strip():
+            continue
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        r = p.add_run()
+        r.text = str(ln).strip()
+        r.font.size = Pt(size_pt)
+        r.font.bold = bold
+        r.font.color.rgb = _col
+        p.space_after = Pt(space_after_pt)
+    return tb
+
+
 def draw_statistics_grid(slide, items, primary, accent, ink, muted, light_bg):
     """4 large statistics with icon + value + caption.
 
@@ -3633,11 +3661,13 @@ def draw_roadmap_timeline(slide, phases, primary, accent, ink, muted, light_bg):
         add_rounded_rect(slide, x, card_y, cw, 1.2, primary)
         add_text_box(slide, x + 0.4, card_y, cw - 0.8, 1.2, str(p.get("title", "")), size_pt=16,
                      bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
-        # 활동
+        # 활동 — 문장 단위 단락 (가독성)
         add_text_box(slide, x + 0.4, card_y + 1.5, cw - 0.8, 0.6, "활동", size_pt=10,
                      bold=True, color_hex=muted, align="left", vcenter=True)
-        add_text_box(slide, x + 0.4, card_y + 2.1, cw - 0.8, 2.4, str(p.get("action", ""))[:110],
-                     size_pt=12, color_hex=ink, align="left", vcenter=False)
+        _act = str(p.get("action", "")).strip()
+        _act_lines = [s.strip() for s in _act.replace(". ", ".\n").split("\n") if s.strip()]
+        _add_paragraphs(slide, x + 0.4, card_y + 2.1, cw - 0.8, 3.2, _act_lines[:3],
+                        size_pt=12, color_hex=ink, space_after_pt=7)
         # 게이트 (성공 기준) — accent 박스 강조
         gate = str(p.get("gate", ""))
         if gate:
@@ -3703,8 +3733,11 @@ def draw_policy_decision(slide, badge, kpis, rules, primary, accent, ink, muted,
                      color_hex="#FFFFFF", align="center", vcenter=True)
         add_text_box(slide, x + 2.2, ry + 0.6, rw - 2.6, 1.3, str(r.get("title", ""))[:24],
                      size_pt=16, bold=True, color_hex=primary, align="left", vcenter=True)
-        add_text_box(slide, x + 0.5, ry + 2.3, rw - 1.0, rh - 2.6, str(r.get("caption", ""))[:200],
-                     size_pt=12, color_hex=ink, align="left", vcenter=False)
+        # jh 2026-06-12 — 문장 단위 줄바꿈 + 단락 간격 (빽빽함·잘림 해소, 사용자 지적)
+        _cap = str(r.get("caption", "")).strip()
+        _sents = [s.strip() for s in _cap.replace(". ", ".\n").split("\n") if s.strip()]
+        _add_paragraphs(slide, x + 0.5, ry + 2.3, rw - 1.0, rh - 2.6, _sents[:4],
+                        size_pt=12, color_hex=ink, space_after_pt=8)
 
 
 def draw_background_brief(slide, purpose, questions, kpi_line, primary, accent, ink, muted, light_bg):

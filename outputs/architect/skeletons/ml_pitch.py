@@ -601,15 +601,15 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     questions = [
         (
             f"{target}을 가장 강하게 결정하는 변수는?",
-            f"EDA 집단 격차 + SHAP 전역 중요도로 규명 — 분석 결과 {_top}이 최상위 신호로 확인됨 (S8·S13)",
+            f"EDA 집단 격차와 SHAP 전역 중요도로 규명 — 분석 결과 {_top}이 최상위 신호로 확인됨",
         ),
         (
             "그 구조가 데이터에 실제로 재현되는가?",
-            "집단 간 격차·변수 상관·비선형 효과를 정량 확인 — 통계적 패턴이 우연이 아님을 검증 (S8~S11)",
+            "집단 간 격차·변수 상관·비선형 효과를 정량 확인 — 통계적 패턴이 우연이 아님을 검증",
         ),
         (
             "모델은 어디서 약하고, 어떻게 보완하나?",
-            "개별 오류 사례·혼동행렬·세그먼트별 성능으로 취약 구간을 짚고 대응 방향 도출 (S14~S17)",
+            "개별 오류 사례·혼동행렬·세그먼트별 성능으로 취약 구간을 짚고 대응 방향 도출",
         ),
     ]
     _pm_str = (f"{pm_val:.3f}" if isinstance(pm_val, float) and pm_val < 1 else str(pm_val)) if pm_val is not None else "—"
@@ -1593,23 +1593,32 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
             {
                 "period": "단기 · 0~30일",
                 "title": "시범 적용",
-                "action": f"{top_feat} 등 핵심 발견을 {industry} 의사결정에 시범 반영 · 관련 부서와 결과 공유",
-                "gate": f"시범 적용에서 분석 근거({_pm_name} {_pm_str})의 실효성 확인 시 확대",
-                "output": "적용 가이드 + 초기 효과 보고",
+                "action": (
+                    f"{top_feat} 등 핵심 발견을 {industry}의 의사결정에 시범 반영한다. "
+                    f"관련 부서와 분석 결과를 공유하고, 현장 적용 가능 범위를 함께 점검한다."
+                ),
+                "gate": f"시범 적용에서 분석 근거({_pm_name} {_pm_str})의 실효성이 확인되면 확대",
+                "output": "적용 가이드 + 초기 효과 보고서",
             },
             {
                 "period": "중기 · 30~90일",
                 "title": "적용 확대",
-                "action": (f"예측이 약한 {_worst} 구간 보완과 함께 " if _worst else "")
-                          + "적용 범위를 확대하고 현장 효과를 정량 측정",
-                "gate": "측정된 개선 효과가 목표 수준 도달 시 제도화 단계 진입",
+                "action": (
+                    (f"예측이 약한 {_worst} 구간을 우선 보완하면서 " if _worst else "")
+                    + "적용 범위를 단계적으로 확대한다. "
+                    + "각 적용 지점에서 현장 효과를 정량 측정해 개선 폭을 추적한다."
+                ),
+                "gate": "측정된 개선 효과가 목표 수준에 도달하면 제도화 단계로 진입",
                 "output": "확대 적용 결과 + 효과 측정 리포트",
             },
             {
                 "period": "장기 · 90일~",
                 "title": "제도·시스템 내재화",
-                "action": f"발견을 {industry} 정책·매뉴얼에 내재화 · 정기 재분석으로 판단 근거를 최신화",
-                "gate": "정기 갱신 체계가 안정적으로 운영되어 지속 의사결정 지원",
+                "action": (
+                    f"검증된 발견을 {industry}의 정책·매뉴얼에 내재화한다. "
+                    "정기 재분석 체계를 구축해 데이터가 갱신될 때마다 판단 근거를 최신화한다."
+                ),
+                "gate": "정기 갱신 체계가 안정적으로 운영되어 지속적 의사결정을 지원",
                 "output": "내재화된 정책 + 정기 재분석 체계",
             },
         ]
@@ -1632,7 +1641,10 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
              "gate": "도입 기준 충족", "output": "검증 결과"},
         ]
 
-    body = [f"{p['period']} {p['title']} · {p['action']} → {p['gate']}" for p in phases]
+    # jh 2026-06-13 — S3 처럼 카피라이터가 도메인 변환할 수 있게 body_outline =
+    # 각 단계 action 문장 (carrier 가 이 body 를 phases[i].action 으로 우선 사용).
+    # 카피라이터 규칙 12-4 가 이 줄들을 현실 행동/정책으로 다시 씀.
+    body = [str(p["action"]) for p in phases]
 
     return SlideSpec(
         id="roadmap",
