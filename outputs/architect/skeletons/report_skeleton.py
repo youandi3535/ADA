@@ -174,6 +174,13 @@ def _fv(v: Any) -> str:
     return str(v)
 
 
+def _fvb(v: Any) -> str:
+    """[레지스터] 본문(결정)용 숫자 — 비율(0<v<1)은 소수 2자리. 4자리 정밀값·CI는 부록 몫."""
+    if isinstance(v, (int, float)) and 0 < abs(v) < 1:
+        return f"{v:.2f}"
+    return _fv(v)
+
+
 def _pct(v: Any) -> str:
     try:
         return f"{float(v) * 100:.1f}%"
@@ -1521,13 +1528,13 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
     _pm_val = _pm.get("value")
     _bench_bits: list[str] = []
     if _pm_val is not None and ("auc" in _pm_name):
-        _bench_bits.append("무작위: 0.5000")
+        _bench_bits.append("무작위 0.50")
         if _maj is not None:
-            _bench_bits.append(f"단순 룰(다수 클래스): {_maj:.4f}")
-        _bench_bits.append(f"<b>본 모델: {_fv(_pm_val)}</b>")
+            _bench_bits.append(f"단순룰(다수클래스) {_maj:.2f}")
+        _bench_bits.append(f"<b>본 모델 {_fvb(_pm_val)}</b>")
     elif _pm_val is not None and _maj is not None:
-        _bench_bits.append(f"단순 룰(다수 클래스): {_maj * 100:.1f}%")
-        _bench_bits.append(f"<b>본 모델: {_fv(_pm_val)}</b>")
+        _bench_bits.append(f"단순룰(다수클래스) {_maj * 100:.1f}%")
+        _bench_bits.append(f"<b>본 모델 {_fvb(_pm_val)}</b>")
     if _bench_bits:
         blocks.append([
             "비교 기준선",
@@ -1560,17 +1567,12 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
                 _bline = f"{_bsrc} {_bml} {_bvs} 대비 본 모델 {_pvs}, {_verd}."
             blocks.append(["업계 벤치마크 대비", _bline])
 
-    # 검증 성능 — [C14 CI룰] AUC 류 지표에 신뢰구간 동반
+    # 검증 성능 — [레지스터] 본문은 헤드라인(반올림)만, 전체 지표·95% 신뢰구간은 부록 9.1로 이관
     if metric_body:
         _n = (ctx.dataset.shape or {}).get("rows", 0)
-        _ci_note = ""
-        if _n and _pm_val is not None and ("auc" in _pm_name) and 0 < _pm_val < 1:
-            # Hanley-McNeil 단순 근사 — SE = sqrt(AUC*(1-AUC)/N)
-            import math as _math
-            _se = _math.sqrt(_pm_val * (1 - _pm_val) / _n)
-            _lo, _hi = max(0.0, _pm_val - 1.96 * _se), min(1.0, _pm_val + 1.96 * _se)
-            _ci_note = f" ({_ko_metric(_pm.get('name'))} 95% CI: {_lo:.4f}~{_hi:.4f}, N={_n:,})"
-        blocks.append(["검증 성능", ", ".join(metric_body) + "." + _ci_note])  # [C12][C14]
+        _hd = f"{_ko_metric(_pm.get('name'))} {_fvb(_pm_val)}" if _pm_val is not None else metric_body[0]
+        _perf = _hd + (f" (n={_n:,})" if _n else "")
+        blocks.append(["검증 성능", _perf + ". 전체 지표와 95% 신뢰구간은 부록 9.1(재현 정보)에 수록."])
 
     slide = SlideSpec(
         id="model_perf",
@@ -2004,6 +2006,20 @@ def _build_appendix(ctx: ReportContext) -> list[SectionSpec]:
         repro_blocks.append(["코드·환경", " · ".join(_bits) + "."])
     else:
         repro_blocks.append(["재현 절차", "데이터 적재, 결측·이상 처리, 학습·검증 분할, 모델 학습, 검증 평가 순으로 재현한다. 동일 분할 기준과 동일 전처리에서 본문 수치가 재현된다."])
+    # [레지스터] 검증 지표 전체(정밀 4자리 + 95% CI) — 본문(§5)은 반올림 헤드라인, 정밀표는 여기로 이관
+    _ev_a = ctx.evaluation
+    _all_m = (_ev_a.metrics or {}) if _ev_a else {}
+    if _all_m:
+        _mlines = [f"{_ko_metric(_k)} {_fv(_m.get('value'))}" for _k, _m in _all_m.items()]
+        _pmv = pm.get("value")
+        _pmn = str(pm.get("name") or "").lower()
+        _ci = ""
+        if n_rows and isinstance(_pmv, (int, float)) and ("auc" in _pmn) and 0 < _pmv < 1:
+            import math as _math
+            _se = _math.sqrt(_pmv * (1 - _pmv) / n_rows)
+            _lo, _hi = max(0.0, _pmv - 1.96 * _se), min(1.0, _pmv + 1.96 * _se)
+            _ci = f" / {pm_ko} 95% CI {_lo:.4f}~{_hi:.4f} (N={n_rows:,})"
+        repro_blocks.append(["검증 지표 전체", ", ".join(_mlines) + "." + _ci])
     sec_repro = make_section("appx_repro", "재현 정보", "appendix", [SlideSpec(
         id="appx_repro", section_id="appx_repro", layout="one_message", role="meta",
         so_what="동일 조건에서 본문 수치 재현", title_ko="재현 정보",
