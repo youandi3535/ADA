@@ -2129,6 +2129,21 @@ def _build_appendix(ctx: ReportContext) -> list[SectionSpec]:
             _lx_lines.append(f"예측 '{_p}'/실제 '{_t}'({_ok}), 근거 {_fe}")
         if _lx_lines:
             repro_blocks.append(["개별 예측 사례", " / ".join(_lx_lines) + "."])
+    # [로드맵 세그먼트별 성능표] 전체 슬라이스 결과율 — 부록(본문 so-what은 §6 상/하위, 전체 표는 여기)
+    _ps_a = (_ev_a.per_segment or []) if _ev_a else []
+    _ps_rows = []
+    for s in _ps_a:
+        if not isinstance(s, dict):
+            continue
+        _nm = str(s.get("segment") or s.get("name") or "")
+        _rt = s.get("churn_rate", s.get("rate"))
+        if not (_nm and isinstance(_rt, (int, float))):
+            continue
+        _sz = s.get("size")
+        _szt = f"({int(_sz):,}건) " if isinstance(_sz, (int, float)) else ""
+        _ps_rows.append(f"{_nm}{_szt}{_rate(_adverse_noun(ctx))} {_rt * 100:.1f}%")
+    if _ps_rows:
+        repro_blocks.append(["세그먼트별 결과율", " / ".join(_ps_rows) + "."])
     sec_repro = make_section("appx_repro", "재현 정보", "appendix", [SlideSpec(
         id="appx_repro", section_id="appx_repro", layout="one_message", role="meta",
         so_what="동일 조건에서 본문 수치 재현", title_ko="재현 정보",
