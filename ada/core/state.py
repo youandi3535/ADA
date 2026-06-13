@@ -109,7 +109,13 @@ class PipelineState(BaseModel):
     retry_count: int = 0
     max_retries: int = 3
     re_loop_count: int = 0
-    max_re_loop: int = 2
+    max_re_loop: int = 3
+    # HJ 2026-06-13 — 4단계(G4) baseline 미달 리루프 전용 카운터(5단계 re_loop_count 와 분리).
+    baseline_re_loop_count: int = 0
+    max_baseline_re_loop: int = 3
+    # HJ 2026-06-13 — 4단계 baseline 리루프 3회 소진 후에도 기준선 미달 → G5 에서 사용자에게
+    #   "계속 진행(더미 제외 상위 2개 중 선택) vs 처음으로" 선택 팝업을 띄우기 위한 플래그.
+    baseline_not_beaten: bool = False
     error: Optional[str] = None
     next_agent: Optional[str] = None
 

@@ -754,8 +754,8 @@ class TestApplySplitLeakageGuard:
             }
         )
 
-    def test_apply_split_returns_three_tuple(self):
-        """apply_split 시그니처: (df_train, df_val, state)."""
+    def test_apply_split_returns_four_tuple(self):
+        """apply_split 시그니처: (df_train, df_val, df_test, state) — 3-way 격리."""
         from agents.handlers.tabular.preprocessor import apply_split
 
         state = self._make_state()
@@ -765,10 +765,10 @@ class TestApplySplitLeakageGuard:
             {"name": "scale_numeric", "method": "robust", "params": {}},
         ]
         result = apply_split(df, plan_steps, state, random_state=42)
-        assert isinstance(result, tuple) and len(result) == 3
-        df_tr, df_val, new_state = result
+        assert isinstance(result, tuple) and len(result) == 4
+        df_tr, df_val, df_test, new_state = result
         assert len(df_tr) > 0 and len(df_val) > 0
-        assert len(df_tr) + len(df_val) == len(df)
+        assert len(df_tr) + len(df_val) + len(df_test) == len(df)
 
     def test_leakage_guard_val_contamination_doesnt_affect_train(self):
         """★ 핵심 — val 의 극단값 오염이 train scaled 결과에 영향 0.
@@ -794,8 +794,8 @@ class TestApplySplitLeakageGuard:
             {"name": "scale_numeric", "method": "robust", "params": {}},
         ]
 
-        df_tr_clean, _, _ = apply_split(df_clean, plan_steps, state, random_state=42)
-        df_tr_poison, _, _ = apply_split(df_poison, plan_steps, state, random_state=42)
+        df_tr_clean, _, _, _ = apply_split(df_clean, plan_steps, state, random_state=42)
+        df_tr_poison, _, _, _ = apply_split(df_poison, plan_steps, state, random_state=42)
 
         # train 행은 동일한 위치 (같은 split) → scaled num1 값이 동일해야 함
         assert "num1" in df_tr_clean.columns
@@ -812,7 +812,7 @@ class TestApplySplitLeakageGuard:
 
         state = self._make_state()
         df = self._make_df(seed=42)
-        _, _, new_state = apply_split(
+        _, _, _, new_state = apply_split(
             df,
             [{"name": "impute_numeric", "strategy": "median", "params": {}}],
             state,
@@ -820,9 +820,10 @@ class TestApplySplitLeakageGuard:
         )
         meta = (new_state.category_extras or {}).get("tabular", {}).get("leakage_safe_split")
         assert meta is not None
-        assert meta["method"] == "split_first_train_fit"
+        assert meta["method"] == "split_first_train_fit_3way"
         assert meta["n_train"] > 0
         assert meta["n_val"] > 0
+        assert meta["n_test"] >= 0
         assert meta["random_state"] == 42
 
     def test_smote_not_applied_to_val(self):
@@ -836,9 +837,9 @@ class TestApplySplitLeakageGuard:
             {"name": "encode_categorical", "params": {"high_card_threshold": 50}},
             {"name": "smote_resample", "params": {}},
         ]
-        _, df_val, _ = apply_split(df, plan_steps, state, random_state=42)
-        # val 행 수가 원본 split 비율 유지 (SMOTE 미적용)
-        expected_val_n = int(len(df) * 0.2)
+        _, df_val, _, _ = apply_split(df, plan_steps, state, random_state=42)
+        # val 행 수 = holdout(0.2) 의 절반 = 전체의 0.1 (3-way: holdout→val/test 50:50, SMOTE 미적용)
+        expected_val_n = int(len(df) * 0.1)
         # train_test_split 의 반올림 차이로 ±1 허용
         assert abs(len(df_val) - expected_val_n) <= 1
 
@@ -853,7 +854,7 @@ class TestApplySplitLeakageGuard:
         df.loc[df.index[0], "y"] = 1
         plan_steps = [{"name": "impute_numeric", "strategy": "median", "params": {}}]
         result = apply_split(df, plan_steps, state, random_state=42)
-        assert len(result) == 3
+        assert len(result) == 4
 
     def test_apply_split_registered_as_capability(self):
         """HANDLER_REGISTRY 자동 등록 확인 (HJ 영역 _base.py 변경 검증)."""

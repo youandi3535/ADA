@@ -663,6 +663,59 @@ async def _g2_eda_prefetch_async(job_id: str) -> dict:
     return {"status": "done", "n": len(upgraded)}
 
 
+# HJ 2026-06-13 — G3 전처리 윤색 선계산 (worker; Ollama·pandas 보유). gate_methodology(G3
+#   방법론 화면) 대기 중 plan+윤색을 미리 만들어 Redis 에 저장 → resume 후 preprocessing_strategist
+#   가 캐시 히트 시 LLM·윤색(최대 165초)을 모두 스킵·즉시 표시(품질 보장·0 블록). G2 eda_prefetch 와
+#   동일 구조. 무거운 import 는 함수 안(지연) — runner 모듈은 api 도 import 함.
+@celery_app.task(name="ada.g3.pre_prefetch")
+def g3_pre_prefetch_task(job_id: str) -> dict:
+    try:
+        return asyncio.run(_g3_pre_prefetch_async(job_id))
+    except Exception as e:  # noqa: BLE001
+        log.warning("g3_pre_prefetch_task_failed", job_id=job_id, error=str(e))
+        return {"status": "error"}
+
+
+async def _g3_pre_prefetch_async(job_id: str) -> dict:
+    import json as _json
+
+    from ada.core.state import PipelineState
+    from agents.preprocessing_strategist import (
+        PreprocessingStrategistAgent,
+        _g3_pre_cache_get,
+        _g3_pre_cache_set,
+        _plan_to_insights,
+    )
+
+    r = _get_redis()
+    raw = r.get(f"ada:full_state:{job_id}")
+    if not raw:
+        return {"status": "no_state"}
+    state = PipelineState(**_json.loads(raw))
+    # 이미 캐시돼 있으면 skip (중복 디스패치 방어)
+    if _g3_pre_cache_get(state.job_id, state.category, state.target_column):
+        return {"status": "already_cached"}
+    agent = PreprocessingStrategistAgent()
+    plan, rationale, leakage_risks = await agent._generate_plan(state)
+    insights = _plan_to_insights(plan, state.data_profile or {})
+    if not insights:
+        return {"status": "no_insights"}
+    upgraded = await agent._dynamic_insights(
+        insights, backend="ollama", context="G3 전처리 전략", job_id=None, key=None
+    )
+    _g3_pre_cache_set(
+        state.job_id,
+        state.category,
+        state.target_column,
+        plan=plan,
+        rationale=rationale,
+        leakage_risks=leakage_risks,
+        insights=upgraded,
+    )
+    log.info("g3_pre_prefetch_done", job_id=job_id, n=len(upgraded), steps=len(plan))
+    return {"status": "done", "n": len(upgraded)}
+
+
 # ---------------------------------------------------------------------------
 # Internal async runners
 # ---------------------------------------------------------------------------
@@ -725,6 +778,8 @@ def _save_gate_data(job_id: str, final_dict: dict) -> None:
             "feature_engineering": final_dict.get("feature_engineering"),  # G3 결과 = G4 화면 표시
             "preprocessing_plan": final_dict.get("preprocessing_plan"),  # G3 plan steps
             "candidate_models": final_dict.get("candidate_models"),  # G4 결과 = G5 화면 표시
+            # HJ 2026-06-13 — 4단계 baseline 3회 미달 시 G5 에서 "계속/처음으로" 선택 팝업 트리거 플래그.
+            "baseline_not_beaten": final_dict.get("baseline_not_beaten"),
             "best_params": final_dict.get("best_params"),  # G4 튜닝 결과 = G5 화면 표시
             "explainability": final_dict.get("explainability"),  # G5 결과 = G6 화면 표시
         }
@@ -758,6 +813,15 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
 
         final = await graph.ainvoke(state, config=config) if not resume else None
         final_dict = _final_to_dict(final)
+
+        # HJ 2026-06-13 — 백그라운드 인사이트 윤색(create_task) 회수. 게이트/완료 publish
+        # 직전에 미완 윤색을 모달에 마저 반영. pending 없으면 즉시 반환(no-op).
+        try:
+            from agents.base import drain_background_insights  # noqa: WPS433
+
+            await drain_background_insights()
+        except Exception:  # noqa: BLE001
+            pass
 
         # 그래프가 완료됐지만 state.error 가 잔존하는 경우 감지 (마지막 안전망)
         # report_composer/self_learning_dispatch 조건부 엣지로 대부분 잡히지만
@@ -1058,6 +1122,16 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             _passes -= 1
 
         checkpointer = fresh_cp
+
+        # HJ 2026-06-13 — 백그라운드 인사이트 윤색(create_task) 회수. G4 등에서 각 agent 가
+        # 윤색을 백그라운드로 던지고 전진했으므로, 게이트(G5) 도달 직전에 미완 윤색을
+        # 모달에 마저 반영한다. pending 없으면 즉시 반환(no-op).
+        try:
+            from agents.base import drain_background_insights  # noqa: WPS433
+
+            await drain_background_insights()
+        except Exception:  # noqa: BLE001
+            pass
         log.info(
             "resume_fresh_invocation",
             gate=gate_code,

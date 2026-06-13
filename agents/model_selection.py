@@ -6,6 +6,7 @@ LLM top3 선정 → 실패 시 ``handlers/{cat}/selector.score(state, recipes)``
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -96,12 +97,18 @@ class ModelSelectionAgent(BaseAgent):
             )
 
             recipes = await self._fetch_recipes(state.category) if self.session else []
+            handler = get_handler(state.category, "score")
 
             top3: list[str] = []
             baselines: list[str] = []
             rationale = ""
             citations: list[str] = []
-            try:
+
+            # HJ 2026-06-13 — LLM top3 선정과 핸들러 score(baselines)를 병렬 실행.
+            #   기존: LLM await 후, 성공해도 baselines 위해 handler 를 또 호출(직렬 2회).
+            #   두 호출은 서로 독립(LLM=추천 top3, handler=후보 풀 점수+baselines)이라
+            #   동시에 돌려도 사용 로직·결과 동일 — 분석 품질 무손실.
+            async def _llm_top3() -> Any:
                 payload = {
                     "category": state.category,
                     "data_profile": state.data_profile,
@@ -115,35 +122,38 @@ class ModelSelectionAgent(BaseAgent):
                     temperature=0.1,
                     json_mode=True,
                 )
-                parsed = self._parse_json(raw)
-                top3 = parsed.get("top3") or []
-                rationale = parsed.get("rationale", "")
-                citations = parsed.get("citations") or []
-            except Exception as e:
-                self.logger.warning("model_selection_llm_fallback", error=str(e))
+                return self._parse_json(raw)
+
+            async def _handler_score() -> Any:
+                if handler is None:
+                    return None
+                return await asyncio.to_thread(handler, state, recipes)
+
+            _llm_res, _handler_res = await asyncio.gather(_llm_top3(), _handler_score(), return_exceptions=True)
+
+            if isinstance(_llm_res, dict):
+                top3 = _llm_res.get("top3") or []
+                rationale = _llm_res.get("rationale", "")
+                citations = _llm_res.get("citations") or []
+            elif isinstance(_llm_res, Exception):
+                self.logger.warning("model_selection_llm_fallback", error=str(_llm_res))
+
+            _handler_out = _handler_res if isinstance(_handler_res, dict) else None
+            if isinstance(_handler_res, Exception):
+                self.logger.warning("selector_handler_failed", category=state.category, error=str(_handler_res))
 
             # Day 11 (jh 위임) — selector.score 결과의 baselines 키 추출.
-            # LLM 경로는 baselines 를 모르므로, fallback 경로 또는 LLM 성공 시에도
-            # 카테고리 핸들러 score() 를 호출해 baselines 만 별도 획득.
-            handler = get_handler(state.category, "score")
             if not top3:
-                if handler is not None:
-                    try:
-                        result = handler(state, recipes)
-                        top3 = result.get("top3") or []
-                        baselines = result.get("baselines") or []
-                        rationale = result.get("rationale", rationale)
-                        citations = result.get("citations") or citations
-                    except Exception as e:
-                        self.logger.warning("selector_handler_failed", category=state.category, error=str(e))
+                # LLM 실패 → 핸들러 결과를 메인 경로로 사용(top3 + baselines).
+                if _handler_out is not None:
+                    top3 = _handler_out.get("top3") or []
+                    baselines = _handler_out.get("baselines") or []
+                    rationale = _handler_out.get("rationale", rationale)
+                    citations = _handler_out.get("citations") or citations
             else:
-                # LLM 경로 성공 → top3 는 LLM 결과 유지하고 baselines 만 핸들러에서 보조 획득.
-                if handler is not None and state.category in ("tabular_ml", "tabular_dl"):
-                    try:
-                        aux = handler(state, recipes) or {}
-                        baselines = aux.get("baselines") or []
-                    except Exception:
-                        baselines = []
+                # LLM 성공 → top3 는 LLM 결과 유지, baselines 만 핸들러에서 보조 획득.
+                if _handler_out is not None and state.category in ("tabular_ml", "tabular_dl"):
+                    baselines = _handler_out.get("baselines") or []
 
             if not top3:
                 top3 = ["XGBoost"]
@@ -160,9 +170,10 @@ class ModelSelectionAgent(BaseAgent):
                     _g4_model_insights.append(f"선정 근거: {str(rationale)[:200]}")
                 if baselines:
                     _g4_model_insights.append(f"베이스라인: {', '.join(str(b) for b in baselines[:3])} (비교군)")
-                _g4_model_insights = await self._dynamic_insights(
-                    _g4_model_insights,
-                    backend="claude",
+                # HJ 2026-06-13 — Claude 윤색은 백그라운드로(critical path 제거) → 튜닝 즉시 전진.
+                self._spawn_insight_polish(
+                    list(_g4_model_insights),
+                    backend="ollama",
                     context="G4 모델 선택",
                     job_id=state.job_id,
                     key="g4_model_insights",
@@ -172,7 +183,7 @@ class ModelSelectionAgent(BaseAgent):
                     {
                         "g4_phase": "model_selection_done",
                         "g4_status": f"모델 후보 {len(top3)}개 선정 완료 — 하이퍼파라미터 튜닝 단계로 이동",
-                        "g4_model_insights": _g4_model_insights,
+                        "g4_model_insights": list(_g4_model_insights),
                         "g4_top3": [str(m) for m in top3[:5]],
                     },
                 )

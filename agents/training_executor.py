@@ -49,6 +49,19 @@ def _split_xy(df: Any, target: str | None) -> tuple[Any, Any]:
     return df.select_dtypes(include=[np.number]).fillna(0).values, np.zeros(len(df))
 
 
+def _leakage_split_bounds(state: Any) -> tuple[int, int] | None:
+    """leakage_safe_split 메타에서 (n_train, n_val) 경계. parquet 순서 [train|val|test].
+    메타 불완전(val_row_count 없음)이면 None → caller 가 기존 split 폴백."""
+    cat = getattr(state, "category", "") or ""
+    cat_key = "tabular" if cat.startswith("tabular") else cat
+    meta = ((getattr(state, "category_extras", None) or {}).get(cat_key, {}) or {}).get("leakage_safe_split") or {}
+    n_tr = meta.get("train_row_count_for_reorder")
+    n_val = meta.get("val_row_count")
+    if isinstance(n_tr, int) and isinstance(n_val, int) and n_tr > 0 and n_val > 0:
+        return n_tr, n_val
+    return None
+
+
 class TrainingExecutorAgent(BaseAgent):
     uses_llm = False
 
@@ -67,8 +80,14 @@ class TrainingExecutorAgent(BaseAgent):
                 return state.with_update(error=f"학습 데이터 로딩 실패: {e}", next_agent="error_recovery")
 
             X, y = _split_xy(df, state.target_column)
-            # train/val split — 시계열은 시간순 split, 그 외 random
-            if state.category == "timeseries":
+            # 누수 차단: preprocessor 가 기록한 [train|val|test] 경계 재사용. test 는 슬라이스
+            # 하지도 않아 학습·early-stop 에 안 샌다. 메타 없으면 기존 split 폴백.
+            _bounds = _leakage_split_bounds(state)
+            if _bounds is not None and (_bounds[0] + _bounds[1]) <= len(X):
+                n_tr, n_val = _bounds
+                X_tr, y_tr = X[:n_tr], y[:n_tr]
+                X_val, y_val = X[n_tr : n_tr + n_val], y[n_tr : n_tr + n_val]
+            elif state.category == "timeseries":
                 split = int(len(X) * 0.8)
                 X_tr, X_val = X[:split], X[split:]
                 y_tr, y_val = y[:split], y[split:]
@@ -85,7 +104,9 @@ class TrainingExecutorAgent(BaseAgent):
                     else None,
                 )
 
-            pipeline = PipelineFactory.create(state.category)
+            # HJ 2026-06-13 — pipeline 은 모델별 학습 함수 안에서 개별 생성한다.
+            #   PipelineFactory.create() 인스턴스는 mlflow_run_id 등 호출별 상태를 보유하므로
+            #   병렬 학습에서 공유하면 run_id race 가 난다 → 모델당 1개 인스턴스로 격리.
             task = (
                 "classification"
                 if state.category in ("tabular_ml", "tabular_dl") and len(set(y.tolist())) <= 20
@@ -98,64 +119,92 @@ class TrainingExecutorAgent(BaseAgent):
 
             trained: list[dict[str, Any]] = []
             heavy_used: list[str] = []
+            _g4_train_insights: list[str] = []
             n_models = len(state.model_candidates)
+            loop = asyncio.get_event_loop()
             # HJ 2026-06-11 — 학습 시작 publish.
             _safe_publish_stage_partial(
                 state.job_id,
                 {
                     "g4_phase": "training_start",
-                    "g4_status": f"모델 학습 시작 — {n_models}개 모델 후보",
+                    "g4_status": f"모델 학습 시작 — {n_models}개 모델 후보 병렬",
                     "training_total_models": n_models,
                 },
             )
-            for _idx, model_name in enumerate(state.model_candidates, start=1):
-                # HJ 2026-06-11 — 모델별 학습 진행 publish.
+
+            def _emit_trained(info: dict[str, Any]) -> None:
+                """HJ 2026-06-13 — 한 모델 학습이 끝나는 즉시 메트릭 인사이트 누적 publish.
+                사용자가 "모아서 한 번에"가 아니라 완료되는 순서대로 실시간 확인."""
+                mn = info.get("model_name", "?")
+                metrics = info.get("metrics") or {}
+                if metrics:
+                    _m_pairs = []
+                    for k in list(metrics.keys())[:4]:
+                        v = metrics[k]
+                        try:
+                            _m_pairs.append(f"{k}={float(v):.3f}")
+                        except (TypeError, ValueError):
+                            _m_pairs.append(f"{k}={v}")
+                    _g4_train_insights.append(f"학습 결과: {mn} → {', '.join(_m_pairs)}")
+                else:
+                    _g4_train_insights.append(f"학습 결과: {mn} (메트릭 미산출)")
                 _safe_publish_stage_partial(
                     state.job_id,
                     {
                         "g4_phase": "training_progress",
-                        "g4_status": f"학습 중 ({_idx}/{n_models}) — {model_name}",
-                        "training_current_model": model_name,
-                        "training_done_count": _idx - 1,
+                        "g4_status": f"학습 완료 ({len(trained)}/{n_models}) — {mn}",
+                        "training_done_count": len(trained),
+                        "g4_train_insights": list(_g4_train_insights),
                     },
                 )
+
+            def _train_light_sync(model_name: str, params: dict[str, Any]) -> dict[str, Any]:
+                # 모델별 pipeline 인스턴스 — mlflow_run_id race 차단(병렬 안전).
+                p = PipelineFactory.create(state.category)
+                model = p.train(X_tr, y_tr, model_name=model_name, params=params)
+                metrics = p.evaluate(model, X_val, y_val, task=task)
+                info: dict[str, Any] = {
+                    "model_name": model_name,
+                    "metrics": metrics,
+                    "mlflow_run_id": p.mlflow_run_id,
+                    "params_used": params,
+                    "executed_on": "pipeline_worker",
+                }
+                if state.category == "tabular_ml":
+                    info.update(p.save_model(model, state.job_id, model_name))
+                return info
+
+            async def _train_one(model_name: str) -> None:
                 # Day 6 계약: HyperparameterTuner 가 채운 best_params 우선 사용.
                 params = (state.best_params or {}).get(model_name, {}) or {}
-
                 if is_heavy_model(model_name):
                     # ── 학원 worker-training 위임 (heavy: DL 계열) ────────────
-                    info = await self._train_remote(
-                        state=state,
-                        model_name=model_name,
-                        params=params,
-                    )
+                    #   여러 heavy 모델이 gather 로 동시에 apply_async 발사 → GPU 워커 병렬 처리.
+                    info = await self._train_remote(state=state, model_name=model_name, params=params)
                     if info is not None:
-                        trained.append(info)
                         heavy_used.append(model_name)
-                        continue
-                    # 위임 실패 시 CPU 인라인 폴백
-                    self.logger.warning(
-                        "heavy_model_remote_failed_fallback_cpu",
-                        model=model_name,
-                    )
+                        trained.append(info)  # asyncio 단일 스레드 — append 는 원자적
+                        _emit_trained(info)
+                        return
+                    self.logger.warning("heavy_model_remote_failed_fallback_cpu", model=model_name)
 
-                # ── CPU 인라인 학습 (light + heavy 폴백) ─────────────────────
+                # ── CPU 인라인 학습 (light + heavy 폴백) — 모델별 스레드 병렬 ─────────────
                 try:
-                    model = pipeline.train(X_tr, y_tr, model_name=model_name, params=params)
-                    metrics = pipeline.evaluate(model, X_val, y_val, task=task)
-                    info: dict[str, Any] = {
-                        "model_name": model_name,
-                        "metrics": metrics,
-                        "mlflow_run_id": pipeline.mlflow_run_id,
-                        "params_used": params,
-                        "executed_on": "pipeline_worker",
-                    }
-                    if state.category == "tabular_ml":
-                        save = pipeline.save_model(model, state.job_id, model_name)
-                        info.update(save)
+                    info = await loop.run_in_executor(None, _train_light_sync, model_name, params)
                     trained.append(info)
-                except Exception as e:
+                    _emit_trained(info)
+                except Exception as e:  # noqa: BLE001
                     self.logger.warning("train_failed", model=model_name, error=str(e))
+
+            # HJ 2026-06-13 — 모델별 학습 병렬. seed=42·random_state=42 고정이라 결과는 직렬과
+            #   비트 동일(무손실). 완료 순서는 가변이라 trained 를 model_candidates 순서로
+            #   재정렬 → metrics_aggregator 의 동점 선택까지 완전 결정론적 유지.
+            await asyncio.gather(
+                *(_train_one(m) for m in state.model_candidates),
+                return_exceptions=True,
+            )
+            _order = {m: i for i, m in enumerate(state.model_candidates)}
+            trained.sort(key=lambda inf: _order.get(inf.get("model_name"), 10_000))
 
             self.logger.info(
                 "training_done",
@@ -164,28 +213,11 @@ class TrainingExecutorAgent(BaseAgent):
                 heavy_known=sorted(HEAVY_MODELS),
             )
 
-            # HJ 2026-06-11 — G4 모달 라이브 피드: 모델별 학습 메트릭을 자연어 인사이트로 publish.
-            # G2 의 eda_insights 패턴 — 사용자가 어떤 모델이 어떤 점수 받았는지 즉시 확인.
+            # HJ 2026-06-13 — Claude 윤색은 백그라운드로(critical path 제거) → 메트릭 집계 즉시 전진.
             try:
-                _g4_train_insights: list[str] = []
-                for info in trained:
-                    mn = info.get("model_name", "?")
-                    metrics = info.get("metrics") or {}
-                    if metrics:
-                        # 상위 4개 메트릭만 표시
-                        _m_pairs = []
-                        for k in list(metrics.keys())[:4]:
-                            v = metrics[k]
-                            try:
-                                _m_pairs.append(f"{k}={float(v):.3f}")
-                            except (TypeError, ValueError):
-                                _m_pairs.append(f"{k}={v}")
-                        _g4_train_insights.append(f"학습 결과: {mn} → {', '.join(_m_pairs)}")
-                    else:
-                        _g4_train_insights.append(f"학습 결과: {mn} (메트릭 미산출)")
-                _g4_train_insights = await self._dynamic_insights(
-                    _g4_train_insights,
-                    backend="claude",
+                self._spawn_insight_polish(
+                    list(_g4_train_insights),
+                    backend="ollama",
                     context="G4 학습 결과",
                     job_id=state.job_id,
                     key="g4_train_insights",
@@ -195,7 +227,6 @@ class TrainingExecutorAgent(BaseAgent):
                     {
                         "g4_phase": "training_done",
                         "g4_status": f"학습 완료 — {len(trained)}개 모델 학습 완료, 메트릭 집계 단계로 이동",
-                        "g4_train_insights": _g4_train_insights,
                     },
                 )
             except Exception as e:  # noqa: BLE001

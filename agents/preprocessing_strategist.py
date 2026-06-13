@@ -129,6 +129,73 @@ def _plan_to_insights(plan: list, profile: dict | None) -> list[str]:
     return insights
 
 
+# HJ 2026-06-13 — G3 전처리 윤색 선계산 캐시 (G2 eda_insights prefetch 패턴 동일).
+#   gate_methodology(G3 방법론 화면) 대기 중 worker 가 plan+윤색을 미리 만들어 Redis 에 저장.
+#   resume 후 __call__ 이 캐시 히트 시 LLM·윤색을 모두 스킵·즉시 표시 → 품질 보장·0 블록.
+def _g3_pre_cache_key(job_id: str) -> str:
+    return f"ada:g3_pre:{job_id}"
+
+
+def _g3_pre_cache_get(job_id, category, target_column):
+    """선계산된 plan+윤색 번들 조회. category/target 일치 시에만 반환(데이터 정합)."""
+    if not job_id:
+        return None
+    try:
+        import json as _json
+
+        import redis as _redis
+
+        from ada.core.config import settings
+
+        r = _redis.Redis.from_url(settings.redis_url)
+        raw = r.get(_g3_pre_cache_key(job_id))
+        if not raw:
+            return None
+        d = _json.loads(raw)
+        if (
+            d.get("status") == "done"
+            and d.get("insights")
+            and d.get("category") == category
+            and d.get("target") == (target_column or None)
+        ):
+            return d
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _g3_pre_cache_set(job_id, category, target_column, *, plan, rationale, leakage_risks, insights) -> None:
+    if not job_id or not insights:
+        return
+    try:
+        import json as _json
+
+        import redis as _redis
+
+        from ada.core.config import settings
+
+        r = _redis.Redis.from_url(settings.redis_url)
+        r.set(
+            _g3_pre_cache_key(job_id),
+            _json.dumps(
+                {
+                    "status": "done",
+                    "category": category,
+                    "target": (target_column or None),
+                    "plan": plan,
+                    "rationale": rationale,
+                    "leakage_risks": leakage_risks,
+                    "insights": insights,
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+            ex=86400,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 SYSTEM_PROMPT = """당신은 시니어 데이터 엔지니어로서 데이터 프로파일을 보고
 전처리 단계를 JSON 으로 설계합니다.
 
@@ -148,58 +215,82 @@ class PreprocessingStrategistAgent(BaseAgent):
     uses_llm = True
     model_name = "claude-sonnet-4-6"
 
+    async def _generate_plan(self, state: PipelineState) -> tuple[list, str, list]:
+        """전처리 plan 생성 (LLM 우선 → 핸들러 폴백). prefetch·본실행 공용.
+
+        입력은 category/data_profile/target 만 의존(방법론 선택과 무관)하므로
+        gate_methodology 대기 중 선계산해도 본실행과 동일한 plan 을 얻는다.
+        반환: (plan, rationale, leakage_risks).
+        """
+        plan: list[dict[str, Any]] = []
+        rationale: str = ""
+        leakage_risks: list = []
+        try:
+            payload = {
+                "category": state.category,
+                "data_profile": state.data_profile,
+                "target_column": state.target_column,
+            }
+            raw = await self._call_llm(
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
+                max_tokens=800,
+                temperature=0.1,
+                json_mode=True,
+            )
+            parsed = self._parse_json(raw)
+            plan = parsed.get("steps") or []
+            rationale = str(parsed.get("rationale") or "").strip()
+            lr = parsed.get("leakage_risks") or []
+            leakage_risks = lr if isinstance(lr, list) else []
+        except Exception as e:
+            self.logger.warning("preprocess_llm_fallback", error=str(e))
+
+        if not plan:
+            handler = get_handler(state.category, "plan")
+            if handler is not None:
+                try:
+                    plan = handler(state) or []
+                except Exception as e:
+                    self.logger.warning("preprocess_handler_failed", category=state.category, error=str(e))
+        return plan, rationale, leakage_risks
+
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
-            plan: list[dict[str, Any]] = []
-
             # HJ 2026-06-11 — G3 모달 라이브 피드: 진행 시작 즉시 status publish.
             _safe_publish_stage_partial(
                 state.job_id,
                 {"g3_phase": "preprocessing_strategist_start", "g3_status": "전처리 전략 LLM 호출 중…"},
             )
 
-            rationale: str = ""
-            leakage_risks: list = []
-            try:
-                payload = {
-                    "category": state.category,
-                    "data_profile": state.data_profile,
-                    "target_column": state.target_column,
-                }
-                raw = await self._call_llm(
-                    system_prompt=SYSTEM_PROMPT,
-                    user_prompt=json.dumps(payload, ensure_ascii=False)[:4000],
-                    max_tokens=800,
-                    temperature=0.1,
-                    json_mode=True,
-                )
-                parsed = self._parse_json(raw)
-                plan = parsed.get("steps") or []
-                rationale = str(parsed.get("rationale") or "").strip()
-                lr = parsed.get("leakage_risks") or []
-                leakage_risks = lr if isinstance(lr, list) else []
-            except Exception as e:
-                self.logger.warning("preprocess_llm_fallback", error=str(e))
-
-            if not plan:
-                handler = get_handler(state.category, "plan")
-                if handler is not None:
-                    try:
-                        plan = handler(state) or []
-                    except Exception as e:
-                        self.logger.warning("preprocess_handler_failed", category=state.category, error=str(e))
-
-            # HJ 2026-06-11 — strategist 종료 시점: plan 을 자연어 인사이트로 변환 + LLM rationale + leakage 위험 publish.
-            # G2 의 eda_insights 와 동일 패턴 — frontend 가 prefix 별 그룹화. 사용자가 실시간 분석 내용 확인.
-            try:
+            # HJ 2026-06-13 — G2 eda_insights prefetch 패턴 이식. gate_methodology(G3 방법론
+            #   화면) 대기 중 worker 가 plan+윤색을 선계산(_g3_pre_prefetch_async)해 Redis 에 저장.
+            #   캐시 히트면 LLM·윤색(최대 165s)을 모두 스킵하고 완성된 윤색을 즉시 동기 publish →
+            #   윤색이 항상 표시(품질 보장)되고 feature_engineer 가 0 블록으로 전진.
+            cached = _g3_pre_cache_get(state.job_id, state.category, state.target_column)
+            if cached:
+                plan = cached.get("plan") or []
+                rationale = str(cached.get("rationale") or "")
+                leakage_risks = cached.get("leakage_risks") or []
+                g3_insights = list(cached.get("insights") or [])
+                self.logger.info("g3_pre_cache_hit", n=len(g3_insights), steps=len(plan))
+            else:
+                # 캐시 미스(빠른 제출·prefetch 미완) — plan 생성 후 윤색은 백그라운드로(critical
+                #   path 제거). 규칙기반 g3_insights 즉시 표시, 윤색 완료분은 _dynamic_insights 가
+                #   job_id+key="g3_insights" 로 교체 publish(best-effort), 게이트 직전 drain 회수.
+                #   윤색은 모달 표시용 설명일 뿐 preprocessing_plan(다음 단계 입력)과 무관.
+                plan, rationale, leakage_risks = await self._generate_plan(state)
                 g3_insights = _plan_to_insights(plan, state.data_profile or {})
-                g3_insights = await self._dynamic_insights(
-                    g3_insights,
+                self._spawn_insight_polish(
+                    list(g3_insights),
                     backend="ollama",
                     context="G3 전처리 전략",
                     job_id=state.job_id,
                     key="g3_insights",
                 )
+
+            # G2 의 eda_insights 와 동일 패턴 — frontend 가 prefix 별 그룹화. 사용자가 실시간 확인.
+            try:
                 _safe_publish_stage_partial(
                     state.job_id,
                     {

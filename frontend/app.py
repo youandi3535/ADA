@@ -1,4 +1,4 @@
-"""frontend/app.py — ADA Studio (단일 플로우 UI).
+"""frontend/app.py — ada studio (단일 플로우 UI).
 
 1) 랜딩(스플래시) → Start
 2) 업로드 → 5게이트(HITL) → 산출물 : 확정 디자인(다크 히어로·진행도 스텝퍼·카드)을
@@ -25,7 +25,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="ADA Studio — Adaptive AutoAI",
+    page_title="ada studio — AI 데이터 분석 에이전트",
     page_icon="🪄",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -293,12 +293,14 @@ _FLOW_HTML = """
     <div style="zoom:.6;max-width:960px;width:100%;border-radius:34px;padding:80px 64px;
       background:linear-gradient(160deg,#2b4a6b 0%,#3f5d7e 100%);color:#e6eef8;text-align:center;
       box-shadow:0 32px 80px rgba(31,62,92,.34);margin-bottom:44px;">
-      <div style="font-size:18px;letter-spacing:.30em;opacity:.85;font-weight:600">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</div>
-      <div style="font-size:160px;line-height:1.0;margin:24px 0 4px">🌐</div>
+      <svg width="148" height="148" viewBox="0 0 48 48" fill="none" style="display:block;margin:16px auto 6px">
+        <path d="M10 38 L24 10 L38 38" stroke="#e6eef8" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M16.5 30 L31.5 30" stroke="#e6eef8" stroke-width="2.3" stroke-linecap="round"/>
+      </svg>
     </div>
     <!-- 텍스트 + 버튼 -->
     <div style="text-align:center;zoom:.6;">
-      <div style="font-size:72px;font-weight:800;color:#19395a;margin:0 0 18px">ADA Studio</div>
+      <div style="font-size:72px;font-weight:800;color:#19395a;margin:0 0 18px">ada <span style="color:#2f6fed;">studio</span></div>
       <div style="font-size:24px;color:#52647d;margin:0 0 40px">다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로!</div>
       <button onclick="startFromLanding()" style="font-family:inherit;font-size:20px;font-weight:600;
         border:none;border-radius:999px;cursor:pointer;background:#1f3e5c;color:#fff;
@@ -306,7 +308,7 @@ _FLOW_HTML = """
     </div>
   </div>
   <div class="shell">
-    <div class="brand"><span class="globe">🌐</span><span class="nm">ADAPTIVE&nbsp;&nbsp;DATA&nbsp;&nbsp;ANALYST</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()" disabled>← 처음(시작화면)으로</button></div>
+    <div class="brand"><svg width="42" height="42" viewBox="0 0 48 48" fill="none" style="flex:0 0 auto"><path d="M10 38 L24 10 L38 38" stroke="#dce8f7" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/><path d="M16.5 30 L31.5 30" stroke="#dce8f7" stroke-width="2.6" stroke-linecap="round"/></svg><span class="nm" style="letter-spacing:.04em;font-size:29px;">ada&nbsp;<span style="color:#6fa8ff;">studio</span></span><span style="background:#e8f1fe;color:#1d5fd6;font-size:1.12rem;font-weight:600;letter-spacing:.06em;padding:7px 20px;border-radius:999px;flex:0 0 auto;">AI 데이터 분석 에이전트</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()" disabled>← 처음(시작화면)으로</button></div>
     <div class="steps" id="steps"></div>
     <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
     <div class="card"><div class="content" id="content"></div><div id="pb-area"></div>
@@ -323,10 +325,13 @@ _FLOW_HTML = """
   <div id="modalOverlay" class="modal-overlay" style="display:none">
     <div class="modal-card">
       <button class="modal-close" id="modalCloseBtn" title="팝업 닫기 (분석은 계속 진행)" onclick="dismissModal()">✕</button>
-      <div class="modal-close-hint">분석은 백그라운드 계속</div>
       <div id="modal-body"></div><div id="modal-scroll"><div id="modal-insight"></div></div><div id="modal-pending-wrap"></div><div id="modal-pb"></div>
     </div>
   </div>
+  <!-- HJ 2026-06-13 — G5 롤백(무인 자동 재시도) 안내 미니팝업. 우하단 고정 — 메인 모달 작성 글에 간섭 없음. -->
+  <div id="rollbackBanner" style="display:none;position:fixed;right:24px;bottom:24px;z-index:99999;max-width:344px;background:#fff5f5;border:2px solid #e23b3b;border-radius:14px;box-shadow:0 12px 34px rgba(180,30,30,.30);padding:16px 18px;font-family:'Pretendard','Inter',-apple-system,sans-serif;"></div>
+  <!-- HJ 2026-06-13 — G5 baseline 미달 선택 팝업: 화면 중앙 오버레이(백드롭 + 가운데 카드). -->
+  <div id="baselineChoiceOverlay" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(18,28,42,.62);align-items:center;justify-content:center;padding:24px;font-family:'Pretendard','Inter',-apple-system,sans-serif;"></div>
   <!-- HJ 2026-06-11 — 모달 ✕ 닫은 후 화면 가운데에 표시되는 '다시 열기' 버튼. 1~6단계 모두 지원.
        render() 가 modalDismissed && _shouldModalBeShown() 시점에만 display:flex 토글.
        2026-06-11 수정 — 우측 하단 floating → 화면 가운데, 크기 2배 (눈에 띄는 큰 박스 버튼). -->
@@ -470,10 +475,12 @@ let selectedTopic={id:1};        // {id:1~5} 또는 {custom:"text"}
 let topicCustomText='';          // 직접 입력 textarea 값
 let g2DirectionsBusy=false;      // endpoint 호출 중 표시용
 let g2DirectionsStartedAt=null;  // HJ 2026-06-11 — busy 시작 시각(ms). 버튼 라벨에 경과초 표시용.
+let busyStartedAt=null, busyTimer=null;  // HJ 2026-06-13 — busy(… 처리 중) 경과초 표시용. startBusyTimer() 가 0.5초 주기로 라벨 갱신.
 let g2DirectionsReady=false;     // endpoint 응답 받았는지 (resume 가드)
 let _g2PrefetchedJob=null;       // HJ 2026-06-12 — 분석 방향 백그라운드 선생성을 job 당 1회만 발사하기 위한 가드.
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
 let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
+let _g5ContinueChosen=false;  // HJ 2026-06-13 — G5 baseline 미달 선택 팝업에서 '계속 진행' 누름 여부
 let gateCache={};  // {G2: gateData, G3: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
 let _sawAnalyzingAfterSubmit=false;  // resume 후 analyzing() 상태를 거쳤는지 — stale gate 차단
 // HJ 2026-06-10 — 모달 닫기 (사용자가 ✕ 누름). 같은 cur 동안만 유효, 다음 단계 진입 시 자동 reset.
@@ -538,11 +545,18 @@ function _typingHoldComplete(){
     // 정확한 3초 시점 재렌더 보장. 모달 닫힘 직후 cur 전진 + stale 해제를 즉시 수행 (다음 poll 2.5s 기다리지 않음).
     setTimeout(function(){
       try{
-        // hold 완료 시점(이 콜백 등록 = _twAllDoneAt 설정 시점 기준 3초 후)에 다음 게이트가 와있으면 전진.
-        if(_nextGateArrived()){
-          lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; follow=true;
+        // HJ 2026-06-12 — 이 콜백은 '템플릿 타이핑 완료' 시점에 예약된다. 그 뒤 LLM 수정 내용이
+        //   추가 도착하면 _miEl 교체로 _twAllDone()=false → 다시 타이핑이 시작된다. 이때 예약 당시
+        //   기준 3초가 지나도 타이핑은 미완이므로, 재확인 없이 전진하면 G3 분석 글 작성 도중 G4 로
+        //   점프(화면 흔들림+조기 전환)하는 버그가 난다. → 콜백 발화 시점에 _typingHoldComplete() 를
+        //   다시 평가해, '진짜 타이핑 완료 + 3초 hold 경과' 일 때만 다음 단계로 전진한다.
+        //   (미완이면 전진 보류, 이후 새 타이핑 완료 시 재예약된 콜백이 처리.)
+        if(_typingHoldComplete()){
+          if(_nextGateArrived()){
+            lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; follow=true;
+          }
+          if(follow && frontier>cur){ cur=Math.max(cur,frontier); }
         }
-        if(follow && frontier>cur){ cur=Math.max(cur,frontier); }
         render();
       }catch(_e){}
     }, POST_TYPING_HOLD_MS+50);
@@ -619,7 +633,7 @@ function resetAll(){
   if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
   status={}; gateData={}; selId=null; selectedFile=null;
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
-  gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={};
+  gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={}; _g5ContinueChosen=false;
   _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;
   render();
 }
@@ -1104,9 +1118,19 @@ async function sha256(str){
   return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
 }
 
+// HJ 2026-06-13 — busy(… 처리 중) 동안 0.5초 주기로 render → 버튼의 경과초를 갱신.
+//   busy=false 가 되면 타이머가 스스로 감지해 종료(busy=false 지점마다 정리 코드 불필요).
+function startBusyTimer(){
+  busyStartedAt=Date.now();
+  if(busyTimer) clearInterval(busyTimer);
+  busyTimer=setInterval(function(){
+    if(!busy){ clearInterval(busyTimer); busyTimer=null; busyStartedAt=null; return; }
+    render();
+  }, 500);
+}
 async function doUpload(){
   if(!selectedFile){ errMsg='먼저 파일을 선택하세요.'; render(); return; }
-  errMsg=''; busy=true; render();
+  errMsg=''; busy=true; startBusyTimer(); render();
   try{
     const fd=new FormData(); fd.append('file', selectedFile);
     const up=await api('/upload',{method:'POST',body:fd});
@@ -1149,7 +1173,7 @@ async function doResume(){
   // CS 2026-06-10 — G2 일 때 선택된 주제도 choice 에 포함
   if(tg==='G2' && window._g2_selectedTopicText){ choice.topic=window._g2_selectedTopicText; }
   const gate=tg;  // curGate() 대신 cur 기준 게이트 코드 사용
-  errMsg=''; busy=true; navUnlocked=false; paused=false; _pauseStart=null; render();  // 재진행 확정 → 정지 해제(정상 진행 복귀)
+  errMsg=''; busy=true; startBusyTimer(); navUnlocked=false; paused=false; _pauseStart=null; render();  // 재진행 확정 → 정지 해제(정상 진행 복귀)
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
@@ -1208,9 +1232,12 @@ async function poll(){
     if((_g1Done || _topicReady) && _typingHoldComplete()){ cur=1; follow=true; }
   }
   // follow=true 여도 cur 는 절대 자동 regress 안 함. 사용자 prev 버튼 클릭 으로만 내려갈 수 있음.
-  // HJ 2026-06-11 — 모달 표시 중에는 cur 자동 전진 차단. frontier 가 올라가도 inModalLoading()=false 될 때까지 고정.
-  //   (구 코드: cur=3 으로 올리면 inModalLoading(cur=3) 이 submittedHere=false 반환 → 모달 즉시 소멸 버그)
-  if(follow && !inModalLoading()) cur=Math.max(cur, frontier);
+  // HJ 2026-06-13 — 자동 전진은 _modalShouldBeActive()(논리 활성, dismiss 무관) 기준으로 차단.
+  //   inModalLoading() 은 modalDismissed(✕ 닫음) 시 false 라, 모달을 닫으면 글 작성이 안 끝났어도
+  //   전진하던 문제가 있었다. 닫기/열기는 화면 시각 토글일 뿐 — 분석·글작성·전진조건에 영향 없어야 한다.
+  //   전진 조건은 '타자기 글 작성 완료 + 3초'(=_modalShouldBeActive()=false) 단일 기준으로 통일(사용자 지시).
+  //   (닫아도 위 [A] _active 경로가 모달 DOM 을 살려둬 타자기가 계속 → _typingHoldComplete() 정상 → 교착 없음)
+  if(follow && !_modalShouldBeActive()) cur=Math.max(cur, frontier);
   // cur 상한 = max(maxReached, frontier) — backend stale 일 때도 사용자 진행 단계 유지.
   cur=Math.max(0,Math.min(cur,Math.max(maxReached,frontier)));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
@@ -1329,7 +1356,9 @@ function _stageProgress(){
     // 팝업 로딩 중(proposals 미도착) → 95% 억제. proposals 도착 시 modal 닫히고 그 때 100%.
     // 완료 = 2단계로 실제 전환되는 시점. modal 닫힌 후에만 100%/'완료' 표시.
     // HJ 2026-06-12 — 모달 로딩 캡 99→95. 마지막 마일스톤이 active(진행중) 로 보이도록 일관화.
-    const _cap=inModalLoading()?95:100;
+    // HJ 2026-06-13 — dismiss 무관(_modalShouldBeActive). 닫기=화면 토글일 뿐이므로,
+    //   모달을 ✕로 닫아도 타이핑 완료+3초(=_modalShouldBeActive()=false) 전까지 95% 유지.
+    const _cap=_modalShouldBeActive()?95:100;
     _shownPct=Math.min(_cap,_shownPct+10);
     _barFlowPct=_shownPct;
     return Math.round(_shownPct);
@@ -1437,7 +1466,8 @@ function progressBar(forceShow){
   let activeIdx=_curMilestoneIdx();
   // HJ 2026-06-12 — 모달 로딩 중(95% hold)에는 마지막 칸을 active(파랑)로 유지.
   //   실제 완료(모달 닫힘 후 p>=100) 시에만 전체 done(녹색).
-  if(p>=100 || (_completing && !inModalLoading())) activeIdx=flow.length;
+  // HJ 2026-06-13 — dismiss 무관(_modalShouldBeActive): 모달을 닫아도 타이핑 완료+3초 전엔 마지막 칸 active 유지.
+  if(p>=100 || (_completing && !_modalShouldBeActive())) activeIdx=flow.length;
   let barHtml='';
   if(flow.length){
     const segs=flow.map(function(ag,i){
@@ -1472,7 +1502,7 @@ function gateHeader(g){
   const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
   const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
   const props=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
-  const stage=STAGE_TRANSITION_DESC[cur];
+  const stage=STAGE_TRANSITION_DESC[cur+1];
   // CS 2026-06-11 — 본인 명시 "강제 X". frontend 휴리스틱 override 제거.
   // backend 의 LLM 분류 결과를 그대로 신뢰. 미확정/빈값이면 _default 폴백.
   let catKey=gateData.category;
@@ -1485,7 +1515,7 @@ function gateHeader(g){
     else { h2=tt[0]; en=tt[1]; desc='업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.'; }
   } else if(stage){
     // 로딩 구간 = 카테고리별 헤더 우선, _default fallback, 없으면 단계 친화 폴백
-    const cmap=GATE_HEADER_BY_CATEGORY.loading[cur]||{};
+    const cmap=GATE_HEADER_BY_CATEGORY.loading[cur+1]||{};
     const byCat=cmap[catKey]||cmap._default;
     if(byCat){ h2=byCat.h2; en=byCat.en; desc=byCat.desc||('곧 "'+esc(tt[0])+'" 화면이 표시됩니다.'); }
     else { h2=stage.ko; en=stage.en; desc='곧 "'+esc(tt[0])+'" 화면이 표시됩니다.'; }
@@ -1648,19 +1678,14 @@ function _modalShouldBeActive(){
   if(isFailed()) return false;
   // HJ 2026-06-12 — G6 는 완료돼도 팝업 타이핑이 끝나기 전이면 모달 유지 (조기 종료·7단계 점프 방지).
   if(isCompleted() && !_g6TypingHold()) return false;
-  // 1~6단계(cur=0~5) 모달은 진행률 41% 이상에서만 노출. 초반 40% 까지는 본문 카드 표시. (원래 동작 유지)
-  // HJ 2026-06-12 — 4단계(G4 모델학습) 팝업 미표시 버그 fix.
-  //   G4 는 backend 글로벌 진행 [50,85] 에 매핑되는데, 튜닝 종료 시점 글로벌 64% = 단계 40%(=(64-50)/35)
-  //   로 41% 게이트 '직전'에 걸린다. 41% 돌파는 학습(글로벌 82%) 종료 시점이라, 그때는 이미 다음 게이트가
-  //   도착해 모달 창이 스킵됨. 게다가 240s 추정치 탓에 시간 기반 폴백도 너무 느리다.
-  //   → cur===3 한정, 단계 분석이 15초 이상 진행되면 pct 무관하게 모달 노출 (아래 lastSubmittedGate 가드 유지).
-  const _stageElapsedMs=_stageStart?(Date.now()-_stageStart):0;
-  const _g4ModalFallback=(cur===3 && _stageElapsedMs>=15000);
-  // HJ 2026-06-12 — 사용자 요구: 모든 단계 모달은 진행률 41% 이상에서만 노출. (G3 즉시 노출 _postSubmitAnalyzing 제거)
-  //   이전 세션이 cur>=2 를 '제출 즉시 모달'로 우회시켜 G3 진행 시 팝업이 0% 에 바로 떴다 → 제거.
-  //   41% 전에는 본문 인라인 로딩만 보이고, 카드 regress 는 contentGate 의 _agStaleLow 가드가 막는다.
-  //   G4(cur===3)만 41% 도달이 늦어 위 _g4ModalFallback(15초)로 별도 노출.
-  if(cur>=0 && cur<=5 && _shownPct<41 && !_g4ModalFallback) return false;
+  // HJ 2026-06-13 — 모달 생성 기준은 '단계 진행률 41%' 단일 기준(사용자 지시).
+  //   시간 기반(15초) 폴백 전면 제거 — 늦게 뜨든 일찍 뜨든 모든 단계
+  //   (cur 0~5)에서 _shownPct 가 41% 에 도달해야만 모달 노출. 41% 미만에서는 본문 카드만 표시한다.
+  //   (lastSubmittedGate 가드(아래 cur>=1 분기)는 유지되어 stale 단계로 새지 않는다.)
+  // HJ 2026-06-13 — 롤백(무인 자동 재시도) 중에는 41% 임계를 우회해 모달을 띄운다.
+  //   진행이 길어지는 롤백 구간에서 사용자가 빈 화면만 보지 않도록(진행 상태 가시화).
+  const _rbActive=!!(((gateData&&gateData.stage_partial)||{}).rollback_active);
+  if(cur>=0 && cur<=5 && _shownPct<41 && !_rbActive) return false;
   if(cur===0){
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
     if(_p0.length && curGate()==='G2' && _typingHoldComplete()) return false;
@@ -2259,14 +2284,12 @@ function modalHtml(){
     body+='<div class="modal-en">G1 — Data Understanding</div>';
     body+='<div class="desc" style="text-align:center;font-size:20px;color:#6b7c95;margin:14px 0 0;line-height:1.5">출처·스키마·도메인 의미·데이터 품질·카테고리 판정·PII 점검까지 마치는 중입니다. 끝나면 자동으로 분석 방향 추천이 표시됩니다.</div>';
   } else {
-    // CS 2026-06-11 — 본인 명시 "강제 X". modal 도 frontend 휴리스틱 제거. backend LLM 분류 신뢰.
-    //   cur=1 (G2→G3 진행: 사용자 G2 응답 후 ~ G3 게이트 도달 전, eda_agent 동작)
-    //   + cur=2 (G3 도달 후 → G4 진행 중) 모두 loading[2] = "EDA 작업 중" 헤더와 동기화.
-    //   backend AGENT_PHASE_MAP 의 18~33% 가 cur=1 eda_agent 시점.
-    var _useLoading2 = (cur===1 || cur===2);
-    var _mc=_useLoading2?((GATE_HEADER_BY_CATEGORY.loading&&GATE_HEADER_BY_CATEGORY.loading[2])||{}):{};
+    // HJ 2026-06-13 — 단계별 동기화 수정. cur(화면 N단계)의 "분석 중"은 G(cur+1) 작업이므로
+    //   loading[cur+1] 헤더를 쓴다(cur=1→G2 EDA, 2→G3 전처리, 3→G4 학습, 4→G5 평가, 5→G6 산출물).
+    //   이전엔 cur=1·2 를 모두 loading[2](EDA)로 묶고 cur=3~5 는 제네릭 폴백이라 3단계부터 한 칸씩 어긋났다.
+    var _mc=(GATE_HEADER_BY_CATEGORY.loading&&GATE_HEADER_BY_CATEGORY.loading[cur+1])||{};
     var _mb=_mc[gateData.category]||_mc._default;
-    if(_useLoading2 && _mb){
+    if(_mb){
       body+='<div class="modal-title">'+_mb.h2+'</div>';
       body+='<div class="modal-en">'+_mb.en+'</div>';
       body+='<div class="desc" style="text-align:center;font-size:20px;color:#6b7c95;margin:14px 0 0;line-height:1.5">'+_mb.desc+'</div>';
@@ -2276,6 +2299,35 @@ function modalHtml(){
     }
   }
   return body;
+}
+// HJ 2026-06-13 — G5 baseline 미달 선택 팝업(화면 중앙 오버레이 #baselineChoiceOverlay 내부 카드).
+//   4단계 baseline 리루프 3회 소진 후에도 진짜 모델이 기준선(Dummy)을 못 이긴 경우,
+//   두 갈래(계속/처음으로)를 빨강 강조로 제시. updateBaselineChoice() 가 표시·숨김 제어.
+function updateBaselineChoice(){
+  const el=document.getElementById('baselineChoiceOverlay');
+  if(!el) return;
+  const atG5=((curGate()==='G5')||(cur===4));
+  const active=atG5 && !!(gateData&&gateData.baseline_not_beaten) && !_g5ContinueChosen
+    && !!jobId && !isFailed() && !isCompleted();
+  if(!active){ if(el.style.display!=='none') el.style.display='none'; el._sig=null; return; }
+  const props=((gateData&&gateData.proposals)||[]).filter(function(p){return !p.is_custom;});
+  const sig=props.slice(0,2).map(function(p){return p.title;}).join('|');
+  if(el._sig!==sig){ el._sig=sig; el.innerHTML=baselineChoicePopup(props); }
+  el.style.display='flex';
+}
+function baselineChoicePopup(llmProps){
+  const names=(llmProps||[]).filter(function(p){return !p.is_custom;}).slice(0,2)
+    .map(function(p){return p.title;}).filter(function(s){return !!s;});
+  const nameTxt=names.length?names.map(esc).join(', '):'상위 모델';
+  return '<div style="background:#fff5f5;border:2px solid #e23b3b;border-radius:20px;padding:34px 40px;max-width:720px;width:100%;box-shadow:0 28px 70px rgba(0,0,0,.45);animation:cmIn .3s ease">'
+    +'<div style="font-size:25px;font-weight:800;color:#c62828;margin-bottom:14px">⚠ 모델이 기준선(Dummy)을 끝내 못 이겼습니다</div>'
+    +'<div style="font-size:18px;color:#3a4a5e;line-height:1.65;margin-bottom:22px">전처리·피처링까지 거슬러 <b>3회 자동 재시도</b>했지만, 학습한 모델들이 단순 기준선(Dummy)조차 넘지 못했습니다. 데이터 신호가 약하거나 타깃·피처 설정의 재검토가 필요할 수 있습니다. 어떻게 진행할까요?</div>'
+    +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+    +'<button onclick="_g5ContinueChosen=true;try{render();}catch(e){}" style="flex:1;min-width:260px;background:#1f3e5c;color:#fff;border:none;border-radius:14px;padding:20px 24px;font-size:19px;font-weight:700;cursor:pointer;text-align:left">계속 진행 ▶'
+    +'<div style="font-size:14px;font-weight:500;opacity:.85;margin-top:7px">더미 제외 상위 2개 모델('+nameTxt+') 중에서 선택</div></button>'
+    +'<button onclick="goToStart()" style="flex:1;min-width:260px;background:#fff;color:#c62828;border:2px solid #e23b3b;border-radius:14px;padding:20px 24px;font-size:19px;font-weight:700;cursor:pointer;text-align:left">처음으로 돌아가기 ↺'
+    +'<div style="font-size:14px;font-weight:500;opacity:.85;margin-top:7px">작업을 끝내고 시작 화면에서 새로 시작</div></button>'
+    +'</div></div>';
 }
 function contentGate(){
   const tg='G'+(cur+1);           // 사용자가 보고 싶은 게이트 (cur 기준). cur=1→G2 ... cur=5→G6
@@ -2332,6 +2384,8 @@ function contentGate(){
   // filter out backend-injected custom placeholder — customCard is added separately below
   const llmProps=props.filter(function(p){ return !p.is_custom; });
   if(!llmProps.length){ return gateHeader(g)+loadingBlock(); }
+  // HJ 2026-06-13 — G5 baseline 미달 선택은 화면 중앙 오버레이(#baselineChoiceOverlay)로
+  //   표시(updateBaselineChoice). 여기 본문은 G5 카드를 그대로 깔아두고 오버레이가 그 위를 덮는다.
   let recId=llmProps.reduce(function(a,b){ return (b.score||0)>(a.score||0)?b:a; }, llmProps[0]).id;
   if(selId===null || selGate!==g){ selId=recId; selGate=g; }
   let cards=llmProps.map(function(p,i){ return propCard(p,i,recId); }).join('');
@@ -2456,7 +2510,7 @@ function content(i){
   return contentResult();
 }
 function primaryLabel(){
-  if(busy) return '… 처리 중';
+  if(busy){ const _bSec = busyStartedAt ? Math.floor((Date.now()-busyStartedAt)/1000) : 0; return '… 처리 중 ('+_bSec+'초)'; }
   if(paused) return '▶ 재시작';
   if(cur===0) return '⬆ 업로드';
   if(cur===LAST) return '📥 완료';
@@ -2464,6 +2518,39 @@ function primaryLabel(){
   //   누르면 그 단계를 현재 선택 카드로 재실행(doResume). cur<frontier(지난 단계)도 동일.
   if(cur>=1 && cur<=5 && (navUnlocked || cur<frontier)) return '🔄 재진행 ▸';
   return '진행 ▸';
+}
+// HJ 2026-06-13 — 자동 리루프(4·5단계) 진행 배너 갱신. stage_partial.rollback_active 기반(통합 스키마).
+//   우하단 고정 — 메인 모달 본문에 간섭하지 않고 1·2·3차 롤백 단계·사유를 빨강 강조로 안내한다.
+function updateRollbackBanner(){
+  const el=document.getElementById('rollbackBanner');
+  if(!el) return;
+  const sp=(gateData&&gateData.stage_partial)||{};
+  const active=!!sp.rollback_active && !!jobId && !isFailed() && !isCompleted();
+  if(!active){ el.style.display='none'; el._sig=null; return; }
+  const stage=+sp.rollback_stage||5;
+  const tier=+sp.rollback_tier||0;
+  const max=+sp.rollback_max||3;
+  const desc=sp.rollback_desc||(tier+'차 롤백');
+  const reason=sp.rollback_reason||(stage===4?'기준선(Dummy) 미달':'평가 임계 성능 미달');
+  const etaSec=+sp.rollback_eta_sec||0;
+  const etaTxt=etaSec>=60?('약 '+Math.round(etaSec/60)+'분'):(etaSec>0?('약 '+etaSec+'초'):'잠시');
+  const stageLabel=stage===4?'4단계 · 모델 학습(기준선 초과 목표)':'5단계 · 평가(임계 성능 목표)';
+  const sig=stage+'|'+tier+'|'+max+'|'+desc+'|'+reason+'|'+etaSec;
+  if(el._sig===sig){ el.style.display='block'; return; }  // 내용 동일 → 재렌더 생략(깜빡임 방지)
+  el._sig=sig;
+  let dots='';
+  for(let i=1;i<=max;i++){
+    const on=i<=tier;
+    dots+='<span style="font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;'+(on?'background:#e23b3b;color:#fff':'background:#f1dada;color:#c08a8a')+'">'+i+'차</span>';
+  }
+  el.innerHTML='<div style="font-size:16px;font-weight:800;color:#c62828;margin-bottom:4px">⚠ 자동 재시도(롤백) 진행 중</div>'
+    +'<div style="font-size:12px;font-weight:700;color:#9a5a5a;margin-bottom:9px">'+esc(stageLabel)+'</div>'
+    +'<div style="display:flex;gap:7px;margin-bottom:10px">'+dots+'</div>'
+    +'<div style="font-size:15px;font-weight:700;color:#1f3e5c;margin-bottom:5px">'+esc(desc)+'</div>'
+    +'<div style="font-size:13px;color:#9a5a5a;margin-bottom:5px">사유: '+esc(reason)+'</div>'
+    +'<div style="font-size:13px;color:#9a5a5a;margin-bottom:8px">예상 추가 시간: <b>'+etaTxt+'</b></div>'
+    +'<div style="font-size:12px;color:#8a98ad;line-height:1.45">조건을 만족할 때까지 자동으로 보강·재학습합니다. 화면은 그대로 두셔도 됩니다(현재 단계 유지).</div>';
+  el.style.display='block';
 }
 function render(){
   // CS 2026-06-10 — 모든 textarea/input 포커스 보존 (polling render 시 포커스·커서 잃지 않게)
@@ -2498,6 +2585,8 @@ function render(){
   var _ce=document.getElementById('content');
   if(_ce._last!==_nc){_ce._last=_nc;_ce.innerHTML=_nc;}
   document.getElementById('pb-area').innerHTML=progressBar();
+  try{ updateRollbackBanner(); }catch(e){}
+  try{ updateBaselineChoice(); }catch(e){}
   // loadMsg·agentLabel 은 DOM 파괴 없이 직접 갱신 (innerHTML 리셋 방지 → SVG 애니메이션 유지)
   var _lmEl=document.getElementById('lmsg');
   if(_lmEl) _lmEl.textContent=loadMsg()+'…';
@@ -2656,7 +2745,7 @@ function render(){
       if(_pbEl) _pbEl.innerHTML=progressBar(true);  // HJ 2026-06-11 — 모달 내부 진행바는 isGateLoading 무관 항상 표시(사라짐 버그 fix)
       // [3] insight 영역 — modalInsightArea 가 모달 콘텐츠 생성. modalDismissed 와 무관하게 새 데이터 도착 시 갱신.
       var _miEl=document.getElementById('modal-insight');
-      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;_twTick();}}
+      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){var _msc=document.getElementById('modal-scroll');var _mst=_msc?_msc.scrollTop:0;_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;if(_msc)_msc.scrollTop=_mst;_twTick();}}
       // [3.5] 타자기 엔진 — modalDismissed 여도 setInterval 계속 도는 핵심.
       //   _twTick 가 span.tw[data-tw] 들을 95ms 마다 1글자씩 채움. 모달 숨겨져 있어도 DOM 은 살아있어 글자 누적.
       //   사용자가 다시 열면 그동안 그려진 글자가 그대로 보임.
@@ -2847,15 +2936,15 @@ if not st.session_state.get("studio_started"):
         st.markdown(
             """
             <div style="text-align:left;">
-              <div style="display:flex;align-items:center;gap:11px;">
+              <div style="display:flex;align-items:center;gap:13px;flex-wrap:wrap;">
                 <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
                   <path d="M10 38 L24 10 L38 38" stroke="#15273d" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
                   <path d="M16.5 30 L31.5 30" stroke="#15273d" stroke-width="2.6" stroke-linecap="round"/>
                 </svg>
                 <span style="font-size:1.7rem;font-weight:700;color:#15273d;">ada <span style="color:#2f6fed;">studio</span></span>
+                <span style="background:#e8f1fe;color:#1d5fd6;font-size:.8rem;font-weight:600;letter-spacing:.06em;padding:5px 14px;border-radius:999px;">AI 데이터 분석 에이전트</span>
               </div>
-              <div style="margin-top:14px;display:inline-block;background:#e8f1fe;color:#1d5fd6;font-size:.8rem;font-weight:600;letter-spacing:.06em;padding:5px 14px;border-radius:999px;">AI 데이터 분석 에이전트</div>
-              <div style="color:#64718a;font-size:1rem;margin-top:22px;line-height:1.6;">숫자만 가득한 데이터 어떻게 처리해야 할지 막막하셨나요?<br>분석에 몇 주, 몇 달째 붙잡혀 계셨나요?<br>데이터를 분석하고 PPT, PDF 등으로 만드는데 골치 아프셨나요?</div>
+              <div style="color:#64718a;font-size:1rem;margin-top:22px;line-height:1.6;">정제되지 않고 막막한, 알지도 못하는 복잡한 데이터도,<br>여러 팀원이 몇 주, 몇 달씩 붙잡히던 분석도,<br>산더미 같던 PPT, PDF 등 보고서 작업도 —</div>
               <div style="color:#2f6fed;font-size:1.2rem;font-weight:700;margin-top:18px;">이제, 끝났습니다!</div>
               <div style="font-size:2.45rem;font-weight:800;color:#15273d;line-height:1.24;margin-top:6px;">3명이,<br>3주 걸릴 프로젝트를,<br><span style="color:#2f6fed;">30분</span> 만에.</div>
               <div style="color:#6b7787;font-size:1.04rem;margin-top:14px;">몇 번의 선택이면, 원본 데이터가 <span style="color:#2f6fed;font-weight:700;">&ldquo;전문가 인사이트&rdquo;</span>로 바뀝니다.</div>

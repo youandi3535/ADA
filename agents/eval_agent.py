@@ -117,9 +117,12 @@ class EvalAgent(BaseAgent):
                 if violations:
                     _vs = [str(v)[:100] for v in violations[:3]]
                     _g5_eval_insights.append(f"임계치 미달: {' / '.join(_vs)}")
-                _g5_eval_insights = await self._dynamic_insights(
-                    _g5_eval_insights,
-                    backend="claude",
+                # HJ 2026-06-13 — 윤색(규칙 기반 사실에 해석 한 문장)은 단순 작업이라 Ollama 로 전환
+                #   (Claude 토큰 절약) + 백그라운드로(critical path 제거). 핵심 평가 판정·rationale 은
+                #   EvalAgent 본 LLM(Claude)이 이미 생성했고, 윤색은 publish 전용(state 무관)이라 품질 무영향.
+                self._spawn_insight_polish(
+                    list(_g5_eval_insights),
+                    backend="ollama",
                     context="G5 평가",
                     job_id=state.job_id,
                     key="g5_eval_insights",
@@ -135,23 +138,68 @@ class EvalAgent(BaseAgent):
             except Exception as e:  # noqa: BLE001
                 self.logger.warning("g5_eval_insights_publish_failed", error=str(e))
 
-            # 3) 분기
+            # 3) 분기 — HJ 2026-06-12 계층적 3단계 무인 자동 재시도.
+            #   1차 HP재튜닝 / 2차 피처재구성 / 3차 전처리재검토. 경로상 게이트는
+            #   BaseGate 가 re_loop_count>0 동안 current_gate=None 으로 자동통과.
+            _RELOOP_ENTRY = {
+                1: "hyperparameter_tuner",
+                2: "feature_engineer",
+                3: "preprocessing_strategist",
+            }
+            # HJ 2026-06-13 — baseline 이김 판정은 4단계(metrics_aggregator)로 이전. 5단계는 임계점(passed)만 본다.
+            # HJ 2026-06-13 — 롤백(무인 자동 재시도) 진행 상태를 모달에 발행. 사용자가 "왜 오래
+            #   걸리는지" 인지하도록 1·2·3차 롤백 단계·사유를 알린다. 통과/종료 시 active=False.
+            _TIER_DESC = {
+                1: "1차 롤백 · 하이퍼파라미터 재튜닝",
+                2: "2차 롤백 · 피처 재구성",
+                3: "3차 롤백 · 전처리 재검토",
+            }
+
+            def _publish_rollback(active: bool, tier: int = 0, desc: str = "", entry: str = "") -> None:
+                # HJ 2026-06-13 — 통합 롤백 배너 스키마(4·5단계 공용). 우하단 빨강 박스에 단계·차수·사유·예상시간.
+                _viol = eval_result.get("threshold_violations") or []
+                _eta = {"hyperparameter_tuner": 240, "feature_engineer": 300, "preprocessing_strategist": 360}.get(
+                    entry, 240
+                )
+                _safe_publish_stage_partial(
+                    state.job_id,
+                    {
+                        "rollback_active": bool(active),
+                        "rollback_stage": 5,
+                        "rollback_tier": int(tier),
+                        "rollback_max": int(state.max_re_loop),
+                        "rollback_desc": desc,
+                        "rollback_reason": (str(_viol[0])[:120] if _viol else "평가 임계 성능 미달"),
+                        "rollback_eta_sec": int(_eta) if active else 0,
+                    },
+                )
+
             if eval_result["passed"]:
-                new_state = state.with_update(eval_result=eval_result, next_agent="explainability")
+                # HJ 2026-06-13 — 통과 시 re_loop_count 리셋(중요). 안 하면 이후 gate_outputs(G6)가
+                #   _base_gate 의 re_loop_count>0 자동통과 분기에 걸려 산출물 선택을 안 띄우고 G7 로
+                #   점프(G6 건너뜀)한다. 통과=정상 전진이므로 0 으로 되돌려 G6 가 정상 인터럽트되게 한다.
+                new_state = state.with_update(eval_result=eval_result, re_loop_count=0, next_agent="explainability")
+                _publish_rollback(False)
             else:
                 new_re_loop = state.re_loop_count + 1
-                if new_re_loop <= state.max_re_loop:
+                entry = _RELOOP_ENTRY.get(new_re_loop)
+                if new_re_loop <= state.max_re_loop and entry is not None:
+                    # 재시도: passed 미달 또는 baseline 미달 → 1차 HP재튜닝 / 2차 피처재구성 / 3차 전처리재검토.
+                    #   누수 안전: feature_engineer 재실행도 leakage_safe_split(train fit→val transform) 경로 유지.
                     new_state = state.with_update(
                         eval_result=eval_result,
                         re_loop_count=new_re_loop,
-                        next_agent="training_executor",
+                        next_agent=entry,
                     )
+                    _publish_rollback(True, new_re_loop, _TIER_DESC.get(new_re_loop, f"{new_re_loop}차 롤백"), entry)
                 else:
+                    # 한도 도달 — 마지막 best 로 진행 (re_loop_count 리셋 → G6 정상 인터럽트, 자동통과 방지).
                     new_state = state.with_update(
                         eval_result=eval_result,
-                        error="평가 임계치 미달 + 재루프 한도 도달",
-                        next_agent="error_recovery",
+                        re_loop_count=0,
+                        next_agent="explainability",
                     )
+                    _publish_rollback(False)
 
             # Phase 1.4 — ReportContext ⑧ evaluation + ⑩ limitations 적립.
             try:

@@ -93,14 +93,36 @@ class FeatureEngineerAgent(BaseAgent):
             if split_handler is not None:
                 try:
                     result = split_handler(df, state.preprocessing_plan or [], state)
-                    if isinstance(result, tuple) and len(result) == 3:
-                        # (df_train_proc, df_val_proc, new_state) 시그니처
+                    if isinstance(result, tuple) and len(result) == 4:
+                        # (df_train_proc, df_val_proc, df_test_proc, new_state)
+                        import pandas as _pd  # noqa: WPS433
+
+                        df_tr, df_val, df_test, state = result
+                        n_tr = int(len(df_tr))
+                        n_val = int(len(df_val))
+                        n_test = int(len(df_test))
+                        df = _pd.concat([df_tr, df_val, df_test], axis=0, ignore_index=True)
+                        try:
+                            extras = dict(state.category_extras or {})
+                            cat_key = "tabular" if state.category.startswith("tabular") else state.category
+                            cat_extras = dict(extras.get(cat_key, {}))
+                            split_meta = dict(cat_extras.get("leakage_safe_split") or {})
+                            split_meta["train_row_count_for_reorder"] = n_tr
+                            split_meta["val_row_count"] = n_val
+                            split_meta["test_row_count"] = n_test
+                            cat_extras["leakage_safe_split"] = split_meta
+                            extras[cat_key] = cat_extras
+                            state = state.with_update(category_extras=extras)
+                        except Exception:
+                            pass
+                        used_leakage_safe = True
+                    elif isinstance(result, tuple) and len(result) == 3:
+                        # (df_train_proc, df_val_proc, new_state) — 2분할 폴백
                         import pandas as _pd  # noqa: WPS433
 
                         df_tr, df_val, state = result
                         n_tr = int(len(df_tr))
                         df = _pd.concat([df_tr, df_val], axis=0, ignore_index=True)
-                        # train 인덱스를 state extras 에 기록 → training_executor 가 동일 split 재현
                         try:
                             extras = dict(state.category_extras or {})
                             cat_key = "tabular" if state.category.startswith("tabular") else state.category

@@ -49,6 +49,23 @@ class BaseGate(BaseAgent):
                 self.logger.warning("gate_propose_failed", gate=self.gate_code, error=str(e))
                 proposals = [{"id": 1, "title": "기본 권장", "rationale": "LLM 실패로 fallback", "score": 0.5}]
 
+            if state.re_loop_count > 0 or state.baseline_re_loop_count > 0:
+                gate_responses = dict(state.gate_responses)
+                gate_responses[self.gate_code] = {
+                    **(gate_responses.get(self.gate_code) or {}),
+                    "proposals": proposals,
+                    "awaiting_decision": False,
+                    "auto_resolved": True,
+                    "auto_resolved_reason": f"re_loop={state.re_loop_count}",
+                }
+                resolved = list(state.auto_resolved_gates or [])
+                if self.gate_code not in resolved:
+                    resolved.append(self.gate_code)
+                return state.with_update(
+                    gate_responses=gate_responses,
+                    auto_resolved_gates=resolved,
+                    current_gate=None,
+                )
             gate_responses = dict(state.gate_responses)
             gate_responses[self.gate_code] = {
                 "proposals": proposals,

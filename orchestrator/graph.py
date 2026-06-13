@@ -191,6 +191,10 @@ def route_after_metrics(state: PipelineState) -> str:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
+    # HJ 2026-06-13 — 4단계 baseline 리루프: metrics_aggregator 가 next_agent 를
+    #   preprocessing_strategist 로 지정하면 전처리부터 재시작(전 단계 롤백, 화면은 유지).
+    if state.next_agent == "preprocessing_strategist":
+        return "preprocessing_strategist"
     return "gate_best_model"
 
 
@@ -215,6 +219,9 @@ def route_after_eval(state: PipelineState) -> str:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
+    _RELOOP_TARGETS = {"hyperparameter_tuner", "feature_engineer", "preprocessing_strategist"}
+    if state.next_agent in _RELOOP_TARGETS:
+        return state.next_agent
     return "explainability"
 
 
@@ -350,6 +357,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
         route_after_metrics,
         {
             "gate_best_model": "gate_best_model",
+            "preprocessing_strategist": "preprocessing_strategist",
             "auto_error_handler": "auto_error_handler",
             "error_recovery": "error_recovery",
         },
@@ -369,6 +377,9 @@ def build_graph(checkpointer: Any | None = None) -> Any:
         route_after_eval,
         {
             "explainability": "explainability",
+            "hyperparameter_tuner": "hyperparameter_tuner",
+            "feature_engineer": "feature_engineer",
+            "preprocessing_strategist": "preprocessing_strategist",
             "auto_error_handler": "auto_error_handler",
             "error_recovery": "error_recovery",
         },

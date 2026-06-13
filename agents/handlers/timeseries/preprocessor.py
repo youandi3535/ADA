@@ -387,6 +387,22 @@ def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
         logger.warning("target_column=%r 이 df 에 없음 — 전처리 건너뜀", target)
         return out
 
+    # ★ 누수 1-3 차단: boxcox λ 를 "학습 구간만으로" 추정하기 위한 train_ratio 도출.
+    #   분할 비율은 plan 의 time_order_split.test_ratio(없으면 0.2)에서 가져와
+    #   train_ratio = 1 - test_ratio. 동일 step 이 Phase 8 에서 실제 분할에도 쓰이므로
+    #   λ 추정 경계와 평가 분할 경계가 자연히 일치한다(스플릿 정합).
+    _train_ratio: float | None = None
+    try:
+        _test_ratio = 0.2
+        for _st in plan_steps:
+            if _st.get("name") == "time_order_split":
+                _test_ratio = float(_st.get("test_ratio", 0.2))
+                break
+        if 0.0 < _test_ratio < 1.0:
+            _train_ratio = 1.0 - _test_ratio
+    except (TypeError, ValueError):
+        _train_ratio = None
+
     for step in plan_steps:
         name = step.get("name")
         try:
@@ -411,6 +427,7 @@ def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
                     shift_min=step.get("shift_min", True),
                     lambda_clip=step.get("lambda_clip", (-5.0, 5.0)),
                     fallback=step.get("fallback", "log1p"),
+                    train_ratio=_train_ratio,  # ★ λ 는 train 구간만으로 추정, 변환은 전체 적용
                 )
 
             elif name == "diff":

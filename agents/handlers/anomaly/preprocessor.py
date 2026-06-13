@@ -288,3 +288,146 @@ def apply_transform(df: Any, fitted_state: dict[str, Any]) -> Any:
         X = fitted_state["pca"].transform(X)
 
     return X
+
+
+# ── 공개 진입점 4: apply_split (학습 누수 차단 — split-first → train fit → val transform) ──
+#
+# feature_engineer 가 get_handler(category, "apply_split") 로 자동 우선 사용한다
+# (미등록이면 apply 폴백). scaler/winsor/PCA 를 "전체 df" 가 아니라 "train 구간"
+# 에만 fit 하여 평가 누수를 차단하는 진입점.
+#
+# 흐름:
+#   1) split 먼저 (경계: category_extras["anomaly_detection"]["split_index"]
+#                      → 시간 컬럼(시간순 ordinal) → 무작위 비율 순).
+#   2) train 으로만 apply() 호출 → fitted statistics(scaler·winsor_limits·pca)
+#      가 train 에 갇힘. 산출물은 preprocessor_artifacts 로 적립됨.
+#   3) val 은 apply_transform(df_val, artifacts) 로 transform-only 재적용
+#      (fit 안 함 → 누수 없음). 학습/추론 일관성 함수 재사용.
+#   4) leakage_safe_split 메타 적립 (evaluator 가 n_train 소비).
+#
+# 반환: (df_train_proc, df_val_proc, new_state)
+#   - 두 DataFrame 은 동일 컬럼(feature_names_out) → feature_engineer 의 concat 안전.
+DEFAULT_SPLIT_TEST_RATIO = 0.2
+
+
+def _split_ts() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _resolve_split_boundary(df: Any, state: Any, test_ratio: float) -> tuple[Any, str]:
+    """train/val 행 분할 — (train_index, val_index 를 담은 (df_train, df_val), 방법명) 반환.
+
+    우선순위:
+      1) category_extras["anomaly_detection"]["split_index"] (정수) — 명시 경계.
+      2) 시간 컬럼 존재 → 시간순 정렬 후 앞 train / 뒤 val (시계열 누수 방지).
+      3) 무작위 비율 (RANDOM_STATE 고정 → 재현).
+    어떤 경우든 df_train/df_val 둘 다 reset_index(drop=True).
+    """
+    import numpy as np  # noqa: WPS433
+
+    n = len(df)
+    cat = (getattr(state, "category_extras", None) or {}).get("anomaly_detection", {}) or {}
+
+    # 1) 명시 split_index
+    si = cat.get("split_index")
+    if isinstance(si, (int, float)) and 0 < int(si) < n:
+        cut = int(si)
+        df_tr = df.iloc[:cut].reset_index(drop=True)
+        df_val = df.iloc[cut:].reset_index(drop=True)
+        return (df_tr, df_val), "explicit_split_index"
+
+    # 2) 시간 컬럼 → 시간순 분할
+    profile = getattr(state, "data_profile", {}) or {}
+    time_cands = profile.get("time_column_candidates") or []
+    time_col = None
+    if profile.get("has_time_column") and time_cands:
+        c0 = time_cands[0]
+        if c0 in df.columns:
+            time_col = c0
+    if time_col is not None:
+        try:
+            import pandas as pd  # noqa: WPS433
+
+            order = pd.to_datetime(df[time_col], errors="coerce")
+            if order.isna().all():
+                order = df[time_col]
+            df_sorted = df.assign(_ord=order).sort_values("_ord").drop(columns=["_ord"])
+            cut = max(1, int(n * (1.0 - test_ratio)))
+            df_tr = df_sorted.iloc[:cut].reset_index(drop=True)
+            df_val = df_sorted.iloc[cut:].reset_index(drop=True)
+            return (df_tr, df_val), "time_ordered"
+        except Exception:  # noqa: BLE001 — 시간 분할 실패 → 무작위 폴백
+            pass
+
+    # 3) 무작위 비율
+    rng = np.random.default_rng(RANDOM_STATE)
+    perm = rng.permutation(n)
+    cut = max(1, int(n * (1.0 - test_ratio)))
+    tr_idx = np.sort(perm[:cut])
+    val_idx = np.sort(perm[cut:])
+    df_tr = df.iloc[tr_idx].reset_index(drop=True)
+    df_val = df.iloc[val_idx].reset_index(drop=True)
+    return (df_tr, df_val), "random_ratio"
+
+
+def apply_split(
+    df: Any,
+    plan_steps: list[dict] | None,
+    state: Any,
+    *,
+    test_ratio: float = DEFAULT_SPLIT_TEST_RATIO,
+) -> tuple[Any, Any, Any]:
+    """누수 방지 전처리 — split 후 train 으로만 fit, val 은 transform-only.
+
+    Returns
+    -------
+    (df_train_proc, df_val_proc, new_state)
+    """
+    import pandas as pd  # noqa: WPS433
+
+    # 데이터가 너무 작아 분할 무의미 → 기존 apply 폴백 (회귀 방지, train==전체).
+    if df is None or len(df) < 4:
+        df_proc, new_state = apply(df, plan_steps, state)
+        empty_val = df_proc.iloc[0:0].copy()
+        return df_proc, empty_val, new_state
+
+    # 1) split 먼저
+    (df_train, df_val), split_method = _resolve_split_boundary(df, state, test_ratio)
+
+    # 2) train 으로만 fit (preprocessor_artifacts 적립)
+    df_train_proc, state_after = apply(df_train, plan_steps, state)
+
+    # 3) fitted artifacts 추출 → val 에 transform-only
+    extras_after = getattr(state_after, "category_extras", None) or {}
+    cat_after = extras_after.get("anomaly_detection", {}) or {}
+    artifacts = cat_after.get("preprocessor_artifacts", {}) or {}
+    feat_out = list(artifacts.get("feature_names_out") or list(df_train_proc.columns))
+
+    try:
+        X_val = apply_transform(df_val, artifacts)
+        df_val_proc = pd.DataFrame(X_val, columns=feat_out)
+    except Exception:  # noqa: BLE001 — val transform 실패 → 빈 val (train 단독 진행)
+        df_val_proc = df_train_proc.iloc[0:0].copy()
+
+    # 컬럼 정합 보장 (apply_transform 출력은 학습과 동일 feature_names_out)
+    if list(df_val_proc.columns) != list(df_train_proc.columns):
+        df_val_proc = df_val_proc.reindex(columns=list(df_train_proc.columns))
+
+    # 4) leakage_safe_split 메타 적립 (evaluator.n_train 소비)
+    new_extras = dict(extras_after)
+    cat_block = dict(new_extras.get("anomaly_detection", {}) or {})
+    cat_block["leakage_safe_split"] = {
+        "method": "split_first_train_fit",
+        "split_method": split_method,
+        "n_train": int(len(df_train_proc)),
+        "n_val": int(len(df_val_proc)),
+        "test_ratio": float(test_ratio),
+        "random_state": int(RANDOM_STATE),
+        "ts": _split_ts(),
+    }
+    new_extras["anomaly_detection"] = cat_block
+    new_state = state_after.with_update(category_extras=new_extras)
+
+    return df_train_proc, df_val_proc, new_state

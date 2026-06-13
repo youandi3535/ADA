@@ -126,9 +126,11 @@ class ReportComposerAgent(BaseAgent):
                     f"종합: 요청 {len(requested)}종 중 {len(results)}종 생성 완료 "
                     f"({(len(results) / max(len(requested), 1) * 100):.0f}%)"
                 )
-                _g6_insights = await self._dynamic_insights(
-                    _g6_insights,
-                    backend="claude",
+                # HJ 2026-06-13 — 산출물 결과 윤색은 단순 작업이라 Ollama+백그라운드로 (토큰 절약 + 즉시 전진).
+                #   산출물 생성 자체는 _gen()이 수행, 윤색은 성공/실패 목록에 해석 붙이는 보조라 품질 무영향.
+                self._spawn_insight_polish(
+                    list(_g6_insights),
+                    backend="ollama",
                     context="G6 산출물 합성",
                     job_id=state.job_id,
                     key="g6_output_insights",

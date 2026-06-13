@@ -68,6 +68,11 @@ class HyperparameterTunerAgent(BaseAgent):
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
+            # 재시도 비례 trial/timeout 증액 (지역값 — 인스턴스 영구변형 금지).
+            _rl = int(getattr(state, "re_loop_count", 0) or 0)
+            _scale = 1.0 + 0.5 * _rl
+            _eff_n_trials = max(1, int(round(self.n_trials * _scale)))
+            _eff_timeout = max(1, int(round(self.timeout_per_model_sec * _scale)))
             X, y = await self._load_xy(state)
             if X is None or y is None:
                 self.logger.warning("hpo_skip_no_data", category=state.category)
@@ -89,42 +94,62 @@ class HyperparameterTunerAgent(BaseAgent):
                 state.job_id,
                 {
                     "g4_phase": "hpo_start",
-                    "g4_status": f"하이퍼파라미터 튜닝 시작 — {n_models}개 모델, 각 {self.n_trials} trials",
+                    "g4_status": f"하이퍼파라미터 튜닝 시작 — {n_models}개 모델 병렬, 각 {self.n_trials} trials",
                     "hpo_total_models": n_models,
                     "hpo_trials_per_model": self.n_trials,
                 },
             )
             _g4_hpo_insights: list[str] = []
-            for idx, model_name in enumerate(state.model_candidates, start=1):
-                _safe_publish_stage_partial(
-                    state.job_id,
-                    {
-                        "g4_phase": "hpo_progress",
-                        "g4_status": f"튜닝 중 ({idx}/{n_models}) — {model_name}",
-                        "hpo_current_model": model_name,
-                        "hpo_done_count": idx - 1,
-                    },
+
+            # HJ 2026-06-13 — 모델별 튜닝 병렬 + 실시간 publish.
+            #   각 Optuna study 는 독립(study_name 에 model_name 포함, TPESampler(seed=42))이라
+            #   병렬 실행해도 결과가 직렬과 비트 동일 — 분석 품질 무손실.
+            #   _run_optuna 는 loop.run_in_executor 기반이라 gather 시 스레드로 동시 실행된다.
+            #   한 모델 study 가 끝나는 즉시 그 best_params 인사이트를 누적 publish → 사용자가
+            #   "모아서 한 번에"가 아니라 완료되는 순서대로 실시간 확인.
+            async def _tune_one(model_name: str) -> None:
+                best = await self._run_optuna(
+                    state,
+                    model_name,
+                    X,
+                    y,
+                    task,
+                    ss_module,
+                    n_trials=_eff_n_trials,
+                    timeout_sec=_eff_timeout,
                 )
-                best = await self._run_optuna(state, model_name, X, y, task, ss_module)
+                # asyncio 단일 스레드 — await 종료 후 아래 동기 구간은 원자적(race 없음).
                 best_params[model_name] = best
-                # HJ 2026-06-11 — 모델별 튜닝 결과 자연어 인사이트 누적 publish.
-                # 사용자가 G2 의 eda_insights 처럼 모델별 최적 파라미터 라이브 확인.
                 try:
                     if best:
                         _p_pairs = [f"{k}={v}" for k, v in list(best.items())[:4]]
                         _g4_hpo_insights.append(f"튜닝 결과: {model_name} → {', '.join(_p_pairs)}")
                     else:
                         _g4_hpo_insights.append(f"튜닝 결과: {model_name} → 기본 파라미터 사용")
+                    _done = len(_g4_hpo_insights)
                     _safe_publish_stage_partial(
                         state.job_id,
-                        {"g4_hpo_insights": list(_g4_hpo_insights)},
+                        {
+                            "g4_phase": "hpo_progress",
+                            "g4_status": f"튜닝 완료 ({_done}/{n_models}) — {model_name}",
+                            "hpo_done_count": _done,
+                            "g4_hpo_insights": list(_g4_hpo_insights),
+                        },
                     )
                 except Exception:  # noqa: BLE001
                     pass
-            # 튜닝 완료 publish — frontend 모달이 best_params 받기 전 미리 안내.
-            _g4_hpo_insights = await self._dynamic_insights(
-                _g4_hpo_insights,
-                backend="claude",
+
+            await asyncio.gather(
+                *(_tune_one(m) for m in state.model_candidates),
+                return_exceptions=True,
+            )
+
+            # HJ 2026-06-13 — Claude 윤색은 백그라운드로(critical path 제거) → 학습 단계 즉시 전진.
+            #   윤색 결과는 _dynamic_insights 가 job_id+key 로 직접 모달에 publish(교체)하며,
+            #   미완분은 게이트 도달 직전 runner.drain_background_insights() 가 회수한다.
+            self._spawn_insight_polish(
+                list(_g4_hpo_insights),
+                backend="ollama",
                 context="G4 하이퍼파라미터 튜닝",
                 job_id=state.job_id,
                 key="g4_hpo_insights",
@@ -135,20 +160,25 @@ class HyperparameterTunerAgent(BaseAgent):
                     "g4_phase": "hpo_done",
                     "g4_status": f"하이퍼파라미터 튜닝 완료 — {n_models}개 모델 — 학습 단계로 이동",
                     "hpo_done_count": n_models,
-                    "g4_hpo_insights": _g4_hpo_insights,
                 },
             )
 
             return state.with_update(best_params=best_params, next_agent="training_executor")
 
     async def _load_xy(self, state: PipelineState):
-        """training_executor 와 동일한 _split_xy 사용. MinIO 로드 실패 시 (None, None)."""
+        """train+val 까지만 CV 사용 (test 격리). 메타 없으면 전체 폴백."""
         try:
             from agents.handlers.common.shared import load_dataframe_from_state
-            from agents.training_executor import _split_xy
+            from agents.training_executor import _leakage_split_bounds, _split_xy
 
             df = load_dataframe_from_state(state)
-            return _split_xy(df, state.target_column)
+            X, y = _split_xy(df, state.target_column)
+            bounds = _leakage_split_bounds(state)
+            if bounds is not None:
+                cut = bounds[0] + bounds[1]
+                if 0 < cut <= len(X):
+                    return X[:cut], y[:cut]
+            return X, y
         except Exception as e:
             self.logger.warning("hpo_load_failed", error=str(e))
             return None, None
@@ -165,7 +195,20 @@ class HyperparameterTunerAgent(BaseAgent):
         except Exception:
             return None
 
-    async def _run_optuna(self, state, model_name, X, y, task, ss_module) -> dict[str, Any]:
+    async def _run_optuna(
+        self,
+        state,
+        model_name,
+        X,
+        y,
+        task,
+        ss_module,
+        *,
+        n_trials: int | None = None,
+        timeout_sec: int | None = None,
+    ) -> dict[str, Any]:
+        _n_trials = int(n_trials) if n_trials is not None else self.n_trials
+        _timeout_sec = int(timeout_sec) if timeout_sec is not None else self.timeout_per_model_sec
         loop = asyncio.get_event_loop()
 
         def _search() -> dict[str, Any]:
@@ -225,12 +268,27 @@ class HyperparameterTunerAgent(BaseAgent):
             try:
                 study.optimize(
                     _objective,
-                    n_trials=self.n_trials,
-                    timeout=self.timeout_per_model_sec,
+                    n_trials=_n_trials,
+                    timeout=_timeout_sec,
                     catch=(Exception,),
                     show_progress_bar=False,
                 )
-                return dict(study.best_params) if study.best_trial else {}
+                if not study.best_trial:
+                    return {}
+                # HJ 2026-06-13 — search_space 의 고정값(random_state·n_jobs·seed·eval_metric 등)은
+                #   trial.suggest_* 를 거치지 않아 study.best_params 에 누락된다. FixedTrial 로
+                #   search_space 를 1회 재실행해 고정값까지 포함한 완전한 파라미터로 복원한다.
+                #   (HJ 2026-06-13 복구: 직전 bind-mount 손상으로 끝부분 유실 → 동일 의도·시그니처로 재작성)
+                best = dict(study.best_params)
+                try:
+                    _sfn = getattr(ss_module, "get_search_space", None)
+                    if callable(_sfn):
+                        full = _sfn(model_name, optuna.trial.FixedTrial(study.best_params))
+                        if isinstance(full, dict) and full:
+                            best = {**full, **best}
+                except Exception as e:
+                    self.logger.warning("fixedtrial_restore_failed", model=model_name, error=str(e))
+                return best
             except Exception as e:
                 self.logger.warning("optuna_failed", model=model_name, error=str(e))
                 return {}
