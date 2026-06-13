@@ -633,6 +633,19 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         canvas.setFont("Helvetica", 12)
         canvas.setFillColor(colors.HexColor("#94A3B8"))
         canvas.drawRightString(A4[0] - 2 * cm, 1 * cm, f"p.{dc.page}")
+        # [공통 로고] 본문 우상단 — 연한 'ada studio' 워드마크 러닝 마크(우측 정렬, 표지=락업/본문=연한 워드마크)
+        _lg_sz = 10.0
+        _lg_y = A4[1] - 1.5 * cm
+        _lg_ada_w = canvas.stringWidth("ada ", _KG, _lg_sz)
+        _lg_studio_w = canvas.stringWidth("studio", _KG, _lg_sz)
+        _lg_gap = _lg_sz * 1.05  # A 심볼 폭 + 여백
+        _lg_x = A4[0] - 2 * cm - (_lg_gap + _lg_ada_w + _lg_studio_w)  # 우측 정렬
+        _draw_brand_A(canvas, _lg_x, _lg_y - _lg_sz * 0.05, _lg_sz * 0.95, colors.HexColor("#9AA7BD"), 1.0)
+        canvas.setFont(_KG, _lg_sz)
+        canvas.setFillColor(colors.HexColor("#8794AC"))  # ada — 연한 네이비
+        canvas.drawString(_lg_x + _lg_gap, _lg_y, "ada ")
+        canvas.setFillColor(colors.HexColor("#9FB8EC"))  # studio — 연한 블루
+        canvas.drawString(_lg_x + _lg_gap + _lg_ada_w, _lg_y, "studio")
         canvas.restoreState()
 
     def _draw_cover(cnv, _doc):
