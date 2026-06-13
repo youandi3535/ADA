@@ -342,6 +342,9 @@ def _titanic_ctx():
             inferred_industry="역사 재난 데이터",
             inferred_use_case="생존 결정 요인 규명 및 예측",
             glossary=glossary,
+            domain_benchmarks=[
+                {"metric": "AUC", "value": 0.80, "source": "유사 이진분류 공개 벤치마크 평균"},
+            ],
         ),
         preprocessing=PreprocessingTrace(
             applied_steps=[

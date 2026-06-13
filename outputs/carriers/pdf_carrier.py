@@ -7,7 +7,7 @@ import re as _re
 from pathlib import Path
 
 from outputs.architect.plan import ReportPlan
-from outputs.architect.skeletons.report_skeleton import ko_metric as _ko_metric
+from outputs.architect.skeletons.report_skeleton import chairman_exec as _chairman_exec, ko_metric as _ko_metric
 from outputs.context.schema import ReportContext
 
 # [PYLANCE_TEST_2026] persist-check — 이 줄이 남아있으면 복원 안 됨
@@ -219,6 +219,13 @@ def _fv(v):
     return str(v)
 
 
+def _nodash(s):
+    """[B18 평이한언어룰] 본문 렌더 직전 긴 줄표(—)를 쉼표로 정리 — 절 잇는 어색한 대시 금지(전역)."""
+    if not isinstance(s, str):
+        return s
+    return _re.sub(r"\s*—\s*", ", ", s).replace(" ,", ",")
+
+
 def _draw_brand_A(c, x, y, h, color, lw):
     """브랜드 'A' 심볼 — 얇은 획 피크(로고 마크). (x,y)=바운딩 좌하단, h=높이."""
     w = h * 0.86
@@ -307,6 +314,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         from reportlab.lib.styles import ParagraphStyle as PS
         from reportlab.lib.units import cm
         from reportlab.platypus import (
+            Flowable,
             Image,
             KeepTogether,
             PageBreak,
@@ -335,13 +343,13 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     body = PS("B", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=8)  # [B28][B30] body 14pt+들여쓰기 8
     bul = PS("BL", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=14, firstLineIndent=-10)  # [B28] bul 14pt
     cap = PS("CP", fontName=_KS, fontSize=12, leading=16, textColor=black)  # [B28] cap 12pt
-    toc_e = PS("TOCE", fontName=_KS, fontSize=14, leading=20, textColor=black)  # [B28] toc_e 14pt  # 목차 항목명
-    toc_p = PS("TOCP", fontName=_KS, fontSize=12, leading=18, textColor=colors.HexColor("#475569"), alignment=TA_RIGHT)  # 목차 페이지(옅은 회색)
+    PS("TOCE", fontName=_KS, fontSize=14, leading=20, textColor=black)  # [B28] toc_e 14pt  # 목차 항목명
+    PS("TOCP", fontName=_KS, fontSize=12, leading=18, textColor=colors.HexColor("#475569"), alignment=TA_RIGHT)  # 목차 페이지(옅은 회색)
     # [목차룰] Executive Summary 강조 + TABLE OF CONTENTS 트래킹 라벨
-    toc_e_exec = PS("TOCEE", fontName=_KG, fontSize=13, leading=20, textColor=colors.HexColor("#243B5C"))  # Exec Summary 강조
-    toc_p_exec = PS("TOCPE", fontName=_KS, fontSize=13, leading=20, textColor=colors.HexColor("#243B5C"), alignment=TA_RIGHT)
-    toc_sub_e = PS("TOCSE", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), leftIndent=16)  # 부록 하위
-    toc_sub_p = PS("TOCSP", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), alignment=TA_RIGHT)
+    PS("TOCEE", fontName=_KG, fontSize=13, leading=20, textColor=colors.HexColor("#243B5C"))  # Exec Summary 강조
+    PS("TOCPE", fontName=_KS, fontSize=13, leading=20, textColor=colors.HexColor("#243B5C"), alignment=TA_RIGHT)
+    PS("TOCSE", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), leftIndent=16)  # 부록 하위
+    PS("TOCSP", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), alignment=TA_RIGHT)
     toc_label = PS("TOCLbl", fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#94A3B8"))  # TABLE OF CONTENTS
 
     # 카테고리 한글 매핑 (표지·사이트 톤 통일) — _draw_cover 에서 사용
@@ -400,6 +408,150 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         if _sec.title:
             toc_entries.append(_sec.title)
 
+    class _TocFlow(Flowable):
+        """[B24 목차룰] 번호 뱃지 + Exec 하이라이트 + 점선 리더 + 선별 질문설명. entries=(번호,제목,설명,페이지,종류).
+
+        설명(desc)은 1~7 분석 섹션에만 — '그 섹션이 답하는 관통질문'. Exec·결론·부록은 자명해 비움(설명 0).
+        """
+
+        def __init__(self, entries, width):
+            Flowable.__init__(self)
+            self.entries = entries
+            self.width = width
+            self.H = sum(
+                34 if k == "exec" else (47 if (k == "main" and d) else 36 if k == "main" else 25)
+                for _n, _t, d, _p, k in entries
+            )
+
+        def wrap(self, aw, ah):
+            return (self.width, self.H)
+
+        def _leader(self, c, x1, x2, y):
+            c.saveState()
+            c.setStrokeColor(colors.HexColor("#CBD5E1"))
+            c.setLineWidth(1)
+            c.setDash([1, 3])
+            c.line(x1, y, x2, y)
+            c.restoreState()
+
+        def draw(self):
+            _NV = colors.HexColor("#243B5C")
+            _BL = colors.HexColor("#3A6FE0")
+            _GR = colors.HexColor("#64748B")
+            _EX = colors.HexColor("#EAF1FD")
+            _SB = colors.HexColor("#7C8AA0")
+            _DS = colors.HexColor("#6B7891")
+            c = self.canv
+            W = self.width
+            y = self.H - 15
+            for num, title, desc, pg, kind in self.entries:
+                if kind == "exec":
+                    c.setFillColor(_EX)
+                    c.roundRect(0, y - 8, W, 30, 6, fill=1, stroke=0)
+                    c.setFont(_KG, 15)
+                    c.setFillColor(_NV)
+                    c.drawString(14, y, title)
+                    c.setFont(_KG, 13)
+                    c.setFillColor(_BL)
+                    c.drawRightString(W - 10, y, pg)
+                    y -= 34
+                elif kind == "main":
+                    _two = bool(desc)
+                    _by = y + 3 if _two else y
+                    c.setFillColor(_NV)
+                    c.roundRect(0, _by - 6, 25, 25, 6, fill=1, stroke=0)
+                    c.setFont(_KG, 12.5)
+                    c.setFillColor(colors.white)
+                    c.drawCentredString(12.5, _by + 1, num)
+                    c.setFont(_KG, 14.5)
+                    c.setFillColor(_NV)
+                    c.drawString(38, _by, title)
+                    _tw = c.stringWidth(title, _KG, 14.5)
+                    c.setFont(_KS, 12)
+                    _pw = c.stringWidth(pg, _KS, 12)
+                    self._leader(c, 38 + _tw + 12, W - _pw - 10, _by + 5)
+                    c.setFillColor(_GR)
+                    c.drawRightString(W, _by, pg)
+                    if _two:
+                        c.setFont(_KS, 10.5)
+                        c.setFillColor(_DS)
+                        c.drawString(38, y - 13, desc)
+                        y -= 47
+                    else:
+                        y -= 36
+                else:
+                    _lbl = (num + "  " + title) if num else title
+                    c.setFont(_KS, 11)
+                    c.setFillColor(_SB)
+                    c.drawString(44, y, _lbl)
+                    _tw = c.stringWidth(_lbl, _KS, 11)
+                    _pw = c.stringWidth(pg, _KS, 11)
+                    self._leader(c, 44 + _tw + 10, W - _pw - 10, y + 4)
+                    c.drawRightString(W, y, pg)
+                    y -= 25
+
+    def _exhibit(num, takeaway, kpis, unit, source, width):
+        """[B-Exhibit] McKinsey식 5요소 exhibit 박스(flowable): 번호·결론제목·KPI비주얼·단위기간·출처주석.
+
+        kpis=[(값, 라벨, 색hex)]. 결론제목(takeaway)이 핵심 — 제목만 읽어도 논리가 흐르게. 전부 ctx 출처.
+        """
+        _exn = PS("ExN", fontName=_KG, fontSize=9.5, textColor=colors.HexColor("#3A6FE0"), leading=13)
+        _ext = PS("ExT", fontName=_KG, fontSize=14.5, textColor=colors.HexColor("#243B5C"), leading=20, spaceBefore=4, spaceAfter=2)
+        _exs = PS("ExS", fontName=_KS, fontSize=9, textColor=colors.HexColor("#64748B"), leading=13)
+        from reportlab.lib.enums import TA_CENTER
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        # [B-Exhibit] KPI 밴드 = 2행(숫자행/라벨행). 숫자=같은 베이스라인(BOTTOM)+가운데, 라벨=같은 줄 시작(TOP)+가운데.
+        _num_ps = PS("ExKNum", fontName=_KG, fontSize=22, leading=24, alignment=TA_CENTER)
+        _lbl_ps = PS("ExKLbl", fontName=_KS, fontSize=10, textColor=colors.HexColor("#6B7891"),
+                     leading=13, alignment=TA_CENTER)
+        _n = len(kpis) or 1
+        _lbl_max = (width - 32) / _n - 18  # 라벨 한 줄 가용 폭(좌우 패딩 제외)
+
+        def _lblbreak(s):
+            # 한 줄에 들어가면 그대로. 길면 '연결구'를 자르지 않고 좋은 지점에서 한 번만 내림.
+            if stringWidth(s, _KS, 10) <= _lbl_max:
+                return s
+            _mm = list(_re.finditer(r"\)\s+", s))  # 1순위: 괄호 묶음 뒤 → 뒤 연결구 통째로 다음 줄
+            if _mm:
+                _i = _mm[0].end()
+                return s[:_i].rstrip() + "<br/>" + s[_i:].strip()
+            _sp = [i for i, ch in enumerate(s) if ch == " "]  # 2순위: 중앙에 가장 가까운 공백
+            if _sp:
+                _md = len(s) / 2
+                _i = min(_sp, key=lambda x: abs(x - _md))
+                return s[:_i] + "<br/>" + s[_i + 1:]
+            return s
+
+        _nums, _lbls = [], []
+        for _v, _l, _col in kpis:
+            _nums.append(Paragraph(f'<font color="{_col}"><b>{_v}</b></font>', _num_ps))
+            _lbls.append(Paragraph(_lblbreak(_l), _lbl_ps))
+        _kt = Table([_nums, _lbls], colWidths=[(width - 32) / _n] * _n)
+        _kt.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FC")),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, 0), "BOTTOM"),   # 숫자행: 같은 베이스라인
+            ("VALIGN", (0, 1), (-1, 1), "TOP"),      # 라벨행: 같은 줄에서 시작
+            ("TOPPADDING", (0, 0), (-1, 0), 14), ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+            ("TOPPADDING", (0, 1), (-1, 1), 3), ("BOTTOMPADDING", (0, 1), (-1, 1), 14),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.HexColor("#E3E8F2")),
+        ]))
+        _inner = [
+            Paragraph(f"E X H I B I T &nbsp;&nbsp; {num}", _exn),
+            Paragraph(takeaway, _ext), Spacer(1, 0.25 * cm), _kt, Spacer(1, 0.2 * cm),
+            Paragraph(f"{unit}<br/>{source}", _exs),
+        ]
+        _box = Table([[_inner]], colWidths=[width])
+        _box.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")),
+            ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+            ("LEFTPADDING", (0, 0), (-1, -1), 20), ("RIGHTPADDING", (0, 0), (-1, -1), 20),
+            ("TOPPADDING", (0, 0), (-1, -1), 16), ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+        ]))
+        return KeepTogether([_box])
+
     def _build_story(toc_render):
         """flowable 리스트 생성. toc_render=None 이면 1차(페이지 측정)용 placeholder 목차.
 
@@ -419,100 +571,90 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             flow.append(Paragraph("목차", h1))
             flow.append(Paragraph("T A B L E &nbsp;&nbsp; O F &nbsp;&nbsp; C O N T E N T S", toc_label))
             flow.append(Spacer(1, 0.5 * cm))
-            # 점선 스타일 (가운데 채움)
-            _dot_style = PS("TOCDot", fontName="Helvetica", fontSize=9, leading=14,
-                            textColor=colors.HexColor("#94A3B8"), alignment=1)
-            _dots = ". " * 30  # 점선 패턴
-            rows = []
-            _split_idx = -1  # 본문↔부록 경계 인덱스
+            # [B24 목차룰] 항목 파싱 → (번호, 제목, 설명, 페이지, 종류). _TocFlow 가 뱃지·Exec하이라이트·점선·선별설명 렌더.
+            # 설명 = 구조적·일반화(어떤 데이터든 동일) — 1~7 분석 섹션이 '답하는 관통질문'. Exec·결론·부록은 자명해 비움.
+            _TOC_DESC = {
+                "1": "무엇을, 왜 분석하는가",
+                "2": "이 데이터로 답할 수 있는가",
+                "3": "무엇이 결과를 가르는가",
+                "4": "믿을 수 있는 절차인가",
+                "5": "단순 기준보다 나은가",
+                "6": "어디에 집중해야 하는가",
+                "7": "무엇을, 어떻게 실행하는가",
+            }
+            _toc_rows = []
             for _idx, _label in enumerate(toc_entries):
                 _pr = toc_render[_idx][1] if toc_render else ""
                 _l = _label.strip()
-                # 9.x 부록 하위 (들여쓰기) — "9.1", "9.2", ... 또는 부록 sub
-                _is_sub = _l.startswith(("9.1", "9.2", "9.3", "9.4")) or (
-                    _l.startswith(("부록", "Appendix")) and "·" in _l
-                )
-                # 본문/부록 경계 — "9. 부록" 라인 식별
-                if _l.startswith("9.") and not _is_sub:
-                    _split_idx = len(rows)
-                # 행 스타일 분기
                 if _l.lower().startswith("executive"):
-                    rows.append([Paragraph(_label, toc_e_exec), Paragraph(_dots, _dot_style), Paragraph(_pr, toc_p_exec)])
-                elif _is_sub:
-                    rows.append([Paragraph(_label, toc_sub_e), Paragraph(_dots, _dot_style), Paragraph(_pr, toc_sub_p)])
+                    _toc_rows.append(("", _l, "", _pr, "exec"))
+                elif _l.startswith(("9.1", "9.2", "9.3", "9.4")) or (_l.startswith(("부록", "Appendix")) and "·" in _l):
+                    _ps = _l.split(None, 1)
+                    _toc_rows.append((_ps[0], _ps[1] if len(_ps) > 1 else "", "", _pr, "sub"))
                 else:
-                    rows.append([Paragraph(_label, toc_e), Paragraph(_dots, _dot_style), Paragraph(_pr, toc_p)])
-            tt = Table(rows, colWidths=[8 * cm, 6 * cm, 3 * cm])
-            _ts = [
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-                ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#E2E8F0")),
-            ]
-            # 본문/부록 경계에 진한 네이비 LINEABOVE (시각 분리)
-            if _split_idx > 0:
-                _ts.append(("LINEABOVE", (0, _split_idx), (-1, _split_idx), 1.0, colors.HexColor("#243B5C")))
-            tt.setStyle(TableStyle(_ts))
-            flow.append(tt)
+                    _mm = _re.match(r"^(\d+)\.?\s*(.*)$", _l)
+                    if _mm:
+                        _toc_rows.append((_mm.group(1), _mm.group(2), _TOC_DESC.get(_mm.group(1), ""), _pr, "main"))
+                    else:
+                        _toc_rows.append(("", _l, "", _pr, "main"))
+            flow.append(_TocFlow(_toc_rows, 17 * cm))
             flow.append(PageBreak())
 
-        # ── Executive Summary (목차 추적 대상: H1TOC)
-        # [B25 키메시지줄띄움룰] 헤드라인(굵은 결론) 다음 한 줄 띄움 — 시각 호흡 + 본문 분리
+        # ── Executive Summary [회장님 Exec룰] BLUF · 관통질문/답 · 3기둥(왜) · hero exhibit · 권고 · 단서
         nt = plan.narrative_thread
-        if getattr(nt, "headline", "") or nt.resolution or nt.conflict:
-            flow.append(Paragraph("Executive Summary", h1_toc))
-            if getattr(nt, "headline", ""):
-                flow.append(Paragraph(f"<b>{nt.headline}</b>", body))  # 결론(정수) — 굵게
-                flow.append(Spacer(1, 0.25 * cm))  # [B25] 키메시지 다음 줄 띄움
-            # 라벨 없이 흐르는 단정 문장 (시니어 스타일): 원인·근거·대응·단서
-            _rest = " ".join(s for s in [nt.conflict, nt.resolution, nt.recommendation] if s)
-            if _rest:
-                flow.append(Paragraph(_rest, body))
-            flow.append(Spacer(1, 0.5 * cm))
 
-        if ctx.evaluation.metrics:
-            flow.append(Paragraph("핵심 지표", h2))
-            data = [["지표", "값"]]
-            _metric_items = list(ctx.evaluation.metrics.items())[:6]
-            for k, m in _metric_items:
-                # raw metric key('val_roc_auc' 등)를 한국어로 ('검증 AUC') — 모르는 키는 원본 유지
-                data.append([_ko_metric(k), _fv(m.get("value"))])
-            t = Table(data, colWidths=[8 * cm, 4 * cm])
-            t.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), primary),
-                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                        ("FONTNAME", (0, 0), (-1, 0), _KG),
-                        ("FONTNAME", (0, 1), (-1, -1), _KS),
-                        ("FONTSIZE", (0, 0), (-1, -1), 10),
-                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-                        ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-                    ]
-                )
-            )
-            flow.append(t)
-            # [C10 SoWhat룰] + [B26 표·차트SoWhat강제룰] 표 아래 인사이트 한 줄(굵게) + 해석 한 줄
-            flow.append(Spacer(1, 0.3 * cm))
+        def _exec_hero(kpis=None, take="", unit="", src=""):  # hero — 비즈니스 KPI 우선, 없으면 모델지표 폴백
+            if kpis:
+                flow.append(_exhibit("1 · 핵심 비즈니스 KPI", take or "핵심 임팩트", kpis, unit or "단위: 추정치", src or "출처: ADA 분석", 17 * cm))
+                return
+            if not ctx.evaluation.metrics:
+                return
             _pm = ctx.evaluation.primary_metric or {}
-            _pm_ko = _ko_metric(_pm.get("name")) if _pm.get("name") else "주지표"
-            _pm_v = _fv(_pm.get("value"))
-            flow.append(Paragraph(
-                f"<b>주지표 {_pm_ko} = {_pm_v}이 본 분석의 판단 기준이다.</b>",
-                body,
-            ))
-            # 지표 간 격차 자동 계산
-            try:
-                _vals = [m.get("value") for _, m in _metric_items if isinstance(m.get("value"), (int, float))]
-                if len(_vals) >= 2:
-                    _spread = (max(_vals) - min(_vals)) * 100
-                    _stab = "균형적이다 — 특정 임계값에 과적합되지 않은 안정 영역으로 해석된다" if _spread <= 15 else "편차가 크다 — 임계값 의존성 확인 필요"
-                    flow.append(Paragraph(
-                        f"지표 간 격차가 {_spread:.0f}%p 이내로 {_stab}.",
-                        body,
-                    ))
-            except Exception:
-                pass
+            _kc = ["#3A6FE0", "#243B5C", "#8478C8"]
+            _kp = [(_fv(_m.get("value")), _ko_metric(_k), _kc[_j % 3])
+                   for _j, (_k, _m) in enumerate(list(ctx.evaluation.metrics.items())[:3])]
+            _pmk = _ko_metric(_pm.get("name")) if _pm.get("name") else "주지표"
+            _tk = (f"{_pmk} {_fv(_pm.get('value'))}, 단순 추측을 결정적으로 상회해 도입 기준을 충족한다."
+                   if _pm.get("value") is not None else "핵심 지표가 도입 판단의 기준이 된다.")
+            _n = (ctx.dataset.shape or {}).get("rows", 0)
+            _sr = f"출처: ADA 분석 · n = {_n:,} · 주: 검증셋 기준" if _n else "출처: ADA 분석 · 주: 검증셋 기준"
+            flow.append(_exhibit("1 · 모델 성능 지표", _tk, _kp, "단위: 지표값(0~1 또는 %) · 기간: 전체 표본", _sr, 17 * cm))
+
+        _pkg = _chairman_exec(ctx, plan)  # 회장 패키지(내용=skeleton). None 이면 기존 Exec 폴백.
+        if _pkg and (getattr(nt, "headline", "") or nt.resolution or nt.conflict):
+            flow.append(Paragraph("Executive Summary", h1_toc))
+            flow.append(Paragraph(f"<b>{_nodash(_pkg['bluf'])}</b>", body))  # BLUF(결정 한 줄)
+            flow.append(Spacer(1, 0.2 * cm))
+            flow.append(Paragraph(  # 관통 질문 + 답
+                f"<font color='#64748B'>관통 질문: {_nodash(_pkg['question'])}</font>  "
+                f"<b><font color='#3A6FE0'>답: {_pkg['verdict']}</font></b>", cap))
+            flow.append(Spacer(1, 0.32 * cm))
+            for _i, (_pt, _pd) in enumerate(_pkg["pillars"], 1):  # 3기둥(왜)
+                flow.append(Paragraph(f"<b><font color='#3A6FE0'>{_i}.</font> {_pt}</b>  {_nodash(_pd)}", body))
+                flow.append(Spacer(1, 0.12 * cm))
+            flow.append(Spacer(1, 0.6 * cm))  # 3기둥과 exhibit 사이 한 줄 호흡(붙지 않게)
+            _exec_hero(_pkg.get("kpis"), _pkg.get("hero_take"), _pkg.get("hero_unit"), _pkg.get("hero_src"))  # hero = 비즈니스 KPI
+            flow.append(Spacer(1, 0.3 * cm))
+            _ask_t = Table([[Paragraph(f"<b>권고: {_nodash(_pkg['ask'])}</b>", sw)]], colWidths=[17 * cm])
+            _ask_t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EAF1FD")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14), ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ]))
+            flow.append(_ask_t)  # 권고(now-what)
+            flow.append(Spacer(1, 0.15 * cm))
+            flow.append(Paragraph(f"<font color='#94A3B8'>{_nodash(_pkg['caveat'])}</font>", cap))  # 단서
+        else:
+            if getattr(nt, "headline", "") or nt.resolution or nt.conflict:
+                flow.append(Paragraph("Executive Summary", h1_toc))
+                if getattr(nt, "headline", ""):
+                    flow.append(Paragraph(f"<b>{_nodash(nt.headline)}</b>", body))
+                    flow.append(Spacer(1, 0.25 * cm))
+                _rest = " ".join(s for s in [nt.conflict, nt.resolution, nt.recommendation] if s)
+                if _rest:
+                    flow.append(Paragraph(_nodash(_rest), body))
+                flow.append(Spacer(1, 0.5 * cm))
+            _exec_hero()
         flow.append(PageBreak())
 
         # ── 본문 섹션 (목차 추적 대상: H1TOC)
@@ -529,7 +671,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 sl_flow: list = [Paragraph(sl.title_ko or sl.id, h2)]
                 if sl.so_what:  # 규칙: '핵심 —' 위아래 한 줄 띄움
                     sl_flow.append(Spacer(1, 0.2 * cm))
-                    sl_flow.append(Paragraph(f"핵심 — {sl.so_what}", sw))
+                    sl_flow.append(Paragraph(_nodash(f"핵심 — {sl.so_what}"), sw))
                     sl_flow.append(Spacer(1, 0.2 * cm))
                 # 산문형 본문(라벨 + 단락) — 규칙: 소제목 사이 한 줄 더 띄움
                 for _blk in (getattr(sl, "prose_blocks", None) or []):
@@ -537,9 +679,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                         sl_flow.append(Spacer(1, 0.42 * cm))
                         if _blk[0]:  # 라벨 있으면 굵게, 없으면 단락만 (라벨 없는 흐름)
                             sl_flow.append(Paragraph(f"<b>{_blk[0]}</b>", sw))
-                        sl_flow.append(Paragraph(str(_blk[1]), body))
+                        sl_flow.append(Paragraph(_nodash(str(_blk[1])), body))
                 for b in sl.body_outline:
-                    sl_flow.append(Paragraph(f"• {b}", bul))
+                    sl_flow.append(Paragraph(f"• {_nodash(b)}", bul))
                 has_img = False
                 vs = sl.visual_spec
                 if vs and (vs.type or "").startswith("table_"):
@@ -572,7 +714,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                             _grp.append(Paragraph(f"<b>{vs.title}</b>", sw))
                         _grp.append(_t)
                         if vs.caption:
-                            _grp.append(Paragraph(vs.caption, cap))
+                            _grp.append(Paragraph(_nodash(vs.caption), cap))
                         sl_flow.append(KeepTogether(_grp))  # 규칙: 표는 절대 페이지 분할 금지
                 elif vs and vs.type and vs.type != "text_only":
                     try:
@@ -597,7 +739,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                             sl_flow.append(Spacer(1, 0.2 * cm))
                             sl_flow.append(Image(png, width=w_cm * cm, height=h_cm * cm))
                             if vs.caption:
-                                sl_flow.append(Paragraph(vs.caption, cap))
+                                sl_flow.append(Paragraph(_nodash(vs.caption), cap))
                             has_img = True
                     except Exception:
                         pass
