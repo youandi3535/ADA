@@ -3595,6 +3595,59 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
         )
 
 
+def draw_policy_decision(slide, badge, kpis, rules, primary, accent, ink, muted, light_bg):
+    """S17 운영 도입 — 상단 판정 배지 + KPI / 하단 운영 룰 3 아이콘 카드.
+
+    jh 2026-06-12 — STEP 세로 카드 폐지 (가독성↓). '도입 결정' 이 한눈에 오게.
+    badge=(라벨, 설명, kind), kpis=[(name,val)], rules=[{title,caption}]
+    """
+    label, desc, kind = badge
+    badge_color = {"ok": "#16A34A", "warn": "#D97706", "no": "#DC2626"}.get(kind, primary)
+    glyph = {"ok": GLYPHS["ok"], "warn": GLYPHS["warn"], "no": GLYPHS["no"]}.get(kind, GLYPHS["ok"])
+
+    # 상단 — 판정 배지 (좌) + KPI 스탯 (우)
+    by, bh = 4.5, 4.2
+    add_rounded_rect(slide, 1.5, by, 11.0, bh, badge_color)
+    add_text_box(slide, 2.1, by + 0.5, 3.0, 3.2, glyph, size_pt=64, bold=True,
+                 color_hex="#FFFFFF", align="center", vcenter=True)
+    add_text_box(slide, 5.0, by + 0.7, 7.0, 1.6, label, size_pt=48, bold=True,
+                 color_hex="#FFFFFF", align="left", vcenter=True)
+    add_text_box(slide, 5.0, by + 2.5, 7.0, 1.2, str(desc), size_pt=18, bold=True,
+                 color_hex="#FFFFFF", align="left", vcenter=True)
+    # 우측 KPI 스탯 3
+    kx = 13.5
+    kw = (SLIDE_W - kx - 1.5 - 2 * 0.4) / max(len(kpis) or 1, 1)
+    for i, (nm, val) in enumerate(kpis[:3]):
+        x = kx + i * (kw + 0.4)
+        add_rounded_rect(slide, x, by, kw, bh, light_bg, line_hex=primary)
+        add_text_box(slide, x, by + 0.6, kw, 1.8, str(val), size_pt=40, bold=True,
+                     color_hex=primary, align="center", vcenter=True)
+        add_rect(slide, x + kw / 2 - 1.0, by + 2.5, 2.0, 0.06, accent)
+        add_text_box(slide, x, by + 2.8, kw, 1.0, str(nm)[:16], size_pt=12, bold=True,
+                     color_hex=muted, align="center", vcenter=True)
+
+    # 하단 — 운영 룰 3 아이콘 카드
+    add_text_box(slide, 1.5, by + bh + 0.5, SLIDE_W - 3.0, 0.7, "운영 룰 · OPERATING RULES",
+                 size_pt=12, bold=True, color_hex=primary, align="left", vcenter=True)
+    ry = by + bh + 1.4
+    rh = SLIDE_H - ry - 1.8
+    n = min(len(rules), 3)
+    gap = 0.5
+    rw = (SLIDE_W - 3.0 - (max(n, 1) - 1) * gap) / max(n, 1)
+    glyphs = [GLYPHS["target"], GLYPHS["chart"], GLYPHS["settings"]]
+    for i in range(n):
+        r = rules[i]
+        x = 1.5 + i * (rw + gap)
+        add_rounded_rect(slide, x, ry, rw, rh, "#FFFFFF", line_hex=primary)
+        add_oval(slide, x + 0.5, ry + 0.5, 1.5, 1.5, primary)
+        add_text_box(slide, x + 0.5, ry + 0.5, 1.5, 1.5, glyphs[i % 3], size_pt=22,
+                     color_hex="#FFFFFF", align="center", vcenter=True)
+        add_text_box(slide, x + 2.2, ry + 0.6, rw - 2.6, 1.3, str(r.get("title", ""))[:24],
+                     size_pt=15, bold=True, color_hex=ink, align="left", vcenter=True)
+        add_text_box(slide, x + 0.5, ry + 2.3, rw - 1.0, rh - 2.6, str(r.get("caption", ""))[:130],
+                     size_pt=12, color_hex=ink, align="left", vcenter=False)
+
+
 def draw_background_brief(slide, purpose, questions, kpi_line, primary, accent, ink, muted, light_bg):
     """분석 배경 — 상단 목적 배너 / 중단 Q1~Q3 카드 / 하단 KPI 결과 스트립.
 

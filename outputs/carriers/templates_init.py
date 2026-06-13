@@ -1219,7 +1219,25 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         })
     if not items:
         items = _items_from_body(sl, 4)
-    I.draw_step_cards_vertical(slide, items[:4], primary, accent, ink, muted, light_bg)
+
+    # jh 2026-06-12 — 세로 카드 나열 폐지 (사용자: 가독성↓·결정이 안 와닿음).
+    # 상단 판정 배지(ADOPT ✓ + 핵심 수치) + 하단 운영 룰 3 아이콘 카드로 재설계.
+    verdict = (ctx.evaluation.verdict or "").lower()
+    _badge = {
+        "adopt": ("ADOPT", "운영 도입 권장", "ok"),
+        "iterate": ("ITERATE", "보완 후 재평가", "warn"),
+        "reject": ("REJECT", "도입 보류", "no"),
+    }.get(verdict, ("REVIEW", "추가 검토", "info"))
+    pm = ctx.evaluation.primary_metric or {}
+    _v = pm.get("value")
+    _pm_str = (f"{_v:.3f}" if isinstance(_v, float) and _v < 1 else str(_v)) if _v is not None else "—"
+    kpis = [(pm.get("name", "정확도"), _pm_str)]
+    for nm in ("val_f1", "val_roc_auc"):
+        m = (ctx.evaluation.metrics or {}).get(nm) or {}
+        mv = m.get("value") if isinstance(m, dict) else None
+        if isinstance(mv, (int, float)):
+            kpis.append((nm, f"{mv:.3f}"))
+    I.draw_policy_decision(slide, _badge, kpis, items[:3], primary, accent, ink, muted, light_bg)
 
 
 def t_roadmap_upgrades(slide, sl, ctx, primary, accent, ink, muted, light_bg):
