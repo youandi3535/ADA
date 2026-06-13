@@ -68,6 +68,11 @@ class HyperparameterTunerAgent(BaseAgent):
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
+            # 재시도 비례 trial/timeout 증액 (지역값 — 인스턴스 영구변형 금지).
+            _rl = int(getattr(state, "re_loop_count", 0) or 0)
+            _scale = 1.0 + 0.5 * _rl
+            _eff_n_trials = max(1, int(round(self.n_trials * _scale)))
+            _eff_timeout = max(1, int(round(self.timeout_per_model_sec * _scale)))
             X, y = await self._load_xy(state)
             if X is None or y is None:
                 self.logger.warning("hpo_skip_no_data", category=state.category)
@@ -105,7 +110,16 @@ class HyperparameterTunerAgent(BaseAgent):
                         "hpo_done_count": idx - 1,
                     },
                 )
-                best = await self._run_optuna(state, model_name, X, y, task, ss_module)
+                best = await self._run_optuna(
+                    state,
+                    model_name,
+                    X,
+                    y,
+                    task,
+                    ss_module,
+                    n_trials=_eff_n_trials,
+                    timeout_sec=_eff_timeout,
+                )
                 best_params[model_name] = best
                 # HJ 2026-06-11 — 모델별 튜닝 결과 자연어 인사이트 누적 publish.
                 # 사용자가 G2 의 eda_insights 처럼 모델별 최적 파라미터 라이브 확인.
@@ -142,13 +156,19 @@ class HyperparameterTunerAgent(BaseAgent):
             return state.with_update(best_params=best_params, next_agent="training_executor")
 
     async def _load_xy(self, state: PipelineState):
-        """training_executor 와 동일한 _split_xy 사용. MinIO 로드 실패 시 (None, None)."""
+        """train+val 까지만 CV 사용 (test 격리). 메타 없으면 전체 폴백."""
         try:
             from agents.handlers.common.shared import load_dataframe_from_state
-            from agents.training_executor import _split_xy
+            from agents.training_executor import _leakage_split_bounds, _split_xy
 
             df = load_dataframe_from_state(state)
-            return _split_xy(df, state.target_column)
+            X, y = _split_xy(df, state.target_column)
+            bounds = _leakage_split_bounds(state)
+            if bounds is not None:
+                cut = bounds[0] + bounds[1]
+                if 0 < cut <= len(X):
+                    return X[:cut], y[:cut]
+            return X, y
         except Exception as e:
             self.logger.warning("hpo_load_failed", error=str(e))
             return None, None
@@ -165,7 +185,20 @@ class HyperparameterTunerAgent(BaseAgent):
         except Exception:
             return None
 
-    async def _run_optuna(self, state, model_name, X, y, task, ss_module) -> dict[str, Any]:
+    async def _run_optuna(
+        self,
+        state,
+        model_name,
+        X,
+        y,
+        task,
+        ss_module,
+        *,
+        n_trials: int | None = None,
+        timeout_sec: int | None = None,
+    ) -> dict[str, Any]:
+        _n_trials = int(n_trials) if n_trials is not None else self.n_trials
+        _timeout_sec = int(timeout_sec) if timeout_sec is not None else self.timeout_per_model_sec
         loop = asyncio.get_event_loop()
 
         def _search() -> dict[str, Any]:
@@ -225,8 +258,8 @@ class HyperparameterTunerAgent(BaseAgent):
             try:
                 study.optimize(
                     _objective,
-                    n_trials=self.n_trials,
-                    timeout=self.timeout_per_model_sec,
+                    n_trials=_n_trials,
+                    timeout=_timeout_sec,
                     catch=(Exception,),
                     show_progress_bar=False,
                 )

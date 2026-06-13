@@ -135,22 +135,30 @@ class EvalAgent(BaseAgent):
             except Exception as e:  # noqa: BLE001
                 self.logger.warning("g5_eval_insights_publish_failed", error=str(e))
 
-            # 3) 분기
+            # 3) 분기 — HJ 2026-06-12 계층적 3단계 무인 자동 재시도.
+            #   1차 HP재튜닝 / 2차 피처재구성 / 3차 전처리재검토. 경로상 게이트는
+            #   BaseGate 가 re_loop_count>0 동안 current_gate=None 으로 자동통과.
+            _RELOOP_ENTRY = {
+                1: "hyperparameter_tuner",
+                2: "feature_engineer",
+                3: "preprocessing_strategist",
+            }
             if eval_result["passed"]:
                 new_state = state.with_update(eval_result=eval_result, next_agent="explainability")
             else:
                 new_re_loop = state.re_loop_count + 1
-                if new_re_loop <= state.max_re_loop:
+                entry = _RELOOP_ENTRY.get(new_re_loop)
+                if new_re_loop <= state.max_re_loop and entry is not None:
                     new_state = state.with_update(
                         eval_result=eval_result,
                         re_loop_count=new_re_loop,
-                        next_agent="training_executor",
+                        next_agent=entry,
                     )
                 else:
+                    # 한도 도달 — 실패 처리 않고 마지막 best 모델로 산출물까지 진행.
                     new_state = state.with_update(
                         eval_result=eval_result,
-                        error="평가 임계치 미달 + 재루프 한도 도달",
-                        next_agent="error_recovery",
+                        next_agent="explainability",
                     )
 
             # Phase 1.4 — ReportContext ⑧ evaluation + ⑩ limitations 적립.

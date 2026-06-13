@@ -215,6 +215,9 @@ def route_after_eval(state: PipelineState) -> str:
         if state.auto_fix_attempts >= state.max_auto_fix_attempts:
             return "error_recovery"
         return "auto_error_handler"
+    _RELOOP_TARGETS = {"hyperparameter_tuner", "feature_engineer", "preprocessing_strategist"}
+    if state.next_agent in _RELOOP_TARGETS:
+        return state.next_agent
     return "explainability"
 
 
@@ -369,6 +372,9 @@ def build_graph(checkpointer: Any | None = None) -> Any:
         route_after_eval,
         {
             "explainability": "explainability",
+            "hyperparameter_tuner": "hyperparameter_tuner",
+            "feature_engineer": "feature_engineer",
+            "preprocessing_strategist": "preprocessing_strategist",
             "auto_error_handler": "auto_error_handler",
             "error_recovery": "error_recovery",
         },

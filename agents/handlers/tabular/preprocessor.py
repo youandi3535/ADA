@@ -2024,13 +2024,15 @@ def _apply_archetype_rules_to_plan(
     for must_name in must:
         if must_name in existing_names:
             continue
-        filtered.append({
-            "name": must_name,
-            "params": {},
-            "needs_review": True,
-            "source": f"archetype:{primary}",
-            "rationale": f"archetype '{primary}' 룰에 의해 강제 추가 (confidence {conf:.2f})",
-        })
+        filtered.append(
+            {
+                "name": must_name,
+                "params": {},
+                "needs_review": True,
+                "source": f"archetype:{primary}",
+                "rationale": f"archetype '{primary}' 룰에 의해 강제 추가 (confidence {conf:.2f})",
+            }
+        )
 
     return filtered
 
@@ -2169,8 +2171,19 @@ def apply_split(
     test_size: float = 0.2,
     random_state: int = 42,
     stratify: Any = None,
-) -> tuple[Any, Any, Any]:
-    """누수 방지 전처리 — split 후 train 으로만 fit, val 은 transform.
+) -> tuple[Any, Any, Any, Any]:
+    """누수 방지 전처리 — train/val/test 3분할 후 train 으로만 fit, val·test 는 transform.
+
+    Day 12 (jh) — 2분할(train/val) → 3분할(train/val/test) 격리로 강화.
+    test 는 평가 전용 holdout 으로 완전히 봉인되어 fit·튜닝·재시도 어디에도
+    관여하지 않는다 (evaluator 가 마지막 1회만 측정). 누수 경로를 train 한 곳으로
+    좁혀, val 점수뿐 아니라 test 점수까지 신뢰 가능하게 만든다.
+
+    분할 절차
+    ---------
+    1) 1차 split : df → train vs holdout (holdout 비율 = ``test_size``)
+    2) 2차 split : holdout → val vs test (50:50 → 각각 전체의 ``test_size``/2)
+    3) train 으로만 apply() 호출(fit) → val·test 둘 다 _transform_only.
 
     Parameters
     ----------
@@ -2180,7 +2193,7 @@ def apply_split(
         plan() 이 반환한 step 명세.
     state : PipelineState
     test_size : float
-        val split 비율 (기본 0.2).
+        holdout(val+test 합) 비율 (기본 0.2 → val 0.1 / test 0.1).
     random_state : int
         재현성용 시드 (기본 42). training_executor 와 동일 시드 사용 권장.
     stratify : array-like or None
@@ -2188,15 +2201,24 @@ def apply_split(
 
     Returns
     -------
-    (df_train_proc, df_val_proc, new_state)
-        - df_train_proc / df_val_proc : 전처리된 train·val DataFrame
+    (df_train_proc, df_val_proc, df_test_proc, new_state)
+        - df_train_proc / df_val_proc / df_test_proc : 전처리된 train·val·test DataFrame
         - new_state : preprocess_artifacts + leakage_safe_split 메타가 적립된 state
+
+    Notes
+    -----
+    하위호환(폴백): holdout 표본이 2분할 불가능할 만큼 작거나(<2행) 1차 split
+    자체가 실패하면 test 를 빈 DataFrame 으로 두고 사실상 train/val 2분할로
+    동작한다(df_test_proc 는 비어 있고 n_test=0). 호출측은 df_test_proc 가
+    비어 있으면 test 격리를 건너뛰면 된다.
     """
     from sklearn.model_selection import train_test_split
 
+    # target 컬럼명은 이 함수의 지역 변수 ``target`` 으로만 접근한다.
+    # (2차 split stratify 에서 NameError 방지 — state.target_column 직접 참조 금지)
     target = getattr(state, "target_column", None)
 
-    # 자동 stratify 결정 (분류 + 고유값 ≤ 50)
+    # 자동 stratify 결정 (분류 + 고유값 ≤ 50) — 1차 split 용 (전체 df 기준)
     if stratify is None and target and target in df.columns:
         try:
             n_unique = int(df[target].nunique(dropna=True))
@@ -2205,9 +2227,9 @@ def apply_split(
         except Exception:
             stratify = None
 
-    # 1) split 먼저 (R-005: state 직접 수정 금지, df 는 copy 후 처리)
+    # 1) 1차 split — train vs holdout (R-005: state 직접 수정 금지, df 는 copy 후 처리)
     try:
-        df_train, df_val = train_test_split(
+        df_train, df_holdout = train_test_split(
             df,
             test_size=test_size,
             random_state=random_state,
@@ -2215,29 +2237,63 @@ def apply_split(
         )
     except ValueError:
         # stratify 불가능 (희소 클래스 등) → 무작위 fallback
-        df_train, df_val = train_test_split(
-            df, test_size=test_size, random_state=random_state
-        )
+        df_train, df_holdout = train_test_split(df, test_size=test_size, random_state=random_state)
     df_train = df_train.reset_index(drop=True)
-    df_val = df_val.reset_index(drop=True)
+    df_holdout = df_holdout.reset_index(drop=True)
 
-    # 2) train 으로만 apply() 호출 — fitted statistics 가 train 에 갇힘
+    # 2) 2차 split — holdout → val vs test (50:50)
+    #    stratify 는 holdout 부분집합 기준으로 재계산해야 한다 (전체 df 의
+    #    stratify Series 는 인덱스가 달라 그대로 쓸 수 없음). 지역 변수 ``target``
+    #    으로 holdout 의 target 컬럼을 참조한다.
+    if len(df_holdout) >= 2:
+        holdout_stratify = None
+        if target and target in df_holdout.columns:
+            try:
+                n_unique_h = int(df_holdout[target].nunique(dropna=True))
+                # 각 클래스가 양쪽(val/test)에 최소 1개씩 가려면 표본/클래스 충분 필요.
+                if 1 < n_unique_h <= 50 and len(df_holdout) >= 2 * n_unique_h:
+                    holdout_stratify = df_holdout[target]
+            except Exception:
+                holdout_stratify = None
+        try:
+            df_val, df_test = train_test_split(
+                df_holdout,
+                test_size=0.5,
+                random_state=random_state,
+                stratify=holdout_stratify,
+            )
+        except ValueError:
+            df_val, df_test = train_test_split(df_holdout, test_size=0.5, random_state=random_state)
+        df_val = df_val.reset_index(drop=True)
+        df_test = df_test.reset_index(drop=True)
+    else:
+        # holdout 이 너무 작아 2분할 불가 → 전부 val, test 는 빈 격리(폴백 2분할 동작).
+        df_val = df_holdout
+        df_test = df_holdout.iloc[0:0].copy()
+
+    # 3) train 으로만 apply() 호출 — fitted statistics 가 train 에 갇힘
     df_train_proc, state_after_train = apply(df_train, plan_steps, state)
 
-    # 3) fitted transformers 추출
+    # 4) fitted transformers 추출
     extras = (state_after_train.category_extras or {}).get("tabular", {})
     artifacts = extras.get("preprocess_artifacts", {}) or {}
 
-    # 4) val 에 transform-only 적용
+    # 5) val·test 에 transform-only 적용 (둘 다 fit 안 함 — test 봉인)
     df_val_proc = _transform_only(df_val, plan_steps, artifacts, state_after_train)
+    if len(df_test) > 0:
+        df_test_proc = _transform_only(df_test, plan_steps, artifacts, state_after_train)
+    else:
+        # 빈 test 폴백: 컬럼 정합을 위해 val 의 0행 슬라이스를 사용.
+        df_test_proc = df_val_proc.iloc[0:0].copy()
 
-    # 5) split 메타 기록
+    # 6) split 메타 기록 (n_test 추가)
     new_extras = dict(state_after_train.category_extras or {})
     tab_extras = dict(new_extras.get("tabular", {}))
     tab_extras["leakage_safe_split"] = {
-        "method": "split_first_train_fit",
+        "method": "split_first_train_fit_3way",
         "n_train": int(len(df_train_proc)),
         "n_val": int(len(df_val_proc)),
+        "n_test": int(len(df_test_proc)),
         "test_size": float(test_size),
         "random_state": int(random_state),
         "stratify_used": stratify is not None,
@@ -2246,7 +2302,7 @@ def apply_split(
     new_extras["tabular"] = tab_extras
     new_state = state_after_train.with_update(category_extras=new_extras)
 
-    return df_train_proc, df_val_proc, new_state
+    return df_train_proc, df_val_proc, df_test_proc, new_state
 
 
 def _transform_only(
@@ -2435,9 +2491,7 @@ def _transform_only(
                     from sklearn.feature_extraction import FeatureHasher
 
                     n_components = info.get("n_components", 16)
-                    hasher = FeatureHasher(
-                        n_features=n_components, input_type="string", alternate_sign=False
-                    )
+                    hasher = FeatureHasher(n_features=n_components, input_type="string", alternate_sign=False)
                     str_vals = out[col].astype(str).values
                     hashed = hasher.transform([[v] for v in str_vals]).toarray()
                     for i, nc in enumerate(info.get("new_cols", [])):
@@ -2477,4 +2531,3 @@ def _transform_only(
         # 그 외 알려지지 않은 step: 무시 (warning artifact 에는 미기록 — caller 책임)
 
     return out
-

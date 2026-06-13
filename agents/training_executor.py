@@ -49,6 +49,19 @@ def _split_xy(df: Any, target: str | None) -> tuple[Any, Any]:
     return df.select_dtypes(include=[np.number]).fillna(0).values, np.zeros(len(df))
 
 
+def _leakage_split_bounds(state: Any) -> tuple[int, int] | None:
+    """leakage_safe_split 메타에서 (n_train, n_val) 경계. parquet 순서 [train|val|test].
+    메타 불완전(val_row_count 없음)이면 None → caller 가 기존 split 폴백."""
+    cat = getattr(state, "category", "") or ""
+    cat_key = "tabular" if cat.startswith("tabular") else cat
+    meta = ((getattr(state, "category_extras", None) or {}).get(cat_key, {}) or {}).get("leakage_safe_split") or {}
+    n_tr = meta.get("train_row_count_for_reorder")
+    n_val = meta.get("val_row_count")
+    if isinstance(n_tr, int) and isinstance(n_val, int) and n_tr > 0 and n_val > 0:
+        return n_tr, n_val
+    return None
+
+
 class TrainingExecutorAgent(BaseAgent):
     uses_llm = False
 
@@ -67,8 +80,14 @@ class TrainingExecutorAgent(BaseAgent):
                 return state.with_update(error=f"학습 데이터 로딩 실패: {e}", next_agent="error_recovery")
 
             X, y = _split_xy(df, state.target_column)
-            # train/val split — 시계열은 시간순 split, 그 외 random
-            if state.category == "timeseries":
+            # 누수 차단: preprocessor 가 기록한 [train|val|test] 경계 재사용. test 는 슬라이스
+            # 하지도 않아 학습·early-stop 에 안 샌다. 메타 없으면 기존 split 폴백.
+            _bounds = _leakage_split_bounds(state)
+            if _bounds is not None and (_bounds[0] + _bounds[1]) <= len(X):
+                n_tr, n_val = _bounds
+                X_tr, y_tr = X[:n_tr], y[:n_tr]
+                X_val, y_val = X[n_tr : n_tr + n_val], y[n_tr : n_tr + n_val]
+            elif state.category == "timeseries":
                 split = int(len(X) * 0.8)
                 X_tr, X_val = X[:split], X[split:]
                 y_tr, y_val = y[:split], y[split:]

@@ -109,7 +109,7 @@ class PipelineState(BaseModel):
     retry_count: int = 0
     max_retries: int = 3
     re_loop_count: int = 0
-    max_re_loop: int = 2
+    max_re_loop: int = 3
     error: Optional[str] = None
     next_agent: Optional[str] = None
 
