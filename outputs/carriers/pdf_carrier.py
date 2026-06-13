@@ -661,8 +661,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         for sec in plan.sections:
             if sec.id == "backup" or sec.kind == "cover":
                 continue
-            flow.append(Paragraph(sec.title, h1_toc))
-            flow.append(Spacer(1, 0.35 * cm))  # 규칙: 큰 제목 밑 한 줄 띄움
+            # [고아 헤딩 방지] 섹션 제목을 첫 렌더 슬라이드와 한 덩어리로 묶어, 제목만 남고 내용이 다음 장으로 밀리는 현상 차단
+            _sec_head = [Paragraph(sec.title, h1_toc), Spacer(1, 0.35 * cm)]  # 규칙: 큰 제목 밑 한 줄 띄움
             _img_in_sec = 0  # 페이지당 차트 최대 2개 강제용
             _just_broke = False
             for sl in sec.slides:
@@ -744,6 +744,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     except Exception:
                         pass
                 sl_flow.append(Spacer(1, 0.25 * cm))
+                if _sec_head is not None:  # [고아 헤딩 방지] 첫 렌더 슬라이드 앞에 섹션 제목 결합 → 절대 분리 안 됨
+                    sl_flow = _sec_head + sl_flow
+                    _sec_head = None
                 # [B6 EDA페이지룰] 차트 슬라이드 페이지당 2개 강제
                 # 홀수 번째(1·3·5번): 페이지 상단에서 시작하도록 보장. 짝수 번째(2·4번): 같은 페이지에 이어 붙이고 끝낸 후 PageBreak.
                 if has_img:
@@ -759,6 +762,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 else:
                     flow.extend(sl_flow)
                     _just_broke = False
+            if _sec_head is not None:  # 슬라이드가 하나도 안 그려진 섹션 → 제목만이라도 출력(누락 방지)
+                flow.extend(_sec_head)
             # [부록압축 2026-06-12] 부록 섹션끼리 PageBreak 생략 → 9.1~9.4 밀집
             if not _just_broke and sec.kind != "appendix":
                 flow.append(PageBreak())
