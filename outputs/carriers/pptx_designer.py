@@ -19,7 +19,6 @@ from outputs.architect.plan import ReportPlan, SlideSpec
 from outputs.carriers.design_hint_helpers import (
     check_and_log_miss,
     icon_name as design_icon_name,
-    palette_override,
     photo_keyword,
 )
 from outputs.context.schema import ReportContext
@@ -137,7 +136,7 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     # EDA 4장은 데이터 기반 제목(title_ko)이 더 구체적이라 맵에서 제외.
     _AGENDA_STORY_LABELS = {
         "hypothesis": "분석 가설 — 무엇을 물었나",
-        "p1_market": "데이터 · 도구 — 개요와 스택",
+        "p1_market": "분석 배경 — 세 가지 질문",
         "p2_pain": "기술 스택",
         "p3_alt_limits": "분석 방법 — 5단계 설계",
         "insight_synthesis": "인사이트 종합 — 발견과 접목 범위",
@@ -150,11 +149,17 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
         "risk_mitigation": "Risk & Drift — SWOT",
         "roadmap": "실행 로드맵 — 후속 작업",
     }
-    if agenda_sl is not None:
+    def _rebuild_agenda() -> None:
+        """목차 항목 재구성 — 카피라이터 적용 *후* 호출해야 본문 제목과 일치.
+
+        jh 2026-06-12 — 초안 제목으로 목차를 굳혀 본문(카피라이터 제목)과
+        불일치하던 결함 수정 (스토리 라벨 우선, EDA 는 최종 제목).
+        """
+        if agenda_sl is None:
+            return
         body_titles = []
         for i, sl in enumerate(slides_flat):
             if sl is agenda_sl:
-                # body items start at i+1 and stop before the last (closing)
                 for j, body_sl in enumerate(slides_flat[i + 1 : -1], 1):
                     title = (
                         _AGENDA_STORY_LABELS.get(body_sl.id)
@@ -166,6 +171,8 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
                 break
         if body_titles:
             agenda_sl.body_outline = body_titles
+
+    _rebuild_agenda()
 
     # Section ID list for chapter numbering on dividers
     section_idx = {}
@@ -195,6 +202,9 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
         logging.getLogger("pptx_designer").warning(
             "prefill_copy_failed_keep_draft: %s", _e, exc_info=True
         )
+
+    # jh 2026-06-12 — 카피라이터가 제목을 다듬은 뒤 목차를 최종 제목으로 재구성
+    _rebuild_agenda()
 
     # === LLM 디자인 일괄 선택 (Step 6-3) ===
     # 각 슬라이드의 후보 N개를 LLM 한테 보여주고 1개 선택 받음.
@@ -287,7 +297,8 @@ def _qa_shrink_overflow(prs) -> int:
             size = max(r.font.size.pt for r in runs)
             shrunk = False
             for _ in range(6):
-                if size <= 9:
+                # jh 2026-06-12 — 발표용 하한 11pt (9pt 까지 내려가 "글씨 작다" 지적)
+                if size <= 11:
                     break
                 if _estimate_text_height_cm(text, size, box_w) <= box_h * 1.15:
                     break
@@ -659,13 +670,10 @@ def _draw_slide(
 ):
     layout = sl.layout
 
-    # Step 7-1 — LLM 디자인 힌트의 palette_hint 적용 (단일 진입점).
-    # LLMDesigner 가 sl._design_hint 에 attach 한 palette_hint
-    # ("default"/"warning"/"success"/"monochrome") 에 따라 primary/accent/secondary 가
-    # 일괄 변경됨. 이하 모든 sub-draw 가 변경된 팔레트를 자동으로 받음.
-    _overridden = palette_override(
-        sl, {"primary": primary, "accent": accent, "secondary": secondary}
-    )
+    # jh 2026-06-12 — palette_hint 비활성화 (사용자 지시: 덱 내 색상 통일).
+    # 슬라이드별 LLM palette_hint 가 장마다 초록/파랑/연두를 섞어 쓰던 결함.
+    # 카테고리 기본 팔레트 하나로 덱 전체 고정 (SWOT 의 시맨틱 4색은 draw 내부 고정이라 유지).
+    _overridden = {"primary": primary, "accent": accent, "secondary": secondary}
     primary = _overridden["primary"]
     accent = _overridden["accent"]
     secondary = _overridden["secondary"]
@@ -1200,15 +1208,20 @@ def _draw_chart_callout(slide, sl, ctx, primary, accent, ink, muted, light_bg, r
 def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
     """페어 bullet 리치텍스트 — 사실 13pt + '→ 시사점' 12B(primary) + 간격."""
     from pptx.dml.color import RGBColor
+    from pptx.enum.text import MSO_ANCHOR
     from pptx.util import Cm, Pt
 
     tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
     tf = tb.text_frame
     tf.word_wrap = True
+    # jh 2026-06-12 — 세로 중앙 정렬 (글이 적어도 허전하지 않게, 사용자 지시)
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     _ink = RGBColor.from_string(str(ink).lstrip("#"))
     _pri = RGBColor.from_string(str(primary).lstrip("#"))
     first = True
-    for b in list(bullets or []):
+    # jh 2026-06-12 — 빈 줄 단락 대신 space_after 로 간격 (deck_qa 가 줄 수를
+    # 과대평가해 본문을 9pt 까지 축소하던 결함), bullet 상한 5→4.
+    for b in list(bullets or [])[:4]:
         s = str(b).strip().lstrip("-").strip()
         fact, _, imp = s.partition(" — ")
         p = tf.paragraphs[0] if first else tf.add_paragraph()
@@ -1217,6 +1230,7 @@ def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
         r.text = f"-  {fact.strip()}"
         r.font.size = Pt(13)
         r.font.color.rgb = _ink
+        last_p = p
         if imp.strip():
             p2 = tf.add_paragraph()
             r2 = p2.add_run()
@@ -1224,10 +1238,8 @@ def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
             r2.font.size = Pt(12)
             r2.font.bold = True
             r2.font.color.rgb = _pri
-        gap = tf.add_paragraph()
-        rg = gap.add_run()
-        rg.text = " "
-        rg.font.size = Pt(7)
+            last_p = p2
+        last_p.space_after = Pt(10)
 
 
 def _draw_quote(slide, sl, primary, accent, ink, muted):
@@ -1277,7 +1289,8 @@ def _draw_agenda(slide, sl, primary, accent, ink, muted):
         "목차",
         size_pt=24,
         bold=True,
-        color_hex=accent,
+        # jh 2026-06-12 — accent(연파랑)가 파랑 그라데이션 위에서 흐림 (사용자 재지적)
+        color_hex="#FFFFFF",
         align="left",
         vcenter=False,
     )
@@ -1750,9 +1763,35 @@ def _prepick_designs(slides_flat: list, ctx) -> None:
     designer = LLMDesigner()
     tasks: list = []
     task_slides: list = []
+    # jh 2026-06-12 — id 기반 디자인 고정 (직렬화 무관, preferred_template 소실 대응).
+    # 이 슬라이드들은 차트·전용 레이아웃이 *결정적*이라 LLM 변동성을 차단한다.
+    # (EDA 의 'vs' 가 split_compare 를 부르고, CM 이 비차트로 새던 결함의 근본 차단)
+    _DESIGN_LOCKED = {
+        "p1_market": "background_questions",      # S6 분석 배경
+        "method_model": "chart_key_insights",     # S8 EDA
+        "tech_architecture": "chart_key_insights",  # S9 EDA
+        "tech_stack": "chart_key_insights",       # S10 EDA
+        "s3_differentiation": "chart_key_insights",  # S11 EDA
+        "i1_kpi": "chart_key_insights",           # S12 성능
+        "eda_findings": "chart_key_insights",     # S13 SHAP
+        "error_analysis": "case_cards_3",         # S14 사례
+        "insights_derived": "chart_key_insights",  # S15 CM
+        "as_is_to_be": "chart_key_insights",      # S16 세그먼트
+        "i3_roi": "policy_steps",                 # S17 정책
+        "roadmap": "roadmap_upgrades",            # S19 로드맵
+        "insight_synthesis": "insight_synthesis_panel",  # S3 종합
+    }
     for sl in slides_flat:
         # cover/agenda/section_divider 는 hardcoded path 라 LLM 스킵
         if getattr(sl, "layout", "") in ("cover", "agenda", "section_divider"):
+            continue
+        # id 고정 슬라이드 — LLM 스킵, 결정적 템플릿 강제
+        _locked = _DESIGN_LOCKED.get(getattr(sl, "id", ""))
+        if _locked and REGISTRY.get(_locked):
+            sl.preferred_template = _locked
+            continue
+        # skeleton 이 고정한 템플릿도 LLM 이 덮어쓰지 않음
+        if getattr(sl, "preferred_template", None):
             continue
         candidates = REGISTRY.candidates_for(sl, ctx, top_n=7)
         if not candidates:

@@ -187,8 +187,8 @@ def test_verdict_reject_closing_signals_no_adopt(category: str) -> None:
 def test_tech_stack_uses_category_manifest_preset(category: str) -> None:
     """Tech Stack 슬라이드 body 의 첫 항목이 카테고리 매니페스트 프리셋과 일치.
 
-    jh 2026-06-12 — ml_pitch 는 S5+S6 병합으로 Tech Stack 이 p1_market(데이터·도구)
-    슬라이드로 이동. 그 외 3 카테고리는 p2_pain 에 배치.
+    jh 2026-06-13 — ml_pitch 는 데이터·도구가 S7(방법) 으로 이관되어 Tech Stack 이
+    p3_alt_limits 슬라이드에 배치. 그 외 3 카테고리는 p2_pain 에 배치.
     """
     ctx = make_rich_ctx(category, "adopt")
     plan = _CATEGORIES[category].build(ctx, {})
@@ -196,11 +196,13 @@ def test_tech_stack_uses_category_manifest_preset(category: str) -> None:
     assert preset, f"manifest preset missing for {category}"
     preset_first_name = preset[0].name
 
-    tech_slide_id = "p1_market" if category == "tabular_ml" else "p2_pain"
+    tech_slide_id = "p3_alt_limits" if category == "tabular_ml" else "p2_pain"
     slide = _find_slide(plan, tech_slide_id)
-    body_joined = " ".join(slide.body_outline)
-    assert preset_first_name in body_joined, (
-        f"{category}: tech stack '{preset_first_name}' missing in {tech_slide_id} body — {body_joined}"
+    # ml 은 stack 이 visual_spec.spec(도구 카드)에, 그 외는 body_outline 에 위치 → 둘 다 검사.
+    spec = getattr(slide.visual_spec, "spec", None) or {}
+    haystack = " ".join(slide.body_outline) + " " + str(spec)
+    assert preset_first_name in haystack, (
+        f"{category}: tech stack '{preset_first_name}' missing in {tech_slide_id} — {haystack[:200]}"
     )
 
 

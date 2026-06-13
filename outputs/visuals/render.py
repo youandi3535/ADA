@@ -93,11 +93,19 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
     # jh 2026-06-12 — 실제 분석 차트 PNG (MinIO) 최우선.
     # 운영 결함: EDA 슬라이드 spec 의 chart_path 가 무시되고 _render_bar 가
     # evaluation.metrics 로 폴백 → 결측 슬라이드에 메트릭 차트가 그려졌음.
+    # (v2) fetch 가 예외를 던지면 함수 전체가 죽어 히트맵 분기에 못 가던 결함 — try 보호.
     _chart_path = str((vs.spec or {}).get("chart_path") or "")
     if _chart_path:
-        _local = _fetch_chart_png(_chart_path)
-        if _local:
-            return _local
+        try:
+            _local = _fetch_chart_png(_chart_path)
+            if _local:
+                return _local
+        except Exception as _fe:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("visuals.render").warning(
+                "chart_fetch_failed: %s err=%s", _chart_path[:80], _fe
+            )
 
     try:
         vtype = vs.type or ""
@@ -129,8 +137,14 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
         if vtype == "risk_matrix":
             return _render_risk_matrix(vs, ctx, primary, plt)
         # jh 2026-06-12 — CM 수치 기반 히트맵 (MinIO 차트 부재 시에도 S15 시각화 보장)
-        if vtype == "diagram_confusion_matrix":
-            _p = _render_cm_heatmap(vs, primary, plt)
+        # belt: 타입이 달라도 spec 에 confusion_matrix 수치가 있으면 무조건 그림
+        _cm_ctx = {}
+        try:
+            _cm_ctx = ctx.evaluation.confusion_matrix or {}
+        except Exception:
+            _cm_ctx = {}
+        if vtype == "diagram_confusion_matrix" or (vs.spec or {}).get("confusion_matrix") or _cm_ctx:
+            _p = _render_cm_heatmap(vs, primary, plt, ctx)
             if _p:
                 return _p
         # jh 2026-06-12 — 세그먼트 성능 가로 막대 (skeleton 시점에 per_segment 가
@@ -169,13 +183,20 @@ def _tmp_png() -> str:
     return tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
 
 
-def _render_cm_heatmap(vs, primary: str, plt) -> Optional[str]:
+def _render_cm_heatmap(vs, primary: str, plt, ctx=None) -> Optional[str]:
     """Confusion Matrix 2x2 히트맵 — spec.confusion_matrix 의 tn/fp/fn/tp 수치로 직접 그림.
 
     jh 2026-06-12 — MinIO 차트 경로가 없을 때도 S15 가 시각자료 없이
     KEY INSIGHTS 만 남던 결함의 안전망. 수치만 있으면 항상 그려진다.
+    (v2) skeleton 빌드 시점엔 spec.confusion_matrix 가 빈 값으로 굳음 → carrier
+    시점 ctx.evaluation.confusion_matrix 폴백 (S15 무차트의 진짜 원인).
     """
     cm = (vs.spec or {}).get("confusion_matrix") or {}
+    if not cm and ctx is not None:
+        try:
+            cm = ctx.evaluation.confusion_matrix or {}
+        except Exception:
+            cm = {}
     try:
         tn = int(cm.get("tn") or cm.get("true_negative") or 0)
         fp = int(cm.get("fp") or cm.get("false_positive") or 0)
@@ -346,10 +367,10 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
     # [좋은패턴][디자이너 라운드 2026-06-11] 시니어 차트 디자인 — max 막대만 강조, 나머지 묻힘
     # 메시지가 어느 값에 있는지 한눈에 보이게 (BCG/McKinsey 정석)
     _max_idx = values.index(max(values)) if values else -1
-    # [차트강조색통일룰 2026-06-11] 모든 차트 강조 막대 = #185FA5 (사이트 메인 블루)
-    # 사용자 확정: "4번 승선항 셰르부르 색" 으로 통일 (의미 있는 막대는 공통 색)
-    _ACCENT = "#185FA5"   # 강조 색 — 사이트 메인 블루 (전 차트 통일)
-    _MUTED = "#94A3B8"    # 묻힘 색 — 표준 슬레이트
+    # jh 2026-06-12 — 강조 막대색을 팔레트 primary 로 (하드코딩 #185FA5 가 색상
+    # 교체에 안 따라가던 결함, 사용자 지적). 묻힘색은 중립 슬레이트 유지.
+    _ACCENT = primary or "#185FA5"
+    _MUTED = "#94A3B8"
     colors_list = [_ACCENT if i == _max_idx else _MUTED for i in range(len(values))]
 
     fig, ax = plt.subplots(figsize=(9, 4.8), dpi=120)
@@ -396,9 +417,10 @@ def _render_line(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, 
     mx, mn = max(values), min(values)
     fig, ax = plt.subplots(figsize=(9, 4.8), dpi=120)
     fig.patch.set_facecolor("white")
-    ax.plot(x, values, color="#185FA5", linewidth=3.5, marker="o", markersize=11,
-            markerfacecolor="#185FA5", markeredgecolor="white", markeredgewidth=2.5, zorder=3)
-    ax.fill_between(x, values, mn - (mx - mn + 1) * 0.3, color="#185FA5", alpha=0.07, zorder=1)
+    _lc = primary or "#185FA5"
+    ax.plot(x, values, color=_lc, linewidth=3.5, marker="o", markersize=11,
+            markerfacecolor=_lc, markeredgecolor="white", markeredgewidth=2.5, zorder=3)
+    ax.fill_between(x, values, mn - (mx - mn + 1) * 0.3, color=_lc, alpha=0.07, zorder=1)
     for xi, v in zip(x, values):
         lbl = f"{int(v)}" if v == int(v) else f"{v:.1f}"
         ax.text(xi, v + (mx - mn + 1) * 0.05, lbl, ha="center", va="bottom", fontsize=21, color="#0F172A", fontweight="bold")
@@ -430,9 +452,9 @@ def _render_hbar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, 
     values = [float(i[1]) for i in items]
     mx = max(values) if values else 1.0
     y = list(range(len(values)))[::-1]
-    # [차트강조색통일룰] _render_bar 와 동일 강조 색 (#185FA5)
+    # jh 2026-06-12 — _render_bar 와 동일하게 팔레트 primary 강조 (하드코딩 제거)
     _max_idx = values.index(max(values)) if values else -1
-    _ACCENT = "#185FA5"   # 강조 색 — 사이트 메인 블루 (전 차트 통일)
+    _ACCENT = primary or "#185FA5"
     _MUTED = "#94A3B8"    # 묻힘 색
     colors_list = [_ACCENT if i == _max_idx else _MUTED for i in range(len(values))]
     fig, ax = plt.subplots(figsize=(9, max(3.2, len(values) * 0.8)), dpi=120)
@@ -727,7 +749,7 @@ def _render_risk_matrix(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -
             continue
         _label, prob, impact = str(item[0]), float(item[1]), float(item[2])
         # 점
-        ax.scatter([prob], [impact], s=550, color="#185FA5", edgecolor="white", linewidth=2.5, zorder=4)
+        ax.scatter([prob], [impact], s=550, color=(primary or "#185FA5"), edgecolor="white", linewidth=2.5, zorder=4)
         ax.text(prob, impact, str(idx), ha="center", va="center", fontsize=14, color="white", fontweight="bold", zorder=5)
     # 축
     ax.set_xlim(-0.02, 1.02)

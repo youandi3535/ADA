@@ -25,6 +25,47 @@ SLIDE_W = 33.867
 SLIDE_H = 19.05
 
 
+def _add_paragraphs(slide, x, y, w, h, lines, size_pt=12, color_hex="#0F172A",
+                    bold=False, space_after_pt=8):
+    """여러 줄을 단락 간격(space_after)과 함께 한 텍스트박스에 — 가독성용.
+
+    jh 2026-06-12 — 빽빽한 caption 을 문장 단위로 끊어 단락 간격 부여.
+    jh 2026-06-13 — 박스 높이(h) 초과 추정 시 폰트·간격 자동 축소 (잘림 방지).
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Cm, Pt
+
+    _lines = [str(ln).strip() for ln in lines if str(ln).strip()]
+    # 높이 추정: 한 줄 ≈ size_pt*0.045cm 높이, w(cm) 당 글자수로 줄 수 환산
+    def _est_height(sz: float, gap: float) -> float:
+        char_per_line = max(6, int(w / (sz * 0.021)))
+        total_lines = sum(max(1, -(-len(ln) // char_per_line)) for ln in _lines)
+        return total_lines * (sz * 0.046) + len(_lines) * (gap * 0.035)
+
+    sz, gap = float(size_pt), float(space_after_pt)
+    for _ in range(6):
+        if _est_height(sz, gap) <= h or sz <= 9:
+            break
+        sz -= 1
+        gap = max(3, gap - 1)
+
+    tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
+    tf = tb.text_frame
+    tf.word_wrap = True
+    _col = RGBColor.from_string(str(color_hex).lstrip("#"))
+    first = True
+    for ln in _lines:
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        r = p.add_run()
+        r.text = ln
+        r.font.size = Pt(sz)
+        r.font.bold = bold
+        r.font.color.rgb = _col
+        p.space_after = Pt(gap)
+    return tb
+
+
 def draw_statistics_grid(slide, items, primary, accent, ink, muted, light_bg):
     """4 large statistics with icon + value + caption.
 
@@ -656,7 +697,9 @@ def draw_5step_alt_callouts(slide, steps, primary, accent, ink, muted, light_bg)
     margin_x = 2.5
     avail_w = SLIDE_W - 2 * margin_x
     step = avail_w / max(1, n - 1) if n > 1 else avail_w
-    y_node = 10.0
+    # jh 2026-06-12 — 노드 행을 위로 올려 (10.0→6.8) 하단 WHY 카드 공간 확보,
+    # 캡션은 전부 노드 아래 단일 배치 (위/아래 교차 폐지 — 헤더 충돌·동선 혼란)
+    y_node = 6.8
     # Horizontal connecting line
     add_rect(slide, margin_x, y_node - 0.05, avail_w, 0.08, "#CBD5E1")
 
@@ -697,45 +740,25 @@ def draw_5step_alt_callouts(slide, steps, primary, accent, ink, muted, light_bg)
             align="center",
             vcenter=True,
         )
-        # Alternating caption (above for even, below for odd)
+        # 단일 하단 캡션 (제목 + 설명) — 모든 노드 동일 위치
         title = str(s.get("title", f"STEP {i + 1}"))[:30]
         caption = str(s.get("caption", ""))[:120]
-        if i % 2 == 0:
-            # Above
-            add_text_box(
-                slide,
-                x - 2.5,
-                y_node - 4.2,
-                5.0,
-                1.0,
-                title,
-                size_pt=13,
-                bold=True,
-                color_hex=primary,
-                align="center",
-                vcenter=True,
-            )
-            add_text_box(
-                slide, x - 2.5, y_node - 3.2, 5.0, 2.0, caption, size_pt=11, color_hex=ink, align="center", vcenter=False
-            )
-        else:
-            # Below (with offset for badge)
-            add_text_box(
-                slide,
-                x - 2.5,
-                y_node + 3.0,
-                5.0,
-                1.0,
-                title,
-                size_pt=13,
-                bold=True,
-                color_hex=primary,
-                align="center",
-                vcenter=True,
-            )
-            add_text_box(
-                slide, x - 2.5, y_node + 4.0, 5.0, 2.0, caption, size_pt=11, color_hex=ink, align="center", vcenter=False
-            )
+        add_text_box(
+            slide,
+            x - 2.6,
+            y_node + 2.6,
+            5.2,
+            1.0,
+            title,
+            size_pt=13,
+            bold=True,
+            color_hex=primary,
+            align="center",
+            vcenter=True,
+        )
+        add_text_box(
+            slide, x - 2.6, y_node + 3.6, 5.2, 2.2, caption, size_pt=11, color_hex=ink, align="center", vcenter=False
+        )
 
 
 def draw_thank_you_closing(slide, ctx, primary, accent, ink, muted):
@@ -2052,8 +2075,11 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
         # Bullets — jh 2026-06-12 견본 구조: 첫 항목은 16B 헤드라인, 나머지는 11pt 세부
         import re as _re
 
-        # 라벨 접두 제거 — "S ·", "강점(S) ·", "W · 약점(W) ·" 류 중복 방지 (2회 적용)
-        _lbl_pat = r"^[-\s]*(?:[SWOT]|강점|약점|기회|위협)\s*(?:\([SWOT]\))?\s*[·:]\s*"
+        # 라벨 접두 제거 — "S ·", "S(강점) ·", "W · 약점(W) ·" 류 중복 방지 (2회 적용)
+        _lbl_pat = (
+            r"^[-\s]*(?:[SWOT]|강점|약점|기회|위협)\s*"
+            r"(?:\((?:[SWOT]|강점|약점|기회|위협)\))?\s*[·:]\s*"
+        )
         pts = [
             _re.sub(_lbl_pat, "", _re.sub(_lbl_pat, "", str(p))).strip()
             for p in (items[i].get("points", []) if i < len(items) else [])
@@ -2251,16 +2277,16 @@ def draw_price_compare_3(slide, items, primary, accent, ink, muted, light_bg):
         )
         # Accent line
         add_rect(slide, x + card_w / 2 - 1.5, y_card + 5.2, 3.0, 0.08, accent if is_highlight else primary)
-        # Caption lines
-        for j, ln in enumerate(item.get("lines", [])[:4]):
+        # Caption lines — jh 2026-06-12: 4→5줄, 56자 (사례 설명 풍부화)
+        for j, ln in enumerate(item.get("lines", [])[:5]):
             add_text_box(
                 slide,
                 x + 0.5,
                 y_card + 5.8 + j * 1.0,
                 card_w - 1.0,
                 0.9,
-                f"- {ln[:40]}",
-                size_pt=10,
+                f"- {ln[:56]}",
+                size_pt=12,
                 color_hex="#E2E8F0" if is_highlight else ink,
                 align="left",
                 vcenter=True,
@@ -3463,7 +3489,9 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
     add_rect(slide, 1.5, 5.5, 3.0, 0.08, accent)
 
     phase_y = 6.0
-    phase_h = 3.5
+    # jh 2026-06-12 — 캡션이 chevron 밖으로 흘러 흰 글씨가 흰 배경에 묻히던 결함:
+    # 캡션을 chevron *아래* ink 색으로 이동 (항상 가독), chevron 은 라벨+제목만.
+    phase_h = 2.8
     margin_x = 1.5
     avail_w = SLIDE_W - 2 * margin_x
     n_phases = min(len(phases), 3)
@@ -3475,12 +3503,12 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
         text_c = "#FFFFFF" if i % 2 == 0 else primary
         # Chevron arrow
         add_chevron(slide, x, phase_y, chev_w, phase_h, c)
-        # Phase label
+        # Phase label — x+0.9: 첫 글자가 chevron 왼끝에 물리지 않게
         add_text_box(
             slide,
-            x + 0.5,
-            phase_y + 0.3,
-            chev_w - 1.5,
+            x + 0.9,
+            phase_y + 0.25,
+            chev_w - 1.9,
             0.9,
             f"PHASE {i + 1:02d}",
             size_pt=11,
@@ -3492,10 +3520,10 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
         # Title
         add_text_box(
             slide,
-            x + 0.5,
-            phase_y + 1.2,
-            chev_w - 1.5,
-            1.0,
+            x + 0.9,
+            phase_y + 1.15,
+            chev_w - 1.9,
+            1.2,
             str(item.get("title", "")).strip()[:30],
             size_pt=14,
             bold=True,
@@ -3503,22 +3531,22 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
             align="left",
             vcenter=True,
         )
-        # Caption
+        # Caption — chevron 아래, ink 색 (가독 보장)
         add_text_box(
             slide,
-            x + 0.5,
-            phase_y + 2.2,
-            chev_w - 1.5,
-            1.0,
-            str(item.get("caption", ""))[:80],
-            size_pt=10,
-            color_hex=text_c,
+            x + 0.3,
+            phase_y + phase_h + 0.15,
+            chev_w - 0.6,
+            1.5,
+            str(item.get("caption", ""))[:90],
+            size_pt=11,
+            color_hex=ink,
             align="left",
             vcenter=False,
         )
 
     # ===== Divider =====
-    div_y = phase_y + phase_h + 0.8
+    div_y = phase_y + phase_h + 1.8
     add_rect(slide, 1.5, div_y, SLIDE_W - 3.0, 0.04, "#E2E8F0")
 
     # ===== Bottom section: 3 upgrade cards =====
@@ -3606,6 +3634,235 @@ def draw_roadmap_with_upgrades(slide, phases, upgrades, primary, accent, ink, mu
             align="left",
             vcenter=False,
         )
+
+
+def draw_roadmap_timeline(slide, phases, primary, accent, ink, muted, light_bg):
+    """실행 로드맵 — 가로 타임라인 + 단계별 「기간·활동·게이트·산출물」 카드.
+
+    jh 2026-06-12 — '언제·무엇을·무엇이 되면 다음' 이 한눈에. 각 단계 하단에
+    게이트(성공 기준) 강조 박스 — 다음 단계로 가는 조건.
+    phases: [{period, title, action, gate, output}]
+    """
+    n = min(len(phases), 3)
+    if n == 0:
+        return
+    margin_x = 1.5
+    gap = 0.6
+    cw = (SLIDE_W - 2 * margin_x - (n - 1) * gap) / n
+    top_y = 4.6
+
+    # 상단 타임라인 축 (단계 연결)
+    axis_y = top_y + 0.7
+    add_rect(slide, margin_x + cw / 2, axis_y, (n - 1) * (cw + gap), 0.08, accent)
+
+    for i in range(n):
+        p = phases[i]
+        x = margin_x + i * (cw + gap)
+        cx = x + cw / 2
+        # 타임라인 노드 + 기간 배지
+        add_oval(slide, cx - 0.45, axis_y - 0.37, 0.9, 0.9, primary)
+        add_text_box(slide, cx - 0.45, axis_y - 0.37, 0.9, 0.9, str(i + 1), size_pt=15,
+                     bold=True, color_hex="#FFFFFF", align="center", vcenter=True)
+        add_text_box(slide, x, top_y + 1.5, cw, 0.7, str(p.get("period", "")), size_pt=13,
+                     bold=True, color_hex=accent, align="center", vcenter=True)
+
+        # 카드
+        card_y = top_y + 2.4
+        card_h = SLIDE_H - card_y - 1.8
+        add_rounded_rect(slide, x, card_y, cw, card_h, "#FFFFFF", line_hex=primary)
+        # 제목 (primary 헤더) — jh 2026-06-13: 가운데 정렬 (단계 헤더 통일)
+        add_rounded_rect(slide, x, card_y, cw, 1.2, primary)
+        add_text_box(slide, x + 0.4, card_y, cw - 0.8, 1.2, str(p.get("title", "")), size_pt=16,
+                     bold=True, color_hex="#FFFFFF", align="center", vcenter=True)
+        # 활동 — 문장 단위 단락 (가독성)
+        add_text_box(slide, x + 0.4, card_y + 1.5, cw - 0.8, 0.6, "활동", size_pt=10,
+                     bold=True, color_hex=muted, align="left", vcenter=True)
+        _act = str(p.get("action", "")).strip()
+        _act_lines = [s.strip() for s in _act.replace(". ", ".\n").split("\n") if s.strip()]
+        _add_paragraphs(slide, x + 0.4, card_y + 2.1, cw - 0.8, 3.2, _act_lines[:3],
+                        size_pt=12, color_hex=ink, space_after_pt=7)
+        # 게이트 (성공 기준) — accent 박스 강조
+        gate = str(p.get("gate", ""))
+        if gate:
+            gy = card_y + card_h - 3.2
+            add_rounded_rect(slide, x + 0.3, gy, cw - 0.6, 1.9, light_bg, line_hex=accent)
+            add_text_box(slide, x + 0.55, gy + 0.15, cw - 1.0, 0.6, "✓ 다음 단계 조건", size_pt=10,
+                         bold=True, color_hex=primary, align="left", vcenter=True)
+            add_text_box(slide, x + 0.55, gy + 0.75, cw - 1.0, 1.1, gate[:70], size_pt=12,
+                         bold=True, color_hex=ink, align="left", vcenter=False)
+        # 산출물
+        out = str(p.get("output", ""))
+        if out:
+            add_text_box(slide, x + 0.4, card_y + card_h - 1.1, cw - 0.8, 0.9,
+                         f"📄 산출 · {out[:30]}", size_pt=11, color_hex=muted, align="left", vcenter=True)
+
+
+def draw_policy_decision(slide, badge, kpis, rules, primary, accent, ink, muted, light_bg):
+    """S17 운영 도입 — 상단 판정 배지 + KPI / 하단 운영 룰 3 아이콘 카드.
+
+    jh 2026-06-12 — STEP 세로 카드 폐지 (가독성↓). '도입 결정' 이 한눈에 오게.
+    badge=(라벨, 설명, kind), kpis=[(name,val)], rules=[{title,caption}]
+    """
+    label, desc, kind = badge
+    badge_color = {"ok": "#16A34A", "warn": "#D97706", "no": "#DC2626"}.get(kind, primary)
+    glyph = {"ok": GLYPHS["ok"], "warn": GLYPHS["warn"], "no": GLYPHS["no"]}.get(kind, GLYPHS["ok"])
+
+    # 상단 — 판정 배지 (좌) + KPI 스탯 (우). jh 2026-06-13 — 배지 높이 축소로
+    # 하단 룰 카드 공간 확보 (룰 잘림 방지).
+    by, bh = 4.5, 3.4
+    add_rounded_rect(slide, 1.5, by, 11.0, bh, badge_color)
+    add_text_box(slide, 2.1, by + 0.4, 3.0, 2.6, glyph, size_pt=54, bold=True,
+                 color_hex="#FFFFFF", align="center", vcenter=True)
+    add_text_box(slide, 5.0, by + 0.45, 7.0, 1.5, label, size_pt=44, bold=True,
+                 color_hex="#FFFFFF", align="left", vcenter=True)
+    add_text_box(slide, 5.0, by + 2.05, 7.0, 1.1, str(desc), size_pt=17, bold=True,
+                 color_hex="#FFFFFF", align="left", vcenter=True)
+    # 우측 KPI 스탯 3
+    kx = 13.5
+    kw = (SLIDE_W - kx - 1.5 - 2 * 0.4) / max(len(kpis) or 1, 1)
+    for i, (nm, val) in enumerate(kpis[:3]):
+        x = kx + i * (kw + 0.4)
+        add_rounded_rect(slide, x, by, kw, bh, light_bg, line_hex=primary)
+        add_text_box(slide, x, by + 0.45, kw, 1.6, str(val), size_pt=38, bold=True,
+                     color_hex=primary, align="center", vcenter=True)
+        add_rect(slide, x + kw / 2 - 1.0, by + 2.1, 2.0, 0.06, accent)
+        add_text_box(slide, x, by + 2.35, kw, 0.9, str(nm)[:16], size_pt=12, bold=True,
+                     color_hex=muted, align="center", vcenter=True)
+
+    # 하단 — 운영 룰 3 아이콘 카드
+    add_text_box(slide, 1.5, by + bh + 0.5, SLIDE_W - 3.0, 0.7, "운영 룰 · OPERATING RULES",
+                 size_pt=12, bold=True, color_hex=primary, align="left", vcenter=True)
+    ry = by + bh + 1.4
+    rh = SLIDE_H - ry - 1.8
+    n = min(len(rules), 3)
+    gap = 0.5
+    rw = (SLIDE_W - 3.0 - (max(n, 1) - 1) * gap) / max(n, 1)
+    glyphs = [GLYPHS["target"], GLYPHS["chart"], GLYPHS["settings"]]
+    for i in range(n):
+        r = rules[i]
+        x = 1.5 + i * (rw + gap)
+        add_rounded_rect(slide, x, ry, rw, rh, "#FFFFFF", line_hex=primary)
+        add_oval(slide, x + 0.5, ry + 0.5, 1.5, 1.5, primary)
+        add_text_box(slide, x + 0.5, ry + 0.5, 1.5, 1.5, glyphs[i % 3], size_pt=22,
+                     color_hex="#FFFFFF", align="center", vcenter=True)
+        add_text_box(slide, x + 2.2, ry + 0.6, rw - 2.6, 1.3, str(r.get("title", ""))[:24],
+                     size_pt=16, bold=True, color_hex=primary, align="left", vcenter=True)
+        # jh 2026-06-12 — 문장 단위 줄바꿈 + 단락 간격 (빽빽함·잘림 해소, 사용자 지적)
+        _cap = str(r.get("caption", "")).strip()
+        _sents = [s.strip() for s in _cap.replace(". ", ".\n").split("\n") if s.strip()]
+        _add_paragraphs(slide, x + 0.5, ry + 2.3, rw - 1.0, rh - 2.6, _sents[:4],
+                        size_pt=12, color_hex=ink, space_after_pt=8)
+
+
+def draw_background_brief(slide, purpose, questions, kpi_line, primary, accent, ink, muted, light_bg):
+    """분석 배경 — 상단 목적 배너 / 중단 Q1~Q3 카드 / 하단 KPI 결과 스트립.
+
+    jh 2026-06-12 — '왜 이 분석인가(목적) + 핵심 질문 + KPI 결과' 도입부.
+    """
+    # 상단 — 목적 배너 (primary 솔리드, 흰 글씨)
+    add_rounded_rect(slide, 1.5, 4.5, SLIDE_W - 3.0, 2.4, primary)
+    add_text_box(slide, 2.1, 4.75, SLIDE_W - 4.2, 0.7, "분석 목적 · WHY",
+                 size_pt=12, bold=True, color_hex="#BFDBFE", align="left", vcenter=True)
+    add_text_box(slide, 2.1, 5.45, SLIDE_W - 4.2, 1.4, str(purpose)[:120],
+                 size_pt=15, bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
+
+    # 중단 — 질문 3 카드
+    n = min(len(questions), 3)
+    gap = 0.5
+    cw = (SLIDE_W - 3.0 - (max(n, 1) - 1) * gap) / max(n, 1)
+    qy, qh = 7.5, 6.2
+    for i in range(n):
+        q, a = questions[i]
+        x = 1.5 + i * (cw + gap)
+        add_rounded_rect(slide, x, qy, cw, qh, light_bg, line_hex=primary)
+        add_oval(slide, x + 0.5, qy + 0.5, 1.4, 1.4, accent)
+        add_text_box(slide, x + 0.5, qy + 0.5, 1.4, 1.4, f"Q{i + 1}",
+                     size_pt=16, bold=True, color_hex="#FFFFFF", align="center", vcenter=True)
+        add_text_box(slide, x + 0.5, qy + 2.1, cw - 1.0, 1.6, str(q)[:60],
+                     size_pt=15, bold=True, color_hex=ink, align="left", vcenter=False)
+        add_rect(slide, x + 0.5, qy + 3.6, cw - 1.0, 0.05, accent)
+        add_text_box(slide, x + 0.5, qy + 3.8, cw - 1.0, qh - 4.0, f"→ {str(a)[:120]}",
+                     size_pt=12, color_hex=ink, align="left", vcenter=False)
+
+    # 하단 — KPI 결과 스트립
+    if kpi_line:
+        add_rounded_rect(slide, 1.5, qy + qh + 0.4, SLIDE_W - 3.0, 1.3, "#F1F5F9")
+        add_text_box(slide, 2.1, qy + qh + 0.4, SLIDE_W - 4.2, 1.3, str(kpi_line)[:90],
+                     size_pt=14, bold=True, color_hex=primary, align="left", vcenter=True)
+
+
+def draw_insight_synthesis(slide, insights, applications, evidence, primary, accent, ink, muted, light_bg,
+                           top_features=None):
+    """발견 종합 — 좌 60% 인사이트(大, 번호뱃지+SHAP 미니바) / 우 40% 접목(단계) / 하단 근거.
+
+    jh 2026-06-12 — 데이터·패턴 균등 4열 폐지, 인사이트·접목 비중 확대 + 미니비주얼 (사용자 지시).
+    top_features: [(name, shap_importance), ...] — 좌측 하단 SHAP 미니바.
+    """
+    y0, h0 = 4.6, 11.2
+    left_w = (SLIDE_W - 3.0) * 0.58
+    right_x = 1.5 + left_w + 0.5
+    right_w = SLIDE_W - right_x - 1.5
+
+    # 좌측 — 인사이트 패널 (번호 뱃지 + 하단 SHAP 미니바)
+    add_rounded_rect(slide, 1.5, y0, left_w, h0, light_bg, line_hex=primary)
+    add_text_box(slide, 2.1, y0 + 0.4, left_w - 1.2, 0.8, "이 분석이 밝힌 것",
+                 size_pt=14, bold=True, color_hex=primary, align="left", vcenter=True)
+    _ins = (insights or [])[:2]
+    iy = y0 + 1.5
+    for i, (head, detail) in enumerate(_ins, 1):
+        add_oval(slide, 2.1, iy + 0.05, 0.9, 0.9, accent)
+        add_text_box(slide, 2.1, iy + 0.05, 0.9, 0.9, str(i), size_pt=15, bold=True,
+                     color_hex="#FFFFFF", align="center", vcenter=True)
+        add_text_box(slide, 3.2, iy, left_w - 2.3, 1.0, f"{str(head)[:40]}",
+                     size_pt=15, bold=True, color_hex=ink, align="left", vcenter=True)
+        add_text_box(slide, 3.2, iy + 1.0, left_w - 2.7, 1.7, str(detail)[:110],
+                     size_pt=12, color_hex=ink, align="left", vcenter=False)
+        iy += 2.9
+
+    # 좌측 하단 — SHAP 기여 미니바 (top_features 가 있을 때)
+    if top_features:
+        add_text_box(slide, 2.1, iy + 0.1, left_w - 1.2, 0.6, "핵심 변수 기여 · SHAP",
+                     size_pt=11, bold=True, color_hex=muted, align="left", vcenter=True)
+        by = iy + 0.85
+        _bars = list(top_features)[:3]
+        _mx = max((abs(float(v)) for _, v in _bars), default=1.0) or 1.0
+        bar_full = left_w - 4.5
+        for nm, val in _bars:
+            w = max(0.2, bar_full * abs(float(val)) / _mx)
+            add_text_box(slide, 2.1, by - 0.05, 2.0, 0.6, str(nm)[:10], size_pt=11,
+                         bold=True, color_hex=ink, align="left", vcenter=True)
+            add_rect(slide, 4.2, by + 0.08, w, 0.42, primary)
+            add_text_box(slide, 4.3 + w, by - 0.05, 1.6, 0.6, f"{float(val):.2f}", size_pt=11,
+                         bold=True, color_hex=primary, align="left", vcenter=True)
+            by += 0.75
+
+    # 우측 — 접목(APPLICATION) 카드 (단계 화살표로 연결)
+    add_rounded_rect(slide, right_x, y0, right_w, h0, primary)
+    add_text_box(slide, right_x + 0.6, y0 + 0.4, right_w - 1.2, 0.8, "활용 가치",
+                 size_pt=14, bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
+    _apps = (applications or [])[:3]
+    ay = y0 + 1.6
+    _step = (h0 - 1.8) / max(len(_apps), 1)
+    for i, a in enumerate(_apps):
+        head, _, tail = str(a).partition(" — ")
+        add_oval(slide, right_x + 0.6, ay + 0.1, 0.7, 0.7, accent)
+        add_text_box(slide, right_x + 0.6, ay + 0.1, 0.7, 0.7, str(i + 1), size_pt=13,
+                     bold=True, color_hex="#FFFFFF", align="center", vcenter=True)
+        add_text_box(slide, right_x + 1.5, ay, right_w - 2.1, 0.9, f"{head[:24]}",
+                     size_pt=14, bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
+        if tail:
+            add_text_box(slide, right_x + 1.5, ay + 0.85, right_w - 2.1, 1.3, tail[:64],
+                         size_pt=12, color_hex="#DBEAFE", align="left", vcenter=False)
+        # 단계 화살표 (마지막 제외)
+        if i < len(_apps) - 1:
+            add_text_box(slide, right_x + 0.75, ay + _step - 0.55, 0.7, 0.6, GLYPHS["arrow_r"],
+                         size_pt=16, bold=True, color_hex=accent, align="center", vcenter=True)
+        ay += _step
+
+    # 하단 — 근거 한 줄 (데이터·패턴 격하)
+    if evidence:
+        add_text_box(slide, 1.5, y0 + h0 + 0.3, SLIDE_W - 3.0, 0.9, str(evidence)[:130],
+                     size_pt=11, color_hex=muted, align="left", vcenter=True)
 
 
 def draw_exec_summary_v32(slide, findings, boxes, primary, accent, ink, muted, light_bg):
@@ -3767,10 +4024,11 @@ def draw_icon_columns(slide, items, primary, accent, ink, muted, light_bg):
         add_rounded_rect(slide, x, 5.0, col_w, 12.1, light_bg, line_hex=primary)
         add_text_box(slide, x, 5.5, col_w, 0.9, str(it.get("tag", ""))[:14].upper(), size_pt=11,
                      bold=True, color_hex=accent, align="center", vcenter=True)
-        add_text_box(slide, x, 6.5, col_w, 1.0, str(it.get("label", ""))[:16], size_pt=14,
+        add_text_box(slide, x, 6.5, col_w, 1.0, str(it.get("label", ""))[:16], size_pt=16,
                      bold=True, color_hex=ink, align="center", vcenter=True)
         glyph = GLYPHS.get(str(it.get("glyph", "")), GLYPHS.get("data", "")) or ""
-        add_text_box(slide, x, 8.0, col_w, 1.6, glyph, size_pt=26, color_hex=primary,
+        add_text_box(slide, x, 8.0, col_w, 1.6, glyph, size_pt=28, color_hex=primary,
                      align="center", vcenter=True)
-        add_text_box(slide, x + 0.4, 10.3, col_w - 0.8, 6.4, str(it.get("text", ""))[:200],
-                     size_pt=10, color_hex=ink, align="left", vcenter=False)
+        # jh 2026-06-12 — 본문 10→13pt + 세로 중앙 (인사이트 종합 글씨 작고 짧다 지적)
+        add_text_box(slide, x + 0.4, 10.0, col_w - 0.8, 6.7, str(it.get("text", ""))[:220],
+                     size_pt=13, color_hex=ink, align="left", vcenter=True)

@@ -303,12 +303,18 @@ def t_team_4(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 
 
 def t_split_compare(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    # jh 2026-06-12 — "ADA 자동화" 영업 디폴트 제거 (S8 에 홍보 문구가 끼던 결함).
+    # 분석 보고서 톤의 중립 라벨 + 재료 없으면 정직 표기.
     half = len(sl.body_outline) // 2 or 2
-    left = {"label": "AS-IS", "headline": "기존 방식", "points": sl.body_outline[:half] or ["수작업 분석"]}
+    left = {
+        "label": "BEFORE",
+        "headline": "개선 전",
+        "points": sl.body_outline[:half] or ["비교 항목 미적립"],
+    }
     right = {
-        "label": "TO-BE",
-        "headline": "ADA 자동화",
-        "points": sl.body_outline[half : half * 2] or ["AI 자동화 + 재현 가능"],
+        "label": "AFTER",
+        "headline": "개선 후",
+        "points": sl.body_outline[half : half * 2] or ["비교 항목 미적립"],
     }
     I.draw_split_compare(slide, left, right, primary, accent, ink, muted, light_bg)
 
@@ -417,10 +423,19 @@ def init_registry() -> None:
 
     # ---- Comparison ----
     REGISTRY.register("as_is_to_be", t_as_is_to_be, fit=has_layout("comparison_before_after"), tags=["compare"])
+    def fit_split_compare(sl, c):
+        # jh 2026-06-12 — evidence(EDA·해석) 슬라이드 제외 + 제목에 명시적 대비어만
+        if getattr(sl, "role", "") == "evidence":
+            return 0.0
+        title = getattr(sl, "title_ko", "") or ""
+        if any(k in title for k in ("AS-IS", "TO-BE", "전후", "개선 전", "대비", " vs ")):
+            return 75.0
+        return 0.0
+
     REGISTRY.register(
         "split_compare",
         t_split_compare,
-        fit=combine(matches_keywords("vs", "비교", "vs."), has_body_min(2)),
+        fit=fit_split_compare,
         tags=["compare"],
     )
     REGISTRY.register("strategy_4", t_strategy_4, fit=has_id("s3_differentiation"), tags=["strategy"])
@@ -814,7 +829,27 @@ def t_solution_overview(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 
 
 def t_lineage_2col(slide, sl, ctx, primary, accent, ink, muted, light_bg):
-    """견본 S9 — 좌: lineage 단계 바 4 / 우: 보충 카드 3."""
+    """견본 S9 — 좌: lineage 단계 바 4 / 우: 보충 카드 3.
+
+    jh 2026-06-12 — p1_market(데이터·도구 병합) 은 visual_spec.spec 에서 직접
+    재료를 가져옴: 카피라이터가 body 를 4줄로 줄여도 (bullet 상한) 좌 4단 +
+    우 3카드가 항상 채워지도록 (S6 텅 비던 결함).
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    if spec.get("overview_items") or spec.get("stack_items"):
+        bars = []
+        for k, v in list(spec.get("overview_items") or [])[:3]:
+            bars.append({"label": str(k), "text": str(v)})
+        for k, v in list(spec.get("quality_items") or [])[:1]:
+            bars.append({"label": f"품질 · {k}", "text": str(v)})
+        cards = [
+            {"label": str(k), "text": str(v)}
+            for k, v in list(spec.get("stack_items") or [])[:3]
+        ]
+        if bars:
+            I.draw_lineage_2col(slide, bars[:4], cards, primary, accent, ink, muted, light_bg)
+            return
     parsed = [
         dict(zip(("label", "text"), _split_label(line, fallback=f"단계 {i + 1}")))
         for i, line in enumerate(sl.body_outline[:7])
@@ -873,11 +908,16 @@ def t_exec_summary_v32(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     limitation_items = list(spec.get("limitation_items") or [])
 
     def _lines(pairs):
+        # jh 2026-06-12 — 소제목 누락("53개 추가"만 남던 결함) → "소제목 · 내용" 형식
         out = []
         for p in pairs[:3]:
             try:
                 k, v = p
-                out.append(str(v) if str(v) else str(k))
+                k, v = str(k).strip(), str(v).strip()
+                if k and v and not v.startswith(k):
+                    out.append(f"{k} · {v}")
+                else:
+                    out.append(v or k)
             except Exception:
                 out.append(str(p))
         return out
@@ -950,8 +990,11 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     whys = list(spec.get("whys") or [])
 
     def _txt(v) -> str:
-        """문자열만 수용 — bool/숫자가 캡션에 'False' 로 찍히던 결함 가드."""
-        return v.strip() if isinstance(v, str) else ""
+        """문자열만 수용 — bool/숫자 및 문자열화된 'False' 류 캡션 차단."""
+        if not isinstance(v, str):
+            return ""
+        v = v.strip()
+        return "" if v.lower() in ("false", "true", "none", "nan", "null", "-") else v
 
     items = []
     for i, s in enumerate(steps[:5]):
@@ -976,6 +1019,155 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         items = _items_from_body(sl, 5)
     I.draw_5step_alt_callouts(slide, items, primary, accent, ink, muted, light_bg)
 
+    # jh 2026-06-12 — S6 에서 이관된 데이터·도구 한 줄 (헤더 부제 아래)
+    _dt = str(spec.get("data_tools_line") or "")
+    if _dt:
+        I.add_text_box(slide, 1.5, 3.95, I.SLIDE_W - 3.0, 0.7, _dt,
+                       size_pt=12, bold=True, color_hex=muted, align="left", vcenter=True)
+
+    # jh 2026-06-12 — "시각자료·설명 부족" (사용자): 하단에 WHY 카드 3개 추가
+    # (단계별 무엇을/왜/결과 — 목표치 S7 의 단계 상세 카드 이식)
+    _cards = []
+    for w in whys[:3]:
+        if not isinstance(w, dict):
+            continue
+        _h = _txt(w.get("header")) or _txt(w.get("what")) or "단계"
+        _why = _txt(w.get("why"))
+        _res = _txt(w.get("result"))
+        if _why or _res:
+            _cards.append((_h[:24], _why[:80], _res[:60]))
+    if _cards:
+        _cw = (I.SLIDE_W - 3.0 - (len(_cards) - 1) * 0.5) / len(_cards)
+        _cy = 13.2
+        for _i, (_h, _why, _res) in enumerate(_cards):
+            _cx = 1.5 + _i * (_cw + 0.5)
+            I.add_rounded_rect(slide, _cx, _cy, _cw, 3.9, light_bg, line_hex=primary)
+            I.add_text_box(slide, _cx + 0.4, _cy + 0.25, _cw - 0.8, 0.8,
+                           _h, size_pt=13, bold=True, color_hex=primary, align="left", vcenter=True)
+            I.add_text_box(slide, _cx + 0.4, _cy + 1.1, _cw - 0.8, 1.8,
+                           _why, size_pt=11, color_hex=ink, align="left", vcenter=False)
+            if _res:
+                I.add_text_box(slide, _cx + 0.4, _cy + 2.95, _cw - 0.8, 0.8,
+                               f"→ {_res}", size_pt=11, bold=True, color_hex=primary, align="left", vcenter=True)
+
+
+def t_background_questions(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S6 — 분석 배경: 목적(왜) + Q1~Q3 + KPI 결과.
+
+    jh 2026-06-12 — "이 PPT 를 왜 만들었나(목적)·KPI·분석 접근이 초반에 와야"
+    (사용자). 상단 목적 배너 + 중단 질문 3 + 하단 KPI 결과 스트립.
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    purpose = str(spec.get("purpose") or sl.so_what or "")
+    questions = list(spec.get("questions") or [])
+    kpi_line = str(spec.get("kpi_line") or "")
+    if not questions:
+        # 폴백 — body 에서 질문 유도
+        for b in (sl.body_outline or [])[1:4]:
+            q, _, a = str(b).partition(" · ")
+            questions.append((q, a))
+    I.draw_background_brief(slide, purpose, questions[:3], kpi_line, primary, accent, ink, muted, light_bg)
+
+
+def t_insight_synthesis_panel(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S3 발견 종합 — 인사이트(좌 大)·접목(우)·근거(하단 한 줄).
+
+    jh 2026-06-12 — 데이터/패턴 균등 4열 대신 인사이트·접목 비중 확대 (사용자 지시).
+    """
+    vs = getattr(sl, "visual_spec", None)
+    spec = dict(getattr(vs, "spec", None) or {})
+    applications = [str(a) for a in (spec.get("applications") or []) if str(a).strip()][:4]
+    evidence = str(spec.get("evidence") or "")
+    # jh 2026-06-12 — 카피라이터가 도메인 함의로 다듬은 body_outline 우선 (규칙 12-3).
+    # body 의 처음 2줄(현실 함의)을 insights 로, spec.insights 는 폴백.
+    insights = []
+    for b in (sl.body_outline or [])[:2]:
+        h, _, d = str(b).partition(" — ")
+        if h.strip():
+            insights.append((h.strip()[:46], d.strip()))
+    if not insights:
+        insights = [
+            (str(h), str(d)) for h, d in (spec.get("insights") or []) if str(h).strip()
+        ][:3]
+    # SHAP 미니바 재료 (좌측 하단 시각화)
+    top_features = []
+    try:
+        top_features = [
+            (getattr(g, "feature", "?"), float(getattr(g, "importance", 0)))
+            for g in (ctx.interpretation.global_importance or [])[:3]
+        ]
+    except Exception:
+        top_features = []
+    I.draw_insight_synthesis(slide, insights, applications, evidence, primary, accent, ink, muted, light_bg,
+                             top_features=top_features)
+
+
+def t_case_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """S14 개별 예측 사례 3건 — 3열 카드 시각화 (jh 2026-06-12).
+
+    텍스트 페어만 있던 S14 에 시각 구조 부여: 사례 유형(TN/FN/FP) 빅라벨 +
+    실제→예측 + 사례별 SHAP 기여 상위 3. 가운데(FN) 카드 강조.
+    """
+    import re as _re
+
+    locals_ = [
+        ex for ex in (ctx.interpretation.local_examples or []) if isinstance(ex, dict)
+    ][:3]
+    items = []
+    for i, ex in enumerate(locals_):
+        kind = str(ex.get("case") or ex.get("kind") or f"사례 {i + 1}")
+        m = _re.search(r"(TN|FN|FP|TP)", kind)
+        if m:
+            big = m.group(1)
+        else:
+            # "정분류" 등 라벨에 토큰이 없으면 실제/예측 값으로 유도
+            a, p = str(ex.get("actual", "")), str(ex.get("predicted", ""))
+            if a == p and a in ("0", "1"):
+                big = "TP" if a == "1" else "TN"
+            elif a == "1" and p == "0":
+                big = "FN"
+            elif a == "0" and p == "1":
+                big = "FP"
+            else:
+                big = f"#{i + 1}"
+        lines = [f"실제 {ex.get('actual', '?')} → 예측 {ex.get('predicted', '?')}"]
+        for tf_ in (ex.get("top_features") or [])[:3]:
+            if isinstance(tf_, dict):
+                try:
+                    lines.append(f"{tf_.get('feature', '?')} {float(tf_.get('shap', 0)):+.2f}")
+                except Exception:
+                    continue
+        # jh 2026-06-12 — S15(집계)와 차별화: 개별 승객의 '이야기' 라벨 + 해석 줄
+        _story = {
+            "TN": ("정확히 걸러냄", "비생존 신호가 일관되게 작동"),
+            "TP": ("정확히 살림", "생존 신호가 일관되게 작동"),
+            "FN": ("생존자를 놓침", "생존 신호가 다른 변수에 묻혀 억제됨"),
+            "FP": ("잘못 살림", "생존 신호가 과대 작동해 오판"),
+        }.get(big, (kind, ""))
+        lines.append(f"→ {_story[1]}" if _story[1] else "")
+        lines = [ln for ln in lines if ln]
+        items.append({
+            "tier": f"사례 {i + 1} · {_story[0]} ({big})",
+            "value": big,
+            "lines": lines,
+        })
+    if not items:
+        # 재료 없으면 body 텍스트 폴백 (정직 표기 유지)
+        for i, b in enumerate((sl.body_outline or [])[:3]):
+            items.append({"tier": f"사례 {i + 1}", "value": f"#{i + 1}", "lines": [str(b)[:80]]})
+    I.draw_price_compare_3(slide, items, primary, accent, ink, muted, light_bg)
+    # 하단 공통 인사이트 스트립 — 카드 3개를 관통하는 한 줄
+    _tail = next(
+        (str(b) for b in reversed(sl.body_outline or []) if "사정거리" in str(b) or "공통" in str(b)),
+        "",
+    )
+    if _tail:
+        I.add_text_box(
+            slide, 1.5, I.SLIDE_H - 1.9, I.SLIDE_W - 3.0, 1.2,
+            _tail[:120], size_pt=12, color_hex=muted, align="left", vcenter=True,
+        )
+
 
 def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     """S17 도입 정책 — 정책 항목 세로 카드 (운영임계/모니터링/Owner...).
@@ -986,11 +1178,80 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     vs = getattr(sl, "visual_spec", None)
     spec = dict(getattr(vs, "spec", None) or {})
     pairs = list(spec.get("policy_items") or [])
+
+    # jh 2026-06-13 — S3·S19 처럼 카피라이터가 다듬은 body_outline("{제목} · {내용}")
+    # 우선 파싱 (LLM 도메인 변환본). 실패 시 spec.policy_items 폴백.
+    _cw_pairs = []
+    for b in (getattr(sl, "body_outline", None) or []):
+        s = str(b).strip()
+        if " · " in s:
+            k, v = s.split(" · ", 1)
+            if k.strip() and v.strip():
+                _cw_pairs.append((k.strip(), v.strip()))
+    if len(_cw_pairs) >= 2:
+        pairs = _cw_pairs
+
+    # jh 2026-06-12 — "S17 인사이트 적다" 지적: 빈약한 캡션을 ctx 실데이터로 보강
+    pm = ctx.evaluation.primary_metric or {}
+    _pm_v = pm.get("value")
+    _opt_thr = None
+    try:
+        _m = (ctx.evaluation.metrics or {}).get("val_optimal_threshold") or {}
+        _opt_thr = _m.get("value")
+    except Exception:
+        pass
+    _worst_seg = ""
+    try:
+        _segs = sorted(
+            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+            key=lambda s: float(s["value"]),
+        )
+        if _segs:
+            _worst_seg = f"{_segs[0].get('segment', '')} (acc {float(_segs[0]['value']):.2f})"
+    except Exception:
+        pass
+    _fn = 0
+    try:
+        _fn = int((ctx.evaluation.confusion_matrix or {}).get("fn") or 0)
+    except Exception:
+        pass
+
+    # jh 2026-06-12 — carrier 시점 실데이터로 룰 보강 (skeleton 시점엔 CM·세그먼트가
+    # 비어 골격이 짧은 폴백으로 굳음 — S17 내용 부족의 진짜 원인).
+    _gi = list(ctx.interpretation.global_importance or [])
+    _top_feat = getattr(_gi[0], "feature", "") if _gi else ""
+
+    def _enrich(title: str, cap: str) -> str:
+        t = title
+        # 도메인 행동 제목(18차)·기존 운영 제목 모두 매칭
+        if any(k in t for k in ("반영", "현장", "임계")):
+            ext = ""
+            if _top_feat:
+                ext += f" 특히 {_top_feat}이(가) 최우선 관리 대상이다."
+            if isinstance(_pm_v, (int, float)):
+                ext += f" 기준 성능 {pm.get('name', '지표')} {_pm_v:.3f}을 모니터링 기준선으로 둔다."
+            return cap + ext
+        if any(k in t for k in ("취약", "모니터링", "대응")):
+            ext = ""
+            if _worst_seg:
+                ext += f" 우선 점검 대상은 {_worst_seg} 구간이다."
+            if _fn:
+                ext += f" 놓치면 손실이 큰 미탐(FN) {_fn}건에 대한 대응 절차를 마련한다."
+            return cap + ext
+        if any(k in t for k in ("검증", "갱신", "지속", "KPI")):
+            ext = ""
+            if isinstance(_opt_thr, (int, float)):
+                ext += f" 분류 임계값 {_opt_thr:.3f} 조정으로 재현율 개선 여지를 점검한다."
+            if _fn:
+                ext += f" 미탐 {_fn}건 축소를 정기 갱신의 1차 목표로 삼는다."
+            return cap + ext
+        return cap
+
     items = []
     for p in pairs[:5]:
         try:
             k, v = p
-            items.append({"title": str(k)[:30], "caption": str(v)[:120]})
+            items.append({"title": str(k)[:30], "caption": _enrich(str(k), str(v))[:120]})
         except Exception:
             items.append({"title": str(p)[:30], "caption": ""})
     biz = spec.get("biz_kpi")
@@ -1001,65 +1262,69 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         })
     if not items:
         items = _items_from_body(sl, 4)
-    I.draw_step_cards_vertical(slide, items[:4], primary, accent, ink, muted, light_bg)
+
+    # jh 2026-06-12 — 세로 카드 나열 폐지 (사용자: 가독성↓·결정이 안 와닿음).
+    # 상단 판정 배지(ADOPT ✓ + 핵심 수치) + 하단 운영 룰 3 아이콘 카드로 재설계.
+    verdict = (ctx.evaluation.verdict or "").lower()
+    _badge = {
+        "adopt": ("ADOPT", "현장 적용 권장", "ok"),
+        "iterate": ("ITERATE", "보완 후 재적용", "warn"),
+        "reject": ("REJECT", "적용 보류", "no"),
+    }.get(verdict, ("REVIEW", "추가 검토", "info"))
+    pm = ctx.evaluation.primary_metric or {}
+    _v = pm.get("value")
+    _pm_str = (f"{_v:.3f}" if isinstance(_v, float) and _v < 1 else str(_v)) if _v is not None else "—"
+    kpis = [(pm.get("name", "정확도"), _pm_str)]
+    for nm in ("val_f1", "val_roc_auc"):
+        m = (ctx.evaluation.metrics or {}).get(nm) or {}
+        mv = m.get("value") if isinstance(m, dict) else None
+        if isinstance(mv, (int, float)):
+            kpis.append((nm, f"{mv:.3f}"))
+    I.draw_policy_decision(slide, _badge, kpis, items[:3], primary, accent, ink, muted, light_bg)
 
 
 def t_roadmap_upgrades(slide, sl, ctx, primary, accent, ink, muted, light_bg):
-    """S19 실행 로드맵 — PHASE 3 + UPGRADE 3 (목표치 S19 구성).
+    """S19 실행 로드맵 — 3단계 「기간·활동·게이트·산출물」 타임라인.
 
-    jh 2026-06-12 — draw_roadmap_with_upgrades 가 미등록(좀비 phase11)이라
-    구이미지 코드로만 그려지고 UPGRADE 가 1개에 머물던 결함. 정식 등록 +
-    실데이터 기반 고도화 카드 3종 구성.
+    jh 2026-06-12 — "뭘 할거다가 안 느껴진다"(사용자) → 측정 가능한 게이트 +
+    구체 산출물 4박자 구조. skeleton 의 phases(dict) 를 직접 소비.
     """
-    import re
-
     vs = getattr(sl, "visual_spec", None)
     spec = dict(getattr(vs, "spec", None) or {})
-    raw_phases = [str(p) for p in (spec.get("phases") or []) if str(p).strip()]
+    raw = list(spec.get("phases") or [])
 
-    body = list(getattr(sl, "body_outline", None) or [])
-    # body: "1. Phase ..." 단계 줄 + 모니터링/재학습 줄
-    caps = [
-        re.sub(r"^\d+\.\s*", "", b) for b in body if re.match(r"^\d+\.\s*", str(b))
-    ]
-    extra = [b for b in body if not re.match(r"^\d+\.\s*", str(b))]
+    # jh 2026-06-12 — skeleton 시점에 global_importance 가 비어 action 이 "핵심 발견"
+    # 폴백으로 굳음 → carrier 시점 실제 top_feat 로 치환 (S19 내용 부족 보강)
+    _gi = list(ctx.interpretation.global_importance or [])
+    _top_feat = getattr(_gi[0], "feature", "") if _gi else ""
 
+    def _fix(txt: str) -> str:
+        if _top_feat:
+            txt = txt.replace("핵심 발견 등 핵심 발견", f"{_top_feat} 등 핵심 발견")
+            txt = txt.replace("핵심 발견 등", f"{_top_feat} 등")
+        return txt
+
+    # jh 2026-06-13 — S3 처럼 카피라이터가 다듬은 body_outline 을 action 으로 우선.
+    # (skeleton spec.phases 는 period/title/gate/output 구조만 제공, action 은 LLM 변환본)
+    _cw_body = [str(b).strip() for b in (getattr(sl, "body_outline", None) or []) if str(b).strip()]
     phases = []
-    for i, ph in enumerate((raw_phases or caps or ["Phase 1", "Phase 2", "Phase 3"])[:3]):
-        cap = ""
-        if i < len(caps) and raw_phases:
-            cap = caps[i]
-        elif i < len(extra):
-            cap = str(extra[i])
-        phases.append({"title": str(ph)[:28], "caption": str(cap)[:80]})
-
-    # UPGRADE 3종 — 실데이터 기반 (재학습 / 취약 세그먼트 보강 / 앙상블)
-    upgrades = []
-    _re_line = next((str(b) for b in extra if "재학습" in str(b)), "")
-    upgrades.append({
-        "title": "재학습 트리거",
-        "caption": _re_line.split("·", 1)[-1].strip() if _re_line else "분기별 정기 또는 drift > 0.1 시 자동 재학습",
-    })
-    try:
-        segs = sorted(
-            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
-            key=lambda s: float(s["value"]),
-        )
-        if segs:
-            upgrades.append({
-                "title": "취약 세그먼트 보강",
-                "caption": f"{segs[0].get('segment', '?')} (acc {float(segs[0]['value']):.2f}) 구간 피처 보강·재검증",
+    for i, p in enumerate(raw[:3]):
+        if isinstance(p, dict) and (p.get("action") or p.get("gate")):
+            _action = _cw_body[i] if i < len(_cw_body) else str(p.get("action", ""))
+            phases.append({
+                "period": str(p.get("period", f"단계 {i + 1}")),
+                "title": str(p.get("title", "")),
+                "action": _fix(_action),
+                "gate": str(p.get("gate", "")),
+                "output": str(p.get("output", "")),
             })
-    except Exception:
-        pass
-    if len(upgrades) < 2:
-        upgrades.append({"title": "피처 보강", "caption": "결측 상위 변수 파생·외부 데이터 결합 검토"})
-    chosen = (ctx.model_selection.chosen or {}).get("name", "")
-    upgrades.append({
-        "title": "모델 앙상블",
-        "caption": f"{chosen or '선정 모델'} + 차점 후보 stacking 으로 추가 향상 여지",
-    })
-    I.draw_roadmap_with_upgrades(slide, phases, upgrades[:3], primary, accent, ink, muted, light_bg)
+    if not phases:
+        # 폴백 — body 에서 유도
+        for i, b in enumerate((sl.body_outline or [])[:3]):
+            head, _, gate = str(b).partition(" → ")
+            phases.append({"period": f"단계 {i + 1}", "title": head[:20],
+                           "action": head, "gate": gate, "output": ""})
+    I.draw_roadmap_timeline(slide, phases, primary, accent, ink, muted, light_bg)
 
 
 def t_icon_columns(slide, sl, ctx, primary, accent, ink, muted, light_bg):
@@ -1089,9 +1354,18 @@ def register_phase12() -> None:
         # 차트 (visual_spec) 가 있어야 의미 있는 레이아웃
         if not getattr(sl, "visual_spec", None):
             return 0.0
-        # jh 2026-06-12 — CM(S15)은 수치만 있으면 히트맵을 직접 그리므로 고정 라우팅
-        # (디자이너가 비차트 템플릿을 골라 S15 가 텍스트만 남던 변동성 차단)
-        if getattr(sl, "id", "") == "insights_derived":
+        # jh 2026-06-12 — 고정 라우팅 확대: preferred_template 이 게이트 직렬화에서
+        # 소실돼 (probe 는 통과, 실분석은 소실) EDA 에 split_compare 가 끼고
+        # S12 가 percentage_grid 로 새던 결함 — id 기반은 직렬화와 무관.
+        _fixed_ids = (
+            "insights_derived",   # S15 CM — 수치만 있으면 히트맵 직접 렌더
+            "i1_kpi",             # S12 성능 — baseline·지표 hbar
+            "method_model",       # S8~11 EDA 4장 — 차트+페어 고정
+            "tech_architecture",
+            "tech_stack",
+            "s3_differentiation",
+        )
+        if getattr(sl, "id", "") in _fixed_ids:
             return 96.0
         if getattr(sl, "layout", "") == "chart_callout":
             return 85.0
@@ -1114,14 +1388,19 @@ def register_phase12() -> None:
         min_score=60.0,
         tags=["solution", "architecture"],
     )
-    REGISTRY.register(
-        "lineage_2col",
-        t_lineage_2col,
-        fit=combine(
+    def fit_lineage(sl, c):
+        # (2차 개편) p1_market 은 background_questions 로 이동 — lineage 고정 해제
+        base = combine(
             matches_keywords("아키텍처", "lineage", "데이터 흐름", "전처리 흐름"),
             has_body_min(4),
             mode="sum",
-        ),
+        )
+        return base(sl, c)
+
+    REGISTRY.register(
+        "lineage_2col",
+        t_lineage_2col,
+        fit=fit_lineage,
         min_score=60.0,
         tags=["architecture", "flow"],
     )
@@ -1178,6 +1457,36 @@ def register_phase12() -> None:
         fit=has_id("i3_roi"),
         min_score=80.0,
         tags=["policy", "action"],
+    )
+    REGISTRY.register(
+        "case_cards_3",
+        t_case_cards,
+        fit=has_id("error_analysis"),
+        min_score=80.0,
+        tags=["cases", "interpretation"],
+    )
+
+    # jh 2026-06-12 (2차 개편) — 배경·질문 / 인사이트 종합 패널 고정 라우팅 (97 > 96)
+    def fit_background(sl, c):
+        return 97.0 if getattr(sl, "id", "") == "p1_market" else 0.0
+
+    REGISTRY.register(
+        "background_questions",
+        t_background_questions,
+        fit=fit_background,
+        min_score=90.0,
+        tags=["background", "questions"],
+    )
+
+    def fit_synthesis_panel(sl, c):
+        return 97.0 if getattr(sl, "id", "") == "insight_synthesis" else 0.0
+
+    REGISTRY.register(
+        "insight_synthesis_panel",
+        t_insight_synthesis_panel,
+        fit=fit_synthesis_panel,
+        min_score=90.0,
+        tags=["insight", "synthesis"],
     )
     REGISTRY.register(
         "roadmap_upgrades",

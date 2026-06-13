@@ -6,7 +6,7 @@ VisualDNA 가 import 해서 사용. 단일 진실원.
 from __future__ import annotations
 
 CATEGORY_PALETTE: dict[str, dict[str, str]] = {
-    "tabular_ml": {"primary": "#2563eb", "accent": "#93c5fd", "secondary": "#1e40af", "label_ko": "정형 ML"},
+    "tabular_ml": {"primary": "#0B2C73", "accent": "#1E5BD6", "secondary": "#06122E", "label_ko": "정형 ML"},
     "tabular_dl": {"primary": "#0891b2", "accent": "#67e8f9", "secondary": "#155e75", "label_ko": "정형 DL"},
     "timeseries": {"primary": "#16a34a", "accent": "#86efac", "secondary": "#15803d", "label_ko": "시계열"},
     "anomaly_detection": {"primary": "#dc2626", "accent": "#fca5a5", "secondary": "#991b1b", "label_ko": "이상 탐지"},

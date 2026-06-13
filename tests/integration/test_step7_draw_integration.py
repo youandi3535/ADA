@@ -23,14 +23,15 @@ from outputs.context.schema import ReportContext
 # ==============================================================
 
 
-def test_draw_slide_calls_palette_override_at_entry():
-    """_draw_slide 진입부에서 palette_override 호출하는지 정적 확인."""
+def test_draw_slide_calls_check_and_log_miss_at_entry():
+    """_draw_slide 진입부에서 부족 신호 카운터를 호출하는지 정적 확인.
+
+    jh 2026-06-13 — palette_override 호출은 그라데이션/carrier-body-우선 색상
+    방식으로 대체되어 제거됨. check_and_log_miss 카운터는 유지.
+    """
     from outputs.carriers import pptx_designer as m
 
     src = open(m.__file__, encoding="utf-8").read()
-    # _draw_slide 본문 내부에 palette_override 호출
-    assert "_overridden = palette_override(" in src, \
-        "palette_override 호출이 _draw_slide 진입부에 없음"
     assert "check_and_log_miss(sl)" in src, \
         "부족 신호 카운터 호출 누락"
 

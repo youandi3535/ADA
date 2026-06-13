@@ -60,8 +60,6 @@ from outputs.architect.skeleton_helpers import (
     format_pm_value as _format_pm_value,
     get_verdict_tone as _get_verdict_tone,
     select_top_eda_charts as _select_top_eda_charts,
-    summarize_dtypes as _summarize_dtypes,
-    summarize_target as _summarize_target,
 )
 from outputs.architect.substitution_manifest import (
     TechStackItem,
@@ -525,6 +523,27 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
         ),
         speaker_notes_hint="가설 3개를 명확히 — 검증은 슬라이드 15 에서 1:1 대응.",
     )
+def _strip_intent_tags(raw: str, max_len: int = 40) -> str:
+    """user_intent 의 게이트 태그(분석 방향:·주제:·방법론:·모델 전략:) 제거 + 길이 제한.
+
+    jh 2026-06-12 — S6 분석 목적이 원문 통째로 들어가 잘리던 결함.
+    """
+    import re
+
+    s = (raw or "").strip()
+    if not s:
+        return "분석 과제"
+    m = re.match(r"^(?:분석 방향|주제|방법론|모델 전략)\s*:\s*(.+)$", s)
+    if m:
+        s = m.group(1).strip()
+    cut = re.search(r"\s*\((?:분석 방향|주제|방법론|모델 전략)\s*:", s)
+    if cut:
+        s = s[: cut.start()].strip()
+    if len(s) > max_len:
+        s = s[: max_len - 1].rstrip() + "…"
+    return s or "분석 과제"
+
+
 def _build_market_context(ctx: ReportContext) -> SlideSpec:
     """슬라이드 5 — 데이터 개요 + 품질 (통합).
 
@@ -532,17 +551,6 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     상단 = 데이터 개요 (행·열·타입·타겟), 하단 = 데이터 품질 이슈 Top 3.
     v28_data_combined layout 가정 — 신규 carrier 가 두 영역으로 분리 렌더.
     """
-    rows = ctx.dataset.shape.get("rows", 0)
-    cols = ctx.dataset.shape.get("cols", 0)
-    dtypes_summary = _summarize_dtypes(ctx)
-    target_summary = _summarize_target(ctx)
-
-    overview_items: list[tuple[str, str]] = [
-        ("규모", f"{rows:,} 행 × {cols} 열"),
-        ("변수 타입", dtypes_summary),
-        ("타겟 분포", target_summary),
-    ]
-
     # 데이터 품질 이슈 Top 3
     issues = list(ctx.eda.data_quality_issues or [])[:3]
     quality_items: list[tuple[str, str]] = []
@@ -555,46 +563,66 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     while len(quality_items) < 3:
         quality_items.append(("품질 확인", "추가 이슈 없음"))
 
-    # jh 2026-06-12 — S5+S6 병합 (사용자 지시): 데이터 개요 + 기술 스택 한 장.
-    # lineage_2col (좌 4단 바 = 데이터, 우 3카드 = 도구) 로 렌더 — 확보한 슬롯엔
-    # insight_synthesis (인사이트 종합) 신설.
-    from outputs.architect.substitution_manifest import resolve_tech_stack as _rts
-
-    category = ctx.meta.category or "tabular_ml"
-    _stack = _rts(category)[:3]
-    body = [
-        f"규모 · {overview_items[0][1]}",
-        f"타겟 분포 · {target_summary}",
-        f"변수 타입 · {dtypes_summary}",
-        f"품질 · {quality_items[0][0]} ({quality_items[0][1]})",
-    ] + [f"{it.name} · {it.role}" for it in _stack]
-
+    # jh 2026-06-12 (3차 개편, 사용자 지시) — "이 PPT 를 *왜* 만들었나(분석 목적)
+    # + KPI 결과 + 분석 접근" 이 초반에 와야 한다. 데이터·도구는 S7(방법) 으로 이관.
+    # 구성: 상단 목적(왜) / 중단 Q1~Q3 / 하단 KPI 결과 한 줄.
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
-    sp = SlideSpec(
+    # jh 2026-06-12 — user_intent 원문 태그(분석방향:·주제:·방법론:·모델전략:) 제거 후
+    # 핵심만 (S6 목적이 원문 통째 + 잘림으로 나오던 결함).
+    intent = _strip_intent_tags(ctx.meta.user_intent or use_case, 40)
+    target = ctx.dataset.detected_target or "타겟"
+    pm = ctx.evaluation.primary_metric or {}
+    pm_name, pm_val = pm.get("name", "정확도"), pm.get("value")
+    verdict = (ctx.evaluation.verdict or "").lower()
+    _verdict_ko = {"adopt": "운영 도입 권장", "iterate": "보완 후 재평가", "reject": "도입 보류"}.get(verdict, "판정")
+    biz = ctx.meta.business_context or ""
+
+    # 목적 — "왜 이 분석인가". 간결·핵심. (카피라이터 12-3 톤은 S3, 여기는 분석 동기)
+    purpose = f"{intent} — {target}를 좌우하는 요인을 데이터로 규명하고 재현 가능한 모델로 검증한다"
+    if biz:
+        purpose = f"{biz}. {purpose}"
+
+    # Q박스 풍부화 — 질문 + 답(접근) + 왜 중요한가
+    _gi = list(ctx.interpretation.global_importance or [])
+    _top = getattr(_gi[0], "feature", "핵심 변수") if _gi else "핵심 변수"
+    questions = [
+        (
+            f"{target}을 가장 강하게 결정하는 변수는?",
+            f"EDA 집단 격차와 SHAP 전역 중요도로 규명 — 분석 결과 {_top}이 최상위 신호로 확인됨",
+        ),
+        (
+            "그 구조가 데이터에 실제로 재현되는가?",
+            "집단 간 격차·변수 상관·비선형 효과를 정량 확인 — 통계적 패턴이 우연이 아님을 검증",
+        ),
+        (
+            "모델은 어디서 약하고, 어떻게 보완하나?",
+            "개별 오류 사례·혼동행렬·세그먼트별 성능으로 취약 구간을 짚고 대응 방향 도출",
+        ),
+    ]
+    _pm_str = (f"{pm_val:.3f}" if isinstance(pm_val, float) and pm_val < 1 else str(pm_val)) if pm_val is not None else "—"
+    kpi_line = f"분석 결과 · {pm_name} {_pm_str} → {_verdict_ko}"
+
+    body = [purpose] + [f"{q} · {a}" for q, a in questions] + [kpi_line]
+
+    return SlideSpec(
         id="p1_market",
         section_id="problem",
-        layout="data_overview_quality_combined",
-        role="evidence",
-        so_what=f"{rows:,} 행 × {cols} 열 — {use_case} 분석에 충분한 규모, 표준 스택으로 전 과정 재현 가능",
-        title_ko="데이터 · 도구 — 개요와 스택",
-        body_outline=body[:7],
+        layout="background_questions",
+        role="claim",
+        so_what=f"왜 이 분석인가 — {target} 결정 요인 규명, {pm_name} {_pm_str} 로 {_verdict_ko}",
+        title_ko="분석 배경 — 목적과 핵심 질문",
+        body_outline=body[:5],
         parent_message_id="problem_root",
         visual_spec=VisualSpec(
-            type="v28_data_combined",
-            title="데이터 · 도구",
-            spec={
-                "overview_items": overview_items,
-                "quality_items": quality_items,
-                "stack_items": [(it.name, it.role) for it in _stack],
-            },
+            type="v32_background_questions",
+            title="분석 배경 · 목적",
+            spec={"purpose": purpose, "questions": questions, "kpi_line": kpi_line},
         ),
         speaker_notes_hint=(
-            "좌측: 데이터 규모/타겟/품질 — 우측: 표준 스택 3종. "
-            "S5+S6 병합으로 확보한 슬롯은 인사이트 종합 장에 사용."
+            "왜 이 분석인가(목적) — 상단. Q1~Q3 + 각 답 위치 — 중단. "
+            "KPI 결과·판정 — 하단. 데이터·도구는 S7(방법) 으로 이관."
         ),
     )
-    sp.preferred_template = "lineage_2col"
-    return sp
 
 
 def _build_pain_points(ctx: ReportContext) -> SlideSpec:
@@ -668,16 +696,25 @@ def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
     # body_outline — legacy carrier 호환 (5 단계 라벨)
     body = [f"단계 {i+1} · {s['label']}" for i, s in enumerate(steps)]
 
+    # jh 2026-06-12 — S6 에서 이관된 데이터·도구 한 줄 (사용자 지시: 방법 장에 흡수)
+    rows = ctx.dataset.shape.get("rows", 0)
+    cols = ctx.dataset.shape.get("cols", 0)
+    target = ctx.dataset.detected_target or "타겟"
+    from outputs.architect.substitution_manifest import resolve_tech_stack as _rts
+
+    _stack = _rts(ctx.meta.category or "tabular_ml")[:4]
+    _stack_names = " · ".join(it.name.split("/")[0].strip() for it in _stack)
+    data_tools_line = f"데이터 {rows:,}건 × {cols}변수 (타겟 {target}) · 도구 {_stack_names}"
+
     return SlideSpec(
         id="p3_alt_limits",
         section_id="limits",
         layout="method_flow_with_why",
         role="evidence",
         so_what=(
-            "5단계 분석 방법 — 각 단계의 *선택 이유* 와 *정량 결과* 를 함께 추적, "
-            "재현 가능성 + 의사결정 트레이스 보존"
+            "전처리부터 평가까지 5단계 — 각 단계의 선택 이유와 정량 결과를 함께 추적"
         ),
-        title_ko="분석 방법",
+        title_ko="분석 방법 — 5단계와 데이터·도구",
         body_outline=body[:5],
         parent_message_id="problem_root",
         visual_spec=VisualSpec(
@@ -686,6 +723,7 @@ def _build_alt_limits(ctx: ReportContext) -> SlideSpec:
             spec={
                 "steps": steps,
                 "whys": whys,
+                "data_tools_line": data_tools_line,
             },
         ),
         speaker_notes_hint=(
@@ -833,10 +871,24 @@ def _build_kpi_with_baseline(ctx: ReportContext) -> SlideSpec:
         f"({tone.accent})"
     )
 
-    return SlideSpec(
+    # jh 2026-06-12 — "점수 4개 다 69%" percentage_grid 결함:
+    # v28_model_perf 는 렌더러 미지원이라 디자이너가 정수 반올림 그리드를 고름.
+    # baseline 막대 + 다양한 메트릭(roc_auc·mcc 포함)을 hbar 차트로 직접 렌더 +
+    # 페어 인사이트 패널 고정 (chart_key_insights).
+    chart_items: list[tuple[str, float]] = []
+    for bar in bars:
+        v = bar.get("value")
+        if isinstance(v, (int, float)):
+            chart_items.append((str(bar.get("label", "?")), float(v)))
+    for name, m in list((ctx.evaluation.metrics or {}).items()):
+        val = m.get("value") if isinstance(m, dict) else None
+        if isinstance(val, (int, float)) and name != pm_name and len(chart_items) < 6:
+            chart_items.append((name, float(val)))
+
+    sp = SlideSpec(
         id="i1_kpi",
         section_id="results",
-        layout="model_perf_baseline_grouped",
+        layout="chart_callout",
         role="evidence",
         so_what=so_what,
         title_ko="모델 성능 · Baseline 비교",
@@ -844,9 +896,10 @@ def _build_kpi_with_baseline(ctx: ReportContext) -> SlideSpec:
         required_refs=primary_metric_ref(ctx),
         parent_message_id="results_root",
         visual_spec=VisualSpec(
-            type="v28_model_perf",
-            title=f"Baseline 비교 — {pm_name}",
+            type="chart_hbar",
+            title=f"성능 비교 — {pm_name} 외 주요 지표",
             spec={
+                "items": chart_items,
                 "metric": pm_name,
                 "metric_value": pm.get("value"),
                 "bars": bars,
@@ -861,6 +914,8 @@ def _build_kpi_with_baseline(ctx: ReportContext) -> SlideSpec:
             "metric_category_compatible=False 면 typed schema 경고 — fallback 변형 검토."
         ),
     )
+    sp.preferred_template = "chart_key_insights"
+    return sp
 
 
 def _build_eda_findings(ctx: ReportContext) -> SlideSpec:
@@ -1060,7 +1115,6 @@ def _build_insight_synthesis(ctx: ReportContext) -> SlideSpec:
     rows = ctx.dataset.shape.get("rows", 0)
     cols = ctx.dataset.shape.get("cols", 0)
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
     pm = ctx.evaluation.primary_metric or {}
     pm_str = _format_pm_value(pm)
 
@@ -1078,33 +1132,75 @@ def _build_insight_synthesis(ctx: ReportContext) -> SlideSpec:
     except Exception:
         pass
 
+    # body_outline — 카피라이터(규칙 12-3) 입력 골격. *현실 함의* 로 변환됨.
+    # 발견 수치를 재료로 담되, head 는 도메인 의미 방향으로.
     body = [
-        f"데이터 · {rows:,}건 × {cols}변수의 {use_case} — 패턴 학습에 충분한 표본",
-        f"패턴 · {top_feats} 가 결과를 좌우 — {chosen} 이 {pm_str} 로 포착{seg_line}",
-        "인사이트 · 결과를 결정한 구조적 요인이 데이터로 정량 입증됨 — 단순 룰로는 못 잡는 비선형·상호작용 포함",
-        "접목 · 동일 구조의 분류 과제에 즉시 이식 가능 — 운영 적용 + 취약 구간 보강 + 유사 데이터 확장 검증 순",
+        (
+            f"{use_case} 의 결과를 가른 본질적 요인 — {top_feats} 의 격차가 "
+            f"현실에서 의미하는 바를 해석"
+        ),
+        (
+            f"데이터가 입증한 구조·현상 — {seg_line.lstrip(', ') or '집단 간 뚜렷한 차이'} 가 "
+            "드러내는 정책·사회·행동 차원의 증거"
+        ),
+        (
+            "이 분석의 활용 가치 — 의사결정 근거·사회 구조 해석·유사 과제 확장"
+        ),
     ]
+
+    # jh 2026-06-12 — 제목은 예시 문구가 아니라 *실제 종합 결론* (사용자 지적).
+    # 구성도 데이터/패턴 균등 4열 대신 인사이트·접목 중심으로 재설계.
+    if gi:
+        _t1 = getattr(gi[0], "feature", "핵심 변수")
+        title_ko = f"{_t1} 등 상위 변수가 결과를 구조적으로 결정 — {pm_str} 로 정량 입증"
+    else:
+        title_ko = f"{use_case} — 구조적 결정 요인 정량 입증"
+
+    # jh 2026-06-12 — S3 는 모델 내부(SHAP·변수)가 아니라 *이 분석이 현실에서
+    # 무엇을 알려주는가*(도메인 함의) 가 핵심 (사용자 지적). skeleton 은 발견 재료를
+    # 골격으로 넘기고, 카피라이터(규칙 12-3)가 user_intent·도메인 보고 현실 함의로 변환.
+    industry = ctx.domain.inferred_industry or ""
+    domain_interp = getattr(ctx.domain, "inferred_interpretation", "") or ""
+    insights = [
+        (
+            f"{use_case} 의 결과를 가른 본질적 요인이 드러났다",
+            f"{top_feats} 의 격차가 핵심 — 이 패턴이 {industry or '해당 도메인'} 에서 의미하는 현실적 함의로 해석",
+        ),
+        (
+            "데이터가 입증한 구조·현상",
+            domain_interp or f"{seg_line.lstrip(', ') or '집단 간 뚜렷한 차이'} — 정책·사회·행동 차원의 증거",
+        ),
+    ]
+    applications = [
+        f"{industry or '현업'} 의사결정 — 분석 결과를 정책·운영 판단의 근거로",
+        "사회·구조 해석 — 발견된 패턴이 드러내는 불평등·행동 양식 등의 증명",
+        "유사 과제 확장 — 동일 구조의 분류 문제로 분석 틀 이식",
+    ]
+    evidence = f"근거 · {rows:,}건 × {cols}변수의 {use_case} — 타겟 완전, 표준 스택 재현 가능"
 
     sp = SlideSpec(
         id="insight_synthesis",
         section_id="results",
-        layout="icon_columns_4",
+        layout="insight_synthesis_panel",
         role="insight",
-        so_what="이 분석으로 무엇을 알 수 있고 어디까지 쓸 수 있는가 — 발견의 종합과 적용 범위",
-        title_ko="인사이트 종합 — 발견과 접목 범위",
+        so_what="이 발견이 의미하는 것과 적용 범위 — 인사이트 중심 종합",
+        title_ko=title_ko,
         body_outline=body,
         parent_message_id="results_root",
         visual_spec=VisualSpec(
             type="v32_insight_synthesis",
             title="인사이트 종합",
-            spec={"columns": body},
+            spec={
+                "insights": insights,
+                "applications": applications,
+                "evidence": evidence,
+            },
         ),
         speaker_notes_hint=(
-            "덱 전체의 '그래서?' 를 한 장으로 — 데이터가 말한 것(패턴), "
-            "그것이 의미하는 것(인사이트), 어디까지 쓸 수 있는지(접목)."
+            "덱 전체의 '그래서?' — 인사이트(좌 크게)와 접목 범위(우)가 주인공, "
+            "데이터·패턴은 하단 근거 한 줄로 격하."
         ),
     )
-    sp.preferred_template = "icon_columns"
     return sp
 
 
@@ -1200,16 +1296,61 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
     tone = _get_verdict_tone(ctx)
     title_ko = tone.s17_section_label or (variant.title_ko if variant else "정책 인사이트")
 
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
     pm = ctx.evaluation.primary_metric or {}
     pm_value = _format_pm_value(pm)
 
+    # jh 2026-06-12 — 도메인 행동 골격용 재료
+    use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
+    industry = ctx.domain.inferred_industry or "현업"
+    _gi = list(ctx.interpretation.global_importance or [])
+    top_feat = getattr(_gi[0], "feature", "핵심 변수") if _gi else "핵심 변수"
+
+    # jh 2026-06-12 — 운영 룰 캡션을 ctx 실데이터로 풍부하게 (사용자: 글 짧다·가독성↓)
+    _opt = None
+    try:
+        _m = (ctx.evaluation.metrics or {}).get("val_optimal_threshold") or {}
+        _opt = _m.get("value")
+    except Exception:
+        pass
+    _worst = ""
+    try:
+        _ss = sorted(
+            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+            key=lambda s: float(s["value"]),
+        )
+        if _ss:
+            _worst = f"{_ss[0].get('segment', '')}(정확도 {float(_ss[0]['value']):.2f})"
+    except Exception:
+        pass
+    _fn = 0
+    try:
+        _fn = int((ctx.evaluation.confusion_matrix or {}).get("fn") or 0)
+    except Exception:
+        pass
+    _thr_txt = f" 분류 임계값 {_opt:.3f}을 적용해" if isinstance(_opt, (int, float)) else ""
+
+    # jh 2026-06-12 — S17 을 ML 기술 운영(임계·drift) → *분석 결과의 현실 행동·정책*
+    # 으로 (사용자: S3 처럼 도메인 관점). skeleton 은 행동 골격 + 재료, 카피라이터(12-4)가
+    # user_intent·도메인 보고 구체 정책으로 변환.
     policy_items: list[tuple[str, str]] = []
     if (ctx.evaluation.verdict or "").lower() == "adopt":
         policy_items = [
-            ("운영 임계", ctx.evaluation.gate_rationale or f"{pm_value} 기반 임계 설정"),
-            ("모니터링", "drift score · 메트릭 alarm · 재학습 트리거"),
-            ("Owner", "모델 운영팀 — 월간 리뷰 · 분기별 재검증"),
+            (
+                "분석 결과의 현장 반영",
+                f"{top_feat} 등 핵심 발견을 {industry} 의 의사결정·정책 근거로 활용한다. "
+                f"{use_case} 에서 가장 영향이 큰 요인을 우선 관리 대상으로 삼는다.",
+            ),
+            (
+                "취약 지점 집중 대응",
+                (f"예측이 불안정한 {_worst} 구간을 현업에서 우선 점검하고 보완한다. " if _worst
+                 else "모델이 약한 구간을 현업에서 우선 점검·보완한다. ")
+                + (f"놓치면 손실이 큰 사례(미탐 {_fn}건)에 대응 절차를 마련한다." if _fn else ""),
+            ),
+            (
+                "지속 검증·갱신",
+                f"신규 데이터로 발견을 재확인하고 정기 재분석으로 정책을 갱신한다. "
+                f"기준 성능({pm_value}) 이탈 시 분석을 재실행해 판단 근거를 최신화한다.",
+            ),
         ]
     elif (ctx.evaluation.verdict or "").lower() == "iterate":
         policy_items = [
@@ -1235,7 +1376,9 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
     if biz_kpi:
         body.append(f"비즈니스 KPI · {getattr(biz_kpi, 'name', '')} {getattr(biz_kpi, 'estimated_value', '')} {getattr(biz_kpi, 'unit', '')}")
 
-    so_what = f"{chosen} 분석 결과 기반 운영 정책 — 판정: {ctx.evaluation.verdict or '미정'}"
+    so_what = f"{use_case} 분석 결과를 현실의 의사결정·정책으로 — 판정: {ctx.evaluation.verdict or '미정'}"
+    if (ctx.evaluation.verdict or "").lower() == "adopt":
+        title_ko = f"분석 결과 적용 — {industry} 행동 방향"
 
     return SlideSpec(
         id="i3_roi",
@@ -1391,37 +1534,108 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
     tone = _get_verdict_tone(ctx)
     verdict = (ctx.evaluation.verdict or "").lower() or "adopt"
 
-    # Phase 라벨을 verdict 별로 — 한 줄 패턴을 ' → ' 로 분해
-    raw_pattern = tone.s19_phase_pattern or "Phase 1 → Phase 2 → Phase 3"
-    phases = [p.strip() for p in raw_pattern.split("→") if p.strip()][:3]
+    # jh 2026-06-12 — 3단계 「기간 · 활동 · 게이트(성공기준) · 산출물」 4박자 구조
+    # (사용자: "뭘 할거다가 안 느껴진다" → 측정 가능한 게이트 + 구체 산출물).
+    pm = ctx.evaluation.primary_metric or {}
+    _v = pm.get("value")
+    _pm_str = (f"{_v:.3f}" if isinstance(_v, float) and _v < 1 else str(_v)) if _v is not None else "—"
+    _pm_name = pm.get("name", "정확도")
+    industry = ctx.domain.inferred_industry or "현업"
+    _gi = list(ctx.interpretation.global_importance or [])
+    top_feat = getattr(_gi[0], "feature", "핵심 발견") if _gi else "핵심 발견"
 
-    body: list[str] = []
-    for i, phase in enumerate(phases):
-        body.append(f"{i+1}. {phase}")
+    _worst = ""
+    try:
+        _ss = sorted(
+            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+            key=lambda s: float(s["value"]),
+        )
+        if _ss:
+            _worst = str(_ss[0].get("segment", ""))
+    except Exception:
+        pass
+    _fn = 0
+    try:
+        _fn = int((ctx.evaluation.confusion_matrix or {}).get("fn") or 0)
+    except Exception:
+        pass
+    _miss = ""
+    try:
+        mr = ctx.dataset.missing_rate or {}
+        _top = sorted(mr.items(), key=lambda kv: -float(kv[1]))[:1]
+        if _top and float(_top[0][1]) > 0.3:
+            _miss = _top[0][0]
+    except Exception:
+        pass
 
+    # jh 2026-06-12 — S19 를 ML 배포(파일럿·재학습) → *분석 결과의 현실 적용 로드맵*
+    # 으로 (사용자: S3 처럼 도메인 행동). 분석 발견을 현업 의사결정·정책에 단계적으로
+    # 반영하는 여정. 카피라이터(12-4)가 도메인 구체화.
     if verdict == "adopt":
-        body.extend([
-            "모니터링 KPI · drift score · primary_metric alarm",
-            "재학습 트리거 · 분기별 또는 drift > 0.1 시",
-        ])
+        phases = [
+            {
+                "period": "단기 · 0~30일",
+                "title": "시범 적용",
+                "action": (
+                    f"{top_feat} 등 핵심 발견을 {industry}의 의사결정에 시범 반영한다. "
+                    f"관련 부서와 분석 결과를 공유하고, 현장 적용 가능 범위를 함께 점검한다."
+                ),
+                "gate": f"시범 적용에서 분석 근거({_pm_name} {_pm_str})의 실효성이 확인되면 확대",
+                "output": "적용 가이드 + 초기 효과 보고서",
+            },
+            {
+                "period": "중기 · 30~90일",
+                "title": "적용 확대",
+                "action": (
+                    (f"예측이 약한 {_worst} 구간을 우선 보완하면서 " if _worst else "")
+                    + "적용 범위를 단계적으로 확대한다. "
+                    + "각 적용 지점에서 현장 효과를 정량 측정해 개선 폭을 추적한다."
+                ),
+                "gate": "측정된 개선 효과가 목표 수준에 도달하면 제도화 단계로 진입",
+                "output": "확대 적용 결과 + 효과 측정 리포트",
+            },
+            {
+                "period": "장기 · 90일~",
+                "title": "제도·시스템 내재화",
+                "action": (
+                    f"검증된 발견을 {industry}의 정책·매뉴얼에 내재화한다. "
+                    "정기 재분석 체계를 구축해 데이터가 갱신될 때마다 판단 근거를 최신화한다."
+                ),
+                "gate": "정기 갱신 체계가 안정적으로 운영되어 지속적 의사결정을 지원",
+                "output": "내재화된 정책 + 정기 재분석 체계",
+            },
+        ]
     elif verdict == "iterate":
-        body.extend([
-            "보강 측정 · 새로 적립된 데이터 규모 / 결측률 변화",
-            "재평가 기준 · 본 모델 대비 +5%p 이상 향상 시 도입 재고려",
-        ])
+        phases = [
+            {"period": "0~30일", "title": "데이터 보강", "action": "결측·표본 확대 수집",
+             "gate": "결측률 목표 이하 달성", "output": "보강 데이터셋"},
+            {"period": "30~60일", "title": "재학습", "action": "신규 피처로 재학습",
+             "gate": f"{_pm_name} +5%p 이상 향상", "output": "개선 모델"},
+            {"period": "60일~", "title": "재평가", "action": "본 모델 대비 비교 검증",
+             "gate": "도입 기준 충족 시 adopt 전환", "output": "도입 재판정 리포트"},
+        ]
     else:  # reject
-        body.extend([
-            "대안 후보 · 문제 재정의 후 새 모델 탐색",
-            "재학습 금지 · 현 데이터·정의로는 본 모델 폐기",
-        ])
+        phases = [
+            {"period": "0~30일", "title": "문제 재정의", "action": "타깃·범위 재설정",
+             "gate": "분석 가능성 재확인", "output": "재정의 문서"},
+            {"period": "30~90일", "title": "대안 탐색", "action": "대안 모델·접근 탐색",
+             "gate": "후보 성능 임계 통과", "output": "대안 후보군"},
+            {"period": "90일~", "title": "검증", "action": "신규 접근 검증",
+             "gate": "도입 기준 충족", "output": "검증 결과"},
+        ]
+
+    # jh 2026-06-13 — S3 처럼 카피라이터가 도메인 변환할 수 있게 body_outline =
+    # 각 단계 action 문장 (carrier 가 이 body 를 phases[i].action 으로 우선 사용).
+    # 카피라이터 규칙 12-4 가 이 줄들을 현실 행동/정책으로 다시 씀.
+    body = [str(p["action"]) for p in phases]
 
     return SlideSpec(
         id="roadmap",
         section_id="plan",
         layout="roadmap_phase_kpi",
         role="action",
-        so_what=f"실행 로드맵 — 판정({verdict}) 에 맞춰 단계 자동 분기",
-        title_ko="실행 로드맵",
+        so_what=f"분석 결과를 {industry} 현장에 단계적으로 적용 — 시범→확대→내재화",
+        title_ko="적용 로드맵 — 분석 결과를 현장에 반영하는 여정",
         body_outline=body[:5],
         parent_message_id="plan_root",
         visual_spec=VisualSpec(
@@ -1434,7 +1648,8 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
             },
         ),
         speaker_notes_hint=(
-            "Phase 는 verdict 에 따라 자동 변형. adopt 만 운영 KPI / iterate 는 보강 / reject 는 폐기 후 대안."
+            "3단계 「기간·활동·게이트·산출물」 — 각 단계는 측정 가능한 성공 기준(gate)을 "
+            "충족해야 다음으로. 고도화는 Phase 3 에 통합 (별도 카드 폐지)."
         ),
     )
 

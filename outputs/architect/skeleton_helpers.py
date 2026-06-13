@@ -227,7 +227,7 @@ def build_eda_slide_from_chart(
     )
     ref_id = getattr(chart, "ref_id", None)
 
-    return SlideSpec(
+    sp = SlideSpec(
         id=slide_id,
         section_id=section_id,
         layout=(variant.layout if variant else "chart_callout"),
@@ -254,6 +254,10 @@ def build_eda_slide_from_chart(
             "KEY INSIGHTS 는 callouts → numbers → finding 순서로 자동 채워짐."
         ),
     )
+    # jh 2026-06-12 — EDA 슬라이드는 차트+KEY INSIGHTS 고정 (LLM 디자이너가
+    # body 의 "74.2% vs 18.9%" 의 'vs' 를 보고 split_compare 로 가로채던 결함 차단).
+    sp.preferred_template = "chart_key_insights"
+    return sp
 
 
 def build_eda_placeholder(
@@ -386,13 +390,16 @@ def build_method_steps(ctx: ReportContext) -> list[dict[str, str]]:
     pp_steps = list(ctx.preprocessing.applied_steps or [])
     if pp_steps:
         steps.append({"label": f"전처리 ({len(pp_steps)}단계)", "kind": "preprocessing"})
+    # jh 2026-06-12 — created 리스트가 비고 개수(final_feature_count)만 적립되는
+    # 실제 파이프라인 케이스 폴백 (S7 단계 2 누락·번호 1·3·4 점프 결함)
     feats = list(ctx.features.created or [])
-    if feats:
-        steps.append({"label": f"신규 피처 {len(feats)}개", "kind": "feature"})
+    _n_feat = len(feats) or (ctx.features.final_feature_count or 0)
+    if _n_feat:
+        steps.append({"label": f"신규 피처 {_n_feat}개", "kind": "feature"})
     chosen_name = (ctx.model_selection.chosen or {}).get("name") or ""
     if chosen_name:
         steps.append({"label": f"모델 {chosen_name}", "kind": "model"})
-    if ctx.training.runs:
+    if ctx.training.runs or chosen_name:
         steps.append({"label": "학습 · 튜닝", "kind": "training"})
     if ctx.evaluation.primary_metric:
         steps.append({"label": "평가 · 검증", "kind": "evaluation"})
@@ -408,8 +415,13 @@ def build_method_steps(ctx: ReportContext) -> list[dict[str, str]]:
 
 
 def build_method_whys(ctx: ReportContext) -> list[dict[str, str]]:
-    """우측 WHY 카드 4개 — (header, what, why, result)."""
+    """우측 WHY 카드 — (header, what, why, result). 단계 번호는 동적(누락 방지)."""
     cards: list[dict[str, str]] = []
+    _step_no = [0]  # 동적 번호 — 누락된 단계가 있어도 1,2,3 연속
+
+    def _next() -> int:
+        _step_no[0] += 1
+        return _step_no[0]
 
     # ① 전처리
     for ps in (ctx.preprocessing.applied_steps or [])[:1]:
@@ -425,28 +437,29 @@ def build_method_whys(ctx: ReportContext) -> list[dict[str, str]]:
                 result = f"{key}: {before[key]} → {after[key]}"
                 break
         if not result:
-            result = "before / after 통계 적립 완료"
+            result = "결측 처리·인코딩 등 전처리 적용 완료"
         cards.append({
-            "header": f"단계 1 · {op}",
+            "header": f"단계 {_next()} · 전처리",
             "what": what,
             "why": rationale or "데이터 분포 보강 — 모델 학습 안정성 향상",
             "result": result,
         })
 
-    # ② 피처 엔지니어링
+    # ② 피처 엔지니어링 — created 비어도 final_feature_count 로 카드 생성
     feats = list(ctx.features.created or [])
-    if feats:
+    _n_feat = len(feats) or (ctx.features.final_feature_count or 0)
+    if _n_feat:
         top = feats[:3]
-        names = " · ".join(getattr(f, "name", "") or "" for f in top)
+        names = " · ".join(getattr(f, "name", "") or "" for f in top) if top else ""
         rationale = next(
             (getattr(f, "rationale", "") for f in top if getattr(f, "rationale", "")),
             "",
         )
         cards.append({
-            "header": f"단계 2 · 신규 피처 {len(feats)}개",
-            "what": names or f"피처 {len(feats)}개 추가",
-            "why": rationale or "비선형·상호작용 신호 포착 — 단일 변수로 못 잡는 패턴",
-            "result": f"최종 피처 수 {ctx.features.final_feature_count or len(feats)}",
+            "header": f"단계 {_next()} · 신규 피처 {_n_feat}개",
+            "what": names or f"파생·변환 피처 {_n_feat}개 생성",
+            "why": rationale or "비선형·상호작용 신호 포착 — 단일 변수로 못 잡는 패턴을 모델에 공급",
+            "result": f"최종 피처 수 {ctx.features.final_feature_count or _n_feat}개로 확장",
         })
 
     # ③ 모델 선정
@@ -465,7 +478,7 @@ def build_method_whys(ctx: ReportContext) -> list[dict[str, str]]:
             f"후보 {len(candidates)}개 비교 후 선택"
         )
         cards.append({
-            "header": "단계 3 · 모델 선정",
+            "header": f"단계 {_next()} · 모델 선정",
             "what": chosen_name,
             "why": justification or "후보 모델 비교 — 본 데이터 특성에 가장 적합",
             "result": result,
@@ -495,20 +508,13 @@ def build_method_whys(ctx: ReportContext) -> list[dict[str, str]]:
                 except (TypeError, ValueError):
                     pass
         cards.append({
-            "header": "단계 4 · 검증 방식",
+            "header": f"단계 {_next()} · 평가·검증",
             "what": split,
-            "why": "모델의 *추가 가치* 정량화 — Baseline 직접 비교로 향상폭 측정",
+            "why": "모델의 추가 가치 정량화 — Baseline 직접 비교로 향상폭 측정",
             "result": result or "Baseline 비교 완료",
         })
 
-    while len(cards) < 4:
-        i = len(cards) + 1
-        cards.append({
-            "header": f"단계 {i} · 추가 분석",
-            "what": "ctx 적립 후 채워짐",
-            "why": "분석 결과 기록 진행 중",
-            "result": "-",
-        })
+    # jh 2026-06-12 — placeholder 카드 제거 (실데이터 단계만 표시, "ctx 적립 후" 노출 방지)
     return cards[:4]
 
 
