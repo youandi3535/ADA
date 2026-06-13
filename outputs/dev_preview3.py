@@ -469,6 +469,7 @@ def _titanic_ctx():
                 )
             ],
             calibration={"ece": 0.034},
+            confusion_matrix={"tp": 280, "fp": 61, "fn": 98, "tn": 452},
         ),
         interpretation=Interpretation(
             global_importance=[
@@ -500,6 +501,7 @@ def _titanic_ctx():
                 LimitationItem(description="구명정 배정·승선 순서 등 시점 정보가 누락돼 시간 동학을 추적할 수 없다"),
                 LimitationItem(description="객실 정확 위치(갑판·구역)가 결측되어 물리적 구조 기회 차이를 정량화하지 못한다"),
             ],
+            revalidation_window="6개월",
         ),
         meta=Meta(
             category="tabular_ml",

@@ -1586,6 +1586,23 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
         if _cal_line:
             blocks.append(["확률 신뢰도(보정)", _cal_line])
 
+    # [로드맵3 혼동행렬룰] 오류 프로파일 — ctx.evaluation.confusion_matrix(조건부·분류만·없으면 스킵): 어디서 틀리나
+    _cm = (ev.confusion_matrix or {}) if ev else {}
+    if isinstance(_cm, dict) and _cm:
+        _fp = _cm.get("fp") or _cm.get("false_positive") or 0
+        _fn = _cm.get("fn") or _cm.get("false_negative") or 0
+        if _fp or _fn:
+            _tech_e = audience_register(ctx)["depth"] == "technical"
+            if _fn > _fp:
+                _cnt = f"(미탐 {_fn:,}건 > 오탐 {_fp:,}건)" if _tech_e else ""
+                _eline = f"오류는 주로 '놓침' 쪽이다{_cnt}. 놓침 비용이 크면 임계값을 낮춰 재현율을 높이는 운영을 권고한다."
+            elif _fp > _fn:
+                _cnt = f"(오탐 {_fp:,}건 > 미탐 {_fn:,}건)" if _tech_e else ""
+                _eline = f"오류는 주로 '헛경보' 쪽이다{_cnt}. 헛경보 비용이 크면 임계값을 높여 정밀도를 높이는 운영을 권고한다."
+            else:
+                _eline = "오류가 놓침과 헛경보에 비슷하게 분포한다. 비용 비대칭에 맞춰 임계값을 정한다."
+            blocks.append(["오류 프로파일", _eline])
+
     # 검증 성능 — [레지스터] 본문은 헤드라인(반올림)만, 전체 지표·95% 신뢰구간은 부록 9.1로 이관
     if metric_body:
         _n = (ctx.dataset.shape or {}).get("rows", 0)
@@ -1935,15 +1952,21 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
         seg_size = int(float(hi_s["size"]))
         seg_rate = float(hi_s.get("churn_rate", hi_s.get("rate")))
         who_sents.append(
-            f"가장 위험한 마이크로-세그먼트는 '{seg_nm}'다 — {seg_size:,}건 규모에 {_rate(event)} {seg_rate * 100:.1f}%."
+            f"가장 위험한 마이크로-세그먼트는 '{seg_nm}'({seg_size:,}건, {_rate(_adverse_noun(ctx))} {seg_rate * 100:.1f}%)."
         )
-    risk_txt = ""
+    # [로드맵4 세그먼트 드라이버] 코호트 동인 — 본문은 상위(고/저위험 대비)까지, 전체는 부록 9.1
+    _seg_notes = []
     for s in list(seg_drivers) + list(seg_insights):
-        risk_txt = _txt_from(s, ("insight", "driver", "note", "summary"))
-        if risk_txt:
-            break
-    if risk_txt:
-        who_sents.append(risk_txt.rstrip(".") + ".")
+        _t = _txt_from(s, ("insight", "driver", "note", "summary"))
+        if _t:
+            _seg_notes.append(_t.rstrip("."))
+    if structured and len(_seg_notes) > 1:
+        _seg_notes = _seg_notes[1:]  # 구조화 고위험 문장과 중복되는 첫 드라이버 제거 → 보완(저위험 등)만
+    if _seg_notes:
+        _ns = 1 if audience_register(ctx)["depth"] == "decision" else 2
+        who_sents.append(". ".join(_seg_notes[:_ns]) + ".")
+        if len(_seg_notes) > _ns:
+            who_sents.append("그 외 세그먼트 동인은 부록 9.1에 정리했다.")
     if who_sents:
         blocks.append(["누구에 집중하나 (추정)", " ".join(who_sents)])  # [C12]
 
@@ -2043,6 +2066,25 @@ def _build_appendix(ctx: ReportContext) -> list[SectionSpec]:
     _cal_a = (_ev_a.calibration or {}) if _ev_a else {}
     if isinstance(_cal_a, dict) and _cal_a.get("ece") is not None:
         repro_blocks.append(["확률 보정(ECE)", f"기대 보정 오차 ECE {_cal_a['ece']:.3f}. 0에 가까울수록 예측 확률이 실제 적중률과 일치하며(완벽 0), 통상 0.05 이하면 양호."])
+    # [로드맵3] 혼동행렬 상세 — 부록(정탐·오탐·미탐·정상기각 건수)
+    _cm_a = (_ev_a.confusion_matrix or {}) if _ev_a else {}
+    if isinstance(_cm_a, dict) and _cm_a:
+        _tp = _cm_a.get("tp") or _cm_a.get("true_positive") or 0
+        _fp2 = _cm_a.get("fp") or _cm_a.get("false_positive") or 0
+        _fn2 = _cm_a.get("fn") or _cm_a.get("false_negative") or 0
+        _tn = _cm_a.get("tn") or _cm_a.get("true_negative") or 0
+        if any((_tp, _fp2, _fn2, _tn)):
+            repro_blocks.append(["혼동행렬", f"정탐(TP) {_tp:,}, 오탐(FP) {_fp2:,}, 미탐(FN) {_fn2:,}, 정상기각(TN) {_tn:,}. (미탐=놓침, 오탐=헛경보; 검증셋 기준)"])
+    # [로드맵4] 세그먼트 동인 전체 — 부록(본문은 상위만, 전체 코호트 인사이트는 여기)
+    _sd_a = (ctx.interpretation.segment_drivers or []) if ctx.interpretation else []
+    if _sd_a:
+        _sd_lines = []
+        for _s in _sd_a:
+            _t = _txt_from(_s, ("insight", "driver", "note", "summary"))
+            if _t:
+                _sd_lines.append(_t.rstrip("."))
+        if _sd_lines:
+            repro_blocks.append(["세그먼트 동인", " / ".join(_sd_lines) + "."])
     sec_repro = make_section("appx_repro", "재현 정보", "appendix", [SlideSpec(
         id="appx_repro", section_id="appx_repro", layout="one_message", role="meta",
         so_what="동일 조건에서 본문 수치 재현", title_ko="재현 정보",
@@ -2227,7 +2269,10 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
     # 4) 운영 적용 — 모델·재학습·모니터링
     ops_sents: list[str] = []
     if has_model:
-        ops_sents.append(f"운영에는 '{chosen}' 모델을 {mdisp} 기준으로 적용하되, 분포 변화에 대응할 정기 재학습 주기(예: 분기)를 함께 둔다.")
+        # [로드맵5 재검증 주기] limitations.revalidation_window 실제 값 사용(없으면 폴백) — "예: 분기" 하드코딩 제거
+        _rev = (ctx.limitations.revalidation_window or "").strip() if ctx.limitations else ""
+        _rev_txt = f"{_rev} 재검증 주기" if _rev else "정기 재검증 주기"
+        ops_sents.append(f"운영에는 '{chosen}' 모델을 {mdisp} 기준으로 적용하되, 분포 변화에 대응할 {_rev_txt}를 함께 둔다.")
     elif chosen and chosen != "-":
         ops_sents.append(f"'{chosen}' 모델 후보를 우선 검증한 뒤 운영 적용 여부를 결정한다.")
     if drv:
