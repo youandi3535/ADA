@@ -684,7 +684,13 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     sl_flow.append(Paragraph(f"• {_nodash(b)}", bul))
                 has_img = False
                 vs = sl.visual_spec
-                if vs and (vs.type or "").startswith("table_"):
+                if vs and (vs.type or "") == "exhibit_kpi":
+                    # [B-Exhibit] 섹션 exhibit — Exec과 동일 _exhibit 박스로 통일(시각 일관성)
+                    _esp = vs.spec or {}
+                    if _esp.get("kpis"):
+                        sl_flow.append(Spacer(1, 0.3 * cm))
+                        sl_flow.append(_exhibit(_esp.get("num", ""), _esp.get("takeaway", ""), _esp["kpis"], _esp.get("unit", ""), _esp.get("source", ""), 17 * cm))
+                elif vs and (vs.type or "").startswith("table_"):
                     # 표는 이미지 대신 native reportlab Table — 선명·full-width·페이지 분할(헤더 반복)
                     _cols = list((vs.spec or {}).get("columns") or [])
                     _rows = list((vs.spec or {}).get("rows") or [])

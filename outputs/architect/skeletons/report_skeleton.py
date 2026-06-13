@@ -698,8 +698,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         bg_parts.append(bctx)
     else:
         bg_parts.append(f"'{target}' {verb}{_josa(verb, 'obj')} 수작업·경험에서 데이터 표준화로 전환할 필요가 분명하다.")
-    # 데이터 구성 + 결측 (압축형) + 규모 판단 (압축형)
-    bg_parts.append(f"분석 대상은 {where}{n_rows:,}건·{comp_txt}.")
+    # 규모 판단 (압축형) — 데이터 구성(변수 수)은 §1 exhibit·§2가 보유 → 배경에선 891 중복 제거
     bg_parts.append(sample_txt + ".")
     if is_anom:
         _stake = "옳게 잡으면 다운타임·품질 손실과 점검 부하를 줄이고, 놓치면 그 비용이 그대로 쌓인다."
@@ -724,7 +723,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     # ── 분석 목적 (과제가 아니라 성과로)
     objective = (
         f"정확한 '{target}' 판정을 자동화해 판정의 일관성과 속도를 확보하는 것이 목적이다. "
-        f"이를 위해 {comp_txt}로 '{target}'{_josa(target, 'obj')} {verb}하는 모델을 수립하고, 결과를 좌우하는 핵심 변수를 규명한다. "
+        f"이를 위해 입력 변수로 '{target}'{_josa(target, 'obj')} {verb}하는 모델을 수립하고, 결과를 좌우하는 핵심 변수를 규명한다. "
         "단순 기준 모델 대비 실질적 개선과 해석 가능성을 함께 확보해, 결과를 운영 의사결정에 바로 활용할 수 있게 한다."
     )
 
@@ -772,7 +771,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     sc_parts: list[str] = []
     # 1) 단순 추측 대비 — 도입 가치
     if naive is not None:
-        sc_parts.append(f"무엇보다 단순 추측(단순 모델 {_fv(naive)} 수준)보다 의미 있게 나아야 도입할 가치가 있다.")
+        sc_parts.append(f"무엇보다 단순 추측(단순 모델 {_fvb(naive)} 수준)보다 의미 있게 나아야 도입할 가치가 있다.")
     elif is_clf and maj is not None:
         sc_parts.append(f"무엇보다 '무조건 다수를 찍는' 추측({_pct(maj)})을 확실히 넘어서야 도입할 가치가 있다.")
     elif is_clf:
@@ -846,12 +845,31 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         + _stk_mid + ". "
         "데이터·MLOps가 모델 적재와 재학습·모니터링을 책임지며, 리스크·컴플라이언스가 공정성과 규제 적합성을 점검한다."
     )
+    # [B-Exhibit §1] 분석 프레임 exhibit — 빈 하단을 채우고 Exec과 동일 _exhibit 박스로 통일. 전부 ctx 출처.
+    _ex_cols = ["#3A6FE0", "#243B5C", "#8478C8"]
+    _ovw_kpis = [[f"{n_rows:,}건", "분석 표본", _ex_cols[0]], [f"{n_feat}개", "입력 변수", _ex_cols[1]]]
+    if is_clf and maj is not None:
+        _ovw_kpis.append([f"{maj * 100:.0f}%", "넘어야 할 단순추측", _ex_cols[2]])
+        _ovw_take = f"데이터는 준비됐다. 관건은 단순 추측({maj * 100:.0f}%)을 의미 있게 넘느냐다."
+        _ovw_unit = "기준: 다수 클래스 비율"
+    elif naive is not None:
+        _ovw_kpis.append([f"{_fvb(naive)}", "단순모델 문턱", _ex_cols[2]])
+        _ovw_take = f"데이터는 준비됐다. 관건은 단순 모델({_fvb(naive)})을 의미 있게 넘느냐다."
+        _ovw_unit = "기준: 단순 모델 점수"
+    else:
+        _ovw_take = f"이 표본·변수 구성이 '{target}' 판정에 충분한지가 도입의 첫 관문이다."
+        _ovw_unit = "기준: 표본·변수 구성"
+    _ovw_exhibit = VisualSpec(type="exhibit_kpi", spec={
+        "num": "2 · 분석 프레임", "takeaway": _ovw_take, "kpis": _ovw_kpis,
+        "unit": _ovw_unit, "source": "출처: ADA 분석",
+    })
+
     slide = SlideSpec(
         id="overview",
         section_id="overview",
         layout="one_message",
         role="claim",
-        so_what=f"무엇이 '{target}'{_josa(target, 'obj')} 좌우하는가, 그리고 그 신호가 단순 기준을 의미 있게 넘는가. 이 둘이 도입 가치를 가른다.",
+        so_what=f"'{target}'{_josa(target, 'obj')} 가르는 신호가 데이터에 실제로 있고, 그 신호가 단순 추측을 의미 있게 넘느냐. 둘 다 '예'가 아니면 이 모델은 운영에 올릴 이유가 없다.",
         title_ko=_head,
         prose_blocks=[
             # [C12 ConfidenceStamp룰] 추정만 (추정) 명시 · 확실은 기본(무표기)
@@ -866,6 +884,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
             ["", "이 도입 가치는 데이터가 이 질문에 답할 수 있을 때만 성립한다. 표본·변수·품질이 그걸 받쳐주는지를 다음 장에서 먼저 따진다."],
             # [70/30룰] 기대 효과는 §8 결론으로 이관 — §1 에서 결론 미리 노출 금지
         ],
+        visual_spec=_ovw_exhibit,
     )
     return make_section("overview", "분석 개요", "context", [slide])
 
@@ -952,8 +971,8 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
         _unit = _unit_for(c, ctx)
         _u = f" {_unit}" if _unit else ""
         key_bits.append(
-            f"{_lbl_c}{_josa(_lbl_c, 'subj')} {_fv(st.get('min'))}{_u}~{_fv(st.get('max'))}{_u} "
-            f"(평균 {_fv(st.get('mean'))}{_u}) 범위"
+            f"{_lbl_c}{_josa(_lbl_c, 'subj')} {_fvb(st.get('min'))}{_u}~{_fvb(st.get('max'))}{_u} "
+            f"(평균 {_fvb(st.get('mean'))}{_u}) 범위"
         )
     if high_card:
         key_bits.append(f"{', '.join(_feat_label(ctx, c) for c in high_card[:2])} 등 범주가 많은 변수는 인코딩 설계가 중요하다")
