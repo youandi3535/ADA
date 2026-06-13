@@ -1204,17 +1204,35 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     except Exception:
         pass
 
+    # jh 2026-06-12 — carrier 시점 실데이터로 룰 보강 (skeleton 시점엔 CM·세그먼트가
+    # 비어 골격이 짧은 폴백으로 굳음 — S17 내용 부족의 진짜 원인).
+    _gi = list(ctx.interpretation.global_importance or [])
+    _top_feat = getattr(_gi[0], "feature", "") if _gi else ""
+
     def _enrich(title: str, cap: str) -> str:
-        # jh 2026-06-12 — 길이 무관 항상 보강 (S17 인사이트 빈약 재지적)
-        if "임계" in title and isinstance(_pm_v, (int, float)):
-            extra = f" — {pm.get('name', '지표')} {_pm_v:.3f} 기준선, 하회 시 재학습 트리거"
+        t = title
+        # 도메인 행동 제목(18차)·기존 운영 제목 모두 매칭
+        if any(k in t for k in ("반영", "현장", "임계")):
+            ext = ""
+            if _top_feat:
+                ext += f" 특히 {_top_feat}이(가) 최우선 관리 대상이다."
+            if isinstance(_pm_v, (int, float)):
+                ext += f" 기준 성능 {pm.get('name', '지표')} {_pm_v:.3f}을 모니터링 기준선으로 둔다."
+            return cap + ext
+        if any(k in t for k in ("취약", "모니터링", "대응")):
+            ext = ""
+            if _worst_seg:
+                ext += f" 우선 점검 대상은 {_worst_seg} 구간이다."
+            if _fn:
+                ext += f" 놓치면 손실이 큰 미탐(FN) {_fn}건에 대한 대응 절차를 마련한다."
+            return cap + ext
+        if any(k in t for k in ("검증", "갱신", "지속", "KPI")):
+            ext = ""
             if isinstance(_opt_thr, (int, float)):
-                extra += f" · 분류 임계값 {_opt_thr:.3f} 적용"
-            return (cap or "운영 기준") + extra
-        if "모니터링" in title and _worst_seg:
-            return (cap or "상시 감시") + f" — 취약 구간 {_worst_seg} 집중 추적"
-        if "KPI" in title.upper() and _fn:
-            return (cap or "") + f" — 미탐(FN) {_fn}건 축소가 1차 목표"
+                ext += f" 분류 임계값 {_opt_thr:.3f} 조정으로 재현율 개선 여지를 점검한다."
+            if _fn:
+                ext += f" 미탐 {_fn}건 축소를 정기 갱신의 1차 목표로 삼는다."
+            return cap + ext
         return cap
 
     items = []
@@ -1263,13 +1281,24 @@ def t_roadmap_upgrades(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     spec = dict(getattr(vs, "spec", None) or {})
     raw = list(spec.get("phases") or [])
 
+    # jh 2026-06-12 — skeleton 시점에 global_importance 가 비어 action 이 "핵심 발견"
+    # 폴백으로 굳음 → carrier 시점 실제 top_feat 로 치환 (S19 내용 부족 보강)
+    _gi = list(ctx.interpretation.global_importance or [])
+    _top_feat = getattr(_gi[0], "feature", "") if _gi else ""
+
+    def _fix(txt: str) -> str:
+        if _top_feat:
+            txt = txt.replace("핵심 발견 등 핵심 발견", f"{_top_feat} 등 핵심 발견")
+            txt = txt.replace("핵심 발견 등", f"{_top_feat} 등")
+        return txt
+
     phases = []
     for i, p in enumerate(raw[:3]):
         if isinstance(p, dict) and (p.get("action") or p.get("gate")):
             phases.append({
                 "period": str(p.get("period", f"단계 {i + 1}")),
                 "title": str(p.get("title", "")),
-                "action": str(p.get("action", "")),
+                "action": _fix(str(p.get("action", ""))),
                 "gate": str(p.get("gate", "")),
                 "output": str(p.get("output", "")),
             })

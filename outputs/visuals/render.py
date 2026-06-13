@@ -138,8 +138,13 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
             return _render_risk_matrix(vs, ctx, primary, plt)
         # jh 2026-06-12 — CM 수치 기반 히트맵 (MinIO 차트 부재 시에도 S15 시각화 보장)
         # belt: 타입이 달라도 spec 에 confusion_matrix 수치가 있으면 무조건 그림
-        if vtype == "diagram_confusion_matrix" or (vs.spec or {}).get("confusion_matrix"):
-            _p = _render_cm_heatmap(vs, primary, plt)
+        _cm_ctx = {}
+        try:
+            _cm_ctx = ctx.evaluation.confusion_matrix or {}
+        except Exception:
+            _cm_ctx = {}
+        if vtype == "diagram_confusion_matrix" or (vs.spec or {}).get("confusion_matrix") or _cm_ctx:
+            _p = _render_cm_heatmap(vs, primary, plt, ctx)
             if _p:
                 return _p
         # jh 2026-06-12 — 세그먼트 성능 가로 막대 (skeleton 시점에 per_segment 가
@@ -178,13 +183,20 @@ def _tmp_png() -> str:
     return tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
 
 
-def _render_cm_heatmap(vs, primary: str, plt) -> Optional[str]:
+def _render_cm_heatmap(vs, primary: str, plt, ctx=None) -> Optional[str]:
     """Confusion Matrix 2x2 히트맵 — spec.confusion_matrix 의 tn/fp/fn/tp 수치로 직접 그림.
 
     jh 2026-06-12 — MinIO 차트 경로가 없을 때도 S15 가 시각자료 없이
     KEY INSIGHTS 만 남던 결함의 안전망. 수치만 있으면 항상 그려진다.
+    (v2) skeleton 빌드 시점엔 spec.confusion_matrix 가 빈 값으로 굳음 → carrier
+    시점 ctx.evaluation.confusion_matrix 폴백 (S15 무차트의 진짜 원인).
     """
     cm = (vs.spec or {}).get("confusion_matrix") or {}
+    if not cm and ctx is not None:
+        try:
+            cm = ctx.evaluation.confusion_matrix or {}
+        except Exception:
+            cm = {}
     try:
         tn = int(cm.get("tn") or cm.get("true_negative") or 0)
         fp = int(cm.get("fp") or cm.get("false_positive") or 0)

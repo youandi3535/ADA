@@ -3716,7 +3716,7 @@ def draw_background_brief(slide, purpose, questions, kpi_line, primary, accent, 
     add_rounded_rect(slide, 1.5, 4.5, SLIDE_W - 3.0, 2.4, primary)
     add_text_box(slide, 2.1, 4.75, SLIDE_W - 4.2, 0.7, "분석 목적 · WHY",
                  size_pt=12, bold=True, color_hex="#BFDBFE", align="left", vcenter=True)
-    add_text_box(slide, 2.1, 5.5, SLIDE_W - 4.2, 1.3, str(purpose)[:130],
+    add_text_box(slide, 2.1, 5.45, SLIDE_W - 4.2, 1.4, str(purpose)[:120],
                  size_pt=15, bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
 
     # 중단 — 질문 3 카드
@@ -3731,11 +3731,11 @@ def draw_background_brief(slide, purpose, questions, kpi_line, primary, accent, 
         add_oval(slide, x + 0.5, qy + 0.5, 1.4, 1.4, accent)
         add_text_box(slide, x + 0.5, qy + 0.5, 1.4, 1.4, f"Q{i + 1}",
                      size_pt=16, bold=True, color_hex="#FFFFFF", align="center", vcenter=True)
-        add_text_box(slide, x + 0.5, qy + 2.2, cw - 1.0, 2.4, str(q)[:60],
+        add_text_box(slide, x + 0.5, qy + 2.1, cw - 1.0, 1.6, str(q)[:60],
                      size_pt=15, bold=True, color_hex=ink, align="left", vcenter=False)
-        add_rect(slide, x + 0.5, qy + 4.5, cw - 1.0, 0.05, accent)
-        add_text_box(slide, x + 0.5, qy + 4.7, cw - 1.0, 1.3, f"→ {str(a)[:50]}",
-                     size_pt=12, color_hex=primary, align="left", vcenter=False)
+        add_rect(slide, x + 0.5, qy + 3.6, cw - 1.0, 0.05, accent)
+        add_text_box(slide, x + 0.5, qy + 3.8, cw - 1.0, qh - 4.0, f"→ {str(a)[:120]}",
+                     size_pt=12, color_hex=ink, align="left", vcenter=False)
 
     # 하단 — KPI 결과 스트립
     if kpi_line:

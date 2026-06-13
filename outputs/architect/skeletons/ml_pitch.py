@@ -525,6 +525,27 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
         ),
         speaker_notes_hint="가설 3개를 명확히 — 검증은 슬라이드 15 에서 1:1 대응.",
     )
+def _strip_intent_tags(raw: str, max_len: int = 40) -> str:
+    """user_intent 의 게이트 태그(분석 방향:·주제:·방법론:·모델 전략:) 제거 + 길이 제한.
+
+    jh 2026-06-12 — S6 분석 목적이 원문 통째로 들어가 잘리던 결함.
+    """
+    import re
+
+    s = (raw or "").strip()
+    if not s:
+        return "분석 과제"
+    m = re.match(r"^(?:분석 방향|주제|방법론|모델 전략)\s*:\s*(.+)$", s)
+    if m:
+        s = m.group(1).strip()
+    cut = re.search(r"\s*\((?:분석 방향|주제|방법론|모델 전략)\s*:", s)
+    if cut:
+        s = s[: cut.start()].strip()
+    if len(s) > max_len:
+        s = s[: max_len - 1].rstrip() + "…"
+    return s or "분석 과제"
+
+
 def _build_market_context(ctx: ReportContext) -> SlideSpec:
     """슬라이드 5 — 데이터 개요 + 품질 (통합).
 
@@ -559,7 +580,9 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     # + KPI 결과 + 분석 접근" 이 초반에 와야 한다. 데이터·도구는 S7(방법) 으로 이관.
     # 구성: 상단 목적(왜) / 중단 Q1~Q3 / 하단 KPI 결과 한 줄.
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
-    intent = (ctx.meta.user_intent or use_case).strip()
+    # jh 2026-06-12 — user_intent 원문 태그(분석방향:·주제:·방법론:·모델전략:) 제거 후
+    # 핵심만 (S6 목적이 원문 통째 + 잘림으로 나오던 결함).
+    intent = _strip_intent_tags(ctx.meta.user_intent or use_case, 40)
     target = ctx.dataset.detected_target or "타겟"
     pm = ctx.evaluation.primary_metric or {}
     pm_name, pm_val = pm.get("name", "정확도"), pm.get("value")
@@ -567,26 +590,26 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     _verdict_ko = {"adopt": "운영 도입 권장", "iterate": "보완 후 재평가", "reject": "도입 보류"}.get(verdict, "판정")
     biz = ctx.meta.business_context or ""
 
-    # 목적 — "왜 이 분석인가" (user_intent + 도메인). 영업 X, 분석 동기 O.
-    purpose = (
-        f"{intent} — {target} 를 좌우하는 요인을 데이터로 규명하고, "
-        f"재현 가능한 모델로 정량 검증하기 위한 분석"
-    )
+    # 목적 — "왜 이 분석인가". 간결·핵심. (카피라이터 12-3 톤은 S3, 여기는 분석 동기)
+    purpose = f"{intent} — {target}를 좌우하는 요인을 데이터로 규명하고 재현 가능한 모델로 검증한다"
     if biz:
-        purpose = f"{biz} — {purpose}"
+        purpose = f"{biz}. {purpose}"
 
+    # Q박스 풍부화 — 질문 + 답(접근) + 왜 중요한가
+    _gi = list(ctx.interpretation.global_importance or [])
+    _top = getattr(_gi[0], "feature", "핵심 변수") if _gi else "핵심 변수"
     questions = [
         (
-            f"{target} 을 가장 강하게 결정하는 변수는 무엇인가",
-            "EDA 격차 분석 + SHAP 전역 중요도 (S8~S13)",
+            f"{target}을 가장 강하게 결정하는 변수는?",
+            f"EDA 집단 격차 + SHAP 전역 중요도로 규명 — 분석 결과 {_top}이 최상위 신호로 확인됨 (S8·S13)",
         ),
         (
-            "그 구조가 데이터에 실제로 재현되는가",
-            "집단 격차·상관·비선형 효과 정량 확인 (S8~S11)",
+            "그 구조가 데이터에 실제로 재현되는가?",
+            "집단 간 격차·변수 상관·비선형 효과를 정량 확인 — 통계적 패턴이 우연이 아님을 검증 (S8~S11)",
         ),
         (
-            "모델은 어디서 약하고 운영에 어떻게 반영하나",
-            "사례·오류 집계·세그먼트 분해 (S14~S17)",
+            "모델은 어디서 약하고, 어떻게 보완하나?",
+            "개별 오류 사례·혼동행렬·세그먼트별 성능으로 취약 구간을 짚고 대응 방향 도출 (S14~S17)",
         ),
     ]
     _pm_str = (f"{pm_val:.3f}" if isinstance(pm_val, float) and pm_val < 1 else str(pm_val)) if pm_val is not None else "—"
