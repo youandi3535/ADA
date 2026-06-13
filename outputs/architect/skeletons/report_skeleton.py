@@ -665,9 +665,6 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         comp_txt = f"{n_feat}개 입력 변수"
 
     # 결측 / 표본 충분성 판단 — [5~6줄룰] 압축형 문장 (전체 background 5~6줄 보장)
-    missing = ds.missing_rate or {}
-    nz = [(c, r) for c, r in sorted(missing.items(), key=lambda kv: -kv[1])[:2] if r and r > 0]
-    miss_txt = ("결측은 " + ", ".join(f"{c} {_pct(r)}" for c, r in nz)) if nz else "결측 거의 없음"
     if n_rows and n_rows < 1000:
         sample_txt = f"{n_rows:,}건은 PoC·탐색에 충분, 운영 일반화엔 확대 필요"
     elif n_rows and n_rows < 10000:
@@ -705,7 +702,16 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         _stake = "정밀히 추정하면 가격·자원 배분의 손실을 줄이고, 틀리면 그 비용이 누적된다."
     else:
         _stake = "옳게 가려내면 한정된 자원을 가장 중요한 대상에 집중하고, 놓치면 그 비용을 현장과 대상이 떠안는다."
-    bg_parts.append("이 판단의 판돈은 작지 않다. " + _stake)  # [판돈] 의사결정 stake
+    # [판돈] 진짜 '돈/규모'(proj.retained=방어 매출)가 잡히는 데이터에서만 정량. 없으면 정성(가짜 수치 금지).
+    _proj = _scenario_projection(ctx)
+    if _proj and _proj.get("retained"):
+        _ev = _event_noun(ctx)
+        bg_parts.append(
+            f"이 판단의 판돈은 작지 않다. 연 약 {_proj['avoided']:,.0f}건의 {_ev} 감축과 "
+            f"매출 약 {round(_proj['retained'], -3):,.0f} 방어가 여기에 달려 있다."
+        )
+    else:
+        bg_parts.append("이 판단의 판돈은 작지 않다. " + _stake)  # 정성 폴백(titanic 등)
     background = " ".join(bg_parts)
 
     # ── 분석 목적 (과제가 아니라 성과로)
@@ -776,9 +782,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     elif is_reg:
         sc_parts.append("현업이 허용하는 오차 범위 안에 드는 비율로 실무 적합성을 가린다.")
     # 3) 안정성 (운영에 쓸 수 있는가) — 약어 없이
-    sc_parts.append("끝으로 한 번의 좋은 점수가 아니라, 시기·집단을 바꿔도 일관되게 유지되는지로 운영에 쓸 수 있는지 판단한다.")
-    # [풍부화] 안 하면의 비용(cost of inaction)
-    sc_parts.append("도입이 늦을수록 일관성 없는 기존 방식의 오류·지연 비용이 누적된다.")
+    sc_parts.append("끝으로 시기·집단을 바꿔도 성능이 유지돼야 운영에 쓸 수 있다.")
     # [C13 Falsifiability룰] 반증 조건 — 못 넘으면 도입 의미 없음
     sc_parts.append(
         "<br/>거꾸로, 입력 변수를 더 늘려도 개선이 +2%p 이내라면 현재 구성으로 충분하다는 뜻이며, "
@@ -808,8 +812,6 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         base_impact = f"정확한 '{target}' 판정을 자동화해 고위험·고우선 대상의 선별과 처리의 일관성·속도를 확보한다."
     impact_parts.append(base_impact)
     impact_parts.append("핵심 변수를 근거로 데이터 수집 우선순위와 프로세스 개선까지 후속 액션으로 연결한다.")
-
-    driving = _driving_question(_f, target)  # 핵펀치 — 진짜 알고 싶은 것 한 줄
 
     # [B9 Headline=Message] 헤드라인 = 의사결정 질문(모델링 질문 아님). 카테고리 분기.
     if not (n_feat and n_rows):

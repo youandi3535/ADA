@@ -219,6 +219,86 @@ def _fv(v):
     return str(v)
 
 
+def _draw_brand_A(c, x, y, h, color, lw):
+    """브랜드 'A' 심볼 — 얇은 획 피크(로고 마크). (x,y)=바운딩 좌하단, h=높이."""
+    w = h * 0.86
+    c.setStrokeColor(color)
+    c.setLineWidth(lw)
+    c.setLineCap(1)
+    c.setLineJoin(1)
+    c.line(x, y, x + w / 2, y + h)
+    c.line(x + w, y, x + w / 2, y + h)
+    t = 0.42  # 가로획 높이 비율
+    c.line(x + t * (w / 2), y + t * h, x + w - t * (w / 2), y + t * h)
+
+
+def _round_card(c, x, y, w, h, r, fill, stroke=None):
+    """둥근 모서리 카드 — fill(+옵션 stroke 테두리)."""
+    c.setFillColor(fill)
+    if stroke is not None:
+        c.setStrokeColor(stroke)
+        c.setLineWidth(1.2)
+        c.roundRect(x, y, w, h, r, stroke=1, fill=1)
+    else:
+        c.roundRect(x, y, w, h, r, stroke=0, fill=1)
+
+
+def _wrap_title(c, text, font, max_w):
+    """표지 제목 자동 맞춤 — 1줄(31→20pt)에 들어가면 1줄, 아니면 2줄(공백 중앙 분할, 28→14pt).
+
+    긴 제목이 우측 여백을 넘어 잘리는 것 방지(어떤 데이터든 일반화). 반환: (lines, size).
+    """
+    for sz in range(31, 19, -1):
+        if c.stringWidth(text, font, sz) <= max_w:
+            return [text], sz
+    sp = [i for i, ch in enumerate(text) if ch == " "]
+    if sp:
+        mid = len(text) / 2
+        cut = min(sp, key=lambda i: abs(i - mid))
+        l1, l2 = text[:cut].strip(), text[cut:].strip()
+    else:
+        cut = len(text) // 2
+        l1, l2 = text[:cut], text[cut:]
+    longer = l1 if c.stringWidth(l1, font, 50) >= c.stringWidth(l2, font, 50) else l2
+    for sz in range(28, 13, -1):
+        if c.stringWidth(longer, font, sz) <= max_w:
+            return [l1, l2], sz
+    return [l1, l2], 14
+
+
+def _brandize_png(png):
+    """[PDF 전용] 차트 강조색 #185FA5 → 브랜드 블루 #3A6FE0 재색칠.
+
+    render.py(공유·PPT 담당 팀원 영역)는 불변. carrier 가 받은 차트 PNG 만 PDF용으로 후처리한다.
+    흰 배경 블렌딩 알파를 보존해 가장자리(AA) 매끄럽게 재색칠. numpy/PIL 없거나 강조색 없으면
+    원본 그대로 반환(안전 — 실패해도 PDF 는 깨지지 않음).
+    """
+    if not png:
+        return png
+    try:
+        import tempfile
+
+        import numpy as np
+        from PIL import Image as _PIL
+
+        src = np.array((24, 95, 165))  # #185FA5 (render.py 강조 통일색)
+        dst = np.array((58, 111, 224), float)  # #3A6FE0 (사이트 브랜드 블루)
+        im = _PIL.open(png).convert("RGB")
+        a = np.asarray(im).astype(np.int16)
+        m = np.sqrt(((a - src) ** 2).sum(2)) < 70
+        if not m.any():
+            return png
+        al = ((255 - a).sum(2) / (255 * 3 - src.sum())).clip(0, 1)[..., None]  # 흰 배경 블렌딩 α 추정
+        rec = dst * al + 255 * (1 - al)
+        out = a.astype(float)
+        out[m] = rec[m]
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+        _PIL.fromarray(out.clip(0, 255).astype("uint8")).save(tmp)
+        return tmp
+    except Exception:
+        return png
+
+
 def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     try:
         from reportlab.lib import colors
@@ -239,35 +319,32 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     except Exception:
         return _fallback(plan, output_path)
     _reg()
-    from outputs.style.palette import get_palette, hex_to_rgb
     from outputs.visuals.render import render_visual_to_png
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    pal = get_palette(ctx.meta.category)
-    primary = colors.Color(*(c / 255 for c in hex_to_rgb(pal["primary"])))  # 표 헤더 배경 전용
+    primary = colors.HexColor("#243B5C")  # 표 헤더 배경 — 브랜드 네이비(통일, palette 비의존)
 
     # 글씨는 모두 검은색 — 표 헤더(파란 배경+흰 글씨)만 예외로 유지.
     black = colors.black
-    h1 = PS("H1", fontName=_KG, fontSize=22, leading=30, textColor=black, spaceBefore=14, spaceAfter=8)  # [B28] h1 22pt
+    h1 = PS("H1", fontName=_KG, fontSize=22, leading=30, textColor=colors.HexColor("#243B5C"), spaceBefore=14, spaceAfter=8)  # [B28] h1 22pt · 브랜드 네이비
     # h1_toc: h1 과 모양 동일하되 목차 페이지 추적 대상(afterFlowable 가 style.name 으로 식별)
-    h1_toc = PS("H1TOC", fontName=_KG, fontSize=22, leading=30, textColor=black, spaceBefore=14, spaceAfter=8)
-    h2 = PS("H2", fontName=_KG, fontSize=18, leading=26, textColor=black, spaceBefore=10, spaceAfter=6)  # [B28] h2 18pt
-    sw = PS("SW", fontName=_KG, fontSize=16, leading=23, textColor=colors.HexColor("#1E3A5F"), leftIndent=0)  # [B28][B29] sw 16pt 네이비
+    h1_toc = PS("H1TOC", fontName=_KG, fontSize=22, leading=30, textColor=colors.HexColor("#243B5C"), spaceBefore=14, spaceAfter=8)
+    h2 = PS("H2", fontName=_KG, fontSize=18, leading=26, textColor=colors.HexColor("#243B5C"), spaceBefore=10, spaceAfter=6)  # [B28] h2 18pt · 브랜드 네이비
+    sw = PS("SW", fontName=_KG, fontSize=16, leading=23, textColor=colors.HexColor("#243B5C"), leftIndent=0)  # [B28][B29] sw 16pt 네이비
     body = PS("B", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=8)  # [B28][B30] body 14pt+들여쓰기 8
     bul = PS("BL", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=14, firstLineIndent=-10)  # [B28] bul 14pt
     cap = PS("CP", fontName=_KS, fontSize=12, leading=16, textColor=black)  # [B28] cap 12pt
     toc_e = PS("TOCE", fontName=_KS, fontSize=14, leading=20, textColor=black)  # [B28] toc_e 14pt  # 목차 항목명
     toc_p = PS("TOCP", fontName=_KS, fontSize=12, leading=18, textColor=colors.HexColor("#475569"), alignment=TA_RIGHT)  # 목차 페이지(옅은 회색)
     # [목차룰] Executive Summary 강조 + TABLE OF CONTENTS 트래킹 라벨
-    toc_e_exec = PS("TOCEE", fontName=_KG, fontSize=13, leading=20, textColor=colors.HexColor("#1E3A5F"))  # Exec Summary 강조
-    toc_p_exec = PS("TOCPE", fontName=_KS, fontSize=13, leading=20, textColor=colors.HexColor("#1E3A5F"), alignment=TA_RIGHT)
+    toc_e_exec = PS("TOCEE", fontName=_KG, fontSize=13, leading=20, textColor=colors.HexColor("#243B5C"))  # Exec Summary 강조
+    toc_p_exec = PS("TOCPE", fontName=_KS, fontSize=13, leading=20, textColor=colors.HexColor("#243B5C"), alignment=TA_RIGHT)
     toc_sub_e = PS("TOCSE", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), leftIndent=16)  # 부록 하위
     toc_sub_p = PS("TOCSP", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), alignment=TA_RIGHT)
     toc_label = PS("TOCLbl", fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#94A3B8"))  # TABLE OF CONTENTS
 
-    # [B5 표지룰] ADA Studio 브랜드 표지 전용 스타일
-    # 카테고리 한글 매핑 (사이트 톤 통일)
+    # 카테고리 한글 매핑 (표지·사이트 톤 통일) — _draw_cover 에서 사용
     _CAT_KO = {
         "tabular_ml": "정형 ML",
         "tabular_dl": "정형 DL",
@@ -275,27 +352,43 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         "anomaly_detection": "이상 탐지",
         "anomaly": "이상 탐지",
     }
-    _NAVY = colors.HexColor("#1E3A5F")
-    _GRAY = colors.HexColor("#475569")
-    _GRAY_LT = colors.HexColor("#94A3B8")
-    _BLUE_PALE = colors.HexColor("#9CB4D0")
-    cover_brand = PS("CoverBrand", fontName="Helvetica-Bold", fontSize=28, leading=32, textColor=colors.white)
-    cover_brand_sub = PS("CoverBrandSub", fontName="Helvetica", fontSize=9, leading=12, textColor=_BLUE_PALE)
-    cover_class = PS("CoverCls", fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=colors.white, alignment=TA_RIGHT)
-    cover_label = PS("CoverLbl", fontName="Helvetica-Bold", fontSize=10, leading=14, textColor=_GRAY)
-    cover_title = PS("CoverTitle", fontName=_KG, fontSize=26, leading=34, textColor=_NAVY, spaceBefore=8, spaceAfter=6)  # [B28] 표지 26pt (2026-06-12 룰 기준 정정, 28→26)
-    cover_subtitle = PS("CoverSub", fontName=_KS, fontSize=14, leading=20, textColor=_GRAY)
-    cover_meta_key = PS("CoverK", fontName=_KG, fontSize=10, leading=14, textColor=_GRAY)
-    cover_meta_val = PS("CoverV", fontName=_KS, fontSize=11, leading=15, textColor=black)
-    cover_slogan = PS("CoverSlogan", fontName=_KS, fontSize=10, leading=14, textColor=_NAVY)
-    cover_big_num = PS("CoverBigNum", fontName="Helvetica-Bold", fontSize=36, leading=42, textColor=_NAVY, alignment=TA_RIGHT)
-    cover_big_lbl = PS("CoverBigLbl", fontName=_KG, fontSize=9, leading=12, textColor=_GRAY, alignment=TA_RIGHT)
-    cover_footer = PS("CoverFt", fontName="Helvetica", fontSize=8, leading=11, textColor=_GRAY_LT)
-    cover_domain = PS("CoverDom", fontName="Helvetica", fontSize=8, leading=11, textColor=_GRAY_LT, alignment=TA_RIGHT)
+    # NOTE(2026-06-12): 옛 플로어블 표지 스타일/상수(_NAVY·cover_* 13종) 제거 —
+    #   표지는 _draw_cover() 캔버스 단일 경로로 일원화(B5 표지룰). 색은 _BR_* 토큰만 사용.
 
     title_text = _clean_title(ctx.meta.user_intent)  # 비대/중복 intent 컷
     chosen = (ctx.model_selection.chosen or {}).get("name", "-")
     pm = ctx.evaluation.primary_metric or {}
+
+    # [브랜드 표지] 사이트(ada-aiagent.com) 브랜드 — 캔버스 표지 색·데이터 (전부 ctx 출처, 하드코딩 없음)
+    _BR_BG = colors.HexColor("#F4F6FB")
+    _BR_NAVY = colors.HexColor("#243B5C")
+    _BR_BLUE = colors.HexColor("#3A6FE0")
+    _BR_LAV = colors.HexColor("#8478C8")
+    _BR_PILL = colors.HexColor("#E7EEFB")
+    _BR_BLUEBG = colors.HexColor("#EAF1FD")
+    _BR_LAVBG = colors.HexColor("#ECEAFA")
+    _BR_BORDER = colors.HexColor("#E3E8F2")
+    _BR_DIV = colors.HexColor("#DCE3EF")
+    _BR_MUTE = colors.HexColor("#8A96A8")
+    _BR_SUB = colors.HexColor("#6B7891")
+    _BR_LINE = colors.HexColor("#EEF1F7")
+    try:
+        from outputs.architect.skeletons.report_skeleton import _human_dataset_name as _hdn
+
+        _cv_ds = _hdn(ctx)
+    except Exception:
+        _cv_ds = (ctx.dataset.dataset_name or "").strip() or "데이터셋"
+    _cv_shape = ctx.dataset.shape or {}
+    _cv_nrows = _cv_shape.get("rows", 0)
+    _cv_ncols = _cv_shape.get("cols")
+    _cv_subtitle = f"{_cv_ds} · {_cv_nrows:,}건" if (_cv_ds and _cv_nrows) else _cv_ds
+    _cv_cat = _CAT_KO.get(ctx.meta.category or "", ctx.meta.category or "-")
+    _cv_date = (ctx.meta.generated_at or "")[:10] or "-"
+    _cv_cls = (ctx.meta.classification or "INTERNAL").upper()
+    _cv_m1v = _fv(pm.get("value"))
+    _cv_m1l = _ko_metric(pm.get("name")) if pm.get("name") else "주지표"
+    _cv_m2v = f"{_cv_ncols:,}" if isinstance(_cv_ncols, int) and _cv_ncols else None
+    _cv_m2l = "데이터 변수"
 
     # 목차 항목 — 본문에 실제로 렌더되는 파트만 (Executive Summary + 번호 섹션)
     toc_entries = []
@@ -314,128 +407,15 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         시작 페이지를 순서대로 수집 → 2차에서 페이지 범위를 채운다.
         """
         flow = []
-        # ── 표지 [B5 표지룰] ADA Studio 브랜드 표지 — 사이트(ada-aiagent.com) 톤 일치
-        # 구성: (1) 네이비 헤더  (2) 보고서 종류 라벨  (3) 제목+데이터셋부제
-        #       (4) 회색 메타 박스 [카테고리/주 모델/표본/생성 | 큰 지표]
-        #       (5) 사이트 슬로건  (6) 푸터 (© + 도메인)
-        import datetime as _dt
-
-        # (1) 네이비 헤더 박스
-        _classification = (ctx.meta.classification or "PUBLIC").upper()
-        _header_left = [
-            Paragraph("ADA Studio", cover_brand),
-            Spacer(1, 0.1 * cm),
-            Paragraph("A D A P T I V E &nbsp;&nbsp; D A T A &nbsp;&nbsp; A N A L Y S T", cover_brand_sub),
-        ]
-        _header_right = Paragraph(_classification, cover_class)
-        _header = Table([[_header_left, _header_right]], colWidths=[12 * cm, 5 * cm], rowHeights=[2.8 * cm])
-        _header.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), _NAVY),
-            ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
-            ("VALIGN", (1, 0), (1, 0), "TOP"),
-            ("LEFTPADDING", (0, 0), (0, 0), 18),
-            ("RIGHTPADDING", (1, 0), (1, 0), 18),
-            ("TOPPADDING", (1, 0), (1, 0), 14),
-            ("BOX", (0, 0), (-1, -1), 0, _NAVY),
-            # 95점 push: 헤더 아래 미세한 진한 네이비 액센트 라인
-            ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#0F1E33")),
-        ]))
-        flow.append(_header)
-        flow.append(Spacer(1, 0.8 * cm))
-
-        # (2) 보고서 종류 라벨
-        flow.append(Paragraph("D A T A - D R I V E N &nbsp;&nbsp; I N S I G H T &nbsp;&nbsp; R E P O R T", cover_label))
-        flow.append(Spacer(1, 0.25 * cm))
-
-        # (3) 큰 제목 + 데이터셋 부제 (이름 · 표본 수)
-        flow.append(Paragraph(title_text, cover_title))
-        _ds_name = ""
-        try:
-            from outputs.architect.skeletons.report_skeleton import _human_dataset_name as _hdn
-            _ds_name = _hdn(ctx)
-        except Exception:
-            _ds_name = (ctx.dataset.dataset_name or "").strip() or "데이터셋"
-        # [표지룰 보강 2026-06-11] 기준 매치 — 부제 간결화 ("데이터셋명 · N건")
-        _shape = ctx.dataset.shape or {}
-        _n_rows = _shape.get("rows", 0)
-        _subtitle = f"{_ds_name} · {_n_rows:,}건" if (_ds_name and _n_rows) else _ds_name
-        flow.append(Paragraph(_subtitle, cover_subtitle))
-        flow.append(Spacer(1, 1.2 * cm))
-
-        # (4) 회색 메타 박스 — 좌: 카테고리/주 모델/표본/생성, 우: 큰 지표
-        _gen_date = (ctx.meta.generated_at or "")[:10]
-        _cat_ko = _CAT_KO.get(ctx.meta.category or "", ctx.meta.category or "-")
-        _meta_rows = [
-            [Paragraph("분석 카테고리", cover_meta_key), Paragraph(_cat_ko, cover_meta_val)],
-            [Paragraph("주 모델", cover_meta_key), Paragraph(str(chosen), cover_meta_val)],
-            [Paragraph("표본 수", cover_meta_key), Paragraph(f"{_n_rows:,}건" if _n_rows else "-", cover_meta_val)],
-            [Paragraph("생성", cover_meta_key), Paragraph(_gen_date or "-", cover_meta_val)],
-        ]
-        _meta_left = Table(_meta_rows, colWidths=[3.0 * cm, 6.5 * cm])
-        _meta_left.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]))
-        _metric_name = _ko_metric(pm.get("name")) if pm.get("name") else "지표"
-        _metric_val = _fv(pm.get("value"))
-        # 우측: 작은 네이비 사각 아이콘 (▣) + 큰 숫자 + 라벨
-        # [표지룰 보강 2026-06-11] 기준 매치 — 작은 파란 정사각 아이콘
-        _meta_right = [
-            Paragraph('<para alignment="right"><font color="#185FA5" size="14">■</font></para>', cover_big_lbl),
-            Spacer(1, 0.05 * cm),
-            Paragraph(_metric_val, cover_big_num),
-            Paragraph(_metric_name, cover_big_lbl),
-        ]
-        _meta = Table([[_meta_left, _meta_right]], colWidths=[10 * cm, 7 * cm])
-        _meta.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
-            ("LINEBEFORE", (0, 0), (0, -1), 3, _NAVY),  # 좌측 네이비 액센트 (브랜드 시각 신호)
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 20),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 20),
-            ("TOPPADDING", (0, 0), (-1, -1), 20),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 20),
-        ]))
-        flow.append(_meta)
-        flow.append(Spacer(1, 1.2 * cm))
-
-        # (5) 슬로건 — 사이트 메인 카피, 평문 (좌측 액센트 라인 없음 — 사용자 확정)
-        flow.append(Paragraph("다섯 번의 선택으로, 데이터를 전문가 수준 인사이트로", cover_slogan))
-
-        # [C3 독자페르소나룰] 독자·용도 한 줄 — 표지 명시 (§1 분석 개요와 동일 문장)
-        try:
-            from outputs.architect.skeletons.report_skeleton import _reader_persona as _rp
-            _persona_txt = _rp(ctx)
-        except Exception:
-            _persona_txt = ""
-        if _persona_txt:
-            flow.append(Spacer(1, 0.35 * cm))
-            flow.append(Paragraph(_persona_txt, cover_footer))
-
-        # (6) 푸터 (페이지 하단 푸시) — 위에 옅은 구분선
-        flow.append(Spacer(1, 3.0 * cm))
-        _year = _dt.datetime.now().year
-        _footer = Table([[
-            Paragraph(f"© {_year} ADA Studio · Adaptive Data Analyst", cover_footer),
-            Paragraph("ada-aiagent.com", cover_domain),
-        ]], colWidths=[10 * cm, 7 * cm])
-        _footer.setStyle(TableStyle([
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("LINEABOVE", (0, 0), (-1, 0), 0.4, colors.HexColor("#CBD5E1")),
-            ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ]))
-        flow.append(_footer)
+        # ── 표지: onFirstPage=_draw_cover 가 1페이지에 브랜드 캔버스 표지를 직접 드로잉.
+        #     여기선 페이지 1 예약용 PageBreak 만 — 목차/본문은 2페이지부터.
+        flow.append(PageBreak())
 
         # ── 목차 [B24 목차룰 보강 2026-06-11] 기준 매치
         # - 항목 ~ 페이지번호 사이 점선 (....) 채움 (3열 Table: 항목 | 점선 | 페이지)
         # - 9.x 부록 하위는 들여쓰기 + 옅은 회색 (toc_sub_e/toc_sub_p)
         # - 8번/9번 사이 본문↔부록 구분선 강화 (네이비 진한 LINEBELOW)
         if toc_entries:
-            flow.append(PageBreak())
             flow.append(Paragraph("목차", h1))
             flow.append(Paragraph("T A B L E &nbsp;&nbsp; O F &nbsp;&nbsp; C O N T E N T S", toc_label))
             flow.append(Spacer(1, 0.5 * cm))
@@ -471,7 +451,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             ]
             # 본문/부록 경계에 진한 네이비 LINEABOVE (시각 분리)
             if _split_idx > 0:
-                _ts.append(("LINEABOVE", (0, _split_idx), (-1, _split_idx), 1.0, colors.HexColor("#1E3A5F")))
+                _ts.append(("LINEABOVE", (0, _split_idx), (-1, _split_idx), 1.0, colors.HexColor("#243B5C")))
             tt.setStyle(TableStyle(_ts))
             flow.append(tt)
             flow.append(PageBreak())
@@ -601,6 +581,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                             png = _fetch_png((vs.spec or {}).get("path"))
                         else:
                             png = render_visual_to_png(vs, ctx, slide=sl)
+                            png = _brandize_png(png)  # [PDF 전용] 차트 강조색 #185FA5→브랜드 블루 #3A6FE0
                         if png:
                             from PIL import Image as PI
 
@@ -654,6 +635,113 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         canvas.drawRightString(A4[0] - 2 * cm, 1 * cm, f"p.{dc.page}")
         canvas.restoreState()
 
+    def _draw_cover(cnv, _doc):
+        """[B5 표지룰] ADA Studio 브랜드 표지 — onFirstPage 로 1페이지에 직접 드로잉(사이트 톤)."""
+        W, H = A4
+        M = 56.0
+        cnv.setFillColor(_BR_BG)
+        cnv.rect(0, 0, W, H, stroke=0, fill=1)
+        cnv.setStrokeColor(_BR_BORDER)
+        cnv.setLineWidth(1)
+        cnv.rect(0.5, 0.5, W - 1, H - 1, stroke=1, fill=0)
+        # (1) 로고 락업 — A 심볼 + "ada studio"(ada 네이비 / studio 블루)
+        _draw_brand_A(cnv, M, H - 78, 24, _BR_NAVY, 2.4)
+        cnv.setFont(_KG, 19)
+        cnv.setFillColor(_BR_NAVY)
+        _tx, _ty = M + 30, H - 74
+        cnv.drawString(_tx, _ty, "ada ")
+        _wa = cnv.stringWidth("ada ", _KG, 19)
+        cnv.setFillColor(_BR_BLUE)
+        cnv.drawString(_tx + _wa, _ty, "studio")
+        # 태그라인 pill
+        _px = _tx + _wa + cnv.stringWidth("studio", _KG, 19) + 14
+        _pw = 128
+        _round_card(cnv, _px, H - 78, _pw, 20, 10, _BR_PILL)
+        cnv.setFont(_KS, 9.5)
+        cnv.setFillColor(_BR_BLUE)
+        cnv.drawCentredString(_px + _pw / 2, H - 71, "AI 데이터 분석 에이전트")
+        # 분류 (우상단)
+        cnv.setFont(_KG, 9.5)
+        cnv.setFillColor(_BR_NAVY)
+        cnv.drawRightString(W - M, H - 72, _cv_cls)
+        # 구분선
+        cnv.setStrokeColor(_BR_DIV)
+        cnv.setLineWidth(1.1)
+        cnv.line(M, H - 96, W - M, H - 96)
+        # (2)(3) 보고서 종류 라벨 + 제목 + 데이터셋 부제
+        cnv.setFont(_KS, 11)
+        cnv.setFillColor(_BR_MUTE)
+        cnv.drawString(M, H - 250, "데 이 터   분 석   종 합   보 고 서")
+        # 제목 — 길면 자동 축소/2줄(우측 여백 넘침 방지)
+        _tlines, _tsz = _wrap_title(cnv, title_text, _KG, W - 2 * M)
+        cnv.setFont(_KG, _tsz)
+        cnv.setFillColor(_BR_NAVY)
+        _ty0 = H - 296
+        _lh = _tsz * 1.16
+        for _i, _ln in enumerate(_tlines):
+            cnv.drawString(M, _ty0 - _i * _lh, _ln)
+        cnv.setFont(_KS, 14)
+        cnv.setFillColor(_BR_SUB)
+        cnv.drawString(M, _ty0 - len(_tlines) * _lh - 4, _cv_subtitle)
+        # (4) 흰색 메타 카드 — 카테고리/주 모델/표본/생성
+        _mc_y, _mc_h = H - 472, 130
+        _round_card(cnv, M, _mc_y, W - 2 * M, _mc_h, 14, colors.white, _BR_BORDER)
+        _rows = [
+            ("분석 카테고리", str(_cv_cat)),
+            ("주 모델", str(chosen)),
+            ("표본 수", f"{_cv_nrows:,}건" if _cv_nrows else "-"),
+            ("생성", _cv_date),
+        ]
+        _ry = _mc_y + _mc_h - 30
+        for _k, _v in _rows:
+            cnv.setFont(_KS, 12.5)
+            cnv.setFillColor(_BR_MUTE)
+            cnv.drawString(M + 22, _ry, _k)
+            cnv.setFont(_KG, 12.5)
+            cnv.setFillColor(_BR_NAVY)
+            cnv.drawRightString(W - M - 22, _ry, _v)
+            if _k != "생성":
+                cnv.setStrokeColor(_BR_LINE)
+                cnv.setLineWidth(0.8)
+                cnv.line(M + 22, _ry - 12, W - M - 22, _ry - 12)
+            _ry -= 29
+        # (5) KEY 지표 카드 — 좌(블루) 주지표 / 우(라벤더) 변수 수. 변수 없으면 주지표 full-width.
+        _ky, _kh, _gap = H - 572, 84, 14
+        if _cv_m2v:
+            _kw = (W - 2 * M - _gap) / 2
+            _round_card(cnv, M, _ky, _kw, _kh, 14, _BR_BLUEBG)
+            cnv.setFont(_KG, 33)
+            cnv.setFillColor(_BR_BLUE)
+            cnv.drawString(M + 22, _ky + 34, _cv_m1v)
+            cnv.setFont(_KS, 12.5)
+            cnv.setFillColor(_BR_SUB)
+            cnv.drawString(M + 22, _ky + 15, _cv_m1l)
+            _round_card(cnv, M + _kw + _gap, _ky, _kw, _kh, 14, _BR_LAVBG)
+            cnv.setFont(_KG, 33)
+            cnv.setFillColor(_BR_LAV)
+            cnv.drawString(M + _kw + _gap + 22, _ky + 34, _cv_m2v)
+            cnv.setFont(_KS, 12.5)
+            cnv.setFillColor(_BR_SUB)
+            cnv.drawString(M + _kw + _gap + 22, _ky + 15, _cv_m2l)
+        else:
+            _round_card(cnv, M, _ky, W - 2 * M, _kh, 14, _BR_BLUEBG)
+            cnv.setFont(_KG, 33)
+            cnv.setFillColor(_BR_BLUE)
+            cnv.drawString(M + 22, _ky + 34, _cv_m1v)
+            cnv.setFont(_KS, 12.5)
+            cnv.setFillColor(_BR_SUB)
+            cnv.drawString(M + 22, _ky + 15, _cv_m1l)
+        # (6) 푸터 — 도메인 + 라벨
+        cnv.setStrokeColor(_BR_DIV)
+        cnv.setLineWidth(1.1)
+        cnv.line(M, 108, W - M, 108)
+        cnv.setFont(_KG, 11.5)
+        cnv.setFillColor(_BR_BLUE)
+        cnv.drawString(M, 88, "ada-aiagent.com")
+        cnv.setFont(_KS, 10.5)
+        cnv.setFillColor(_BR_MUTE)
+        cnv.drawRightString(W - M, 88, "DATA-DRIVEN INSIGHT REPORT")
+
     class _TrackDoc(SimpleDocTemplate):
         """afterFlowable 로 'H1TOC' 헤딩의 시작 페이지를 순서대로 수집."""
 
@@ -674,7 +762,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     _tmp = _tf.NamedTemporaryFile(suffix=".pdf", delete=False).name
     try:
         d1 = _mk(_tmp)
-        d1.build(_build_story(None), onFirstPage=_foot, onLaterPages=_foot)
+        d1.build(_build_story(None), onFirstPage=_draw_cover, onLaterPages=_foot)
         pages, total = list(d1.toc_pages), d1.page
     except Exception:
         pages, total = [], 0
@@ -697,7 +785,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
 
     # ── 2차: 실제 페이지 범위 채워 최종 렌더
     doc = _mk(out)
-    doc.build(_build_story(toc_render), onFirstPage=_foot, onLaterPages=_foot)
+    doc.build(_build_story(toc_render), onFirstPage=_draw_cover, onLaterPages=_foot)
     return str(out)
 
 
