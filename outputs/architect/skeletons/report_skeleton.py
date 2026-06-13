@@ -1089,28 +1089,20 @@ def _chart_3step_caption(items, n_rows, event, baseline_rate=None, kind="rate"):
             "<b>시사</b> 스케일·구간화·이상치 처리(4장)로 보완한다."
         )
 
-    # kind == "rate" : 타깃 발생률 by 세그먼트
+    # kind == "rate" : 타깃 발생률 by 세그먼트 — 관찰+의미만 (벤치마크는 §5, '우선 개입'은 종합서 1회·트레일러 제거)
     hp_items = [(n, _as_pct(v)) for n, v in vals]
-    hp_name, hp = max(hp_items, key=lambda x: x[1])
-    lp_name, lp = min(hp_items, key=lambda x: x[1])
+    pcts = [p for _, p in hp_items]
+    hp, lp = (max(pcts), min(pcts)) if pcts else (0.0, 0.0)
     obs_pts = ", ".join(f"{n} {p:.1f}%" for n, p in hp_items[:4])
     gap = hp - lp
     ratio = (hp / lp) if lp > 0 else 0.0
-    bench_txt = ""
-    if baseline_rate is not None and 0 < baseline_rate < 1:
-        _bv = baseline_rate * 100.0
-        _gap = max(hp - _bv, 0.0)
-        bench_txt = f" <b>벤치마크</b> 단순 룰(다수 추측) {_bv:.1f}% 대비 최고 {hp:.1f}% (+{_gap:.1f}%p)."
     if ratio >= 5:
         meaning = f"<b>의미</b> 최고·최저 {ratio:.1f}배 격차 — {event} 결정의 1차 변수."
     elif ratio >= 2 or gap >= 10:
         meaning = f"<b>의미</b> 집단 간 {gap:.1f}%p 격차 — 결과를 가르는 핵심 동인."
     else:
         meaning = "<b>의미</b> 단독 결정성은 제한적, 타 동인과의 상호작용 분석 필요."
-    return (
-        f"<b>관찰</b> {_rate(event)} {obs_pts}.{n_txt} {meaning}{bench_txt} "
-        f"<b>시사</b> {hp_name} 집단을 우선 대상으로 한 개입이 가장 큰 {event} 레버 (6·7장에서 정량)."
-    )
+    return f"<b>관찰</b> {_rate(event)} {obs_pts}.{n_txt} {meaning}"
 
 
 def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
@@ -1190,39 +1182,39 @@ def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
                 syn.append(f"{nm} 결과 {res}로 통계적으로 유의했다.")
     if syn:
         syn.append("이 발견들이 핵심 인사이트에서 정량적 개입 레버로 이어진다.")
+        # [§3 종합 capstone] 동인별 격차 랭킹 = '무엇이 가장 크게 가르나'를 한 그림으로 (연결: eda.charts numbers)
+        _driver_gaps = []
+        for _ch in charts[:_MAX_EDA_SLIDES]:
+            _nv = [_as_pct(d.get("value", 0)) for d in (getattr(_ch, "numbers", None) or []) if isinstance(d, dict)]
+            if len(_nv) >= 2:
+                _dt = getattr(_ch, "title_ko", "") or ""
+                _driver_gaps.append((_dt, round(max(_nv) - min(_nv), 1)))
+        _driver_gaps.sort(key=lambda kv: -kv[1])
+        _syn_vis = (
+            VisualSpec(type="chart_hbar", title="동인별 격차 (%p)", spec={"items": _driver_gaps},
+                       caption="격차가 큰 동인일수록 우선 개입의 지렛대가 크다 — 위에서부터 자원 배분.")
+            if len(_driver_gaps) >= 2 else None
+        )
         slides.append(
             SlideSpec(
                 id="eda_findings",
                 section_id="eda",
                 layout="one_message",
                 role="claim",
-                so_what="탐색이 가리키는 한 방향",
+                so_what="탐색이 가리키는 한 방향 — 격차가 큰 동인이 곧 개입 우선순위다.",
                 title_ko=f"{len(slides) + 1}) 주요 발견 종합",
-                # [B6 EDA페이지룰] 발견 종합 + 비즈니스 의미 — 의사결정자 연결
-                # [C10 SoWhat] 차트만 늘어놓고 끝내지 않음 — "그래서 뭐?" 답을 카드로
+                # [B6 EDA페이지룰] 발견 종합 + 비즈니스 의미 + 동인 랭킹 exhibit (의사결정 70%)
+                # 산문은 패턴·유의성만 — 격차 수치는 exhibit가 보여줌(반복 금지). 행동계획·한계는 §7(중복 제거).
                 prose_blocks=[
                     ["발견 종합", " ".join(syn)],
                     [
                         "비즈니스 의미",
-                        "<b>표적 개입:</b> 상위 위험군 표적 처리로 전체 발생률 감축 + 운영 비용 절감.<br/>"
-                        "<b>매출 방어:</b> 고가치 세그먼트 우선 보호로 매출 손실 방어 여지.<br/>"
-                        "<b>KPI 가시성:</b> 운영 결과 정량 추적으로 경영진 KPI 보고 정교화."
-                    ],
-                    [
-                        "다음 행동 (Owner · Date)",
-                        # [C6 Action_OwnerDate룰] 누가·언제까지 명시
-                        "<b>도입 권고:</b> 모델팀 — 분기 게이트 통과 시 5% 파일럿 가동 (~Q+1)<br/>"
-                        "<b>의사결정 결재:</b> 운영팀장/사업부장 — 1단계 결재 (~2주)<br/>"
-                        "<b>모니터링 정례화:</b> 데이터팀 — 월간 운영 KPI 추적 (운영 후 30일 내 시작)"
-                    ],
-                    [
-                        "한계 · 카운터내러티브",
-                        # [C7 CounterNarrative룰] 가장 강한 반대 논거 + 반박
-                        "<b>표본 한계:</b> 단일 데이터셋·제한된 기간이라 시대·상황 외삽에 한계가 있어, 결정 신뢰구간에 보수적 마진을 권고한다.<br/>"
-                        "<b>반대 논거:</b> '단일 데이터로 일반화 불가'라는 반론이 있으나, 핵심 변수의 효과가 다른 기간·유사 사례에서도 재현되면 발견의 안정성은 확보된다.<br/>"
-                        "<b>외부 검증:</b> 운영 1·3·6개월 시점에 동일 변수의 영향력을 재확인하고, 임계 이탈 시 재학습한다."
+                        "<b>표적 개입:</b> 격차가 가장 큰 집단에 자원을 집중해 결과를 효율적으로 개선한다.<br/>"
+                        "<b>우선순위:</b> 동인별 격차 순서가 곧 개입 우선순위 — 한정 자원의 효과를 극대화한다.<br/>"
+                        "<b>KPI 가시성:</b> 개입 효과를 정량 추적해 경영진 KPI 보고를 정교화한다."
                     ],
                 ],
+                visual_spec=_syn_vis,
             )
         )
 
