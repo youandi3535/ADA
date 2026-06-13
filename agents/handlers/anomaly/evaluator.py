@@ -370,10 +370,25 @@ def evaluate(state: Any) -> dict[str, Any]:
         best_f1_threshold = float(best_row["threshold"])
 
     if has_y and auc is not None:
-        passed = bool(auc >= AUC_PASS_THRESHOLD)
+        auc_ok = bool(auc >= AUC_PASS_THRESHOLD)
+        # ★ HJ 2026-06-13 — 극단 불균형(희귀 이상)에서 ROC-AUC 는 낙관적 → 이미 계산된
+        #   PR-AUC 가 무작위 기준선(= 양성 base rate)을 유의하게 넘는지 보조 확인.
+        #   PR-AUC 의 무작위값은 base rate 이므로, base rate × 1.5 미만이면 랭킹력이
+        #   사실상 무작위 → 통과 취소. pr_auc/base_rate 둘 다 있고 희귀(base_rate<0.2)
+        #   일 때만 적용(보수적 — 균형 데이터엔 영향 없음).
+        pr_ok = True
+        try:
+            base_rate = float(np.mean(np.asarray(y_eval, dtype=float)))
+        except Exception:  # noqa: BLE001
+            base_rate = 0.0
+        if pr_auc is not None and 0.0 < base_rate < 0.2:
+            pr_ok = bool(pr_auc >= base_rate * 1.5)
+        passed = bool(auc_ok and pr_ok)
         rationale = f"AUC={auc:.3f} (임계 {AUC_PASS_THRESHOLD:.2f})"
         if pr_auc is not None:
             rationale += f", PR-AUC={pr_auc:.3f}"
+            if not pr_ok:
+                rationale += f" (PR-AUC < base rate {base_rate:.3f}×1.5 — 희귀 이상 랭킹력 무작위 수준)"
     else:
         passed = True
         rationale = "y_true 부재 — 비지도 평가 (메트릭 None)"

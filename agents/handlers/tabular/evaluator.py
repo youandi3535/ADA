@@ -309,10 +309,72 @@ def _check_violations(metrics: dict, thr: dict) -> list[str]:
     return violations
 
 
+# HJ 2026-06-13 — 데이터 인지형(adaptive) 임계. 단일 고정값(THRESHOLDS_BY_CAT)의 한계
+#   (균형 이진엔 0.55≈랜덤, 불균형엔 weighted-F1 이 다수 클래스로 부풀려 무의미)를 보완.
+_RANDOM_MARGIN = 0.15  # 무작위/기준선 위로 요구하는 절대 마진
+_IMBALANCE_SWITCH = 1.5  # class_imbalance_ratio 이상이면 weighted-F1 → ROC-AUC 로 전환
+
+
+def _is_regression(state: Any, metrics: dict) -> bool:
+    """회귀 여부 — metrics 우선(val_r2 만 있고 val_f1 없음), 없으면 task 추정."""
+    if "val_r2" in metrics and "val_f1" not in metrics:
+        return True
+    return _resolve_task_for_cv(state) == "regression"
+
+
+def _n_classes(state: Any, metrics: dict) -> int:
+    """클래스 수 — class_distribution → val_f1_per_class → 이진 가정 순 폴백."""
+    prof = getattr(state, "data_profile", None) or {}
+    cd = prof.get("class_distribution")
+    if isinstance(cd, dict) and cd:
+        return max(2, len(cd))
+    pc = metrics.get("val_f1_per_class")
+    if isinstance(pc, dict) and pc:
+        return max(2, len(pc))
+    return 2
+
+
+def resolve_thresholds(state: Any) -> tuple[dict[str, float], str]:
+    """데이터 특성(task/클래스수/불균형)에 맞춰 (지표→임계, 한국어 근거) 동적 결정.
+
+    - 회귀: R² 는 분산정규화(0=평균예측)라 데이터-불변 고정 바닥이 정당.
+    - 분류(불균형 ratio≥1.5): weighted-F1 은 다수 클래스가 점수를 부풀리므로
+      ROC-AUC(무작위 0.5 기준, 불균형 강건)로 게이트 전환. AUC 미제공(proba 없음)
+      시 weighted-F1 로 폴백(공허 통과 방지).
+    - 분류(균형/경미): weighted-F1≈macro-F1. 무작위 F1≈1/n_classes + 마진.
+      클래스 많을수록(어려울수록) 자동 완화.
+    """
+    cat = state.category
+    metrics = (state.best_model or {}).get("metrics") or {}
+    profile = getattr(state, "data_profile", None) or {}
+    base = THRESHOLDS_BY_CAT.get(cat, {})
+
+    if _is_regression(state, metrics):
+        floor = float(base.get("val_r2", 0.30))
+        return {"val_r2": floor}, f"회귀 → val_r2≥{floor} (평균예측 대비 분산설명, 스케일 불변)"
+
+    imb = float(profile.get("class_imbalance_ratio") or 1.0)
+    if imb >= _IMBALANCE_SWITCH and metrics.get("val_roc_auc") is not None:
+        thr = round(0.5 + _RANDOM_MARGIN, 2)
+        return (
+            {"val_roc_auc": thr},
+            f"불균형(ratio={imb:.1f}) → val_roc_auc≥{thr} (무작위 0.5+마진{_RANDOM_MARGIN}; weighted-F1 다수편향 회피)",
+        )
+
+    n_cls = _n_classes(state, metrics)
+    rand = 1.0 / max(n_cls, 2)
+    thr = round(min(0.85, max(0.30, rand + _RANDOM_MARGIN)), 2)
+    note = "경미불균형 " if imb >= _IMBALANCE_SWITCH else ""
+    return (
+        {"val_f1": thr},
+        f"{note}{n_cls}클래스 → val_f1(weighted)≥{thr} (무작위 {rand:.2f}+마진{_RANDOM_MARGIN})",
+    )
+
+
 def evaluate(state: Any) -> dict[str, Any]:
     best = state.best_model or {}
     metrics = best.get("metrics") or {}
-    thr = THRESHOLDS_BY_CAT.get(state.category, {})
+    thr, thr_desc = resolve_thresholds(state)  # HJ — 데이터 인지형 적응 임계
 
     # 1) val 기반 1차 판정 (best_model.metrics = val 점수).
     val_violations = _check_violations(metrics, thr)
@@ -356,6 +418,9 @@ def evaluate(state: Any) -> dict[str, Any]:
         else:
             rationale = "; ".join(val_violations)
 
+    # HJ 2026-06-13 — 적응형 임계 근거를 rationale 에 노출 (사용자에게 "왜 이 기준" 설명).
+    rationale = f"{rationale} · 기준: {thr_desc}"
+
     # Day 11 (jh) — baseline 대비 격차 계산. baseline 미학습/누락 시 빈 dict.
     # (격차는 학습 시 산출된 val 점수 기준으로 일관되게 계산 — baseline 도 val.)
     baseline = _find_baseline_metrics(state)
@@ -376,6 +441,19 @@ def evaluate(state: Any) -> dict[str, Any]:
     baseline_primary_std = baseline_cv_stats.get("primary_std") if baseline_cv_stats else None
     improvement = _add_significance(improvement, baseline_primary_std)
 
+    # HJ 2026-06-13 — 상대·유의성 게이트(common.gates 표준): 데이터 자신의 Dummy
+    #   baseline 을 통계적으로 유의하게(lift ≥ 2σ) 이겼는지. 고정 임계(절대)와 병행.
+    #   lift_significant 가 '명시적 False' 일 때만 패널티 — None(판단불가; CV 미실행/
+    #   baseline 없음)은 미패널티 → 회귀 0·하위호환. 절대 임계는 통과했어도 Dummy
+    #   대비 우위가 noise 수준이면 통과 취소(약한 보증 방지).
+    if improvement.get("lift_significant") is False:
+        _sig_msg = "baseline 대비 유의한 우위 없음 (lift<2σ)"
+        if _sig_msg not in violations:
+            violations = list(violations) + [_sig_msg]
+        if passed:
+            passed = False
+            rationale = f"{rationale} | {_sig_msg}"
+
     result = {
         "passed": passed,
         "rationale": rationale,
@@ -383,6 +461,7 @@ def evaluate(state: Any) -> dict[str, Any]:
         "metrics": metrics,
         # Day 12 (jh) — 평가 근거·test 봉인 상태 노출.
         "eval_basis": eval_basis,  # "test" | "val"
+        "threshold_basis": thr_desc,  # HJ — 적응형 임계 근거(한국어)
         "test_held_out": test_held_out,  # True 면 이번 평가에서 test 미사용(봉인)
         "test_metrics": test_metrics,  # test 1회 측정값 (미측정 시 빈 dict)
         "val_passed": val_passed,

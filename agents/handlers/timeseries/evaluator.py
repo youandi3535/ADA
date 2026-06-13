@@ -780,6 +780,13 @@ def evaluate(state: Any) -> dict[str, Any]:
             f"leakage_suspect ({len(leakage_signals)}건): " + ", ".join(s["kind"] for s in leakage_signals)
         )
 
+    # ── B-8 (HJ 2026-06-13) : DM 검정 유의성 게이트 — model 이 naïve 를 통계적으로
+    #   "못" 이기면(verdict=naive_wins) passed=False. 상대·유의성 표준(common.gates 의
+    #   시계열판). dm_test unavailable / tie / model_wins 면 무영향(기존 동작 보존).
+    dm = _dm_test(metrics)
+    if dm.get("verdict") == "naive_wins":
+        violations.append("DM 검정: naïve 대비 통계적 열세 (model_loses)")
+
     # ── C-1 : 최종 반환 ──
     # L6 — rationale 한국어 가독성 + 수치 인용 강화 (InsightAgent fallback 활용성 ↑)
     passed = len(violations) == 0
@@ -820,7 +827,7 @@ def evaluate(state: Any) -> dict[str, Any]:
         "symptom_classification": symptom,
         "fit_quality": _diagnose_fit_quality(metrics),
         "residual_diagnostics": _diagnose_residuals(metrics),  # G15
-        "dm_test": _dm_test(metrics),  # G13
+        "dm_test": dm,  # G13 (B-8 에서 1회 계산·재사용)
         # L4 — task_kind 안내 (chosen_recipe 활용 시만)
         "task_kind_hint": classification_hint,
     }
