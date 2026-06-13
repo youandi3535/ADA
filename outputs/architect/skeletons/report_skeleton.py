@@ -144,7 +144,6 @@ from outputs.architect.plan import (
     SlideSpec,
     VisualSpec,
 )
-from outputs.architect.skeletons._rules import card as _label_card
 from outputs.context.schema import ReportContext
 
 SKELETON_NAME = "Report"
@@ -685,14 +684,12 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     _f = _task_flags(ctx)
     maj = _f["maj"]
     is_clf, is_ts, is_anom = _f["is_clf"], _f["is_ts"], _f["is_anom"]
-    is_reg, is_imbal, is_multiclass = _f["is_reg"], _f["is_imbal"], _f["is_multiclass"]
+    is_reg, is_imbal = _f["is_reg"], _f["is_imbal"]
 
     # ── 분석 배경 — [5~6줄룰] 적용. business_context 있으면 시급성 문장 중복 회피.
     # 한국어 14pt 기준: 한 줄 ≈ 30자, 5줄 ≈ 150자, 6줄 ≈ 180자. 4문장 × 평균 40자 이내가 목표.
     bg_parts: list[str] = []
     bctx = (ctx.meta.business_context or "").strip()
-    industry = ((ctx.domain.inferred_industry if ctx.domain else "") or "").strip()
-    where = f"{industry} 도메인의 " if industry else ""
     if bctx:
         # bctx 가 있으면 시급성 문장 생략 (같은 결의 진술 — 중복 회피)
         bg_parts.append(bctx)
