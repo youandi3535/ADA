@@ -687,7 +687,7 @@ def _draw_slide(
         _draw_cover(slide, sl, ctx, primary, accent, secondary)
         return
     if layout == "agenda":
-        _draw_agenda(slide, sl, primary, accent, ink, muted, secondary)
+        _draw_agenda(slide, sl, primary, accent, ink, muted)
         return
     if layout == "section_divider":
         return  # skipped at the higher level
@@ -718,7 +718,7 @@ def _draw_slide(
         _draw_step_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg)
         return
     if layout == "agenda":
-        _draw_agenda(slide, sl, primary, accent, ink, muted, secondary)
+        _draw_agenda(slide, sl, primary, accent, ink, muted)
         return
     if layout == "kpi_cards_4":
         _draw_percentage_grid(slide, sl, ctx, primary, accent, ink, muted, light_bg)
@@ -1266,10 +1266,9 @@ def _draw_quote(slide, sl, primary, accent, ink, muted):
     )
 
 
-def _draw_agenda(slide, sl, primary, accent, ink, muted, secondary="#06122E"):
+def _draw_agenda(slide, sl, primary, accent, ink, muted):
     # Left gradient panel (smaller — 25%)
-    # jh 2026-06-12 — 그라데이션 끝색 하드코딩(#1e3a8a) 제거 → secondary 팔레트
-    add_gradient_rect(slide, 0, 0, SLIDE_W * 0.25, SLIDE_H, primary, secondary, angle=180)
+    add_gradient_rect(slide, 0, 0, SLIDE_W * 0.25, SLIDE_H, primary, "#1e3a8a", angle=180)
     add_text_box(
         slide,
         1.2,
@@ -1492,4 +1491,370 @@ def _draw_as_is_to_be(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     )
     draw_as_is_to_be(
         slide,
-        {"label": "AS-IS", "points": a
+        {"label": "AS-IS", "points": as_is_pts},
+        {"label": "TO-BE", "points": to_be_pts},
+        primary,
+        accent,
+        ink,
+        muted,
+        light_bg,
+    )
+
+
+def _draw_timeline(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """Timeline milestones with alternating labels."""
+    _draw_header(slide, sl, primary, ink, muted)
+    from outputs.carriers.pptx_infographics import draw_timeline_milestones
+
+    milestones = []
+    for i, line in enumerate(sl.body_outline[:5]):
+        # Try to parse "Phase 1 (0~30일): xxx"
+        year = f"P{i + 1}"
+        label = line
+        if ":" in line:
+            year_part, label = line.split(":", 1)
+            year = year_part.strip()[:18]
+            label = label.strip()
+        milestones.append({"year": year, "label": label[:80]})
+    if not milestones:
+        milestones = [
+            {"year": "Phase 1", "label": "파일럿 운영 시작 - 0~30일"},
+            {"year": "Phase 2", "label": "운영 환경 단계 배포 - 30~90일"},
+            {"year": "Phase 3", "label": "확장 + 재학습 자동화 - 90일+"},
+        ]
+    draw_timeline_milestones(slide, milestones, primary, accent, ink, muted, light_bg)
+
+
+def _draw_checklist(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """4 horizontal big-check cards for action/recommendation slides."""
+    _draw_header(slide, sl, primary, ink, muted)
+    from outputs.carriers.pptx_infographics import draw_checklist_4
+
+    items = []
+    for line in sl.body_outline[:4]:
+        # "권고 액션 1: 모델을 운영 환경..." → title + caption
+        if ":" in line:
+            k, v = line.split(":", 1)
+            items.append({"title": k.strip()[:30], "caption": v.strip()[:120]})
+        elif "·" in line:
+            k, v = line.split("·", 1)
+            items.append({"title": k.strip()[:30], "caption": v.strip()[:120]})
+        else:
+            items.append({"title": line[:30], "caption": ""})
+    if not items:
+        items = [
+            {"title": "단계적 배포", "caption": "파일럿 → 운영 단계 전환"},
+            {"title": "모니터링 설정", "caption": "핵심 지표 자동 알람"},
+            {"title": "정기 재학습", "caption": "분기 1회 모델 갱신"},
+            {"title": "문서·교육", "caption": "운영팀 인수인계 + 표준 문서화"},
+        ]
+    draw_checklist_4(slide, items, primary, accent, ink, muted, light_bg)
+
+
+def _draw_step_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """Vertical STEP cards for roadmap/ROI."""
+    _draw_header(slide, sl, primary, ink, muted)
+    from outputs.carriers.pptx_infographics import draw_step_cards_vertical
+
+    items = []
+    for line in sl.body_outline[:4]:
+        if ":" in line:
+            k, v = line.split(":", 1)
+            items.append({"title": k.strip()[:30], "caption": v.strip()[:120]})
+        elif "·" in line:
+            k, v = line.split("·", 1)
+            items.append({"title": k.strip()[:30], "caption": v.strip()[:120]})
+        else:
+            items.append({"title": line[:30], "caption": ""})
+    if not items:
+        items = [
+            {"title": "준비", "caption": "데이터·인프라 점검"},
+            {"title": "파일럿", "caption": "1개월 시범 운영"},
+            {"title": "확장", "caption": "전사 단계 도입"},
+            {"title": "정착", "caption": "자동화·표준화"},
+        ]
+    draw_step_cards_vertical(slide, items, primary, accent, ink, muted, light_bg)
+
+
+def _draw_strategy_4(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """4 strategy circles around central product."""
+    _draw_header(slide, sl, primary, ink, muted)
+    from outputs.carriers.pptx_infographics import draw_strategy_4_circular
+
+    items = []
+    for line in sl.body_outline[:4]:
+        title = line.split(":", 1)[0] if ":" in line else line.split("·", 1)[0]
+        items.append({"title": title.strip()[:24]})
+    if not items:
+        items = [
+            {"title": "자동화 + 신뢰성"},
+            {"title": "재현 가능성"},
+            {"title": "운영 표준화"},
+            {"title": "확장성"},
+        ]
+    draw_strategy_4_circular(slide, items, primary, accent, ink, muted, light_bg)
+
+
+def _draw_chevron_seq(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """5 chevron arrows for model candidates."""
+    _draw_header(slide, sl, primary, ink, muted)
+    from outputs.carriers.pptx_infographics import draw_chevron_strategies
+
+    cands = ctx.model_selection.candidates or []
+    items = []
+    for c in cands[:5]:
+        items.append(
+            {
+                "title": (c.name or "")[:20],
+                "caption": (c.why_tried or "")[:80],
+            }
+        )
+    if not items:
+        items = [
+            {"title": "Baseline", "caption": "기준 모델"},
+            {"title": "Tree", "caption": "트리 기반"},
+            {"title": "Ensemble", "caption": "앙상블"},
+            {"title": "DL", "caption": "딥러닝"},
+            {"title": "Chosen", "caption": "최종 선정"},
+        ]
+    draw_chevron_strategies(slide, items, primary, accent, ink, muted, light_bg)
+
+
+def _draw_index_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """4 Index cards with big numbers (Index 01-04)."""
+    _draw_header(slide, sl, primary, ink, muted)
+    from outputs.carriers.pptx_infographics import draw_index_cards
+
+    items = []
+    for line in sl.body_outline[:4]:
+        if ":" in line:
+            k, v = line.split(":", 1)
+        elif "·" in line:
+            k, v = line.split("·", 1)
+        else:
+            k, v = line, ""
+        items.append({"title": k.strip()[:24], "caption": v.strip()[:100]})
+    if not items:
+        items = [
+            {"title": "성능", "caption": "정확도·재현율·정밀도 종합"},
+            {"title": "해석성", "caption": "SHAP·PDP 기반 설명력"},
+            {"title": "속도", "caption": "학습·추론 시간"},
+            {"title": "운영", "caption": "재학습·배포 용이성"},
+        ]
+    draw_index_cards(slide, items, primary, accent, ink, muted, light_bg)
+
+
+def _draw_big_stats(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    """Big numbers (Executive Summary)."""
+    _draw_header(slide, sl, primary, ink, muted)
+    from outputs.carriers.pptx_infographics import draw_big_stats
+
+    pm = ctx.evaluation.primary_metric or {}
+    items = []
+    if pm:
+        v = pm.get("value")
+        v_str = f"{v * 100:.0f}%" if isinstance(v, float) and v < 1 else str(v)
+        items.append(
+            {
+                "value": v_str,
+                "label": pm.get("name", "PRIMARY").upper(),
+                "caption": "대표 평가 지표 - 우수 임계치 통과",
+            }
+        )
+    rows = ctx.dataset.shape.get("rows", 0)
+    items.append(
+        {
+            "value": f"{rows:,}",
+            "label": "DATA POINTS",
+            "caption": "분석 대상 데이터 규모",
+        }
+    )
+    if ctx.evaluation.business_kpi:
+        kpi = ctx.evaluation.business_kpi[0]
+        items.append(
+            {
+                "value": f"{kpi.estimated_value:.1f}{kpi.unit}",
+                "label": kpi.name.upper()[:30],
+                "caption": f"신뢰도 {kpi.confidence}",
+            }
+        )
+    if not items:
+        items = [
+            {"value": "85%", "label": "ACCURACY", "caption": "임계치 통과"},
+            {"value": "12,000", "label": "SAMPLES", "caption": "분석 대상"},
+        ]
+    draw_big_stats(slide, items[:3], primary, accent, ink, muted, light_bg)
+
+
+def _draw_donut(slide, sl, ctx, primary, accent, ink, muted, light_bg):
+    _draw_header(slide, sl, primary, ink, muted)
+    from outputs.carriers.pptx_infographics import draw_donut_metric
+
+    pm = ctx.evaluation.primary_metric or {}
+    v = pm.get("value", 0.85)
+    pct = float(v) * 100 if isinstance(v, float) and v < 1 else float(v)
+    side = sl.body_outline[:5] or [f"{k}: {m.get('value')}" for k, m in list(ctx.evaluation.metrics.items())[:4]]
+    draw_donut_metric(
+        slide,
+        pct,
+        pm.get("name", "PRIMARY"),
+        "KEY METRIC INSIGHT",
+        primary,
+        accent,
+        ink,
+        muted,
+        light_bg,
+        side_items=side,
+    )
+
+
+# ==============================================================
+# LLM 디자인 일괄 선택 (Step 6-3)
+# ==============================================================
+
+
+def _prefill_copy(slides_flat: list, ctx) -> None:
+    """덱 전체 문장 LLM 채움 (Phase 3) — 결과를 SlideSpec 에 in-place 반영.
+
+    템플릿 소환 → 구성 파악 → 데이터 수집 → 문장 채움 순서의 마지막 단계.
+    실패 시 조용히 두지 않고 호출측에서 warning 로깅 (skeleton 초안 유지).
+    """
+    import asyncio
+
+    from outputs.carriers.llm_copywriter import LLMCopywriter
+
+    writer = LLMCopywriter()
+
+    async def _run():
+        return await writer.fill_deck(slides_flat, ctx)
+
+    fills = asyncio.run(_run())
+    for sl in slides_flat:
+        fill = fills.get(sl.id)
+        if not fill:
+            continue
+        if fill.get("title_ko"):
+            sl.title_ko = fill["title_ko"]
+        if fill.get("so_what"):
+            sl.so_what = fill["so_what"]
+        if fill.get("body_outline"):
+            sl.body_outline = fill["body_outline"]
+
+
+def _prepick_designs(slides_flat: list, ctx) -> None:
+    """슬라이드 N개에 대해 LLM 으로 디자인 일괄 선택.
+
+    각 슬라이드의 ``preferred_template`` 에 LLM 선택을 저장.
+    REGISTRY.best_for() 가 이걸 1순위로 인식해서 _draw_slide 가 자동 사용.
+
+    실패 시 조용히 룰 기반 폴백 유지 (deck 빌드 자체는 반드시 성공).
+    """
+    import asyncio
+
+    from outputs.carriers.template_registry import REGISTRY
+    from outputs.carriers.templates_init import init_registry
+
+    try:
+        from outputs.carriers.llm_designer import LLMDesigner
+    except Exception:
+        return  # LLM 의존성 못 가져오면 룰 기반으로 폴백
+
+    init_registry()
+
+    # 후보 + tasks 준비
+    designer = LLMDesigner()
+    tasks: list = []
+    task_slides: list = []
+    # jh 2026-06-12 — id 기반 디자인 고정 (직렬화 무관, preferred_template 소실 대응).
+    # 이 슬라이드들은 차트·전용 레이아웃이 *결정적*이라 LLM 변동성을 차단한다.
+    # (EDA 의 'vs' 가 split_compare 를 부르고, CM 이 비차트로 새던 결함의 근본 차단)
+    _DESIGN_LOCKED = {
+        "p1_market": "background_questions",      # S6 분석 배경
+        "method_model": "chart_key_insights",     # S8 EDA
+        "tech_architecture": "chart_key_insights",  # S9 EDA
+        "tech_stack": "chart_key_insights",       # S10 EDA
+        "s3_differentiation": "chart_key_insights",  # S11 EDA
+        "i1_kpi": "chart_key_insights",           # S12 성능
+        "eda_findings": "chart_key_insights",     # S13 SHAP
+        "error_analysis": "case_cards_3",         # S14 사례
+        "insights_derived": "chart_key_insights",  # S15 CM
+        "as_is_to_be": "chart_key_insights",      # S16 세그먼트
+        "i3_roi": "policy_steps",                 # S17 정책
+        "roadmap": "roadmap_upgrades",            # S19 로드맵
+        "insight_synthesis": "insight_synthesis_panel",  # S3 종합
+    }
+    for sl in slides_flat:
+        # cover/agenda/section_divider 는 hardcoded path 라 LLM 스킵
+        if getattr(sl, "layout", "") in ("cover", "agenda", "section_divider"):
+            continue
+        # id 고정 슬라이드 — LLM 스킵, 결정적 템플릿 강제
+        _locked = _DESIGN_LOCKED.get(getattr(sl, "id", ""))
+        if _locked and REGISTRY.get(_locked):
+            sl.preferred_template = _locked
+            continue
+        # skeleton 이 고정한 템플릿도 LLM 이 덮어쓰지 않음
+        if getattr(sl, "preferred_template", None):
+            continue
+        candidates = REGISTRY.candidates_for(sl, ctx, top_n=7)
+        if not candidates:
+            continue
+        # 후보 1개 — LLM 호출 생략, 룰 1위 그대로
+        if len(candidates) == 1:
+            sl.preferred_template = candidates[0].name
+            continue
+        tasks.append(designer.pick_design(sl, ctx, candidates))
+        task_slides.append(sl)
+
+    if not tasks:
+        return
+
+    # asyncio.run + gather 로 batch 호출 (병렬)
+    # report_composer 가 asyncio.to_thread 로 호출하므로 워커 스레드엔 루프 없음 → asyncio.run() OK
+    async def _gather():
+        return await asyncio.gather(*tasks, return_exceptions=True)
+
+    try:
+        results = asyncio.run(_gather())
+    except Exception:
+        return  # LLM batch 실패 — 룰 폴백
+
+    # 각 슬라이드에 결과 저장
+    for sl, result in zip(task_slides, results):
+        if isinstance(result, Exception):
+            continue
+        if not isinstance(result, dict):
+            continue
+        chosen = result.get("chosen_template", "")
+        if chosen:
+            sl.preferred_template = chosen
+        # 디자인 힌트 (palette/photo/icon) 도 attach — 후속 sub-step 에서 사용
+        sl._design_hint = result
+
+    # jh 2026-06-12 — cover 는 prepick 스킵 대상이라 photo_keyword 힌트가 영영 없음
+    # → 본문 슬라이드 LLM 키워드 최빈값을 cover 에 전파 (도메인 사진 강제의 마지막 고리)
+    try:
+        from collections import Counter
+
+        _kws = [
+            str((getattr(s, "_design_hint", None) or {}).get("photo_keyword", "") or "").strip()
+            for s in slides_flat
+        ]
+        _kws = [k for k in _kws if k]
+        if _kws:
+            _top_kw = Counter(_kws).most_common(1)[0][0]
+            for s in slides_flat:
+                if getattr(s, "layout", "") == "cover":
+                    _hint = dict(getattr(s, "_design_hint", None) or {})
+                    if not _hint.get("photo_keyword"):
+                        _hint["photo_keyword"] = _top_kw
+                        s._design_hint = _hint
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 성공 요약 — 성공/실패 무관하게 흔적 1줄 (2026-06-11 침묵 사고 재발 방지)
+    import logging
+
+    _n_llm = sum(1 for r in results if isinstance(r, dict) and r.get("_source") == "llm")
+    logging.getLogger("pptx_designer").info(
+        "prepick_designs_done: %d/%d slides via LLM", _n_llm, len(task_slides)
+    )
