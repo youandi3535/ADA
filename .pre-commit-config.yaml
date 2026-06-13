@@ -14,6 +14,14 @@
 # 우회 (긴급시만, HJ 협의 필수):
 #   git commit --no-verify
 #
+# ── Windows Smart App Control(WinError 4551) 회피 ──
+# pre-commit 이 만드는 서명 없는 console-script launcher(.exe) 를
+# Windows 애플리케이션 제어 정책(SAC/WDAC)이 멀티프로세스 동시 spawn 시
+# 일관되게 차단한다("[WinError 4551] 애플리케이션 제어 정책에서 이 파일을 차단했습니다").
+# 그래서 pre-commit-hooks 외부 repo 대신 local + `python -m <module>` 진입으로
+# 실행한다 — 서명된 python.exe 로 모듈을 직접 호출해 launcher 를 우회한다.
+# (ruff 는 단일 Rust 바이너리라 launcher 가 없어 영향 없음 → 외부 repo 유지.)
+#
 # 수정 권한: HJ 단독 (.github/CODEOWNERS 참조)
 # ============================================================
 
@@ -22,7 +30,7 @@ default_install_hook_types: [pre-commit, post-merge]
 
 repos:
   # ─────────────────────────────────────────────────────────
-  # 1) Ruff — lint + format 자동 수정
+  # 1) Ruff — lint + format 자동 수정 (단일 바이너리, SAC 영향 없음)
   # ─────────────────────────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.14
@@ -32,21 +40,76 @@ repos:
       - id: ruff-format
 
   # ─────────────────────────────────────────────────────────
-  # 2) 기본 위생 훅
+  # 2) 기본 위생 훅 — pre-commit-hooks(v5.0.0) 를 local + `python -m`
+  #    진입으로 실행 (위 헤더의 WinError 4551 회피 설명 참조).
+  #    8개 훅이 동일 additional_dependencies 로 venv 하나를 공유한다.
   # ─────────────────────────────────────────────────────────
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+  - repo: local
     hooks:
       - id: trailing-whitespace
+        name: trim trailing whitespace
+        entry: python -m pre_commit_hooks.trailing_whitespace_fixer
+        language: python
+        additional_dependencies: ["pre-commit-hooks==5.0.0"]
+        types: [text]
+        stages: [pre-commit]
+
       - id: end-of-file-fixer
+        name: fix end of files
+        entry: python -m pre_commit_hooks.end_of_file_fixer
+        language: python
+        additional_dependencies: ["pre-commit-hooks==5.0.0"]
+        types: [text]
+        stages: [pre-commit]
+
       - id: check-yaml
+        name: check yaml
+        entry: python -m pre_commit_hooks.check_yaml
+        language: python
+        additional_dependencies: ["pre-commit-hooks==5.0.0"]
+        types: [yaml]
         exclude: ^(docker/.*\.yml|\.github/workflows/.*\.yml)$  # Helm/GHA template 제외
+        stages: [pre-commit]
+
       - id: check-json
+        name: check json
+        entry: python -m pre_commit_hooks.check_json
+        language: python
+        additional_dependencies: ["pre-commit-hooks==5.0.0"]
+        types: [json]
+        stages: [pre-commit]
+
       - id: check-toml
+        name: check toml
+        entry: python -m pre_commit_hooks.check_toml
+        language: python
+        additional_dependencies: ["pre-commit-hooks==5.0.0"]
+        types: [toml]
+        stages: [pre-commit]
+
       - id: check-added-large-files
+        name: check for added large files
+        entry: python -m pre_commit_hooks.check_added_large_files
+        language: python
+        additional_dependencies: ["pre-commit-hooks==5.0.0"]
         args: [--maxkb=1024]
+        stages: [pre-commit]
+
       - id: check-merge-conflict
+        name: check for merge conflicts
+        entry: python -m pre_commit_hooks.check_merge_conflict
+        language: python
+        additional_dependencies: ["pre-commit-hooks==5.0.0"]
+        types: [text]
+        stages: [pre-commit]
+
       - id: detect-private-key
+        name: detect private key
+        entry: python -m pre_commit_hooks.detect_private_key
+        language: python
+        additional_dependencies: ["pre-commit-hooks==5.0.0"]
+        types: [text]
+        stages: [pre-commit]
       # mixed-line-ending 훅 제거 — Windows core.autocrlf=true 환경에서
       # Python 캐시 실행파일이 AppControl에 차단됨 (WinError 4551).
       # LF 강제 적용은 .gitattributes eol=lf + CI (Linux) 에서 보장.
@@ -66,11 +129,13 @@ repos:
 
       - id: shared-deps-warning
         name: "공유 의존성 파일 수정 경고"
-        entry: bash -c 'changed=$(git diff --cached --name-only | grep -E "^(requirements/.*\.txt|pyproject\.toml|\.pre-commit-config\.yaml|alembic\.ini|\.github/)" || true); if [ -n "$changed" ]; then echo "⚠️  공유 파일 수정 감지 — HJ 리뷰 필요:"; echo "$changed" | sed "s/^/  - /"; fi; exit 0'
+        entry: bash scripts/dev/check_shared_deps.sh
         language: system
         pass_filenames: false
         stages: [pre-commit]
         # 경고만 (exit 0). 차단은 CODEOWNERS 가 PR 단계에서 강제.
+        # 인라인 bash -c '...' 는 Windows entry 파싱과 충돌(괄호 syntax error)하여
+        # 스크립트 파일로 분리함.
 
       - id: ensure-post-merge-hook
         name: "post-merge 훅 자동 설치 확인"
