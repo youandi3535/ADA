@@ -1237,9 +1237,9 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     # 상단 판정 배지(ADOPT ✓ + 핵심 수치) + 하단 운영 룰 3 아이콘 카드로 재설계.
     verdict = (ctx.evaluation.verdict or "").lower()
     _badge = {
-        "adopt": ("ADOPT", "운영 도입 권장", "ok"),
-        "iterate": ("ITERATE", "보완 후 재평가", "warn"),
-        "reject": ("REJECT", "도입 보류", "no"),
+        "adopt": ("ADOPT", "현장 적용 권장", "ok"),
+        "iterate": ("ITERATE", "보완 후 재적용", "warn"),
+        "reject": ("REJECT", "적용 보류", "no"),
     }.get(verdict, ("REVIEW", "추가 검토", "info"))
     pm = ctx.evaluation.primary_metric or {}
     _v = pm.get("value")

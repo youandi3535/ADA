@@ -1291,6 +1291,12 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
     pm = ctx.evaluation.primary_metric or {}
     pm_value = _format_pm_value(pm)
 
+    # jh 2026-06-12 — 도메인 행동 골격용 재료
+    use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
+    industry = ctx.domain.inferred_industry or "현업"
+    _gi = list(ctx.interpretation.global_importance or [])
+    top_feat = getattr(_gi[0], "feature", "핵심 변수") if _gi else "핵심 변수"
+
     # jh 2026-06-12 — 운영 룰 캡션을 ctx 실데이터로 풍부하게 (사용자: 글 짧다·가독성↓)
     _opt = None
     try:
@@ -1315,24 +1321,27 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
         pass
     _thr_txt = f" 분류 임계값 {_opt:.3f}을 적용해" if isinstance(_opt, (int, float)) else ""
 
+    # jh 2026-06-12 — S17 을 ML 기술 운영(임계·drift) → *분석 결과의 현실 행동·정책*
+    # 으로 (사용자: S3 처럼 도메인 관점). skeleton 은 행동 골격 + 재료, 카피라이터(12-4)가
+    # user_intent·도메인 보고 구체 정책으로 변환.
     policy_items: list[tuple[str, str]] = []
     if (ctx.evaluation.verdict or "").lower() == "adopt":
         policy_items = [
             (
-                "운영 임계",
-                f"{pm_value}를 기준선으로 고정하고{_thr_txt} 운영한다. "
-                f"이 값을 하회하면 성능 저하로 보고 즉시 재학습을 트리거한다.",
+                "분석 결과의 현장 반영",
+                f"{top_feat} 등 핵심 발견을 {industry} 의 의사결정·정책 근거로 활용한다. "
+                f"{use_case} 에서 가장 영향이 큰 요인을 우선 관리 대상으로 삼는다.",
             ),
             (
-                "모니터링",
-                "입력 분포 변화(drift score)와 주요 지표를 상시 추적하고 알람을 건다. "
-                + (f"특히 취약 구간 {_worst}을 집중 감시한다." if _worst else "이상 징후 시 운영팀에 자동 통보한다."),
+                "취약 지점 집중 대응",
+                (f"예측이 불안정한 {_worst} 구간을 현업에서 우선 점검하고 보완한다. " if _worst
+                 else "모델이 약한 구간을 현업에서 우선 점검·보완한다. ")
+                + (f"놓치면 손실이 큰 사례(미탐 {_fn}건)에 대응 절차를 마련한다." if _fn else ""),
             ),
             (
-                "재학습·책임",
-                (f"미탐(FN) {_fn}건 축소를 1차 목표로 " if _fn else "")
-                + "분기별 정기 재학습 또는 drift 초과 시 비정기 재학습을 수행하며, "
-                "모델 운영팀이 월간 리뷰·분기 재검증을 담당한다.",
+                "지속 검증·갱신",
+                f"신규 데이터로 발견을 재확인하고 정기 재분석으로 정책을 갱신한다. "
+                f"기준 성능({pm_value}) 이탈 시 분석을 재실행해 판단 근거를 최신화한다.",
             ),
         ]
     elif (ctx.evaluation.verdict or "").lower() == "iterate":
@@ -1359,7 +1368,9 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
     if biz_kpi:
         body.append(f"비즈니스 KPI · {getattr(biz_kpi, 'name', '')} {getattr(biz_kpi, 'estimated_value', '')} {getattr(biz_kpi, 'unit', '')}")
 
-    so_what = f"{chosen} 분석 결과 기반 운영 정책 — 판정: {ctx.evaluation.verdict or '미정'}"
+    so_what = f"{use_case} 분석 결과를 현실의 의사결정·정책으로 — 판정: {ctx.evaluation.verdict or '미정'}"
+    if (ctx.evaluation.verdict or "").lower() == "adopt":
+        title_ko = f"분석 결과 적용 — {industry} 행동 방향"
 
     return SlideSpec(
         id="i3_roi",
@@ -1522,6 +1533,10 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
     _pm_str = (f"{_v:.3f}" if isinstance(_v, float) and _v < 1 else str(_v)) if _v is not None else "—"
     _pm_name = pm.get("name", "정확도")
     chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
+    use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
+    industry = ctx.domain.inferred_industry or "현업"
+    _gi = list(ctx.interpretation.global_importance or [])
+    top_feat = getattr(_gi[0], "feature", "핵심 발견") if _gi else "핵심 발견"
 
     _worst = ""
     try:
@@ -1547,29 +1562,32 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
     except Exception:
         pass
 
+    # jh 2026-06-12 — S19 를 ML 배포(파일럿·재학습) → *분석 결과의 현실 적용 로드맵*
+    # 으로 (사용자: S3 처럼 도메인 행동). 분석 발견을 현업 의사결정·정책에 단계적으로
+    # 반영하는 여정. 카피라이터(12-4)가 도메인 구체화.
     if verdict == "adopt":
-        _fn_goal = f"{_fn}→{max(int(_fn * 0.7), 1)}건 이하" if _fn else "FN 감소"
         phases = [
             {
-                "period": "0~30일",
-                "title": "파일럿 배포",
-                "action": f"{chosen} 운영 투입 · 취약 구간 {_worst or '세그먼트'} 집중 추적",
-                "gate": f"실데이터 {_pm_name} {_pm_str} 수준 유지 시 확장 승인",
-                "output": "파일럿 성능 리포트",
+                "period": "단기 · 0~30일",
+                "title": "시범 적용",
+                "action": f"{top_feat} 등 핵심 발견을 {industry} 의사결정에 시범 반영 · 관련 부서와 결과 공유",
+                "gate": f"시범 적용에서 분석 근거({_pm_name} {_pm_str})의 실효성 확인 시 확대",
+                "output": "적용 가이드 + 초기 효과 보고",
             },
             {
-                "period": "30~90일",
-                "title": "전사 확장",
-                "action": (f"{_miss} 결측 보강 피처 투입 · " if _miss else "") + "전 세그먼트 성능 안정화",
-                "gate": f"미탐(FN) {_fn_goal}로 감소 시 정착 단계 진입",
-                "output": "전사 운영 전환 + 세그먼트 보강 모델",
+                "period": "중기 · 30~90일",
+                "title": "적용 확대",
+                "action": (f"예측이 약한 {_worst} 구간 보완과 함께 " if _worst else "")
+                          + "적용 범위를 확대하고 현장 효과를 정량 측정",
+                "gate": "측정된 개선 효과가 목표 수준 도달 시 제도화 단계 진입",
+                "output": "확대 적용 결과 + 효과 측정 리포트",
             },
             {
-                "period": "90일~",
-                "title": "정착·고도화",
-                "action": "분기 재학습 자동화 · CatBoost+차점 후보 앙상블 적용",
-                "gate": "drift 0.1 이내 안정 운영 · 분기 재검증 통과",
-                "output": "자동 재학습 파이프라인 + 모니터링 대시보드",
+                "period": "장기 · 90일~",
+                "title": "제도·시스템 내재화",
+                "action": f"발견을 {industry} 정책·매뉴얼에 내재화 · 정기 재분석으로 판단 근거를 최신화",
+                "gate": "정기 갱신 체계가 안정적으로 운영되어 지속 의사결정 지원",
+                "output": "내재화된 정책 + 정기 재분석 체계",
             },
         ]
     elif verdict == "iterate":
@@ -1598,8 +1616,8 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
         section_id="plan",
         layout="roadmap_phase_kpi",
         role="action",
-        so_what=f"언제·무엇을 해서·무엇이 되면 다음 — {verdict} 판정 기반 3단계 실행 게이트",
-        title_ko="실행 로드맵 — 단계별 활동과 성공 기준",
+        so_what=f"분석 결과를 {industry} 현장에 단계적으로 적용 — 시범→확대→내재화",
+        title_ko="적용 로드맵 — 분석 결과를 현장에 반영하는 여정",
         body_outline=body[:5],
         parent_message_id="plan_root",
         visual_spec=VisualSpec(
