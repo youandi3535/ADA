@@ -23,7 +23,7 @@
 
 ### 🟢 즉시 (quick-win)
 - [x] **도메인 벤치마크** → §5(성능, §8서 정밀화) · 중요도 9/노력 3 · `domain.domain_benchmarks` · "업계 평균 대비 본 모델, 상위/동등/하회" 조건부+적응형 깊이(audience_register). ✅ 2026-06-13 report_skeleton.py L1537~1561 + 기능테스트 3케이스
-- [ ] **캘리브레이션·ECE** → §5 · 8/3 · `handlers/tabular` · 확률 신뢰도(임계값 근거), 차트 이미 생성됨
+- [x] **캘리브레이션·ECE** → §5 본문(so-what)+부록 9.1(ECE) · 8/3 · `evaluation.calibration` · 카테고리 분기(ML=ECE/시계열=coverage/이상=분리도)+적응형 깊이. ✅ 2026-06-13 report_skeleton.py + 기능테스트 6케이스
 - [ ] **혼동행렬 에러 프로파일** → §5 · 9/4 · `output_extras` · "어디서 틀리나(FP·FN)" 도입 게이트 핵심
 - [ ] **세그먼트 드라이버** → §6 · 8/4 · `interpretation.segment_drivers` · 코호트별 "무엇이 좌우"
 - [ ] **재검증 주기** → §8 · 7/3 · `limitations.revalidation_window` · "30일·드리프트 시 재학습" 운영 정책

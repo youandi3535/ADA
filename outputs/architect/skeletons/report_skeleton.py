@@ -1567,6 +1567,25 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
                 _bline = f"{_bsrc} {_bml} {_bvs} 대비 본 모델 {_pvs}, {_verd}."
             blocks.append(["업계 벤치마크 대비", _bline])
 
+    # [로드맵2 캘리브레이션룰] 확률/예측 신뢰도 — ctx.evaluation.calibration(조건부·카테고리 분기·없으면 스킵)
+    _calib = (ev.calibration or {}) if ev else {}
+    if isinstance(_calib, dict) and _calib:
+        _tech_c = audience_register(ctx)["depth"] == "technical"
+        _cal_line = ""
+        if _calib.get("ece") is not None:  # 정형 ML/DL 분류: 기대 보정 오차(ECE)
+            _ece = _calib["ece"]
+            _ece_txt = f" (ECE {_ece:.3f})" if _tech_c else ""
+            if isinstance(_ece, (int, float)) and _ece <= 0.05:
+                _cal_line = f"모델이 제시하는 확률이 실제 적중률과 잘 맞아{_ece_txt}, 확률을 그대로 임계값·의사결정에 쓸 수 있다."
+            else:
+                _cal_line = f"모델 확률이 실제 적중률과 다소 어긋나{_ece_txt}, 임계값은 보정 후 사용을 권고한다."
+        elif _calib.get("coverage") is not None:  # 시계열: 예측구간 커버리지
+            _cal_line = f"예측구간이 실제값을 약 {_calib['coverage']:.0%} 포함(목표 80%)으로, 계획 수립 시 구간을 신뢰하고 쓸 수 있다."
+        elif (_calib.get("thresholds") is not None) or (_calib.get("bhattacharyya") is not None):  # 이상탐지: 분리도
+            _cal_line = "정상·이상 점수 분포가 뚜렷이 분리돼, 운영 임계값을 헛경보 없이 설정할 수 있다."
+        if _cal_line:
+            blocks.append(["확률 신뢰도(보정)", _cal_line])
+
     # 검증 성능 — [레지스터] 본문은 헤드라인(반올림)만, 전체 지표·95% 신뢰구간은 부록 9.1로 이관
     if metric_body:
         _n = (ctx.dataset.shape or {}).get("rows", 0)
@@ -2020,6 +2039,10 @@ def _build_appendix(ctx: ReportContext) -> list[SectionSpec]:
             _lo, _hi = max(0.0, _pmv - 1.96 * _se), min(1.0, _pmv + 1.96 * _se)
             _ci = f" / {pm_ko} 95% CI {_lo:.4f}~{_hi:.4f} (N={n_rows:,})"
         repro_blocks.append(["검증 지표 전체", ", ".join(_mlines) + "." + _ci])
+    # [로드맵2] 확률 보정 상세(ECE) — 부록
+    _cal_a = (_ev_a.calibration or {}) if _ev_a else {}
+    if isinstance(_cal_a, dict) and _cal_a.get("ece") is not None:
+        repro_blocks.append(["확률 보정(ECE)", f"기대 보정 오차 ECE {_cal_a['ece']:.3f}. 0에 가까울수록 예측 확률이 실제 적중률과 일치하며(완벽 0), 통상 0.05 이하면 양호."])
     sec_repro = make_section("appx_repro", "재현 정보", "appendix", [SlideSpec(
         id="appx_repro", section_id="appx_repro", layout="one_message", role="meta",
         so_what="동일 조건에서 본문 수치 재현", title_ko="재현 정보",

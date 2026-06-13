@@ -468,6 +468,7 @@ def _titanic_ctx():
                     confidence="medium",
                 )
             ],
+            calibration={"ece": 0.034},
         ),
         interpretation=Interpretation(
             global_importance=[
