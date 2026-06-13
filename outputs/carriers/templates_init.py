@@ -1087,7 +1087,17 @@ def t_insight_synthesis_panel(slide, sl, ctx, primary, accent, ink, muted, light
         for b in (sl.body_outline or [])[:3]:
             h, _, d = str(b).partition(" — ")
             insights.append((h.strip()[:40], d.strip()))
-    I.draw_insight_synthesis(slide, insights, applications, evidence, primary, accent, ink, muted, light_bg)
+    # SHAP 미니바 재료 (좌측 하단 시각화)
+    top_features = []
+    try:
+        top_features = [
+            (getattr(g, "feature", "?"), float(getattr(g, "importance", 0)))
+            for g in (ctx.interpretation.global_importance or [])[:3]
+        ]
+    except Exception:
+        top_features = []
+    I.draw_insight_synthesis(slide, insights, applications, evidence, primary, accent, ink, muted, light_bg,
+                             top_features=top_features)
 
 
 def t_case_cards(slide, sl, ctx, primary, accent, ink, muted, light_bg):
@@ -1241,61 +1251,32 @@ def t_policy_steps(slide, sl, ctx, primary, accent, ink, muted, light_bg):
 
 
 def t_roadmap_upgrades(slide, sl, ctx, primary, accent, ink, muted, light_bg):
-    """S19 실행 로드맵 — PHASE 3 + UPGRADE 3 (목표치 S19 구성).
+    """S19 실행 로드맵 — 3단계 「기간·활동·게이트·산출물」 타임라인.
 
-    jh 2026-06-12 — draw_roadmap_with_upgrades 가 미등록(좀비 phase11)이라
-    구이미지 코드로만 그려지고 UPGRADE 가 1개에 머물던 결함. 정식 등록 +
-    실데이터 기반 고도화 카드 3종 구성.
+    jh 2026-06-12 — "뭘 할거다가 안 느껴진다"(사용자) → 측정 가능한 게이트 +
+    구체 산출물 4박자 구조. skeleton 의 phases(dict) 를 직접 소비.
     """
-    import re
-
     vs = getattr(sl, "visual_spec", None)
     spec = dict(getattr(vs, "spec", None) or {})
-    raw_phases = [str(p) for p in (spec.get("phases") or []) if str(p).strip()]
-
-    body = list(getattr(sl, "body_outline", None) or [])
-    # body: "1. Phase ..." 단계 줄 + 모니터링/재학습 줄
-    caps = [
-        re.sub(r"^\d+\.\s*", "", b) for b in body if re.match(r"^\d+\.\s*", str(b))
-    ]
-    extra = [b for b in body if not re.match(r"^\d+\.\s*", str(b))]
+    raw = list(spec.get("phases") or [])
 
     phases = []
-    for i, ph in enumerate((raw_phases or caps or ["Phase 1", "Phase 2", "Phase 3"])[:3]):
-        cap = ""
-        if i < len(caps) and raw_phases:
-            cap = caps[i]
-        elif i < len(extra):
-            cap = str(extra[i])
-        phases.append({"title": str(ph)[:28], "caption": str(cap)[:80]})
-
-    # UPGRADE 3종 — 실데이터 기반 (재학습 / 취약 세그먼트 보강 / 앙상블)
-    upgrades = []
-    _re_line = next((str(b) for b in extra if "재학습" in str(b)), "")
-    upgrades.append({
-        "title": "재학습 트리거",
-        "caption": _re_line.split("·", 1)[-1].strip() if _re_line else "분기별 정기 또는 drift > 0.1 시 자동 재학습",
-    })
-    try:
-        segs = sorted(
-            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
-            key=lambda s: float(s["value"]),
-        )
-        if segs:
-            upgrades.append({
-                "title": "취약 세그먼트 보강",
-                "caption": f"{segs[0].get('segment', '?')} (acc {float(segs[0]['value']):.2f}) 구간 피처 보강·재검증",
+    for i, p in enumerate(raw[:3]):
+        if isinstance(p, dict) and (p.get("action") or p.get("gate")):
+            phases.append({
+                "period": str(p.get("period", f"단계 {i + 1}")),
+                "title": str(p.get("title", "")),
+                "action": str(p.get("action", "")),
+                "gate": str(p.get("gate", "")),
+                "output": str(p.get("output", "")),
             })
-    except Exception:
-        pass
-    if len(upgrades) < 2:
-        upgrades.append({"title": "피처 보강", "caption": "결측 상위 변수 파생·외부 데이터 결합 검토"})
-    chosen = (ctx.model_selection.chosen or {}).get("name", "")
-    upgrades.append({
-        "title": "모델 앙상블",
-        "caption": f"{chosen or '선정 모델'} + 차점 후보 stacking 으로 추가 향상 여지",
-    })
-    I.draw_roadmap_with_upgrades(slide, phases, upgrades[:3], primary, accent, ink, muted, light_bg)
+    if not phases:
+        # 폴백 — body 에서 유도
+        for i, b in enumerate((sl.body_outline or [])[:3]):
+            head, _, gate = str(b).partition(" → ")
+            phases.append({"period": f"단계 {i + 1}", "title": head[:20],
+                           "action": head, "gate": gate, "output": ""})
+    I.draw_roadmap_timeline(slide, phases, primary, accent, ink, muted, light_bg)
 
 
 def t_icon_columns(slide, sl, ctx, primary, accent, ink, muted, light_bg):

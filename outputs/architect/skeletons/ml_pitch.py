@@ -1290,12 +1290,49 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
     pm = ctx.evaluation.primary_metric or {}
     pm_value = _format_pm_value(pm)
 
+    # jh 2026-06-12 — 운영 룰 캡션을 ctx 실데이터로 풍부하게 (사용자: 글 짧다·가독성↓)
+    _opt = None
+    try:
+        _m = (ctx.evaluation.metrics or {}).get("val_optimal_threshold") or {}
+        _opt = _m.get("value")
+    except Exception:
+        pass
+    _worst = ""
+    try:
+        _ss = sorted(
+            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+            key=lambda s: float(s["value"]),
+        )
+        if _ss:
+            _worst = f"{_ss[0].get('segment', '')}(정확도 {float(_ss[0]['value']):.2f})"
+    except Exception:
+        pass
+    _fn = 0
+    try:
+        _fn = int((ctx.evaluation.confusion_matrix or {}).get("fn") or 0)
+    except Exception:
+        pass
+    _thr_txt = f" 분류 임계값 {_opt:.3f}을 적용해" if isinstance(_opt, (int, float)) else ""
+
     policy_items: list[tuple[str, str]] = []
     if (ctx.evaluation.verdict or "").lower() == "adopt":
         policy_items = [
-            ("운영 임계", ctx.evaluation.gate_rationale or f"{pm_value} 기반 임계 설정"),
-            ("모니터링", "drift score · 메트릭 alarm · 재학습 트리거"),
-            ("Owner", "모델 운영팀 — 월간 리뷰 · 분기별 재검증"),
+            (
+                "운영 임계",
+                f"{pm_value}를 기준선으로 고정하고{_thr_txt} 운영한다. "
+                f"이 값을 하회하면 성능 저하로 보고 즉시 재학습을 트리거한다.",
+            ),
+            (
+                "모니터링",
+                "입력 분포 변화(drift score)와 주요 지표를 상시 추적하고 알람을 건다. "
+                + (f"특히 취약 구간 {_worst}을 집중 감시한다." if _worst else "이상 징후 시 운영팀에 자동 통보한다."),
+            ),
+            (
+                "재학습·책임",
+                (f"미탐(FN) {_fn}건 축소를 1차 목표로 " if _fn else "")
+                + "분기별 정기 재학습 또는 drift 초과 시 비정기 재학습을 수행하며, "
+                "모델 운영팀이 월간 리뷰·분기 재검증을 담당한다.",
+            ),
         ]
     elif (ctx.evaluation.verdict or "").lower() == "iterate":
         policy_items = [
@@ -1477,37 +1514,91 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
     tone = _get_verdict_tone(ctx)
     verdict = (ctx.evaluation.verdict or "").lower() or "adopt"
 
-    # Phase 라벨을 verdict 별로 — 한 줄 패턴을 ' → ' 로 분해
-    raw_pattern = tone.s19_phase_pattern or "Phase 1 → Phase 2 → Phase 3"
-    phases = [p.strip() for p in raw_pattern.split("→") if p.strip()][:3]
+    # jh 2026-06-12 — 3단계 「기간 · 활동 · 게이트(성공기준) · 산출물」 4박자 구조
+    # (사용자: "뭘 할거다가 안 느껴진다" → 측정 가능한 게이트 + 구체 산출물).
+    pm = ctx.evaluation.primary_metric or {}
+    _v = pm.get("value")
+    _pm_str = (f"{_v:.3f}" if isinstance(_v, float) and _v < 1 else str(_v)) if _v is not None else "—"
+    _pm_name = pm.get("name", "정확도")
+    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
 
-    body: list[str] = []
-    for i, phase in enumerate(phases):
-        body.append(f"{i+1}. {phase}")
+    _worst = ""
+    try:
+        _ss = sorted(
+            [s for s in (ctx.evaluation.per_segment or []) if isinstance(s, dict) and s.get("value") is not None],
+            key=lambda s: float(s["value"]),
+        )
+        if _ss:
+            _worst = str(_ss[0].get("segment", ""))
+    except Exception:
+        pass
+    _fn = 0
+    try:
+        _fn = int((ctx.evaluation.confusion_matrix or {}).get("fn") or 0)
+    except Exception:
+        pass
+    _miss = ""
+    try:
+        mr = ctx.dataset.missing_rate or {}
+        _top = sorted(mr.items(), key=lambda kv: -float(kv[1]))[:1]
+        if _top and float(_top[0][1]) > 0.3:
+            _miss = _top[0][0]
+    except Exception:
+        pass
 
     if verdict == "adopt":
-        body.extend([
-            "모니터링 KPI · drift score · primary_metric alarm",
-            "재학습 트리거 · 분기별 또는 drift > 0.1 시",
-        ])
+        _fn_goal = f"{_fn}→{max(int(_fn * 0.7), 1)}건 이하" if _fn else "FN 감소"
+        phases = [
+            {
+                "period": "0~30일",
+                "title": "파일럿 배포",
+                "action": f"{chosen} 운영 투입 · 취약 구간 {_worst or '세그먼트'} 집중 추적",
+                "gate": f"실데이터 {_pm_name} {_pm_str} 수준 유지 시 확장 승인",
+                "output": "파일럿 성능 리포트",
+            },
+            {
+                "period": "30~90일",
+                "title": "전사 확장",
+                "action": (f"{_miss} 결측 보강 피처 투입 · " if _miss else "") + "전 세그먼트 성능 안정화",
+                "gate": f"미탐(FN) {_fn_goal}로 감소 시 정착 단계 진입",
+                "output": "전사 운영 전환 + 세그먼트 보강 모델",
+            },
+            {
+                "period": "90일~",
+                "title": "정착·고도화",
+                "action": "분기 재학습 자동화 · CatBoost+차점 후보 앙상블 적용",
+                "gate": "drift 0.1 이내 안정 운영 · 분기 재검증 통과",
+                "output": "자동 재학습 파이프라인 + 모니터링 대시보드",
+            },
+        ]
     elif verdict == "iterate":
-        body.extend([
-            "보강 측정 · 새로 적립된 데이터 규모 / 결측률 변화",
-            "재평가 기준 · 본 모델 대비 +5%p 이상 향상 시 도입 재고려",
-        ])
+        phases = [
+            {"period": "0~30일", "title": "데이터 보강", "action": "결측·표본 확대 수집",
+             "gate": "결측률 목표 이하 달성", "output": "보강 데이터셋"},
+            {"period": "30~60일", "title": "재학습", "action": "신규 피처로 재학습",
+             "gate": f"{_pm_name} +5%p 이상 향상", "output": "개선 모델"},
+            {"period": "60일~", "title": "재평가", "action": "본 모델 대비 비교 검증",
+             "gate": "도입 기준 충족 시 adopt 전환", "output": "도입 재판정 리포트"},
+        ]
     else:  # reject
-        body.extend([
-            "대안 후보 · 문제 재정의 후 새 모델 탐색",
-            "재학습 금지 · 현 데이터·정의로는 본 모델 폐기",
-        ])
+        phases = [
+            {"period": "0~30일", "title": "문제 재정의", "action": "타깃·범위 재설정",
+             "gate": "분석 가능성 재확인", "output": "재정의 문서"},
+            {"period": "30~90일", "title": "대안 탐색", "action": "대안 모델·접근 탐색",
+             "gate": "후보 성능 임계 통과", "output": "대안 후보군"},
+            {"period": "90일~", "title": "검증", "action": "신규 접근 검증",
+             "gate": "도입 기준 충족", "output": "검증 결과"},
+        ]
+
+    body = [f"{p['period']} {p['title']} · {p['action']} → {p['gate']}" for p in phases]
 
     return SlideSpec(
         id="roadmap",
         section_id="plan",
         layout="roadmap_phase_kpi",
         role="action",
-        so_what=f"실행 로드맵 — 판정({verdict}) 에 맞춰 단계 자동 분기",
-        title_ko="실행 로드맵",
+        so_what=f"언제·무엇을 해서·무엇이 되면 다음 — {verdict} 판정 기반 3단계 실행 게이트",
+        title_ko="실행 로드맵 — 단계별 활동과 성공 기준",
         body_outline=body[:5],
         parent_message_id="plan_root",
         visual_spec=VisualSpec(
@@ -1520,7 +1611,8 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
             },
         ),
         speaker_notes_hint=(
-            "Phase 는 verdict 에 따라 자동 변형. adopt 만 운영 KPI / iterate 는 보강 / reject 는 폐기 후 대안."
+            "3단계 「기간·활동·게이트·산출물」 — 각 단계는 측정 가능한 성공 기준(gate)을 "
+            "충족해야 다음으로. 고도화는 Phase 3 에 통합 (별도 카드 폐지)."
         ),
     )
 
