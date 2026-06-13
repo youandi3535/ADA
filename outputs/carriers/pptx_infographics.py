@@ -30,26 +30,39 @@ def _add_paragraphs(slide, x, y, w, h, lines, size_pt=12, color_hex="#0F172A",
     """여러 줄을 단락 간격(space_after)과 함께 한 텍스트박스에 — 가독성용.
 
     jh 2026-06-12 — 빽빽한 caption 을 문장 단위로 끊어 단락 간격 부여.
+    jh 2026-06-13 — 박스 높이(h) 초과 추정 시 폰트·간격 자동 축소 (잘림 방지).
     """
     from pptx.dml.color import RGBColor
     from pptx.util import Cm, Pt
+
+    _lines = [str(ln).strip() for ln in lines if str(ln).strip()]
+    # 높이 추정: 한 줄 ≈ size_pt*0.045cm 높이, w(cm) 당 글자수로 줄 수 환산
+    def _est_height(sz: float, gap: float) -> float:
+        char_per_line = max(6, int(w / (sz * 0.021)))
+        total_lines = sum(max(1, -(-len(ln) // char_per_line)) for ln in _lines)
+        return total_lines * (sz * 0.046) + len(_lines) * (gap * 0.035)
+
+    sz, gap = float(size_pt), float(space_after_pt)
+    for _ in range(6):
+        if _est_height(sz, gap) <= h or sz <= 9:
+            break
+        sz -= 1
+        gap = max(3, gap - 1)
 
     tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
     tf = tb.text_frame
     tf.word_wrap = True
     _col = RGBColor.from_string(str(color_hex).lstrip("#"))
     first = True
-    for ln in lines:
-        if not str(ln).strip():
-            continue
+    for ln in _lines:
         p = tf.paragraphs[0] if first else tf.add_paragraph()
         first = False
         r = p.add_run()
-        r.text = str(ln).strip()
-        r.font.size = Pt(size_pt)
+        r.text = ln
+        r.font.size = Pt(sz)
         r.font.bold = bold
         r.font.color.rgb = _col
-        p.space_after = Pt(space_after_pt)
+        p.space_after = Pt(gap)
     return tb
 
 
@@ -3657,10 +3670,10 @@ def draw_roadmap_timeline(slide, phases, primary, accent, ink, muted, light_bg):
         card_y = top_y + 2.4
         card_h = SLIDE_H - card_y - 1.8
         add_rounded_rect(slide, x, card_y, cw, card_h, "#FFFFFF", line_hex=primary)
-        # 제목 (primary 헤더)
+        # 제목 (primary 헤더) — jh 2026-06-13: 가운데 정렬 (단계 헤더 통일)
         add_rounded_rect(slide, x, card_y, cw, 1.2, primary)
         add_text_box(slide, x + 0.4, card_y, cw - 0.8, 1.2, str(p.get("title", "")), size_pt=16,
-                     bold=True, color_hex="#FFFFFF", align="left", vcenter=True)
+                     bold=True, color_hex="#FFFFFF", align="center", vcenter=True)
         # 활동 — 문장 단위 단락 (가독성)
         add_text_box(slide, x + 0.4, card_y + 1.5, cw - 0.8, 0.6, "활동", size_pt=10,
                      bold=True, color_hex=muted, align="left", vcenter=True)
@@ -3694,14 +3707,15 @@ def draw_policy_decision(slide, badge, kpis, rules, primary, accent, ink, muted,
     badge_color = {"ok": "#16A34A", "warn": "#D97706", "no": "#DC2626"}.get(kind, primary)
     glyph = {"ok": GLYPHS["ok"], "warn": GLYPHS["warn"], "no": GLYPHS["no"]}.get(kind, GLYPHS["ok"])
 
-    # 상단 — 판정 배지 (좌) + KPI 스탯 (우)
-    by, bh = 4.5, 4.2
+    # 상단 — 판정 배지 (좌) + KPI 스탯 (우). jh 2026-06-13 — 배지 높이 축소로
+    # 하단 룰 카드 공간 확보 (룰 잘림 방지).
+    by, bh = 4.5, 3.4
     add_rounded_rect(slide, 1.5, by, 11.0, bh, badge_color)
-    add_text_box(slide, 2.1, by + 0.5, 3.0, 3.2, glyph, size_pt=64, bold=True,
+    add_text_box(slide, 2.1, by + 0.4, 3.0, 2.6, glyph, size_pt=54, bold=True,
                  color_hex="#FFFFFF", align="center", vcenter=True)
-    add_text_box(slide, 5.0, by + 0.7, 7.0, 1.6, label, size_pt=48, bold=True,
+    add_text_box(slide, 5.0, by + 0.45, 7.0, 1.5, label, size_pt=44, bold=True,
                  color_hex="#FFFFFF", align="left", vcenter=True)
-    add_text_box(slide, 5.0, by + 2.5, 7.0, 1.2, str(desc), size_pt=18, bold=True,
+    add_text_box(slide, 5.0, by + 2.05, 7.0, 1.1, str(desc), size_pt=17, bold=True,
                  color_hex="#FFFFFF", align="left", vcenter=True)
     # 우측 KPI 스탯 3
     kx = 13.5
@@ -3709,10 +3723,10 @@ def draw_policy_decision(slide, badge, kpis, rules, primary, accent, ink, muted,
     for i, (nm, val) in enumerate(kpis[:3]):
         x = kx + i * (kw + 0.4)
         add_rounded_rect(slide, x, by, kw, bh, light_bg, line_hex=primary)
-        add_text_box(slide, x, by + 0.6, kw, 1.8, str(val), size_pt=40, bold=True,
+        add_text_box(slide, x, by + 0.45, kw, 1.6, str(val), size_pt=38, bold=True,
                      color_hex=primary, align="center", vcenter=True)
-        add_rect(slide, x + kw / 2 - 1.0, by + 2.5, 2.0, 0.06, accent)
-        add_text_box(slide, x, by + 2.8, kw, 1.0, str(nm)[:16], size_pt=12, bold=True,
+        add_rect(slide, x + kw / 2 - 1.0, by + 2.1, 2.0, 0.06, accent)
+        add_text_box(slide, x, by + 2.35, kw, 0.9, str(nm)[:16], size_pt=12, bold=True,
                      color_hex=muted, align="center", vcenter=True)
 
     # 하단 — 운영 룰 3 아이콘 카드
