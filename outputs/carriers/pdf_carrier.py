@@ -684,7 +684,36 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     sl_flow.append(Paragraph(f"• {_nodash(b)}", bul))
                 has_img = False
                 vs = sl.visual_spec
-                if vs and (vs.type or "") == "exhibit_kpi":
+                if vs and (vs.type or "") == "issue_tree":
+                    # [B-Exhibit] 관통 질문 issue-tree — 거버닝 질문(네이비 바) + N갈래 카드. _exhibit과 같은 박스로 통일. try/except 안전.
+                    try:
+                        from reportlab.lib.enums import TA_CENTER as _TAC
+                        _isp = vs.spec or {}
+                        _gov = _isp.get("governing", "")
+                        _subs = _isp.get("subs") or []
+                        if _gov and _subs:
+                            _itn = PS("ITn", fontName=_KG, fontSize=9.5, textColor=colors.HexColor("#3A6FE0"), leading=13)
+                            _itg = PS("ITg", fontName=_KG, fontSize=12, textColor=colors.white, leading=16, alignment=_TAC)
+                            _its = PS("ITs", fontName=_KS, fontSize=9.5, textColor=colors.HexColor("#334155"), leading=13, alignment=_TAC)
+                            _itd = PS("ITd", fontName=_KS, fontSize=8, textColor=colors.HexColor("#94A3B8"), leading=11, alignment=_TAC)
+                            _itsrc = PS("ITsrc", fontName=_KS, fontSize=9, textColor=colors.HexColor("#64748B"), leading=13)
+                            _gov_t = Table([[Paragraph(_nodash(_gov), _itg)]], colWidths=[15.6 * cm])
+                            _gov_t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#243B5C")), ("ROUNDEDCORNERS", [6, 6, 6, 6]), ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9), ("LEFTPADDING", (0, 0), (-1, -1), 14), ("RIGHTPADDING", (0, 0), (-1, -1), 14)]))
+                            _nq = len(_subs) or 1
+                            _cards = [Paragraph(f'<font color="#3A6FE0"><b>{_i + 1}.</b></font> {_s}', _its) for _i, _s in enumerate(_subs)]
+                            _sub_t = Table([_cards], colWidths=[(15.6 / _nq) * cm] * _nq)
+                            _sub_t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FC")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 11), ("BOTTOMPADDING", (0, 0), (-1, -1), 11), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.HexColor("#E3E8F2"))]))
+                            _inner = [Paragraph(f"E X H I B I T &nbsp;&nbsp; {_isp.get('num', '')}", _itn), Spacer(1, 0.18 * cm), _gov_t, Spacer(1, 0.05 * cm), Paragraph("▼ 세 갈래로 분해", _itd), Spacer(1, 0.05 * cm), _sub_t]
+                            if _isp.get("source"):
+                                _inner.append(Spacer(1, 0.15 * cm))
+                                _inner.append(Paragraph(_nodash(_isp["source"]), _itsrc))
+                            _box = Table([[_inner]], colWidths=[17 * cm])
+                            _box.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")), ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")), ("ROUNDEDCORNERS", [8, 8, 8, 8]), ("LEFTPADDING", (0, 0), (-1, -1), 20), ("RIGHTPADDING", (0, 0), (-1, -1), 20), ("TOPPADDING", (0, 0), (-1, -1), 16), ("BOTTOMPADDING", (0, 0), (-1, -1), 16)]))
+                            sl_flow.append(Spacer(1, 0.8 * cm))
+                            sl_flow.append(KeepTogether([_box]))
+                    except Exception:
+                        pass
+                elif vs and (vs.type or "") == "exhibit_kpi":
                     # [B-Exhibit] 섹션 exhibit — Exec과 동일 _exhibit 박스로 통일(시각 일관성)
                     _esp = vs.spec or {}
                     if _esp.get("kpis"):

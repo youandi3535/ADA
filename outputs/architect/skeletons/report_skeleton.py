@@ -723,32 +723,13 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     # ── 분석 목적 (과제가 아니라 성과로)
     objective = (
         f"정확한 '{target}' 판정을 자동화해 판정의 일관성과 속도를 확보하는 것이 목적이다. "
-        f"이를 위해 입력 변수로 '{target}'{_josa(target, 'obj')} {verb}하는 모델을 수립하고, 결과를 좌우하는 핵심 변수를 규명한다. "
+        f"이를 위해 {comp_txt}로 '{target}'{_josa(target, 'obj')} {verb}하는 모델을 수립하고, 결과를 좌우하는 핵심 변수를 규명한다. "
         "단순 기준 모델 대비 실질적 개선과 해석 가능성을 함께 확보해, 결과를 운영 의사결정에 바로 활용할 수 있게 한다."
     )
 
-    # ── 분석 질문 (의사결정 언어 — 지표 약어 없이 '무슨 결정·무슨 비용'으로)
-    q_list = [f"첫째, 어떤 변수·요인이 '{target}'{_josa(target, 'obj')} 가장 강하게 좌우하는가?"]
-    if is_anom:
-        q_list.append("둘째, 이상 징후를 얼마나 일찍 잡아내며, 헛경보로 인한 불필요한 점검은 얼마나 줄일 수 있는가?")
-        q_list.append("셋째, 놓침과 헛경보 중 어느 실수가 더 비싼가, 그 비용에 맞춰 경보 기준을 어디에 둘 것인가?")
-    elif is_ts:
-        q_list.append(f"둘째, '{target}'에 어떤 추세·계절성·변화 시점이 있으며, '어제와 같다'고 찍는 수준을 의미 있게 넘어서는가?")
-        q_list.append("셋째, 며칠·몇 기간 앞까지 믿고 계획에 쓸 수 있는가?")
-    elif is_imbal:
-        q_list.append("둘째, 중요한 소수 사례를 놓치지 않으면서 헛경보를 어디까지 줄일 수 있는가?")
-        q_list.append("셋째, 놓침과 헛경보 중 어느 실수가 더 비싼가, 그에 맞춰 판정 기준을 어디에 둘 것인가?")
-    elif is_multiclass:
-        q_list.append("둘째, 어떤 범주끼리 자주 헷갈리며, 그 혼동이 어떤 잘못된 결정으로 이어지는가?")
-        q_list.append("셋째, 특정 범주의 판정이 유독 약하다면 어디를 보강해야 하는가?")
-    elif is_clf:
-        q_list.append("둘째, '놓침'과 '헛경보' 중 어느 실수가 더 비싼가, 그 비용에 맞춰 판정 기준을 어디에 둘 것인가?")
-        q_list.append("셋째, 현재 데이터만으로 단순 추측보다 의미 있게 나은 판정이 가능한가?")
-    else:  # 회귀
-        q_list.append("둘째, 예측이 얼마나 빗나가며, 현업이 허용하는 오차 범위 안에 드는 경우는 얼마나 되는가?")
-        q_list.append("셋째, 크게 빗나가는 상황은 언제이며, 그 위험을 어떻게 관리할 것인가?")
-    q_list.append(f"넷째, 세그먼트·구간별로 '{target}' 양상이 달라 다르게 대응해야 하는가?")
-    questions = "이 판단은 다음으로 쪼개진다.<br/>" + "<br/>".join(q_list)
+    # ── 분석 질문 → §1 exhibit(issue-tree)로 시각화. 긴 질문 나열(중복·지면) 대신 관통질문을 3갈래로 분해.
+    #    세부 답은 §3(무엇이)·§5(믿나)·§6(어떻게)에 있다 — 관통 인사이트가 척추로 흐르게.
+    _tree_subs = [f"무엇이 '{target}'{_josa(target, 'obj')} 가르나", "믿고 운영에 쓸 만한가", "어디에·어떻게 적용하나"]
 
     # ── 분석 범위 (+ 한계 선제)
     scope_parts = [f"분석은 {n_rows:,}행 × {n_cols}열을 대상으로 {cat} 관점의 {verb}에 한정한다."]
@@ -845,23 +826,13 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         + _stk_mid + ". "
         "데이터·MLOps가 모델 적재와 재학습·모니터링을 책임지며, 리스크·컴플라이언스가 공정성과 규제 적합성을 점검한다."
     )
-    # [B-Exhibit §1] 분석 프레임 exhibit — 빈 하단을 채우고 Exec과 동일 _exhibit 박스로 통일. 전부 ctx 출처.
-    _ex_cols = ["#3A6FE0", "#243B5C", "#8478C8"]
-    _ovw_kpis = [[f"{n_rows:,}건", "분석 표본", _ex_cols[0]], [f"{n_feat}개", "입력 변수", _ex_cols[1]]]
-    if is_clf and maj is not None:
-        _ovw_kpis.append([f"{maj * 100:.0f}%", "넘어야 할 단순추측", _ex_cols[2]])
-        _ovw_take = f"데이터는 준비됐다. 관건은 단순 추측({maj * 100:.0f}%)을 의미 있게 넘느냐다."
-        _ovw_unit = "기준: 다수 클래스 비율"
-    elif naive is not None:
-        _ovw_kpis.append([f"{_fvb(naive)}", "단순모델 문턱", _ex_cols[2]])
-        _ovw_take = f"데이터는 준비됐다. 관건은 단순 모델({_fvb(naive)})을 의미 있게 넘느냐다."
-        _ovw_unit = "기준: 단순 모델 점수"
-    else:
-        _ovw_take = f"이 표본·변수 구성이 '{target}' 판정에 충분한지가 도입의 첫 관문이다."
-        _ovw_unit = "기준: 표본·변수 구성"
-    _ovw_exhibit = VisualSpec(type="exhibit_kpi", spec={
-        "num": "2 · 분석 프레임", "takeaway": _ovw_take, "kpis": _ovw_kpis,
-        "unit": _ovw_unit, "source": "출처: ADA 분석",
+    # [B-Exhibit §1] 관통 질문 issue-tree — 보고서 논리(관통질문 → 3갈래)를 McKinsey식 피라미드로 시각화.
+    # [관통 인사이트 원칙·헌법] 관통질문이 전체를 흐르는 척추: tree의 3갈래가 §3·§5·§6 답으로 이어진다. 결정 논리 중심(70% 의사결정).
+    _ovw_exhibit = VisualSpec(type="issue_tree", spec={
+        "num": "2 · 관통 질문 분해",
+        "governing": _head,
+        "subs": _tree_subs,
+        "source": "관통 질문을 세 갈래로 분해. 각 갈래의 답은 §3·§5·§6 본문에 있다.",
     })
 
     slide = SlideSpec(
@@ -878,7 +849,6 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
             ["분석 배경", background],
             ["이해관계자", stakeholders],
             ["분석 목적", objective],
-            ["세부 질문", questions],
             ["분석 범위", scope],
             ["성공 기준 (추정)", success],
             ["", "이 도입 가치는 데이터가 이 질문에 답할 수 있을 때만 성립한다. 표본·변수·품질이 그걸 받쳐주는지를 다음 장에서 먼저 따진다."],
