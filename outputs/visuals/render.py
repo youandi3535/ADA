@@ -121,6 +121,8 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
             return _render_gantt(vs, ctx, primary, plt)
         if vtype == "diagram_tree":
             return _render_tree(vs, ctx, primary, plt)
+        if vtype == "roadmap":
+            return _render_roadmap(vs, ctx, primary, plt)
         if vtype in (
             "table_feature_matrix",
             "table_score_card",
@@ -457,24 +459,53 @@ def _render_hbar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, 
     _ACCENT = primary or "#185FA5"
     _MUTED = "#94A3B8"    # 묻힘 색
     colors_list = [_ACCENT if i == _max_idx else _MUTED for i in range(len(values))]
-    fig, ax = plt.subplots(figsize=(9, max(3.2, len(values) * 0.8)), dpi=120)
+    _unit = "%" if "%" in (vs.title or "") else ""   # 제목에 % 있으면 라벨에 % 부착
+    _track = mx * 1.16
+    fig, ax = plt.subplots(figsize=(9, max(3.0, len(values) * 0.82)), dpi=120)
     fig.patch.set_facecolor("white")
-    ax.barh(y, values, color=colors_list, height=0.42, zorder=3)  # 두께 절반(날씬하게)
+    ax.barh(y, [_track] * len(values), color="#F1F5F9", height=0.58, zorder=1)  # 트랙(배경 진행바)
+    ax.barh(y, values, color=colors_list, height=0.58, zorder=3)                # 값 막대
     for yi, v in zip(y, values):
-        lbl = f"{int(v)}" if v == int(v) else f"{v:.1f}"
-        ax.text(v + mx * 0.02, yi, lbl, va="center", ha="left", fontsize=21, color="#0F172A", fontweight="bold")
+        lbl = (f"{int(v)}" if v == int(v) else f"{v:.1f}") + _unit
+        ax.text(v + mx * 0.025, yi, lbl, va="center", ha="left", fontsize=20, color="#0F172A", fontweight="bold")
     ax.set_yticks(y)
     ax.set_yticklabels(labels)
     if vs.title:
         ax.set_title(_ensure_ascii(vs.title), fontsize=17, color="#0F172A", pad=14, loc="left", fontweight="bold")
-    for s in ("top", "right", "bottom"):
+    for s in ("top", "right", "bottom", "left"):
         ax.spines[s].set_visible(False)
     ax.tick_params(axis="y", colors="#0F172A", labelsize=18, length=0)
-    ax.tick_params(axis="x", colors="#475569", labelsize=11)
-    ax.set_xlim(0, mx * 1.18)
-    ax.grid(axis="x", color="#EEF2F6", linewidth=1.0, zorder=0)
+    ax.xaxis.set_visible(False)  # 값이 막대에 직접 있으므로 x축 제거 — 군더더기 없는 룩
+    ax.set_xlim(0, _track)
     ax.set_axisbelow(True)
     plt.tight_layout()
+    out = _tmp_png()
+    plt.savefig(out, dpi=130, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def _render_roadmap(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -> str:
+    """분석 접근 로드맵 — 번호 원 + 화살표 가로 흐름 (박스 아님)."""
+    steps = (vs.spec or {}).get("steps") or []
+    steps = [_ensure_ascii(str(s))[:14] for s in steps]
+    n = len(steps)
+    if n == 0:
+        return ""
+    fig, ax = plt.subplots(figsize=(11, 2.2), dpi=130)
+    fig.patch.set_facecolor("white")
+    ax.set_xlim(-0.6, n - 0.4)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    for i, lab in enumerate(steps):
+        if i < n - 1:
+            ax.annotate("", xy=(i + 0.74, 0.66), xytext=(i + 0.26, 0.66),
+                        arrowprops=dict(arrowstyle="-|>", color="#B6C6DA", lw=2.4))
+        ax.scatter([i], [0.66], s=1700, color="#185FA5", zorder=3, edgecolors="white", linewidths=2.5)
+        ax.text(i, 0.66, str(i + 1), ha="center", va="center", color="white", fontsize=17, fontweight="bold", zorder=4)
+        ax.text(i, 0.24, lab, ha="center", va="center", color="#0F172A", fontsize=14, fontweight="bold")
+    if vs.title:
+        ax.set_title(_ensure_ascii(vs.title), fontsize=15, color="#0F172A", pad=12, loc="left", fontweight="bold")
     out = _tmp_png()
     plt.savefig(out, dpi=130, bbox_inches="tight", facecolor="white")
     plt.close(fig)

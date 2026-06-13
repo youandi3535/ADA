@@ -719,6 +719,31 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     if _esp.get("kpis"):
                         sl_flow.append(Spacer(1, 0.3 * cm))
                         sl_flow.append(_exhibit(_esp.get("num", ""), _esp.get("takeaway", ""), _esp["kpis"], _esp.get("unit", ""), _esp.get("source", ""), 17 * cm))
+                elif vs and (vs.type or "") == "gate_check":
+                    # [B-Exhibit] 데이터 적합성 게이트 — 상태 체크리스트(✓/⚠) 박스. _exhibit과 같은 박스로 통일. try/except 안전.
+                    try:
+                        _gsp = vs.spec or {}
+                        _gates_v = _gsp.get("gates") or []
+                        if _gates_v:
+                            _gcn = PS("GCn", fontName=_KG, fontSize=9.5, textColor=colors.HexColor("#3A6FE0"), leading=13)
+                            _gct = PS("GCt", fontName=_KG, fontSize=13, textColor=colors.HexColor("#243B5C"), leading=18, spaceAfter=2)
+                            _gcr = PS("GCr", fontName=_KS, fontSize=10.5, textColor=colors.HexColor("#334155"), leading=17)
+                            _gcs = PS("GCs", fontName=_KS, fontSize=9, textColor=colors.HexColor("#64748B"), leading=13)
+                            _grows = [[Paragraph(f'<font color="{_co}"><b>{_st}</b></font>&nbsp;&nbsp;{_lb}', _gcr)] for _st, _lb, _co in _gates_v]
+                            _gtbl = Table(_grows, colWidths=[15.6 * cm])
+                            _gtbl.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12), ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor("#E3E8F2"))]))
+                            _ginner = [Paragraph(f"E X H I B I T &nbsp;&nbsp; {_gsp.get('num', '')}", _gcn)]
+                            if _gsp.get("takeaway"):
+                                _ginner += [Spacer(1, 0.1 * cm), Paragraph(_nodash(_gsp["takeaway"]), _gct)]
+                            _ginner += [Spacer(1, 0.15 * cm), _gtbl]
+                            if _gsp.get("source"):
+                                _ginner += [Spacer(1, 0.12 * cm), Paragraph(_nodash(_gsp["source"]), _gcs)]
+                            _gbox = Table([[_ginner]], colWidths=[17 * cm])
+                            _gbox.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")), ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")), ("ROUNDEDCORNERS", [8, 8, 8, 8]), ("LEFTPADDING", (0, 0), (-1, -1), 20), ("RIGHTPADDING", (0, 0), (-1, -1), 20), ("TOPPADDING", (0, 0), (-1, -1), 16), ("BOTTOMPADDING", (0, 0), (-1, -1), 16)]))
+                            sl_flow.append(Spacer(1, 0.8 * cm))
+                            sl_flow.append(KeepTogether([_gbox]))
+                    except Exception:
+                        pass
                 elif vs and (vs.type or "").startswith("table_"):
                     # 표는 이미지 대신 native reportlab Table — 선명·full-width·페이지 분할(헤더 반복)
                     _cols = list((vs.spec or {}).get("columns") or [])
@@ -771,10 +796,11 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                             if h_cm > 4.8:
                                 h_cm = 4.8
                                 w_cm = h_cm * ar
-                            sl_flow.append(Spacer(1, 0.2 * cm))
+                            sl_flow.append(Spacer(1, 0.45 * cm))  # [B25] 그래프 앞 한 줄 띄움
                             sl_flow.append(Image(png, width=w_cm * cm, height=h_cm * cm))
                             if vs.caption:
                                 sl_flow.append(Paragraph(_nodash(vs.caption), cap))
+                            sl_flow.append(Spacer(1, 0.4 * cm))  # [B25] 그래프 뒤 한 줄 띄움
                             has_img = True
                     except Exception:
                         pass

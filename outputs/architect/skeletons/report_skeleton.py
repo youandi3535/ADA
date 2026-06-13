@@ -727,10 +727,6 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         "단순 기준 모델 대비 실질적 개선과 해석 가능성을 함께 확보해, 결과를 운영 의사결정에 바로 활용할 수 있게 한다."
     )
 
-    # ── 분석 질문 → §1 exhibit(issue-tree)로 시각화. 긴 질문 나열(중복·지면) 대신 관통질문을 3갈래로 분해.
-    #    세부 답은 §3(무엇이)·§5(믿나)·§6(어떻게)에 있다 — 관통 인사이트가 척추로 흐르게.
-    _tree_subs = [f"무엇이 '{target}'{_josa(target, 'obj')} 가르나", "믿고 운영에 쓸 만한가", "어디에·어떻게 적용하나"]
-
     # ── 분석 범위 (+ 한계 선제)
     scope_parts = [f"분석은 {n_rows:,}행 × {n_cols}열을 대상으로 {cat} 관점의 {verb}에 한정한다."]
     if ds.detected_time_col:
@@ -826,13 +822,10 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         + _stk_mid + ". "
         "데이터·MLOps가 모델 적재와 재학습·모니터링을 책임지며, 리스크·컴플라이언스가 공정성과 규제 적합성을 점검한다."
     )
-    # [B-Exhibit §1] 관통 질문 issue-tree — 보고서 논리(관통질문 → 3갈래)를 McKinsey식 피라미드로 시각화.
-    # [관통 인사이트 원칙·헌법] 관통질문이 전체를 흐르는 척추: tree의 3갈래가 §3·§5·§6 답으로 이어진다. 결정 논리 중심(70% 의사결정).
-    _ovw_exhibit = VisualSpec(type="issue_tree", spec={
-        "num": "2 · 관통 질문 분해",
-        "governing": _head,
-        "subs": _tree_subs,
-        "source": "관통 질문을 세 갈래로 분해. 각 갈래의 답은 §3·§5·§6 본문에 있다.",
+    # [B-Exhibit §1] 분석 접근 로드맵 — 박스/헤드라인 반복 대신 '데이터→결정' 흐름(번호 원+화살표). 4단계가 §2·§3·§5·§7로 이어짐.
+    # [관통 인사이트 원칙·헌법] 로드맵 4단계가 보고서를 관통하는 척추 — 헤드라인을 반복하지 않고 '여정'을 제시(결정 중심 70%).
+    _ovw_exhibit = VisualSpec(type="roadmap", title="분석 접근 — 데이터에서 결정까지", spec={
+        "steps": ["데이터 적합성", "핵심 동인", "성능·신뢰", "표적 실행"],
     })
 
     slide = SlideSpec(
@@ -851,7 +844,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
             ["분석 목적", objective],
             ["분석 범위", scope],
             ["성공 기준 (추정)", success],
-            ["", "이 도입 가치는 데이터가 이 질문에 답할 수 있을 때만 성립한다. 표본·변수·품질이 그걸 받쳐주는지를 다음 장에서 먼저 따진다."],
+            ["", "이 도입 가치는 데이터가 이 질문에 답할 수 있을 때만 성립한다."],
             # [70/30룰] 기대 효과는 §8 결론으로 이관 — §1 에서 결론 미리 노출 금지
         ],
         visual_spec=_ovw_exhibit,
@@ -908,8 +901,6 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
     else:
         tgt_txt = "연속값 추정 대상이다"
 
-    issues = (ctx.eda.data_quality_issues or []) if ctx.eda else []
-
     # ── 도출 단락
     p_fit = f"분석 대상은 {n_rows:,}행 × {n_cols}열로, 식별자·타깃을 제외하면 수치형 {len(num_cols)}개·범주형 {len(cat_cols)}개의 입력 변수로 구성된다. {adeq}."
     if ds.detected_time_col:
@@ -950,37 +941,6 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
 
     p_target = f"타깃 '{target}'{_josa(target, 'subj')} {tgt_txt}. 이는 이후 평가 지표·임계값 선택의 전제가 된다."
 
-    # ── 품질 점검 — 발견 + 처리 + 후속 (실무 표준 3단)
-    # 단순 'X 11건' 한 줄로 끝내지 않고, '뭘 어떻게 처리할 것인가'까지 명시.
-    if not issues:
-        p_quality = (
-            "품질 점검 결과 식별된 이슈는 없다. "
-            "본 분석에서는 별도 정제 단계 없이 데이터를 그대로 사용하며, "
-            "운영 데이터 입수 시점에 동일한 점검 체크리스트를 자동 실행한다."
-        )
-    else:
-        findings = []
-        for it in issues[:3]:
-            if isinstance(it, dict):
-                txt = _txt_from(it, ("issue", "name", "note"))
-                if txt:
-                    findings.append(txt.rstrip("."))
-        finding_txt = "; ".join(findings) if findings else "경미한 데이터 이슈"
-        treatment = (
-            "전처리 단계에서 대치(수치 중앙값·범주 최빈값)로 보정해 분석 영향을 차단했다"
-            if has_impute else
-            "해당 행 제외 또는 '결측 자체를 신호로 인코딩'하는 안을 검토한다"
-        )
-        # [B15·B19] _label_card() 통과로 자동 준수
-        p_quality = _label_card([
-            ("발견", f"{finding_txt}."),
-            ("처리", f"{treatment}."),
-            ("후속",
-             "운영 데이터에서 동일 패턴 발생 시 자동 동일 처리를 적용하며, "
-             "임계 초과(전체의 5% 이상)나 새 유형 이슈 발생 시 데이터팀에 에스컬레이션해 "
-             "처리 결정과 영향 평가를 문서화한다."),
-        ])
-
     # so_what — '회장이 봐도 끌리는' 핵심 한 줄 (데이터의 결정적 사실을 앞세움)
     adequate = bool(n_rows and n_rows >= 1000)
     event = _event_noun(ctx)
@@ -993,27 +953,36 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
     else:
         sow = f"결측 없이 {len(input_cols)}개 변수가 '{target}'{_josa(target, 'obj')} 다각도로 담아, 원인 규명까지 가능한 데이터다."
 
-    slide = SlideSpec(
+    # [§2 시각화] 박스 요약 대신 '데이터를 보여준다' — 결측 프로파일(그래프). 변수 사전(표)은 부록 9.2.
+    # [연결 자산] dataset.missing_rate·dtypes·numeric_stats = 파이프라인 프로파일러 산출값 직접 사용(어떤 데이터든 자동).
+    _miss_items = [(str(_feat_label(ctx, c)), round(r * 100, 1)) for c, r in miss_cols[:6]]
+    _miss_chart = (
+        VisualSpec(type="chart_hbar", title="변수별 결측률 (%)", spec={"items": _miss_items},
+                   caption="결측이 큰 변수일수록 단순 대치가 신호를 지울 위험이 크다.")
+        if _miss_items else None
+    )
+
+    # [§2 = 1슬라이드·1페이지] 구성·주요변수·타깃·결측 글 + 결측 그래프(결측분석 뒤). 품질점검(결측 중복) 제거 → 변수표는 부록 9.2.
+    slide1 = SlideSpec(
         id="data_understanding",
         section_id="data_understanding",
-        layout="comparison_table",
+        layout="one_message",
         role="evidence",
         so_what=sow,
         title_ko=(  # [B9 Headline=Message] 결론형, 동적
             f"{n_rows:,}건·{n_cols}개 변수로 결정에 충분한가"
-            if n_rows and n_cols else "표본 적합성 및 변수 진단"
+            if n_rows and n_cols else "표본 적합성 및 데이터 품질"
         ),
         prose_blocks=[
             # [C12 ConfidenceStamp룰] §2 데이터 진단은 모두 데이터에서 직접 도출 (확실)
             ["데이터 구성·적합성", p_fit],
-            ["결측 분석", p_missing],
             ["주요 변수", p_key],
             ["타깃 분포", p_target],
-            ["품질 점검", p_quality],
+            ["결측 분석", p_missing],
         ],
-        visual_spec=_data_dictionary_visual(ctx),
+        visual_spec=_miss_chart,  # 결측 프로파일 그래프 (박스 아님)
     )
-    return make_section("data_understanding", "데이터 이해", "context", [slide])
+    return make_section("data_understanding", "데이터 이해", "context", [slide1])
 
 
 def _chart_kind(c_title, ct, items):
