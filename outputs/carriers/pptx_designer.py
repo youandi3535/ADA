@@ -19,7 +19,6 @@ from outputs.architect.plan import ReportPlan, SlideSpec
 from outputs.carriers.design_hint_helpers import (
     check_and_log_miss,
     icon_name as design_icon_name,
-    palette_override,
     photo_keyword,
 )
 from outputs.context.schema import ReportContext
@@ -1209,9 +1208,8 @@ def _draw_chart_callout(slide, sl, ctx, primary, accent, ink, muted, light_bg, r
 def _add_pair_bullets(slide, x, y, w, h, bullets, ink, primary):
     """페어 bullet 리치텍스트 — 사실 13pt + '→ 시사점' 12B(primary) + 간격."""
     from pptx.dml.color import RGBColor
-    from pptx.util import Cm, Pt
-
     from pptx.enum.text import MSO_ANCHOR
+    from pptx.util import Cm, Pt
 
     tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
     tf = tb.text_frame

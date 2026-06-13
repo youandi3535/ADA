@@ -60,8 +60,6 @@ from outputs.architect.skeleton_helpers import (
     format_pm_value as _format_pm_value,
     get_verdict_tone as _get_verdict_tone,
     select_top_eda_charts as _select_top_eda_charts,
-    summarize_dtypes as _summarize_dtypes,
-    summarize_target as _summarize_target,
 )
 from outputs.architect.substitution_manifest import (
     TechStackItem,
@@ -553,17 +551,6 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
     상단 = 데이터 개요 (행·열·타입·타겟), 하단 = 데이터 품질 이슈 Top 3.
     v28_data_combined layout 가정 — 신규 carrier 가 두 영역으로 분리 렌더.
     """
-    rows = ctx.dataset.shape.get("rows", 0)
-    cols = ctx.dataset.shape.get("cols", 0)
-    dtypes_summary = _summarize_dtypes(ctx)
-    target_summary = _summarize_target(ctx)
-
-    overview_items: list[tuple[str, str]] = [
-        ("규모", f"{rows:,} 행 × {cols} 열"),
-        ("변수 타입", dtypes_summary),
-        ("타겟 분포", target_summary),
-    ]
-
     # 데이터 품질 이슈 Top 3
     issues = list(ctx.eda.data_quality_issues or [])[:3]
     quality_items: list[tuple[str, str]] = []
@@ -1128,7 +1115,6 @@ def _build_insight_synthesis(ctx: ReportContext) -> SlideSpec:
     rows = ctx.dataset.shape.get("rows", 0)
     cols = ctx.dataset.shape.get("cols", 0)
     use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
     pm = ctx.evaluation.primary_metric or {}
     pm_str = _format_pm_value(pm)
 
@@ -1310,7 +1296,6 @@ def _build_roi(ctx: ReportContext) -> SlideSpec:
     tone = _get_verdict_tone(ctx)
     title_ko = tone.s17_section_label or (variant.title_ko if variant else "정책 인사이트")
 
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
     pm = ctx.evaluation.primary_metric or {}
     pm_value = _format_pm_value(pm)
 
@@ -1555,8 +1540,6 @@ def _build_roadmap(ctx: ReportContext) -> SlideSpec:
     _v = pm.get("value")
     _pm_str = (f"{_v:.3f}" if isinstance(_v, float) and _v < 1 else str(_v)) if _v is not None else "—"
     _pm_name = pm.get("name", "정확도")
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
-    use_case = ctx.domain.inferred_use_case or ctx.meta.user_intent or "분석 과제"
     industry = ctx.domain.inferred_industry or "현업"
     _gi = list(ctx.interpretation.global_importance or [])
     top_feat = getattr(_gi[0], "feature", "핵심 발견") if _gi else "핵심 발견"
