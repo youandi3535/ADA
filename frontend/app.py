@@ -472,6 +472,7 @@ let selectedTopic={id:1};        // {id:1~5} 또는 {custom:"text"}
 let topicCustomText='';          // 직접 입력 textarea 값
 let g2DirectionsBusy=false;      // endpoint 호출 중 표시용
 let g2DirectionsStartedAt=null;  // HJ 2026-06-11 — busy 시작 시각(ms). 버튼 라벨에 경과초 표시용.
+let busyStartedAt=null, busyTimer=null;  // HJ 2026-06-13 — busy(… 처리 중) 경과초 표시용. startBusyTimer() 가 0.5초 주기로 라벨 갱신.
 let g2DirectionsReady=false;     // endpoint 응답 받았는지 (resume 가드)
 let _g2PrefetchedJob=null;       // HJ 2026-06-12 — 분석 방향 백그라운드 선생성을 job 당 1회만 발사하기 위한 가드.
 let lastSubmittedGate=null;  // resume 후 이 게이트가 사라질 때까지 계속 폴링
@@ -1113,9 +1114,19 @@ async function sha256(str){
   return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
 }
 
+// HJ 2026-06-13 — busy(… 처리 중) 동안 0.5초 주기로 render → 버튼의 경과초를 갱신.
+//   busy=false 가 되면 타이머가 스스로 감지해 종료(busy=false 지점마다 정리 코드 불필요).
+function startBusyTimer(){
+  busyStartedAt=Date.now();
+  if(busyTimer) clearInterval(busyTimer);
+  busyTimer=setInterval(function(){
+    if(!busy){ clearInterval(busyTimer); busyTimer=null; busyStartedAt=null; return; }
+    render();
+  }, 500);
+}
 async function doUpload(){
   if(!selectedFile){ errMsg='먼저 파일을 선택하세요.'; render(); return; }
-  errMsg=''; busy=true; render();
+  errMsg=''; busy=true; startBusyTimer(); render();
   try{
     const fd=new FormData(); fd.append('file', selectedFile);
     const up=await api('/upload',{method:'POST',body:fd});
@@ -1158,7 +1169,7 @@ async function doResume(){
   // CS 2026-06-10 — G2 일 때 선택된 주제도 choice 에 포함
   if(tg==='G2' && window._g2_selectedTopicText){ choice.topic=window._g2_selectedTopicText; }
   const gate=tg;  // curGate() 대신 cur 기준 게이트 코드 사용
-  errMsg=''; busy=true; navUnlocked=false; paused=false; _pauseStart=null; render();  // 재진행 확정 → 정지 해제(정상 진행 복귀)
+  errMsg=''; busy=true; startBusyTimer(); navUnlocked=false; paused=false; _pauseStart=null; render();  // 재진행 확정 → 정지 해제(정상 진행 복귀)
   try{
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
@@ -1217,9 +1228,12 @@ async function poll(){
     if((_g1Done || _topicReady) && _typingHoldComplete()){ cur=1; follow=true; }
   }
   // follow=true 여도 cur 는 절대 자동 regress 안 함. 사용자 prev 버튼 클릭 으로만 내려갈 수 있음.
-  // HJ 2026-06-11 — 모달 표시 중에는 cur 자동 전진 차단. frontier 가 올라가도 inModalLoading()=false 될 때까지 고정.
-  //   (구 코드: cur=3 으로 올리면 inModalLoading(cur=3) 이 submittedHere=false 반환 → 모달 즉시 소멸 버그)
-  if(follow && !inModalLoading()) cur=Math.max(cur, frontier);
+  // HJ 2026-06-13 — 자동 전진은 _modalShouldBeActive()(논리 활성, dismiss 무관) 기준으로 차단.
+  //   inModalLoading() 은 modalDismissed(✕ 닫음) 시 false 라, 모달을 닫으면 글 작성이 안 끝났어도
+  //   전진하던 문제가 있었다. 닫기/열기는 화면 시각 토글일 뿐 — 분석·글작성·전진조건에 영향 없어야 한다.
+  //   전진 조건은 '타자기 글 작성 완료 + 3초'(=_modalShouldBeActive()=false) 단일 기준으로 통일(사용자 지시).
+  //   (닫아도 위 [A] _active 경로가 모달 DOM 을 살려둬 타자기가 계속 → _typingHoldComplete() 정상 → 교착 없음)
+  if(follow && !_modalShouldBeActive()) cur=Math.max(cur, frontier);
   // cur 상한 = max(maxReached, frontier) — backend stale 일 때도 사용자 진행 단계 유지.
   cur=Math.max(0,Math.min(cur,Math.max(maxReached,frontier)));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
@@ -1338,7 +1352,9 @@ function _stageProgress(){
     // 팝업 로딩 중(proposals 미도착) → 95% 억제. proposals 도착 시 modal 닫히고 그 때 100%.
     // 완료 = 2단계로 실제 전환되는 시점. modal 닫힌 후에만 100%/'완료' 표시.
     // HJ 2026-06-12 — 모달 로딩 캡 99→95. 마지막 마일스톤이 active(진행중) 로 보이도록 일관화.
-    const _cap=inModalLoading()?95:100;
+    // HJ 2026-06-13 — dismiss 무관(_modalShouldBeActive). 닫기=화면 토글일 뿐이므로,
+    //   모달을 ✕로 닫아도 타이핑 완료+3초(=_modalShouldBeActive()=false) 전까지 95% 유지.
+    const _cap=_modalShouldBeActive()?95:100;
     _shownPct=Math.min(_cap,_shownPct+10);
     _barFlowPct=_shownPct;
     return Math.round(_shownPct);
@@ -1446,7 +1462,8 @@ function progressBar(forceShow){
   let activeIdx=_curMilestoneIdx();
   // HJ 2026-06-12 — 모달 로딩 중(95% hold)에는 마지막 칸을 active(파랑)로 유지.
   //   실제 완료(모달 닫힘 후 p>=100) 시에만 전체 done(녹색).
-  if(p>=100 || (_completing && !inModalLoading())) activeIdx=flow.length;
+  // HJ 2026-06-13 — dismiss 무관(_modalShouldBeActive): 모달을 닫아도 타이핑 완료+3초 전엔 마지막 칸 active 유지.
+  if(p>=100 || (_completing && !_modalShouldBeActive())) activeIdx=flow.length;
   let barHtml='';
   if(flow.length){
     const segs=flow.map(function(ag,i){
@@ -1481,7 +1498,7 @@ function gateHeader(g){
   const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
   const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
   const props=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
-  const stage=STAGE_TRANSITION_DESC[cur];
+  const stage=STAGE_TRANSITION_DESC[cur+1];
   // CS 2026-06-11 — 본인 명시 "강제 X". frontend 휴리스틱 override 제거.
   // backend 의 LLM 분류 결과를 그대로 신뢰. 미확정/빈값이면 _default 폴백.
   let catKey=gateData.category;
@@ -1494,7 +1511,7 @@ function gateHeader(g){
     else { h2=tt[0]; en=tt[1]; desc='업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.'; }
   } else if(stage){
     // 로딩 구간 = 카테고리별 헤더 우선, _default fallback, 없으면 단계 친화 폴백
-    const cmap=GATE_HEADER_BY_CATEGORY.loading[cur]||{};
+    const cmap=GATE_HEADER_BY_CATEGORY.loading[cur+1]||{};
     const byCat=cmap[catKey]||cmap._default;
     if(byCat){ h2=byCat.h2; en=byCat.en; desc=byCat.desc||('곧 "'+esc(tt[0])+'" 화면이 표시됩니다.'); }
     else { h2=stage.ko; en=stage.en; desc='곧 "'+esc(tt[0])+'" 화면이 표시됩니다.'; }
@@ -1657,19 +1674,11 @@ function _modalShouldBeActive(){
   if(isFailed()) return false;
   // HJ 2026-06-12 — G6 는 완료돼도 팝업 타이핑이 끝나기 전이면 모달 유지 (조기 종료·7단계 점프 방지).
   if(isCompleted() && !_g6TypingHold()) return false;
-  // 1~6단계(cur=0~5) 모달은 진행률 41% 이상에서만 노출. 초반 40% 까지는 본문 카드 표시. (원래 동작 유지)
-  // HJ 2026-06-12 — 4단계(G4 모델학습) 팝업 미표시 버그 fix.
-  //   G4 는 backend 글로벌 진행 [50,85] 에 매핑되는데, 튜닝 종료 시점 글로벌 64% = 단계 40%(=(64-50)/35)
-  //   로 41% 게이트 '직전'에 걸린다. 41% 돌파는 학습(글로벌 82%) 종료 시점이라, 그때는 이미 다음 게이트가
-  //   도착해 모달 창이 스킵됨. 게다가 240s 추정치 탓에 시간 기반 폴백도 너무 느리다.
-  //   → cur===3 한정, 단계 분석이 15초 이상 진행되면 pct 무관하게 모달 노출 (아래 lastSubmittedGate 가드 유지).
-  const _stageElapsedMs=_stageStart?(Date.now()-_stageStart):0;
-  const _g4ModalFallback=(cur===3 && _stageElapsedMs>=15000);
-  // HJ 2026-06-12 — 사용자 요구: 모든 단계 모달은 진행률 41% 이상에서만 노출. (G3 즉시 노출 _postSubmitAnalyzing 제거)
-  //   이전 세션이 cur>=2 를 '제출 즉시 모달'로 우회시켜 G3 진행 시 팝업이 0% 에 바로 떴다 → 제거.
-  //   41% 전에는 본문 인라인 로딩만 보이고, 카드 regress 는 contentGate 의 _agStaleLow 가드가 막는다.
-  //   G4(cur===3)만 41% 도달이 늦어 위 _g4ModalFallback(15초)로 별도 노출.
-  if(cur>=0 && cur<=5 && _shownPct<41 && !_g4ModalFallback) return false;
+  // HJ 2026-06-13 — 모달 생성 기준은 '단계 진행률 41%' 단일 기준(사용자 지시).
+  //   시간 기반(15초) 폴백 전면 제거 — 늦게 뜨든 일찍 뜨든 모든 단계
+  //   (cur 0~5)에서 _shownPct 가 41% 에 도달해야만 모달 노출. 41% 미만에서는 본문 카드만 표시한다.
+  //   (lastSubmittedGate 가드(아래 cur>=1 분기)는 유지되어 stale 단계로 새지 않는다.)
+  if(cur>=0 && cur<=5 && _shownPct<41) return false;
   if(cur===0){
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
     if(_p0.length && curGate()==='G2' && _typingHoldComplete()) return false;
@@ -2268,14 +2277,12 @@ function modalHtml(){
     body+='<div class="modal-en">G1 — Data Understanding</div>';
     body+='<div class="desc" style="text-align:center;font-size:20px;color:#6b7c95;margin:14px 0 0;line-height:1.5">출처·스키마·도메인 의미·데이터 품질·카테고리 판정·PII 점검까지 마치는 중입니다. 끝나면 자동으로 분석 방향 추천이 표시됩니다.</div>';
   } else {
-    // CS 2026-06-11 — 본인 명시 "강제 X". modal 도 frontend 휴리스틱 제거. backend LLM 분류 신뢰.
-    //   cur=1 (G2→G3 진행: 사용자 G2 응답 후 ~ G3 게이트 도달 전, eda_agent 동작)
-    //   + cur=2 (G3 도달 후 → G4 진행 중) 모두 loading[2] = "EDA 작업 중" 헤더와 동기화.
-    //   backend AGENT_PHASE_MAP 의 18~33% 가 cur=1 eda_agent 시점.
-    var _useLoading2 = (cur===1 || cur===2);
-    var _mc=_useLoading2?((GATE_HEADER_BY_CATEGORY.loading&&GATE_HEADER_BY_CATEGORY.loading[2])||{}):{};
+    // HJ 2026-06-13 — 단계별 동기화 수정. cur(화면 N단계)의 "분석 중"은 G(cur+1) 작업이므로
+    //   loading[cur+1] 헤더를 쓴다(cur=1→G2 EDA, 2→G3 전처리, 3→G4 학습, 4→G5 평가, 5→G6 산출물).
+    //   이전엔 cur=1·2 를 모두 loading[2](EDA)로 묶고 cur=3~5 는 제네릭 폴백이라 3단계부터 한 칸씩 어긋났다.
+    var _mc=(GATE_HEADER_BY_CATEGORY.loading&&GATE_HEADER_BY_CATEGORY.loading[cur+1])||{};
     var _mb=_mc[gateData.category]||_mc._default;
-    if(_useLoading2 && _mb){
+    if(_mb){
       body+='<div class="modal-title">'+_mb.h2+'</div>';
       body+='<div class="modal-en">'+_mb.en+'</div>';
       body+='<div class="desc" style="text-align:center;font-size:20px;color:#6b7c95;margin:14px 0 0;line-height:1.5">'+_mb.desc+'</div>';
@@ -2465,7 +2472,7 @@ function content(i){
   return contentResult();
 }
 function primaryLabel(){
-  if(busy) return '… 처리 중';
+  if(busy){ const _bSec = busyStartedAt ? Math.floor((Date.now()-busyStartedAt)/1000) : 0; return '… 처리 중 ('+_bSec+'초)'; }
   if(paused) return '▶ 재시작';
   if(cur===0) return '⬆ 업로드';
   if(cur===LAST) return '📥 완료';
@@ -2864,7 +2871,7 @@ if not st.session_state.get("studio_started"):
                 <span style="font-size:1.7rem;font-weight:700;color:#15273d;">ada <span style="color:#2f6fed;">studio</span></span>
                 <span style="background:#e8f1fe;color:#1d5fd6;font-size:.8rem;font-weight:600;letter-spacing:.06em;padding:5px 14px;border-radius:999px;">AI 데이터 분석 에이전트</span>
               </div>
-              <div style="color:#64718a;font-size:1rem;margin-top:22px;line-height:1.6;">숫자만 가득한 데이터 어떻게 처리해야 할지 막막하셨나요?<br>분석에 몇 주, 몇 달째 붙잡혀 계셨나요?<br>데이터를 분석하고 PPT, PDF 등으로 만드는데 골치 아프셨나요?</div>
+              <div style="color:#64718a;font-size:1rem;margin-top:22px;line-height:1.6;">정제되지 않고 막막한, 알지도 못하는 복잡한 데이터도,<br>여러 팀원이 몇 주, 몇 달씩 붙잡히던 분석도,<br>산더미 같던 PPT, PDF 등 보고서 작업도 —</div>
               <div style="color:#2f6fed;font-size:1.2rem;font-weight:700;margin-top:18px;">이제, 끝났습니다!</div>
               <div style="font-size:2.45rem;font-weight:800;color:#15273d;line-height:1.24;margin-top:6px;">3명이,<br>3주 걸릴 프로젝트를,<br><span style="color:#2f6fed;">30분</span> 만에.</div>
               <div style="color:#6b7787;font-size:1.04rem;margin-top:14px;">몇 번의 선택이면, 원본 데이터가 <span style="color:#2f6fed;font-weight:700;">&ldquo;전문가 인사이트&rdquo;</span>로 바뀝니다.</div>

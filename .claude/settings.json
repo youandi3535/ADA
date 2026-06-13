@@ -242,7 +242,8 @@
       "Bash(node --check .tmp_flow.js)",
       "Bash(grep -n \"^    [2-5]:{$\" frontend/app.py)",
       "PowerShell(git status --short frontend/; \\(Get-Content frontend\\\\app.py\\).Count)",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(python -m py_compile agents/base.py agents/hyperparameter_tuner.py agents/training_executor.py agents/model_selection.py orchestrator/runner.py)"
     ],
     "additionalDirectories": [
       "C:\\IT\\workspace_python\\ADA\\.git"

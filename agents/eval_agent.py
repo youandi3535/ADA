@@ -117,9 +117,12 @@ class EvalAgent(BaseAgent):
                 if violations:
                     _vs = [str(v)[:100] for v in violations[:3]]
                     _g5_eval_insights.append(f"임계치 미달: {' / '.join(_vs)}")
-                _g5_eval_insights = await self._dynamic_insights(
-                    _g5_eval_insights,
-                    backend="claude",
+                # HJ 2026-06-13 — 윤색(규칙 기반 사실에 해석 한 문장)은 단순 작업이라 Ollama 로 전환
+                #   (Claude 토큰 절약) + 백그라운드로(critical path 제거). 핵심 평가 판정·rationale 은
+                #   EvalAgent 본 LLM(Claude)이 이미 생성했고, 윤색은 publish 전용(state 무관)이라 품질 무영향.
+                self._spawn_insight_polish(
+                    list(_g5_eval_insights),
+                    backend="ollama",
                     context="G5 평가",
                     job_id=state.job_id,
                     key="g5_eval_insights",

@@ -417,6 +417,25 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
         if job.status == "failed" and job.error_message:
             data["pipeline_error"] = job.error_message
 
+    # HJ 2026-06-13 — G3(방법론) 화면 진입 감지 → 전처리 윤색 선계산 1회 디스패치.
+    #   사용자가 방법론을 고르는 동안 worker(-c 2)가 plan+윤색을 미리 만들어 Redis 캐시에 저장 →
+    #   resume 후 preprocessing_strategist 가 캐시 히트로 즉시 표시(품질 보장·0 블록). G2 eda_prefetch 동형.
+    #   gate_detail 은 폴링되므로 NX 락으로 job 당 1회만 디스패치. 실패/미완은 노드가 그 자리 폴백.
+    if data.get("gate") == "G3":
+        try:
+            import redis as _rp
+
+            from ada.core.config import settings as _sp
+
+            _rcp = _rp.Redis.from_url(_sp.redis_url)
+            if _rcp.set(f"ada:g3_pre_prefetch_lock:{job_id}", "1", nx=True, ex=600):
+                from orchestrator.runner import g3_pre_prefetch_task
+
+                g3_pre_prefetch_task.apply_async(args=[job_id], queue="pipeline")
+                log.info("g3_pre_prefetch_dispatched", job_id=job_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("g3_pre_prefetch_dispatch_failed", error=str(e))
+
     return data
 
 

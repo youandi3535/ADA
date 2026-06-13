@@ -37,6 +37,34 @@ _OLLAMA_STOP_TOKENS: list[str] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# HJ 2026-06-13 — 백그라운드 인사이트 윤색 (critical path 제거).
+# ---------------------------------------------------------------------------
+# G4 등에서 _dynamic_insights(Claude 윤색)를 `await` 하면 다음 agent 전진이
+# 윤색(최대 30초)만큼 막힌다. 윤색 결과는 모달 표시 전용(job_id+key 주면
+# _dynamic_insights 내부가 직접 publish)이라 다음 agent 입력이 아니므로,
+# `create_task` 로 백그라운드 실행하고 파이프라인은 즉시 전진시킨다.
+# event loop 생명주기 안전을 위해 모듈 레벨 set 으로 task 를 보관하고,
+# orchestrator.runner._invoke/_resume 가 게이트 인터럽트 직전에
+# drain_background_insights() 로 회수(미완 윤색을 모달에 마저 반영).
+_BACKGROUND_INSIGHT_TASKS: "set[asyncio.Task]" = set()
+
+
+async def drain_background_insights(timeout: float = 25.0) -> None:
+    """백그라운드 윤색 task 들을 timeout 내에서 회수(best-effort).
+
+    게이트 도달 시점에 호출 — 남은 Claude 윤색이 모달에 마저 반영되도록 한다.
+    timeout 초과분은 그대로 백그라운드 진행(다음 폴링에서 모달 갱신).
+    """
+    pending = {t for t in _BACKGROUND_INSIGHT_TASKS if not t.done()}
+    if not pending:
+        return
+    try:
+        await asyncio.wait(pending, timeout=timeout)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class BaseAgent(abc.ABC):
     """모든 에이전트의 공통 베이스."""
 
@@ -789,6 +817,33 @@ class BaseAgent(abc.ABC):
             return json.loads(text)
         except Exception:
             return None
+
+    def _spawn_insight_polish(
+        self,
+        lines: list[str],
+        *,
+        backend: str = "claude",
+        context: str = "",
+        job_id: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        """HJ 2026-06-13 — `_dynamic_insights` 를 백그라운드로 실행(critical path 제거).
+
+        규칙 기반 lines 의 즉시 발행 + Claude 윤색 후 교체 발행은 모두
+        `_dynamic_insights` 가 job_id+key 로 수행하므로, 본 헬퍼는 그 코루틴을
+        `create_task` 로 던지고 즉시 반환한다 → 다음 agent 가 윤색을 기다리지 않는다.
+        실행 중인 event loop 가 없거나 job_id/key 가 없으면 발행 의미가 없어 no-op.
+        회수는 ``drain_background_insights()`` 가 게이트 인터럽트 직전에 담당.
+        """
+        if not job_id or not key or not lines:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._dynamic_insights(lines, backend=backend, context=context, job_id=job_id, key=key))
+        _BACKGROUND_INSIGHT_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_INSIGHT_TASKS.discard)
 
     async def _dynamic_insights(
         self,

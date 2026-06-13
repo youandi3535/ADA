@@ -65,9 +65,11 @@ class ExplainabilityAgent(BaseAgent):
                 elif artifacts.get("decomposition_path") or artifacts.get("seasonality_period"):
                     period = artifacts.get("seasonality_period")
                     _g5_shap_insights.append(f"시계열 분해: 계절성 주기 {period} (추세·계절·잔차 분해 완료)")
-                _g5_shap_insights = await self._dynamic_insights(
-                    _g5_shap_insights,
-                    backend="claude",
+                # HJ 2026-06-13 — 윤색은 단순 작업이라 Ollama+백그라운드로 (토큰 절약 + critical path 제거).
+                #   SHAP 계산 자체는 코드(_shap)가 수행, 윤색은 상위 피처에 해석 한 문장 붙이는 보조라 품질 무영향.
+                self._spawn_insight_polish(
+                    list(_g5_shap_insights),
+                    backend="ollama",
                     context="G5 설명가능성(SHAP)",
                     job_id=state.job_id,
                     key="g5_shap_insights",
