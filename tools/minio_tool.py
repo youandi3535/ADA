@@ -8,7 +8,9 @@ from __future__ import annotations
 import io
 import os
 import tempfile
+import threading
 import zipfile
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,6 +23,99 @@ from ada.core.config import settings
 from ada.core.logger import get_logger
 
 log = get_logger("minio")
+
+
+def _looks_decoded_ok(df: Any) -> bool:
+    """디코딩 검증 — 컬럼명에 한글이 복원됐거나 mojibake 흔적이 없으면 True.
+
+    mojibake(예: '구분별' → '±¸ºÐº°') 는 CP949/EUC-KR 바이트를 latin 계열로
+    잘못 디코딩했을 때 Latin-1 Supplement(U+00A0~U+00FF) 문자가 다수 나타난다.
+    """
+    try:
+        text = " ".join(map(str, df.columns))
+    except Exception:  # noqa: BLE001
+        return True
+    if not text:
+        return True
+    # 한글(가~힣)이 하나라도 있으면 정상 디코딩으로 판단
+    if any("가" <= ch <= "힣" for ch in text):
+        return True
+    # Latin-1 Supplement(mojibake 흔적) 비율이 높으면 깨진 것으로 판단
+    suspicious = sum(1 for ch in text if " " <= ch <= "ÿ")
+    return suspicious < max(2, int(len(text) * 0.2))
+
+
+def _read_csv_robust(body: bytes) -> Any:
+    """한국어 CSV 강건 로딩 — utf-8 → cp949/euc-kr 검증 → chardet 보조.
+
+    HJ 2026-06-14 — chardet 이 한국어 CP949/EUC-KR 을 latin 계열(Windows-1252/
+    ISO-8859)로 오판하면 read_csv 가 에러 없이 mojibake 로 읽어 이후 컬럼 의미
+    분석이 전부 깨진다. utf-8 실패 시 cp949/euc-kr 을 우선 시도하고 한글 복원을
+    검증한 뒤 채택한다.
+    """
+    import pandas as pd  # noqa: WPS433
+
+    # 1) BOM 포함 utf-8 우선 (정상 utf-8 CSV)
+    for enc in ("utf-8-sig", "utf-8"):
+        try:
+            return pd.read_csv(io.BytesIO(body), encoding=enc)
+        except UnicodeDecodeError:
+            continue
+
+    # 2) utf-8 실패 = 한국어 인코딩 가능성 높음 → cp949/euc-kr 명시 시도 + 검증
+    for enc in ("cp949", "euc-kr"):
+        try:
+            df = pd.read_csv(io.BytesIO(body), encoding=enc)
+        except Exception:  # noqa: BLE001
+            continue
+        if _looks_decoded_ok(df):
+            return df
+
+    # 3) chardet 보조 — 단, latin 계열 오판은 cp949 로 대체
+    try:
+        import chardet  # noqa: WPS433
+
+        det = chardet.detect(body[:65536]) or {}
+        enc = (det.get("encoding") or "").lower()
+        if not enc or enc.startswith(("iso-8859", "windows-125", "latin")):
+            enc = "cp949"
+        return pd.read_csv(io.BytesIO(body), encoding=enc)
+    except Exception:  # noqa: BLE001
+        # 4) 최후 — cp949 강제
+        return pd.read_csv(io.BytesIO(body), encoding="cp949")
+
+
+# HJ 2026-06-14 — 단계 간 동일 object 반복 로드 제거용 프로세스 로컬 캐시.
+#   G4~G5 에서 tuner·training·eval·explainability 가 같은 parquet/csv 를 매번
+#   재다운로드·재디코딩하던 낭비 제거. key=object|fmt — 같은 object=같은 bytes=
+#   같은 DataFrame 이므로 결과는 비트 동일(무손실). maxsize·MB 상한으로 워커 메모리 보호.
+#   주의: 반환 DataFrame 은 read-only 사용 (호출부는 select_dtypes/drop 등 새 객체 생성).
+_DF_CACHE_MAXSIZE = 2
+_DF_CACHE_MAX_MB = 600.0
+_df_cache: "OrderedDict[str, Any]" = OrderedDict()
+_df_cache_lock = threading.Lock()
+
+
+def _df_cache_get(key: str) -> Any:
+    with _df_cache_lock:
+        if key in _df_cache:
+            _df_cache.move_to_end(key)
+            return _df_cache[key]
+    return None
+
+
+def _df_cache_put(key: str, df: Any) -> None:
+    try:
+        mb = float(df.memory_usage(deep=True).sum()) / (1024 * 1024)
+    except Exception:  # noqa: BLE001
+        mb = 0.0
+    if mb > _DF_CACHE_MAX_MB:
+        return  # 과대 DataFrame 은 캐시 제외 (워커 2.5GB 메모리 보호)
+    with _df_cache_lock:
+        _df_cache[key] = df
+        _df_cache.move_to_end(key)
+        while len(_df_cache) > _DF_CACHE_MAXSIZE:
+            _df_cache.popitem(last=False)
 
 
 class MinIOClient:
@@ -68,25 +163,30 @@ class MinIOClient:
         return resp["Body"].read()
 
     def load_dataframe(self, object_name: str, fmt: str = "csv") -> Any:
-        """csv/parquet/xlsx/json/zip 자동 핸들링."""
+        """csv/parquet/xlsx/json/zip 자동 핸들링.
+
+        HJ 2026-06-14 — 동일 object 반복 로드는 프로세스 캐시에서 즉시 반환
+        (단계 간 재다운로드·재디코딩 제거). 같은 bytes → 같은 DataFrame, 무손실.
+        """
+        cache_key = f"{object_name}|{fmt.lower()}"
+        cached = _df_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        df = self._load_dataframe_uncached(object_name, fmt)
+        _df_cache_put(cache_key, df)
+        return df
+
+    def _load_dataframe_uncached(self, object_name: str, fmt: str = "csv") -> Any:
         import pandas as pd  # noqa: WPS433
 
         body = self.download_bytes(object_name)
         buf = io.BytesIO(body)
         fmt = fmt.lower()
         if fmt in ("csv", "txt"):
-            try:
-                return pd.read_csv(buf, encoding="utf-8")
-            except UnicodeDecodeError:
-                buf.seek(0)
-                try:
-                    import chardet  # noqa: WPS433
-
-                    enc = chardet.detect(body[:65536]).get("encoding") or "cp949"
-                except Exception:
-                    enc = "cp949"
-                buf.seek(0)
-                return pd.read_csv(buf, encoding=enc)
+            # HJ 2026-06-14 — 한국어 인코딩 강건 로딩 (chardet 오판 회피).
+            # 기존 utf-8→chardet→cp949 순서는 chardet 이 CP949 를 latin 계열로
+            # 오판하면 mojibake(±¸ºÐº°)로 읽혀 컬럼 의미 분석이 깨졌다.
+            return _read_csv_robust(body)
         if fmt == "parquet":
             return pd.read_parquet(buf)
         if fmt in ("xlsx", "xls"):

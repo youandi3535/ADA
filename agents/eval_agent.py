@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -27,6 +28,20 @@ def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
         _psp(job_id, partial)
     except Exception:  # noqa: BLE001
         pass
+
+
+async def _consume_explain_task(task: Any) -> dict[str, Any] | None:
+    """③ eval 병렬 선계산 explainability task 회수.
+
+    실패·예외 시 None 반환 → explainability 노드가 정상적으로 재계산하므로 무손실.
+    """
+    if task is None:
+        return None
+    try:
+        result = await task
+        return result if isinstance(result, dict) and result else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 SYSTEM_PROMPT = """당신은 QA 평가관입니다. best_model.metrics + eval_result 를 보고
@@ -51,6 +66,19 @@ class EvalAgent(BaseAgent):
                     "g5_status": f"모델 '{(state.best_model or {}).get('model_name', '미정')}' 평가 중…",
                 },
             )
+
+            # HJ 2026-06-14 — ③ explainability(SHAP, CPU)를 eval LLM(I/O)과 병렬 선계산.
+            #   to_thread 기반이라 eval 의 LLM 대기시간에 SHAP 가 겹쳐 ~30s 절감(결과 비트 동일).
+            #   passed/한도도달 → explainability 노드가 결과 재사용(재계산 스킵, publish 는 유지).
+            #   재시도(미달) → task.cancel() 로 폐기(다음 best_model 로 재계산).
+            explain_task = None
+            try:
+                if state.best_model:
+                    from agents.explainability import ExplainabilityAgent  # noqa: WPS433
+
+                    explain_task = asyncio.create_task(ExplainabilityAgent()._compute_artifacts(state))
+            except Exception:  # noqa: BLE001
+                explain_task = None
 
             # 1) 카테고리 핸들러로 임계치 판정
             eval_result: dict[str, Any] = {
@@ -193,7 +221,12 @@ class EvalAgent(BaseAgent):
                 # HJ 2026-06-13 — 통과 시 re_loop_count 리셋(중요). 안 하면 이후 gate_outputs(G6)가
                 #   _base_gate 의 re_loop_count>0 자동통과 분기에 걸려 산출물 선택을 안 띄우고 G7 로
                 #   점프(G6 건너뜀)한다. 통과=정상 전진이므로 0 으로 되돌려 G6 가 정상 인터럽트되게 한다.
-                new_state = state.with_update(eval_result=eval_result, re_loop_count=0, next_agent="explainability")
+                # HJ 2026-06-14 — ③ 병렬 선계산한 SHAP 회수해 explainability 노드가 재사용하게 전달.
+                _exp = await _consume_explain_task(explain_task)
+                _u: dict[str, Any] = {"eval_result": eval_result, "re_loop_count": 0, "next_agent": "explainability"}
+                if _exp:
+                    _u["explanations"] = _exp
+                new_state = state.with_update(**_u)
                 _publish_rollback(False)
             else:
                 new_re_loop = state.re_loop_count + 1
@@ -201,6 +234,9 @@ class EvalAgent(BaseAgent):
                 if new_re_loop <= state.max_re_loop and entry is not None:
                     # 재시도: passed 미달 또는 baseline 미달 → 1차 HP재튜닝 / 2차 피처재구성 / 3차 전처리재검토.
                     #   누수 안전: feature_engineer 재실행도 leakage_safe_split(train fit→val transform) 경로 유지.
+                    # HJ 2026-06-14 — ③ 재시도 경로는 선계산 SHAP 폐기(다음 best_model 로 재계산).
+                    if explain_task is not None:
+                        explain_task.cancel()
                     new_state = state.with_update(
                         eval_result=eval_result,
                         re_loop_count=new_re_loop,
@@ -209,11 +245,16 @@ class EvalAgent(BaseAgent):
                     _publish_rollback(True, new_re_loop, _TIER_DESC.get(new_re_loop, f"{new_re_loop}차 롤백"), entry)
                 else:
                     # 한도 도달 — 마지막 best 로 진행 (re_loop_count 리셋 → G6 정상 인터럽트, 자동통과 방지).
-                    new_state = state.with_update(
-                        eval_result=eval_result,
-                        re_loop_count=0,
-                        next_agent="explainability",
-                    )
+                    # HJ 2026-06-14 — ③ explainability 진행 → 선계산 결과 재사용.
+                    _exp2 = await _consume_explain_task(explain_task)
+                    _u2: dict[str, Any] = {
+                        "eval_result": eval_result,
+                        "re_loop_count": 0,
+                        "next_agent": "explainability",
+                    }
+                    if _exp2:
+                        _u2["explanations"] = _exp2
+                    new_state = state.with_update(**_u2)
                     _publish_rollback(False)
 
             # Phase 1.4 — ReportContext ⑧ evaluation + ⑩ limitations 적립.

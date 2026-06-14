@@ -82,11 +82,12 @@ async def _prefetch_topic_proposals(state: PipelineState) -> None:
     except Exception:  # noqa: BLE001
         # 실패·timeout → fallback 즉시 patch (무한 대기 방지)
         try:
-            from agents.gates.analysis_proposer import _TOPIC_FALLBACK_DEFAULTS  # noqa: WPS433
+            # HJ 2026-06-14 — generic 정적 폴백 대신 data_profile 구조 기반 동적 폴백.
+            from agents.gates.analysis_proposer import _build_topic_fallback  # noqa: WPS433
 
             _patch_gate_data(
                 state.job_id,
-                {"topic_proposals": [dict(t) for t in _TOPIC_FALLBACK_DEFAULTS]},
+                {"topic_proposals": _build_topic_fallback(getattr(state, "data_profile", None))},
             )
         except Exception:  # noqa: BLE001
             pass

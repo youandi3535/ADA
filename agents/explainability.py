@@ -6,6 +6,7 @@ SHAP 층화 샘플링(R-501) — 큰 데이터에서 stratified sample 1000 row.
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from typing import Any
 
@@ -41,11 +42,13 @@ class ExplainabilityAgent(BaseAgent):
                     "g5_status": "SHAP·설명가능성 계산 중…",
                 },
             )
-            artifacts: dict[str, Any] = {}
-            if state.category == "timeseries":
-                artifacts.update(await self._timeseries_decompose(state))
+            # HJ 2026-06-14 — ③ eval 단계에서 SHAP 를 eval LLM 과 병렬 선계산했으면
+            #   (state.explanations) 재계산을 건너뛰고 publish 만 수행. 결과 비트 동일, ~30s 절감.
+            _pre = getattr(state, "explanations", None)
+            if isinstance(_pre, dict) and _pre:
+                artifacts: dict[str, Any] = dict(_pre)
             else:
-                artifacts.update(await self._shap(state))
+                artifacts = await self._compute_artifacts(state)
 
             # HJ 2026-06-11 — G5 SHAP 상위 피처 자연어 인사이트 publish.
             # G2 의 eda_insights 패턴 — "SHAP 상위 피처: 'Age' (importance 0.32)" 형식.
@@ -88,7 +91,18 @@ class ExplainabilityAgent(BaseAgent):
             return state.with_update(explanations=artifacts, next_agent="insight")
 
     # ------------------------------------------------------------------
-    async def _shap(self, state: PipelineState) -> dict[str, Any]:
+    async def _compute_artifacts(self, state: PipelineState) -> dict[str, Any]:
+        """SHAP(비시계열) 또는 시계열 분해 — CPU 작업을 to_thread 로 워커 스레드에서 수행.
+
+        eval 단계의 병렬 선계산과 이 노드 양쪽에서 공용. to_thread 라 호출자(eval)의
+        LLM I/O 대기와 진짜 병렬로 겹친다(SHAP 내부는 동기 numpy/shap C 레벨, GIL 해제).
+        """
+        if state.category == "timeseries":
+            return await asyncio.to_thread(self._timeseries_decompose, state)
+        return await asyncio.to_thread(self._shap, state)
+
+    # ------------------------------------------------------------------
+    def _shap(self, state: PipelineState) -> dict[str, Any]:
         import joblib  # noqa: WPS433
         import shap  # type: ignore
 
@@ -145,7 +159,7 @@ class ExplainabilityAgent(BaseAgent):
             return {"shap_error": str(e)}
 
     # ------------------------------------------------------------------
-    async def _timeseries_decompose(self, state: PipelineState) -> dict[str, Any]:
+    def _timeseries_decompose(self, state: PipelineState) -> dict[str, Any]:
         import matplotlib  # noqa: WPS433
 
         from tools.minio_tool import get_minio_client
