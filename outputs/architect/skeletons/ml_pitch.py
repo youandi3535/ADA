@@ -496,7 +496,6 @@ def _build_exec_summary_ml(ctx: ReportContext) -> SlideSpec:
 def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
     """슬라이드 4 — 분석 가설 (3개)."""
     pm = ctx.evaluation.primary_metric or {}
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
     intent = ctx.meta.user_intent or "분석 과제"
     # jh 2026-06-12 — "가설문 — 증거 — 인사이트" 3분할 형식 (라벨 접두 금지).
     # carrier t_hyp_evidence_insight 가 " — " 기준으로 3칸에 분배한다.
