@@ -92,16 +92,72 @@ class _SeasonalNaiveModel:
 
 class TimeSeriesPipeline(BasePipeline):
     experiment_name = "ada-timeseries"
-    # 9종으로 확장 — selector A안의 SARIMAX 후보 + 헌장 6-1 ETS 기준선
-    # + 헌장 4-2·6-5 seasonal_naive 기준선
+    # 19종 확장 (2026-06-14, B 길) — CPU 중심 + GTX 1060 3GB 보조
+    # 통계·고전(9) / 자동화(4) / ML 회귀(6) / 경량 DL(7)  + 기존 seasonal_naive 기준선
+    # 표 정합: STL/VAR/VARMA/GARCH/RNN 신규. RNN 은 darts RNNModel(cell="RNN") 로 통합.
+    # 신규 분기는 _train_dispatch 끝에서 graceful (라이브러리 미설치 시 fallback).
     SUPPORTED_MODELS = (
+        # 통계·고전 (9, seasonal_naive 포함)
         "ARIMA",
         "SARIMA",
         "SARIMAX",
-        "Prophet",
         "ETS",
+        "STL",
         "seasonal_naive",
+        "VAR",
+        "VARMA",
+        "GARCH",
+        # 자동화·전용 (4)
+        "Prophet",
+        "AutoARIMA",
+        "AutoETS",
+        "NeuralProphet",
+        # ML 회귀 (6, 피처 기반)
+        "LightGBM",
+        "XGBoost",
+        "CatBoost",
+        "RandomForest",
+        "Ridge",
+        "Lasso",
+        # 경량 DL (7, darts 통합 — LSTM/GRU/RNN 은 cell 차이)
+        "TCN",
+        "NHiTS",
+        "NBEATS",
+        "LSTM",
+        "GRU",
+        "RNN",
+        "DeepAR",
     )
+
+    # 모델 family 분류 — selector / search_space / output_extras 공용
+    MODEL_FAMILY = {
+        "ARIMA": "stat",
+        "SARIMA": "stat",
+        "SARIMAX": "stat",
+        "ETS": "stat",
+        "STL": "stat",
+        "seasonal_naive": "stat",
+        "VAR": "stat",
+        "VARMA": "stat",
+        "GARCH": "stat",
+        "Prophet": "auto",
+        "AutoARIMA": "auto",
+        "AutoETS": "auto",
+        "NeuralProphet": "auto",
+        "LightGBM": "ml",
+        "XGBoost": "ml",
+        "CatBoost": "ml",
+        "RandomForest": "ml",
+        "Ridge": "ml",
+        "Lasso": "ml",
+        "TCN": "dl",
+        "NHiTS": "dl",
+        "NBEATS": "dl",
+        "LSTM": "dl",
+        "GRU": "dl",
+        "RNN": "dl",
+        "DeepAR": "dl",
+    }
 
     def __init__(self) -> None:
         super().__init__()
@@ -335,6 +391,132 @@ class TimeSeriesPipeline(BasePipeline):
             # ── 신규 — seasonal_naive 기준선 ──
             period = int(params.get("seasonal_periods") or self._seasonal_s or 7)
             return _SeasonalNaiveModel(y_train, period=period)
+        # ─── Phase B (2026-06-14, B 길) — 통계·고전 확장 ───
+        if model_name == "STL":
+            from pipelines.timeseries.models_stat import STLModel
+
+            return STLModel(
+                y_train,
+                period=int(params.get("seasonal_periods") or self._seasonal_s or 7),
+                arima_order=tuple(params.get("arima_order") or (1, 1, 0)),
+            )
+        if model_name == "VAR":
+            from pipelines.timeseries.models_stat import VARModel
+
+            return VARModel(
+                X_train if hasattr(X_train, "shape") and getattr(X_train, "shape", (0, 1))[-1] > 1 else y_train,
+                maxlags=int(params.get("maxlags") or 5),
+                ic=str(params.get("ic") or "aic"),
+            )
+        if model_name == "VARMA":
+            from pipelines.timeseries.models_stat import VARMAModel
+
+            return VARMAModel(
+                X_train if hasattr(X_train, "shape") and getattr(X_train, "shape", (0, 1))[-1] > 1 else y_train,
+                order=tuple(params.get("order") or (1, 0)),
+            )
+        if model_name == "GARCH":
+            from pipelines.timeseries.models_stat import GARCHModel
+
+            return GARCHModel(
+                y_train,
+                p=int(params.get("p") or 1),
+                q=int(params.get("q") or 1),
+                egarch=bool(params.get("egarch", False)),
+            )
+        # ─── Phase C (2026-06-14, B 길) — 자동화·전용 확장 ───
+        if model_name == "AutoARIMA":
+            from pipelines.timeseries.models_auto import AutoARIMAModel
+
+            return AutoARIMAModel(
+                y_train,
+                season_length=int(params.get("season_length") or self._seasonal_s or 7),
+            )
+        if model_name == "AutoETS":
+            from pipelines.timeseries.models_auto import AutoETSModel
+
+            return AutoETSModel(
+                y_train,
+                season_length=int(params.get("season_length") or self._seasonal_s or 7),
+            )
+        if model_name == "NeuralProphet":
+            from pipelines.timeseries.models_auto import NeuralProphetModel
+
+            return NeuralProphetModel(
+                y_train,
+                ds=params.get("ds"),
+                freq=str(params.get("freq") or "D"),
+                epochs=int(params.get("epochs") or 10),
+                n_lags=int(params.get("n_lags") or 0),
+            )
+        # ─── Phase D (2026-06-14, B 길) — ML 회귀 확장 (6 종) ───
+        if model_name == "LightGBM":
+            from pipelines.timeseries.models_ml import LightGBMModel
+
+            return LightGBMModel(X_train, y_train, **{k: v for k, v in params.items() if k != "exog_columns"})
+        if model_name == "XGBoost":
+            from pipelines.timeseries.models_ml import XGBoostModel
+
+            return XGBoostModel(X_train, y_train, **{k: v for k, v in params.items() if k != "exog_columns"})
+        if model_name == "CatBoost":
+            from pipelines.timeseries.models_ml import CatBoostModel
+
+            return CatBoostModel(X_train, y_train, **{k: v for k, v in params.items() if k != "exog_columns"})
+        if model_name == "RandomForest":
+            from pipelines.timeseries.models_ml import RandomForestModel
+
+            return RandomForestModel(X_train, y_train, **{k: v for k, v in params.items() if k != "exog_columns"})
+        if model_name == "Ridge":
+            from pipelines.timeseries.models_ml import RidgeModel
+
+            return RidgeModel(X_train, y_train, **{k: v for k, v in params.items() if k != "exog_columns"})
+        if model_name == "Lasso":
+            from pipelines.timeseries.models_ml import LassoModel
+
+            return LassoModel(X_train, y_train, **{k: v for k, v in params.items() if k != "exog_columns"})
+        # ─── Phase E (2026-06-14, B 길) — 경량 DL 확장 (7 종, darts) ───
+        if model_name == "TCN":
+            from pipelines.timeseries.models_dl import TCNModel
+
+            return TCNModel(
+                y_train, freq=str(params.get("freq") or "D"), **{k: v for k, v in params.items() if k != "freq"}
+            )
+        if model_name == "NHiTS":
+            from pipelines.timeseries.models_dl import NHiTSModel
+
+            return NHiTSModel(
+                y_train, freq=str(params.get("freq") or "D"), **{k: v for k, v in params.items() if k != "freq"}
+            )
+        if model_name == "NBEATS":
+            from pipelines.timeseries.models_dl import NBEATSModel
+
+            return NBEATSModel(
+                y_train, freq=str(params.get("freq") or "D"), **{k: v for k, v in params.items() if k != "freq"}
+            )
+        if model_name == "LSTM":
+            from pipelines.timeseries.models_dl import LSTMModel
+
+            return LSTMModel(
+                y_train, freq=str(params.get("freq") or "D"), **{k: v for k, v in params.items() if k != "freq"}
+            )
+        if model_name == "GRU":
+            from pipelines.timeseries.models_dl import GRUModel
+
+            return GRUModel(
+                y_train, freq=str(params.get("freq") or "D"), **{k: v for k, v in params.items() if k != "freq"}
+            )
+        if model_name == "RNN":
+            from pipelines.timeseries.models_dl import RNNModel as _RNN
+
+            return _RNN(
+                y_train, freq=str(params.get("freq") or "D"), **{k: v for k, v in params.items() if k != "freq"}
+            )
+        if model_name == "DeepAR":
+            from pipelines.timeseries.models_dl import DeepARModel
+
+            return DeepARModel(
+                y_train, freq=str(params.get("freq") or "D"), **{k: v for k, v in params.items() if k != "freq"}
+            )
         # StatsForecast fallback
         try:
             import pandas as pd  # noqa: WPS433
@@ -559,6 +741,7 @@ class TimeSeriesPipeline(BasePipeline):
         params: dict[str, Any],
         n_splits: int = 3,
         task: str = "forecasting",
+        cv_strategy: str = "expanding",
     ) -> dict[str, Any]:
         """rolling-origin walk-forward CV — HyperparameterTunerAgent 가 호출.
 
@@ -596,11 +779,25 @@ class TimeSeriesPipeline(BasePipeline):
         max_possible = max(2, (n - gap) // (min_fold + 1))
         n_splits_eff = max(2, min(int(n_splits), max_possible))
 
+        # PB (2026-06-14) — cv_strategy 토글: "expanding" (기본) / "rolling"
+        # rolling 모드: max_train_size 를 fold 당 일정하게 제한 → window 슬라이딩
+        max_train_size = None
+        if str(cv_strategy).lower() == "rolling":
+            # 마지막 fold 가 사용하게 될 train 크기 = n - (n_splits * test_size) - gap
+            # → train 크기를 그 값으로 고정해 모든 fold 가 동일 크기 window 사용
+            test_size = max(min_fold, (n - gap) // (n_splits_eff + 1))
+            max_train_size = max(min_fold, test_size * n_splits_eff)
         try:
-            splitter = TimeSeriesSplit(n_splits=n_splits_eff, gap=gap)
+            if max_train_size is not None:
+                splitter = TimeSeriesSplit(n_splits=n_splits_eff, gap=gap, max_train_size=max_train_size)
+            else:
+                splitter = TimeSeriesSplit(n_splits=n_splits_eff, gap=gap)
         except TypeError:
-            # 구버전 sklearn — gap 인자 미지원
-            splitter = TimeSeriesSplit(n_splits=n_splits_eff)
+            # 구버전 sklearn — gap/max_train_size 인자 미지원
+            try:
+                splitter = TimeSeriesSplit(n_splits=n_splits_eff, max_train_size=max_train_size)
+            except TypeError:
+                splitter = TimeSeriesSplit(n_splits=n_splits_eff)
 
         fold_scores: list[float] = []
         fold_metrics_list: list[dict[str, Any]] = []
@@ -640,9 +837,10 @@ class TimeSeriesPipeline(BasePipeline):
             "std": std,
             "n_splits": n_splits_eff,
             "gap": gap,
+            "cv_strategy": str(cv_strategy).lower(),
+            "max_train_size": max_train_size,
         }
 
-    # ── logger 안전 호출 (BasePipeline 에 logger 없을 수 있음) ──
     def _log_warning(self, event: str, **kw: Any) -> None:
         logger = getattr(self, "logger", None)
         if logger is not None:

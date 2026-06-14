@@ -112,6 +112,8 @@ def _build_meta(title: str, eda: dict, profile: dict) -> dict[str, Any]:
     cp = eda.get("changepoints") or 0
     hetero = bool(eda.get("heteroscedastic"))
     forecast_kind = "interval" if (cp >= 1 or hetero) else "point"
+    # P6 (2026-06-14, Phase Ⅳ) — user_intent 키워드 매핑은 g1/g2 호출처에서 적용.
+    # 본 함수는 데이터 신호 기반 기본값만 결정 (state 미수신).
 
     task_kind = "classification" if title == "이상 시점" else "regression"
 
@@ -198,13 +200,24 @@ def g1(state: Any) -> list[dict[str, Any]]:
         }
         for (rid, title, rkey, akey) in titles
     ]
+    # P6 (2026-06-14, Phase Ⅳ) — user_intent 키워드 → forecast_kind 덮어쓰기
+    # quantile / 분위 / VaR / 리스크 → "quantile" (분위 예측)
+    # interval / 구간 / 신뢰 / pi → "interval"
+    # 둘 다 없으면 _build_meta 가 산출한 데이터 신호 기반 값 유지.
+    if any(k in intent for k in ("quantile", "분위", "percentile", "var ", "리스크", "risk")):
+        forecast_kind_override = "quantile"
+    elif any(k in intent for k in ("interval", "구간", "신뢰", "confidence", "pi", "prediction interval")):
+        forecast_kind_override = "interval"
+    else:
+        forecast_kind_override = None
+    if forecast_kind_override:
+        for r in recipes:
+            if isinstance(r.get("meta"), dict):
+                r["meta"]["forecast_kind"] = forecast_kind_override
     recipes.sort(key=lambda r: r["score"], reverse=True)
     return recipes
 
 
-# ════════════════════════════════════════════════════════════════
-# §E-2. g2 — 카테고리 유지
-# ════════════════════════════════════════════════════════════════
 def g2(state: Any) -> list[dict[str, Any]]:
     """G3 방법론 — 시계열 카테고리 유지 우선."""
     return [

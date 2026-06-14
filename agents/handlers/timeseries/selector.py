@@ -45,7 +45,38 @@ from __future__ import annotations
 from typing import Any
 
 # ── 모듈 상수 ─────────────────────────────────────────────────────
-SUPPORTED_MODELS = ("ARIMA", "SARIMA", "SARIMAX", "Prophet", "ETS", "seasonal_naive")
+SUPPORTED_MODELS = (
+    # 통계·고전 (9)
+    "ARIMA",
+    "SARIMA",
+    "SARIMAX",
+    "ETS",
+    "STL",
+    "seasonal_naive",
+    "VAR",
+    "VARMA",
+    "GARCH",
+    # 자동화·전용 (4)
+    "Prophet",
+    "AutoARIMA",
+    "AutoETS",
+    "NeuralProphet",
+    # ML 회귀 (6)
+    "LightGBM",
+    "XGBoost",
+    "CatBoost",
+    "RandomForest",
+    "Ridge",
+    "Lasso",
+    # 경량 DL (7, darts 통합)
+    "TCN",
+    "NHiTS",
+    "NBEATS",
+    "LSTM",
+    "GRU",
+    "RNN",
+    "DeepAR",
+)
 STAT_MODELS = ("ARIMA", "SARIMA", "SARIMAX", "ETS")
 
 BASE_SCORE = 0.70
@@ -108,12 +139,34 @@ TOPIC_BONUS: dict[str, dict[str, float]] = {
 # 점수 범위 0.0~1.0. 학술적 근거 + CS 운영 경험 기반 기본값.
 EXPERT_DIMENSIONS: dict[str, dict[str, float]] = {
     "interpretability": {
+        # 기존 6 종
         "ARIMA": 0.95,
         "SARIMA": 0.85,
         "SARIMAX": 0.80,
         "ETS": 0.75,
         "Prophet": 0.70,
         "seasonal_naive": 1.00,
+        # Phase G 신규 통계 (4) + 자동화 (3) + ML (6) + DL (7)
+        "STL": 0.85,
+        "VAR": 0.70,
+        "VARMA": 0.60,
+        "GARCH": 0.60,
+        "AutoARIMA": 0.85,
+        "AutoETS": 0.75,
+        "NeuralProphet": 0.50,
+        "LightGBM": 0.40,
+        "XGBoost": 0.40,
+        "CatBoost": 0.45,
+        "RandomForest": 0.55,
+        "Ridge": 0.80,
+        "Lasso": 0.85,
+        "TCN": 0.20,
+        "NHiTS": 0.35,
+        "NBEATS": 0.30,
+        "LSTM": 0.20,
+        "GRU": 0.20,
+        "RNN": 0.15,
+        "DeepAR": 0.30,
     },
     "robustness": {
         "ARIMA": 0.30,
@@ -122,6 +175,26 @@ EXPERT_DIMENSIONS: dict[str, dict[str, float]] = {
         "ETS": 0.40,
         "Prophet": 0.90,
         "seasonal_naive": 1.00,
+        "STL": 0.50,
+        "VAR": 0.40,
+        "VARMA": 0.40,
+        "GARCH": 0.50,
+        "AutoARIMA": 0.60,
+        "AutoETS": 0.55,
+        "NeuralProphet": 0.75,
+        "LightGBM": 0.85,
+        "XGBoost": 0.85,
+        "CatBoost": 0.85,
+        "RandomForest": 0.80,
+        "Ridge": 0.70,
+        "Lasso": 0.70,
+        "TCN": 0.65,
+        "NHiTS": 0.75,
+        "NBEATS": 0.70,
+        "LSTM": 0.65,
+        "GRU": 0.65,
+        "RNN": 0.55,
+        "DeepAR": 0.70,
     },
     "uncertainty_quality": {
         "ARIMA": 0.80,
@@ -130,6 +203,26 @@ EXPERT_DIMENSIONS: dict[str, dict[str, float]] = {
         "ETS": 0.70,
         "Prophet": 0.90,
         "seasonal_naive": 0.20,
+        "STL": 0.70,
+        "VAR": 0.75,
+        "VARMA": 0.75,
+        "GARCH": 0.95,
+        "AutoARIMA": 0.80,
+        "AutoETS": 0.75,
+        "NeuralProphet": 0.80,
+        "LightGBM": 0.40,
+        "XGBoost": 0.40,
+        "CatBoost": 0.40,
+        "RandomForest": 0.50,
+        "Ridge": 0.50,
+        "Lasso": 0.50,
+        "TCN": 0.50,
+        "NHiTS": 0.60,
+        "NBEATS": 0.55,
+        "LSTM": 0.40,
+        "GRU": 0.40,
+        "RNN": 0.35,
+        "DeepAR": 0.95,
     },
     "retraining_cost": {
         "ARIMA": 0.95,
@@ -138,6 +231,26 @@ EXPERT_DIMENSIONS: dict[str, dict[str, float]] = {
         "ETS": 0.90,
         "Prophet": 0.70,
         "seasonal_naive": 1.00,
+        "STL": 0.85,
+        "VAR": 0.60,
+        "VARMA": 0.50,
+        "GARCH": 0.70,
+        "AutoARIMA": 0.75,
+        "AutoETS": 0.80,
+        "NeuralProphet": 0.30,
+        "LightGBM": 0.85,
+        "XGBoost": 0.80,
+        "CatBoost": 0.75,
+        "RandomForest": 0.75,
+        "Ridge": 0.95,
+        "Lasso": 0.95,
+        "TCN": 0.30,
+        "NHiTS": 0.30,
+        "NBEATS": 0.30,
+        "LSTM": 0.25,
+        "GRU": 0.30,
+        "RNN": 0.30,
+        "DeepAR": 0.20,
     },
 }
 
@@ -455,14 +568,65 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
     horizon = _horizon(state, eda)
 
     # ── §B : recipe_key 별 base candidates ──
+    # Phase G (2026-06-14, B 길) — 26 종 합류. ML 회귀·STL·AutoARIMA/AutoETS 도 후보.
+    # DL 은 n_rows 충분 시만 합류 (CPU 친화). 다변량은 별도 분기.
     if recipe_key == "단기 예측":
-        candidates = ["ARIMA", "SARIMA", "Prophet", "SARIMAX", "ETS"]
+        candidates = [
+            "ARIMA",
+            "SARIMA",
+            "Prophet",
+            "SARIMAX",
+            "ETS",
+            "AutoARIMA",
+            "AutoETS",
+            "STL",
+            "LightGBM",
+            "XGBoost",
+            "RandomForest",
+            "Ridge",
+        ]
     elif recipe_key == "이상 시점":
-        candidates = ["Prophet", "SARIMA", "ETS"]
+        candidates = ["Prophet", "SARIMA", "ETS", "STL", "AutoETS", "LightGBM", "RandomForest", "GARCH"]
     elif recipe_key == "계절 분해":
-        candidates = ["Prophet", "SARIMA", "SARIMAX", "ETS"]
+        candidates = ["Prophet", "SARIMA", "SARIMAX", "ETS", "STL", "AutoARIMA", "AutoETS", "LightGBM", "XGBoost"]
     else:
-        candidates = ["ARIMA", "SARIMA", "Prophet", "ETS"]
+        candidates = ["ARIMA", "SARIMA", "Prophet", "ETS", "STL", "AutoARIMA", "LightGBM", "XGBoost", "Ridge"]
+
+    # 다변량 신호 → VAR/VARMA 추가
+    if is_multivariate:
+        for m in ("VAR", "VARMA"):
+            if m not in candidates:
+                candidates.append(m)
+
+    # 변동성 신호 → GARCH 추가
+    if heteroscedastic and "GARCH" not in candidates:
+        candidates.append("GARCH")
+
+    # 충분 데이터 (n_rows >= 500) → 경량 DL 합류 (보수)
+    if n_rows >= 500:
+        for m in ("TCN", "NHiTS", "NBEATS"):
+            if m not in candidates:
+                candidates.append(m)
+        # DL RNN 계열은 n_rows >= 1000 + horizon 길 때
+        if n_rows >= 1000 and horizon >= 7:
+            for m in ("LSTM", "GRU", "DeepAR"):
+                if m not in candidates:
+                    candidates.append(m)
+
+    # NeuralProphet 은 changepoints 풍부할 때
+    if changepoints >= 5 and n_rows >= 300 and "NeuralProphet" not in candidates:
+        candidates.append("NeuralProphet")
+
+    # CatBoost / Lasso 도 ML 신호 (n_exog 풍부) 시 합류
+    n_exog_check = len(_exog_columns(state, eda))
+    if n_exog_check >= 3:
+        for m in ("CatBoost", "Lasso"):
+            if m not in candidates:
+                candidates.append(m)
+
+    # RNN 은 RNN 계열 합류 시 같이
+    if "LSTM" in candidates and "RNN" not in candidates:
+        candidates.append("RNN")
 
     base = {m: BASE_SCORE for m in candidates}
     adj: dict[str, float] = {m: 0.0 for m in candidates}
@@ -559,10 +723,8 @@ def score(state: Any, recipes: list[dict[str, Any]] | None = None) -> dict[str, 
         "multistep_strategy": multistep,
         "hybrid_hint": hybrid,
         "leakage_excluded": leakage_excluded,
-        # 주제 적합도 신호 (2026-06-05) — insight·output_extras 에서 활용
         "topic_signals": {k: v for k, v in topic_signals.items() if v},
         "intent_match": {m: lst for m, lst in intent_match.items() if lst},
-        # 전문가 4 차원 (2026-06-08, Phase 1-A) — insight·output_extras 에서 trace·인용
         "expert_priorities": expert_priorities,
         "expert_scores": expert_scores,
         "expert_top_dimension": (
