@@ -15,7 +15,7 @@ v2 설계 철학 (목적·인사이트 중심):
     §4 분석 방법          (method)          전처리·피처·검증 설계 (신뢰 근거)
     §5 모델 성능          (model_performance) 후보 비교·성능 (근거·조연)
     §6 핵심 인사이트와 해석  (key_insights)     변수 중요도·per-feature·세그먼트 드라이버 ★심장
-    §7 비즈니스 함의 및 권고 (implications)    임팩트·표적 개입·실행 레버·운영 적용·리스크 (풍부 산문)
+    §7 비즈니스 임팩트와 실행 (implications)    임팩트·표적 개입·실행 레버·운영 적용·리스크 (풍부 산문)
     §8 결론               (conclusion)      §1 핵심 질문에 대한 시니어 톤의 답 (짧고 단정)
     부록 (appendix, 선택)                   재현 정보·코드·환경
 
@@ -49,7 +49,7 @@ v2 설계 철학 (목적·인사이트 중심):
     §4 분석 방법          → "분석 절차 및 검증 설계 (신뢰 근거)"
     §5 모델 성능          → "모델 선정 및 성능 (근거)"  ★기준
     §6 핵심 인사이트와 해석  → "동인·메커니즘·표적 종합 (핵심 발견)"
-    §7 비즈니스 함의 및 권고 → "실행 레버·운영 적용·리스크 (액션 플랜)"
+    §7 비즈니스 임팩트와 실행 → "실행 레버·운영 적용·리스크 (액션 플랜)"
     §8 결론               → "최종 답과 의사결정 (Bottom Line)"
 
 사용법:
@@ -144,7 +144,6 @@ from outputs.architect.plan import (
     SlideSpec,
     VisualSpec,
 )
-from outputs.architect.skeletons._rules import card as _label_card
 from outputs.context.schema import ReportContext
 
 SKELETON_NAME = "Report"
@@ -172,6 +171,13 @@ def _fv(v: Any) -> str:
     if isinstance(v, float):
         return f"{v:.4f}" if 0 < abs(v) < 1 else f"{v:,.2f}"
     return str(v)
+
+
+def _fvb(v: Any) -> str:
+    """[레지스터] 본문(결정)용 숫자 — 비율(0<v<1)은 소수 2자리. 4자리 정밀값·CI는 부록 몫."""
+    if isinstance(v, (int, float)) and 0 < abs(v) < 1:
+        return f"{v:.2f}"
+    return _fv(v)
 
 
 def _pct(v: Any) -> str:
@@ -665,9 +671,6 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         comp_txt = f"{n_feat}개 입력 변수"
 
     # 결측 / 표본 충분성 판단 — [5~6줄룰] 압축형 문장 (전체 background 5~6줄 보장)
-    missing = ds.missing_rate or {}
-    nz = [(c, r) for c, r in sorted(missing.items(), key=lambda kv: -kv[1])[:2] if r and r > 0]
-    miss_txt = ("결측은 " + ", ".join(f"{c} {_pct(r)}" for c, r in nz)) if nz else "결측 거의 없음"
     if n_rows and n_rows < 1000:
         sample_txt = f"{n_rows:,}건은 PoC·탐색에 충분, 운영 일반화엔 확대 필요"
     elif n_rows and n_rows < 10000:
@@ -681,22 +684,37 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     _f = _task_flags(ctx)
     maj = _f["maj"]
     is_clf, is_ts, is_anom = _f["is_clf"], _f["is_ts"], _f["is_anom"]
-    is_reg, is_imbal, is_multiclass = _f["is_reg"], _f["is_imbal"], _f["is_multiclass"]
+    is_reg, is_imbal = _f["is_reg"], _f["is_imbal"]
 
     # ── 분석 배경 — [5~6줄룰] 적용. business_context 있으면 시급성 문장 중복 회피.
     # 한국어 14pt 기준: 한 줄 ≈ 30자, 5줄 ≈ 150자, 6줄 ≈ 180자. 4문장 × 평균 40자 이내가 목표.
     bg_parts: list[str] = []
     bctx = (ctx.meta.business_context or "").strip()
-    industry = ((ctx.domain.inferred_industry if ctx.domain else "") or "").strip()
-    where = f"{industry} 도메인의 " if industry else ""
     if bctx:
         # bctx 가 있으면 시급성 문장 생략 (같은 결의 진술 — 중복 회피)
         bg_parts.append(bctx)
     else:
         bg_parts.append(f"'{target}' {verb}{_josa(verb, 'obj')} 수작업·경험에서 데이터 표준화로 전환할 필요가 분명하다.")
-    # 데이터 구성 + 결측 (압축형) + 규모 판단 (압축형)
-    bg_parts.append(f"분석 대상은 {where}{n_rows:,}건·{comp_txt}, {miss_txt}.")
+    # 규모 판단 (압축형) — 데이터 구성(변수 수)은 §1 exhibit·§2가 보유 → 배경에선 891 중복 제거
     bg_parts.append(sample_txt + ".")
+    if is_anom:
+        _stake = "옳게 잡으면 다운타임·품질 손실과 점검 부하를 줄이고, 놓치면 그 비용이 그대로 쌓인다."
+    elif is_ts:
+        _stake = "정확히 예측하면 재고·인력·리드타임 낭비를 줄이고, 빗나가면 그 손실을 현장이 떠안는다."
+    elif is_reg:
+        _stake = "정밀히 추정하면 가격·자원 배분의 손실을 줄이고, 틀리면 그 비용이 누적된다."
+    else:
+        _stake = "옳게 가려내면 한정된 자원을 가장 중요한 대상에 집중하고, 놓치면 그 비용을 현장과 대상이 떠안는다."
+    # [판돈] 진짜 '돈/규모'(proj.retained=방어 매출)가 잡히는 데이터에서만 정량. 없으면 정성(가짜 수치 금지).
+    _proj = _scenario_projection(ctx)
+    if _proj and _proj.get("retained"):
+        _ev = _event_noun(ctx)
+        bg_parts.append(
+            f"이 판단의 판돈은 작지 않다. 연 약 {_proj['avoided']:,.0f}건의 {_ev} 감축과 "
+            f"매출 약 {round(_proj['retained'], -3):,.0f} 방어가 여기에 달려 있다."
+        )
+    else:
+        bg_parts.append("이 판단의 판돈은 작지 않다. " + _stake)  # 정성 폴백(titanic 등)
     background = " ".join(bg_parts)
 
     # ── 분석 목적 (과제가 아니라 성과로)
@@ -705,29 +723,6 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
         f"이를 위해 {comp_txt}로 '{target}'{_josa(target, 'obj')} {verb}하는 모델을 수립하고, 결과를 좌우하는 핵심 변수를 규명한다. "
         "단순 기준 모델 대비 실질적 개선과 해석 가능성을 함께 확보해, 결과를 운영 의사결정에 바로 활용할 수 있게 한다."
     )
-
-    # ── 분석 질문 (의사결정 언어 — 지표 약어 없이 '무슨 결정·무슨 비용'으로)
-    q_list = [f"첫째, 어떤 변수·요인이 '{target}'{_josa(target, 'obj')} 가장 강하게 좌우하는가?"]
-    if is_anom:
-        q_list.append("둘째, 이상 징후를 얼마나 일찍 잡아내며, 헛경보로 인한 불필요한 점검은 얼마나 줄일 수 있는가?")
-        q_list.append("셋째, 놓침과 헛경보 중 어느 실수가 더 비싼가, 그 비용에 맞춰 경보 기준을 어디에 둘 것인가?")
-    elif is_ts:
-        q_list.append(f"둘째, '{target}'에 어떤 추세·계절성·변화 시점이 있으며, '어제와 같다'고 찍는 수준을 의미 있게 넘어서는가?")
-        q_list.append("셋째, 며칠·몇 기간 앞까지 믿고 계획에 쓸 수 있는가?")
-    elif is_imbal:
-        q_list.append("둘째, 중요한 소수 사례를 놓치지 않으면서 헛경보를 어디까지 줄일 수 있는가?")
-        q_list.append("셋째, 놓침과 헛경보 중 어느 실수가 더 비싼가, 그에 맞춰 판정 기준을 어디에 둘 것인가?")
-    elif is_multiclass:
-        q_list.append("둘째, 어떤 범주끼리 자주 헷갈리며, 그 혼동이 어떤 잘못된 결정으로 이어지는가?")
-        q_list.append("셋째, 특정 범주의 판정이 유독 약하다면 어디를 보강해야 하는가?")
-    elif is_clf:
-        q_list.append("둘째, '놓침'과 '헛경보' 중 어느 실수가 더 비싼가, 그 비용에 맞춰 판정 기준을 어디에 둘 것인가?")
-        q_list.append("셋째, 현재 데이터만으로 단순 추측보다 의미 있게 나은 판정이 가능한가?")
-    else:  # 회귀
-        q_list.append("둘째, 예측이 얼마나 빗나가며, 현업이 허용하는 오차 범위 안에 드는 경우는 얼마나 되는가?")
-        q_list.append("셋째, 크게 빗나가는 상황은 언제이며, 그 위험을 어떻게 관리할 것인가?")
-    q_list.append(f"넷째, 세그먼트·구간별로 '{target}' 양상이 달라 다르게 대응해야 하는가?")
-    questions = "<br/>".join(q_list)
 
     # ── 분석 범위 (+ 한계 선제)
     scope_parts = [f"분석은 {n_rows:,}행 × {n_cols}열을 대상으로 {cat} 관점의 {verb}에 한정한다."]
@@ -750,7 +745,7 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     sc_parts: list[str] = []
     # 1) 단순 추측 대비 — 도입 가치
     if naive is not None:
-        sc_parts.append(f"무엇보다 단순 추측(단순 모델 {_fv(naive)} 수준)보다 의미 있게 나아야 도입할 가치가 있다.")
+        sc_parts.append(f"무엇보다 단순 추측(단순 모델 {_fvb(naive)} 수준)보다 의미 있게 나아야 도입할 가치가 있다.")
     elif is_clf and maj is not None:
         sc_parts.append(f"무엇보다 '무조건 다수를 찍는' 추측({_pct(maj)})을 확실히 넘어서야 도입할 가치가 있다.")
     elif is_clf:
@@ -767,11 +762,11 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     elif is_reg:
         sc_parts.append("현업이 허용하는 오차 범위 안에 드는 비율로 실무 적합성을 가린다.")
     # 3) 안정성 (운영에 쓸 수 있는가) — 약어 없이
-    sc_parts.append("끝으로 한 번의 좋은 점수가 아니라, 시기·집단을 바꿔도 일관되게 유지되는지로 운영에 쓸 수 있는지 판단한다.")
+    sc_parts.append("끝으로 시기·집단을 바꿔도 성능이 유지돼야 운영에 쓸 수 있다.")
     # [C13 Falsifiability룰] 반증 조건 — 못 넘으면 도입 의미 없음
     sc_parts.append(
-        f"[반증] 이 기준을 못 넘으면 모델 도입 효용이 없다 — "
-        f"{n_feat}개 입력 변수 외 후보를 추가했을 때 +2%p 이내 개선이면 현재 변수 구성으로 충분."
+        "<br/>거꾸로, 입력 변수를 더 늘려도 개선이 +2%p 이내라면 현재 구성으로 충분하다는 뜻이며, "
+        "그 선을 못 넘는 모델은 도입할 이유가 없다."
     )
     success = " ".join(sc_parts)
 
@@ -798,30 +793,58 @@ def _build_overview(ctx: ReportContext) -> SectionSpec:
     impact_parts.append(base_impact)
     impact_parts.append("핵심 변수를 근거로 데이터 수집 우선순위와 프로세스 개선까지 후속 액션으로 연결한다.")
 
-    driving = _driving_question(_f, target)  # 핵펀치 — 진짜 알고 싶은 것 한 줄
+    # [B9 Headline=Message] 헤드라인 = 의사결정 질문(모델링 질문 아님). 카테고리 분기.
+    if not (n_feat and n_rows):
+        _head = "프로젝트 정의 (목적·범위·성공 기준)"
+    elif is_anom:
+        _head = "이상탐지를 운영 점검 체계로 도입할 가치가 있는가"
+    elif is_ts:
+        _head = f"'{target}' 예측을 계획 수립에 도입할 가치가 있는가"
+    elif is_reg:
+        _head = f"'{target}' 추정 모델을 의사결정에 도입할 가치가 있는가"
+    else:
+        _head = f"'{target}' 판정 모델을 운영에 도입할 가치가 있는가"
+
+    # [풍부화 §1] 이해관계자 — 괄호 태그(승인/실행 등) 금지, 산문으로. 카테고리 분기.
+    if is_anom:
+        _stk_mid = "경보를 받아 점검하는 운영팀이 대응을 맡고, 놓친 이상과 헛경보의 비용은 점검 대상에게 돌아간다"
+    elif is_ts:
+        _stk_mid = "예측으로 계획하는 수요·재고·인력 부서가 이를 실행하며, 과·소 예측의 비용은 공급·고객 접점에 돌아간다"
+    elif is_reg:
+        _stk_mid = "추정으로 가격·자원·리스크를 정하는 실무팀이 이를 실행하며, 과대·과소 추정의 비용은 그 대상에게 돌아간다"
+    else:
+        _stk_mid = f"판정을 받아 처리하는 실무팀이 일상 운영을 맡고, 오판의 영향은 '{target}' 판정 대상에게 돌아간다"
+    stakeholders = (
+        "도입 여부와 적용 범위는 운영·사업 책임자가 효익과 위험을 따져 결정한다. "
+        + _stk_mid + ". "
+        "데이터·MLOps가 모델 적재와 재학습·모니터링을 책임지며, 리스크·컴플라이언스가 공정성과 규제 적합성을 점검한다."
+    )
+    # [B-Exhibit §1] 분석 접근 로드맵 — 박스/헤드라인 반복 대신 '데이터→결정' 흐름(번호 원+화살표). 4단계가 §2·§3·§5·§7로 이어짐.
+    # [관통 인사이트 원칙·헌법] 로드맵 4단계가 보고서를 관통하는 척추 — 헤드라인을 반복하지 않고 '여정'을 제시(결정 중심 70%).
+    _ovw_exhibit = VisualSpec(type="roadmap", title="분석 접근 — 데이터에서 결정까지", spec={
+        "steps": ["데이터 적합성", "핵심 동인", "성능·신뢰", "표적 실행"],
+    })
+
     slide = SlideSpec(
         id="overview",
         section_id="overview",
         layout="one_message",
         role="claim",
-        so_what=driving,
-        title_ko=(  # [B9 Headline=Message] 라벨형 → 결론형, 동적
-            # (a) "변수" → "입력 변수" 로 명확화 (전체 컬럼 12개 vs 입력 9개 혼동 차단)
-            # (a) 조사 _josa() 로 받침 자동 처리 — 'Survived' 같은 영문도 정확
-            f"{n_feat}개 입력 변수로 {n_rows:,}건 '{target}'{_josa(target, 'obj')} 정확히 가려낼 수 있는가"
-            if n_feat and n_rows else "프로젝트 정의 (목적·범위·성공 기준)"
-        ),
+        so_what=f"'{target}'{_josa(target, 'obj')} 가르는 신호가 데이터에 실제로 있고, 그 신호가 단순 추측을 의미 있게 넘느냐. 둘 다 '예'가 아니면 이 모델은 운영에 올릴 이유가 없다.",
+        title_ko=_head,
         prose_blocks=[
             # [C12 ConfidenceStamp룰] 추정만 (추정) 명시 · 확실은 기본(무표기)
             # [C3 독자페르소나룰] 본 보고서의 독자·용도 (표지와 동일 문장)
             ["독자·용도", _reader_persona(ctx)],
             ["분석 배경", background],
+            ["이해관계자", stakeholders],
             ["분석 목적", objective],
-            ["세부 질문", questions],
             ["분석 범위", scope],
             ["성공 기준 (추정)", success],
+            ["", "이 도입 가치는 데이터가 이 질문에 답할 수 있을 때만 성립한다."],
             # [70/30룰] 기대 효과는 §8 결론으로 이관 — §1 에서 결론 미리 노출 금지
         ],
+        visual_spec=_ovw_exhibit,
     )
     return make_section("overview", "분석 개요", "context", [slide])
 
@@ -875,8 +898,6 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
     else:
         tgt_txt = "연속값 추정 대상이다"
 
-    issues = (ctx.eda.data_quality_issues or []) if ctx.eda else []
-
     # ── 도출 단락
     p_fit = f"분석 대상은 {n_rows:,}행 × {n_cols}열로, 식별자·타깃을 제외하면 수치형 {len(num_cols)}개·범주형 {len(cat_cols)}개의 입력 변수로 구성된다. {adeq}."
     if ds.detected_time_col:
@@ -908,45 +929,14 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
         _unit = _unit_for(c, ctx)
         _u = f" {_unit}" if _unit else ""
         key_bits.append(
-            f"{_lbl_c}{_josa(_lbl_c, 'subj')} {_fv(st.get('min'))}{_u}~{_fv(st.get('max'))}{_u} "
-            f"(평균 {_fv(st.get('mean'))}{_u}) 범위"
+            f"{_lbl_c}{_josa(_lbl_c, 'subj')} {_fvb(st.get('min'))}{_u}~{_fvb(st.get('max'))}{_u} "
+            f"(평균 {_fvb(st.get('mean'))}{_u}) 범위"
         )
     if high_card:
         key_bits.append(f"{', '.join(_feat_label(ctx, c) for c in high_card[:2])} 등 범주가 많은 변수는 인코딩 설계가 중요하다")
     p_key = ". ".join(key_bits) + "."
 
     p_target = f"타깃 '{target}'{_josa(target, 'subj')} {tgt_txt}. 이는 이후 평가 지표·임계값 선택의 전제가 된다."
-
-    # ── 품질 점검 — 발견 + 처리 + 후속 (실무 표준 3단)
-    # 단순 'X 11건' 한 줄로 끝내지 않고, '뭘 어떻게 처리할 것인가'까지 명시.
-    if not issues:
-        p_quality = (
-            "품질 점검 결과 식별된 이슈는 없다. "
-            "본 분석에서는 별도 정제 단계 없이 데이터를 그대로 사용하며, "
-            "운영 데이터 입수 시점에 동일한 점검 체크리스트를 자동 실행한다."
-        )
-    else:
-        findings = []
-        for it in issues[:3]:
-            if isinstance(it, dict):
-                txt = _txt_from(it, ("issue", "name", "note"))
-                if txt:
-                    findings.append(txt.rstrip("."))
-        finding_txt = "; ".join(findings) if findings else "경미한 데이터 이슈"
-        treatment = (
-            "전처리 단계에서 대치(수치 중앙값·범주 최빈값)로 보정해 분석 영향을 차단했다"
-            if has_impute else
-            "해당 행 제외 또는 '결측 자체를 신호로 인코딩'하는 안을 검토한다"
-        )
-        # [B15·B19] _label_card() 통과로 자동 준수
-        p_quality = _label_card([
-            ("발견", f"{finding_txt}."),
-            ("처리", f"{treatment}."),
-            ("후속",
-             "운영 데이터에서 동일 패턴 발생 시 자동 동일 처리를 적용하며, "
-             "임계 초과(전체의 5% 이상)나 새 유형 이슈 발생 시 데이터팀에 에스컬레이션해 "
-             "처리 결정과 영향 평가를 문서화한다."),
-        ])
 
     # so_what — '회장이 봐도 끌리는' 핵심 한 줄 (데이터의 결정적 사실을 앞세움)
     adequate = bool(n_rows and n_rows >= 1000)
@@ -960,27 +950,36 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
     else:
         sow = f"결측 없이 {len(input_cols)}개 변수가 '{target}'{_josa(target, 'obj')} 다각도로 담아, 원인 규명까지 가능한 데이터다."
 
-    slide = SlideSpec(
+    # [§2 시각화] 박스 요약 대신 '데이터를 보여준다' — 결측 프로파일(그래프). 변수 사전(표)은 부록 9.2.
+    # [연결 자산] dataset.missing_rate·dtypes·numeric_stats = 파이프라인 프로파일러 산출값 직접 사용(어떤 데이터든 자동).
+    _miss_items = [(str(_feat_label(ctx, c)), round(r * 100, 1)) for c, r in miss_cols[:6]]
+    _miss_chart = (
+        VisualSpec(type="chart_hbar", title="변수별 결측률 (%)", spec={"items": _miss_items},
+                   caption="결측이 큰 변수일수록 단순 대치가 신호를 지울 위험이 크다.")
+        if _miss_items else None
+    )
+
+    # [§2 = 1슬라이드·1페이지] 구성·주요변수·타깃·결측 글 + 결측 그래프(결측분석 뒤). 품질점검(결측 중복) 제거 → 변수표는 부록 9.2.
+    slide1 = SlideSpec(
         id="data_understanding",
         section_id="data_understanding",
-        layout="comparison_table",
+        layout="one_message",
         role="evidence",
         so_what=sow,
         title_ko=(  # [B9 Headline=Message] 결론형, 동적
             f"{n_rows:,}건·{n_cols}개 변수로 결정에 충분한가"
-            if n_rows and n_cols else "표본 적합성 및 변수 진단"
+            if n_rows and n_cols else "표본 적합성 및 데이터 품질"
         ),
         prose_blocks=[
             # [C12 ConfidenceStamp룰] §2 데이터 진단은 모두 데이터에서 직접 도출 (확실)
             ["데이터 구성·적합성", p_fit],
-            ["결측 분석", p_missing],
             ["주요 변수", p_key],
             ["타깃 분포", p_target],
-            ["품질 점검", p_quality],
+            ["결측 분석", p_missing],
         ],
-        visual_spec=_data_dictionary_visual(ctx),
+        visual_spec=_miss_chart,  # 결측 프로파일 그래프 (박스 아님)
     )
-    return make_section("data_understanding", "데이터 이해", "context", [slide])
+    return make_section("data_understanding", "데이터 이해", "context", [slide1])
 
 
 def _chart_kind(c_title, ct, items):
@@ -1087,28 +1086,20 @@ def _chart_3step_caption(items, n_rows, event, baseline_rate=None, kind="rate"):
             "<b>시사</b> 스케일·구간화·이상치 처리(4장)로 보완한다."
         )
 
-    # kind == "rate" : 타깃 발생률 by 세그먼트
+    # kind == "rate" : 타깃 발생률 by 세그먼트 — 관찰+의미만 (벤치마크는 §5, '우선 개입'은 종합서 1회·트레일러 제거)
     hp_items = [(n, _as_pct(v)) for n, v in vals]
-    hp_name, hp = max(hp_items, key=lambda x: x[1])
-    lp_name, lp = min(hp_items, key=lambda x: x[1])
+    pcts = [p for _, p in hp_items]
+    hp, lp = (max(pcts), min(pcts)) if pcts else (0.0, 0.0)
     obs_pts = ", ".join(f"{n} {p:.1f}%" for n, p in hp_items[:4])
     gap = hp - lp
     ratio = (hp / lp) if lp > 0 else 0.0
-    bench_txt = ""
-    if baseline_rate is not None and 0 < baseline_rate < 1:
-        _bv = baseline_rate * 100.0
-        _gap = max(hp - _bv, 0.0)
-        bench_txt = f" <b>벤치마크</b> 단순 룰(다수 추측) {_bv:.1f}% 대비 최고 {hp:.1f}% (+{_gap:.1f}%p)."
     if ratio >= 5:
         meaning = f"<b>의미</b> 최고·최저 {ratio:.1f}배 격차 — {event} 결정의 1차 변수."
     elif ratio >= 2 or gap >= 10:
         meaning = f"<b>의미</b> 집단 간 {gap:.1f}%p 격차 — 결과를 가르는 핵심 동인."
     else:
         meaning = "<b>의미</b> 단독 결정성은 제한적, 타 동인과의 상호작용 분석 필요."
-    return (
-        f"<b>관찰</b> {_rate(event)} {obs_pts}.{n_txt} {meaning}{bench_txt} "
-        f"<b>시사</b> {hp_name} 집단을 우선 대상으로 한 개입이 가장 큰 {event} 레버 (6·7장에서 정량)."
-    )
+    return f"<b>관찰</b> {_rate(event)} {obs_pts}.{n_txt} {meaning}"
 
 
 def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
@@ -1188,41 +1179,39 @@ def _build_eda(ctx: ReportContext) -> Optional[SectionSpec]:
                 syn.append(f"{nm} 결과 {res}로 통계적으로 유의했다.")
     if syn:
         syn.append("이 발견들이 핵심 인사이트에서 정량적 개입 레버로 이어진다.")
+        # [§3 종합 capstone] 동인별 격차 랭킹 = '무엇이 가장 크게 가르나'를 한 그림으로 (연결: eda.charts numbers)
+        _driver_gaps = []
+        for _ch in charts[:_MAX_EDA_SLIDES]:
+            _nv = [_as_pct(d.get("value", 0)) for d in (getattr(_ch, "numbers", None) or []) if isinstance(d, dict)]
+            if len(_nv) >= 2:
+                _dt = getattr(_ch, "title_ko", "") or ""
+                _driver_gaps.append((_dt, round(max(_nv) - min(_nv), 1)))
+        _driver_gaps.sort(key=lambda kv: -kv[1])
+        _syn_vis = (
+            VisualSpec(type="chart_hbar", title="동인별 격차 (%p)", spec={"items": _driver_gaps},
+                       caption="격차가 큰 동인일수록 우선 개입의 지렛대가 크다 — 위에서부터 자원 배분.")
+            if len(_driver_gaps) >= 2 else None
+        )
         slides.append(
             SlideSpec(
                 id="eda_findings",
                 section_id="eda",
                 layout="one_message",
                 role="claim",
-                so_what="탐색이 가리키는 한 방향",
+                so_what="탐색이 가리키는 한 방향 — 격차가 큰 동인이 곧 개입 우선순위다.",
                 title_ko=f"{len(slides) + 1}) 주요 발견 종합",
-                # [B6 EDA페이지룰] 발견 종합 + 비즈니스 의미 — 의사결정자 연결
-                # [C10 SoWhat] 차트만 늘어놓고 끝내지 않음 — "그래서 뭐?" 답을 카드로
+                # [B6 EDA페이지룰] 발견 종합 + 비즈니스 의미 + 동인 랭킹 exhibit (의사결정 70%)
+                # 산문은 패턴·유의성만 — 격차 수치는 exhibit가 보여줌(반복 금지). 행동계획·한계는 §7(중복 제거).
                 prose_blocks=[
                     ["발견 종합", " ".join(syn)],
                     [
                         "비즈니스 의미",
-                        "<b>표적 개입:</b> 상위 위험군 표적 처리로 전체 발생률 감축 + 운영 비용 절감.<br/>"
-                        "<b>매출 방어:</b> 고가치 세그먼트 우선 보호로 매출 손실 방어 여지.<br/>"
-                        "<b>KPI 가시성:</b> 운영 결과 정량 추적으로 경영진 KPI 보고 정교화."
-                    ],
-                    [
-                        "다음 행동 (Owner · Date)",
-                        # [C6 Action_OwnerDate룰] 누가·언제까지 명시
-                        "<b>도입 권고:</b> 모델팀 — 분기 게이트 통과 시 5% 파일럿 가동 (~Q+1)<br/>"
-                        "<b>의사결정 결재:</b> 운영팀장/사업부장 — 1단계 결재 (~2주)<br/>"
-                        "<b>모니터링 정례화:</b> 데이터팀 — 월간 운영 KPI 추적 (운영 후 30일 내 시작)"
-                    ],
-                    [
-                        "한계 · 카운터내러티브",
-                        # [C7 CounterNarrative룰] 가장 강한 반대 논거 + 반박
-                        "<b>표본 한계:</b> 891명 · 단일 사건 (1912년) — 시대·상황 외삽 제한적, "
-                        "결정 신뢰구간에 5%p 마진 적용 권고.<br/>"
-                        "<b>반대 논거:</b> '단일 사건 데이터로 일반화 불가' — 그러나 성별·등급 효과는 "
-                        "다른 재난 사례(세월호·페리 침몰 통계)에서도 재현된 패턴, 핵심 발견 안정성 확보.<br/>"
-                        "<b>외부 검증:</b> 운영 1·3·6개월 시점 동일 변수 영향력 재확인 — 임계 이탈 시 재학습."
+                        "<b>표적 개입:</b> 격차가 가장 큰 집단에 자원을 집중해 결과를 효율적으로 개선한다.<br/>"
+                        "<b>우선순위:</b> 동인별 격차 순서가 곧 개입 우선순위 — 한정 자원의 효과를 극대화한다.<br/>"
+                        "<b>KPI 가시성:</b> 개입 효과를 정량 추적해 경영진 KPI 보고를 정교화한다."
                     ],
                 ],
+                visual_spec=_syn_vis,
             )
         )
 
@@ -1486,30 +1475,87 @@ def _build_model_performance(ctx: ReportContext) -> Optional[SectionSpec]:
     _pm_val = _pm.get("value")
     _bench_bits: list[str] = []
     if _pm_val is not None and ("auc" in _pm_name):
-        _bench_bits.append("무작위: 0.5000")
+        _bench_bits.append("무작위 0.50")
         if _maj is not None:
-            _bench_bits.append(f"단순 룰(다수 클래스): {_maj:.4f}")
-        _bench_bits.append(f"<b>본 모델: {_fv(_pm_val)}</b>")
+            _bench_bits.append(f"단순룰(다수클래스) {_maj:.2f}")
+        _bench_bits.append(f"<b>본 모델 {_fvb(_pm_val)}</b>")
     elif _pm_val is not None and _maj is not None:
-        _bench_bits.append(f"단순 룰(다수 클래스): {_maj * 100:.1f}%")
-        _bench_bits.append(f"<b>본 모델: {_fv(_pm_val)}</b>")
+        _bench_bits.append(f"단순룰(다수클래스) {_maj * 100:.1f}%")
+        _bench_bits.append(f"<b>본 모델 {_fvb(_pm_val)}</b>")
     if _bench_bits:
         blocks.append([
             "비교 기준선",
             " / ".join(_bench_bits) + "."
         ])
 
-    # 검증 성능 — [C14 CI룰] AUC 류 지표에 신뢰구간 동반
+    # [로드맵1 도메인 벤치마크룰] 업계/외부 평균 대비 본 모델 — ctx.domain.domain_benchmarks(조건부·없으면 스킵·카테고리 불문)
+    _dbs = (ctx.domain.domain_benchmarks or []) if ctx.domain else []
+    if _dbs and _pm_val is not None:
+        _pmn2 = str(_pm.get("name") or "").lower()
+        _bm_match = None
+        for _b in _dbs:
+            _bmn = str(_b.get("metric") or "").lower()
+            if _bmn and (_bmn in _pmn2 or _pmn2 in _bmn or _bmn.replace("_", "") in _pmn2.replace("_", "")):
+                _bm_match = _b
+                break
+        _bm_match = _bm_match or _dbs[0]
+        _bmv = _bm_match.get("value")
+        if isinstance(_bmv, (int, float)) and isinstance(_pm_val, (int, float)):
+            _bvs = f"{_bmv:.2f}" if 0 < abs(_bmv) < 1 else _fv(_bmv)
+            _pvs = f"{_pm_val:.2f}" if 0 < abs(_pm_val) < 1 else _fv(_pm_val)
+            _gap = _pm_val - _bmv
+            _verd = "상위" if _gap > 0.005 else ("동등" if abs(_gap) <= 0.005 else "하회")
+            _bsrc = str(_bm_match.get("source") or "업계 벤치마크")
+            _bml = _ko_metric(_bm_match.get("metric")) or str(_bm_match.get("metric") or "지표")
+            _reg = audience_register(ctx)
+            if _reg["depth"] == "technical":
+                _bline = f"{_bsrc} {_bml} {_bvs} 대비 본 모델 {_pvs}, {_verd}(격차 {_gap:+.2f})."
+            else:
+                _bline = f"{_bsrc} {_bml} {_bvs} 대비 본 모델 {_pvs}, {_verd}."
+            blocks.append(["업계 벤치마크 대비", _bline])
+
+    # [로드맵2 캘리브레이션룰] 확률/예측 신뢰도 — ctx.evaluation.calibration(조건부·카테고리 분기·없으면 스킵)
+    _calib = (ev.calibration or {}) if ev else {}
+    if isinstance(_calib, dict) and _calib:
+        _tech_c = audience_register(ctx)["depth"] == "technical"
+        _cal_line = ""
+        if _calib.get("ece") is not None:  # 정형 ML/DL 분류: 기대 보정 오차(ECE)
+            _ece = _calib["ece"]
+            _ece_txt = f" (ECE {_ece:.3f})" if _tech_c else ""
+            if isinstance(_ece, (int, float)) and _ece <= 0.05:
+                _cal_line = f"모델이 제시하는 확률이 실제 적중률과 잘 맞아{_ece_txt}, 확률을 그대로 임계값·의사결정에 쓸 수 있다."
+            else:
+                _cal_line = f"모델 확률이 실제 적중률과 다소 어긋나{_ece_txt}, 임계값은 보정 후 사용을 권고한다."
+        elif _calib.get("coverage") is not None:  # 시계열: 예측구간 커버리지
+            _cal_line = f"예측구간이 실제값을 약 {_calib['coverage']:.0%} 포함(목표 80%)으로, 계획 수립 시 구간을 신뢰하고 쓸 수 있다."
+        elif (_calib.get("thresholds") is not None) or (_calib.get("bhattacharyya") is not None):  # 이상탐지: 분리도
+            _cal_line = "정상·이상 점수 분포가 뚜렷이 분리돼, 운영 임계값을 헛경보 없이 설정할 수 있다."
+        if _cal_line:
+            blocks.append(["확률 신뢰도(보정)", _cal_line])
+
+    # [로드맵3 혼동행렬룰] 오류 프로파일 — ctx.evaluation.confusion_matrix(조건부·분류만·없으면 스킵): 어디서 틀리나
+    _cm = (ev.confusion_matrix or {}) if ev else {}
+    if isinstance(_cm, dict) and _cm:
+        _fp = _cm.get("fp") or _cm.get("false_positive") or 0
+        _fn = _cm.get("fn") or _cm.get("false_negative") or 0
+        if _fp or _fn:
+            _tech_e = audience_register(ctx)["depth"] == "technical"
+            if _fn > _fp:
+                _cnt = f"(미탐 {_fn:,}건 > 오탐 {_fp:,}건)" if _tech_e else ""
+                _eline = f"오류는 주로 '놓침' 쪽이다{_cnt}. 놓침 비용이 크면 임계값을 낮춰 재현율을 높이는 운영을 권고한다."
+            elif _fp > _fn:
+                _cnt = f"(오탐 {_fp:,}건 > 미탐 {_fn:,}건)" if _tech_e else ""
+                _eline = f"오류는 주로 '헛경보' 쪽이다{_cnt}. 헛경보 비용이 크면 임계값을 높여 정밀도를 높이는 운영을 권고한다."
+            else:
+                _eline = "오류가 놓침과 헛경보에 비슷하게 분포한다. 비용 비대칭에 맞춰 임계값을 정한다."
+            blocks.append(["오류 프로파일", _eline])
+
+    # 검증 성능 — [레지스터] 본문은 헤드라인(반올림)만, 전체 지표·95% 신뢰구간은 부록 9.1로 이관
     if metric_body:
         _n = (ctx.dataset.shape or {}).get("rows", 0)
-        _ci_note = ""
-        if _n and _pm_val is not None and ("auc" in _pm_name) and 0 < _pm_val < 1:
-            # Hanley-McNeil 단순 근사 — SE = sqrt(AUC*(1-AUC)/N)
-            import math as _math
-            _se = _math.sqrt(_pm_val * (1 - _pm_val) / _n)
-            _lo, _hi = max(0.0, _pm_val - 1.96 * _se), min(1.0, _pm_val + 1.96 * _se)
-            _ci_note = f" ({_ko_metric(_pm.get('name'))} 95% CI: {_lo:.4f}~{_hi:.4f}, N={_n:,})"
-        blocks.append(["검증 성능", ", ".join(metric_body) + "." + _ci_note])  # [C12][C14]
+        _hd = f"{_ko_metric(_pm.get('name'))} {_fvb(_pm_val)}" if _pm_val is not None else metric_body[0]
+        _perf = _hd + (f" (n={_n:,})" if _n else "")
+        blocks.append(["검증 성능", _perf + ". 전체 지표와 95% 신뢰구간은 부록 9.1(재현 정보)에 수록."])
 
     slide = SlideSpec(
         id="model_perf",
@@ -1648,6 +1694,16 @@ def _event_noun(ctx: ReportContext) -> str:
     return "양성 사례"
 
 
+# 호의적(좋은) 결과 → 줄이고자 하는 '나쁜 사건' 대응. 투영·집중 문장은 '줄이는 사건'을 다루므로 adverse 명사 사용.
+_ADVERSE_MAP = {"생존": "사망", "성공": "실패", "합격": "불합격", "정상": "이상",
+                "유지": "이탈", "완치": "재발", "회복": "악화"}
+
+
+def _adverse_noun(ctx: ReportContext) -> str:
+    """줄이려는 '나쁜 사건' 명사 — 호의적 타깃(생존·성공 등)이면 반의어(사망·실패), 아니면 사건 그대로(이탈·부도)."""
+    return _ADVERSE_MAP.get(_event_noun(ctx), _event_noun(ctx))
+
+
 def _rate(noun: str) -> str:
     """비율 표현 — 받침에 따라 률/율. '이탈'→'이탈률', '부도'→'부도율', '사기'→'사기율'."""
     if not noun:
@@ -1676,7 +1732,8 @@ def _levers(ctx: ReportContext, flags: dict[str, Any]) -> list[dict[str, str]]:
     §6·§7·ES 가 공유해 보고서 척추를 일관되게 만든다.
     """
     target = ctx.dataset.detected_target or "타깃"
-    event = _event_noun(ctx)
+    _event_noun(ctx)
+    adverse = _adverse_noun(ctx)  # 줄이는 나쁜 사건(생존→사망 등) — 투영 효과 라벨용
     drivers = _driver_labels(ctx, 2)
     proj = _scenario_projection(ctx)
     out: list[dict[str, str]] = []
@@ -1700,8 +1757,8 @@ def _levers(ctx: ReportContext, flags: dict[str, Any]) -> list[dict[str, str]]:
             rev = f", 연 약 {round(proj['retained'], -3):,.0f} 방어" if proj.get("retained") else ""
             out.append({
                 "handle": f"'{proj['high']}' 집단을 '{proj['target']}' 수준으로 끌어올리는 표적 개입",  # [B18 평이한언어룰] 화살표 제거
-                "effect": (  # [B18 평이한언어룰] 화살표·기호 제거, 풀어쓰기
-                    f"전체 {_rate(event)}이 {proj['cur_churn'] * 100:.1f}%에서 "
+                "effect": (  # [B18 평이한언어룰] 화살표·기호 제거, 풀어쓰기 / 줄이는 사건=adverse(생존→사망)
+                    f"전체 {_rate(adverse)}이 {proj['cur_churn'] * 100:.1f}%에서 "
                     f"{proj['new_churn'] * 100:.1f}%로 {red:.1f}%p 감소{rev}"
                 ),
             })
@@ -1842,23 +1899,55 @@ def _build_key_insights(ctx: ReportContext) -> Optional[SectionSpec]:
         seg_size = int(float(hi_s["size"]))
         seg_rate = float(hi_s.get("churn_rate", hi_s.get("rate")))
         who_sents.append(
-            f"가장 위험한 마이크로-세그먼트는 '{seg_nm}'다 — {seg_size:,}건 규모에 {_rate(event)} {seg_rate * 100:.1f}%."
+            f"가장 위험한 마이크로-세그먼트는 '{seg_nm}'({seg_size:,}건, {_rate(_adverse_noun(ctx))} {seg_rate * 100:.1f}%)."
         )
-    risk_txt = ""
+    # [로드맵4 세그먼트 드라이버] 코호트 동인 — 본문은 상위(고/저위험 대비)까지, 전체는 부록 9.1
+    _seg_notes = []
     for s in list(seg_drivers) + list(seg_insights):
-        risk_txt = _txt_from(s, ("insight", "driver", "note", "summary"))
-        if risk_txt:
-            break
-    if risk_txt:
-        who_sents.append(risk_txt.rstrip(".") + ".")
+        _t = _txt_from(s, ("insight", "driver", "note", "summary"))
+        if _t:
+            _seg_notes.append(_t.rstrip("."))
+    if structured and len(_seg_notes) > 1:
+        _seg_notes = _seg_notes[1:]  # 구조화 고위험 문장과 중복되는 첫 드라이버 제거 → 보완(저위험 등)만
+    if _seg_notes:
+        _ns = 1 if audience_register(ctx)["depth"] == "decision" else 2
+        who_sents.append(". ".join(_seg_notes[:_ns]) + ".")
+        if len(_seg_notes) > _ns:
+            who_sents.append("그 외 세그먼트 동인은 부록 9.1에 정리했다.")
     if who_sents:
         blocks.append(["누구에 집중하나 (추정)", " ".join(who_sents)])  # [C12]
+
+    # [로드맵1 로컬 설명] 개별 예측 사례 — interpretation.local_examples(조건부): "근거 때문에 Y 예측"
+    _lx = (interp.local_examples or []) if interp else []
+    _case_sents = []
+    for ex in _lx:
+        if not isinstance(ex, dict):
+            continue
+        _cbs = ex.get("contributions") or []
+        _feats = ", ".join(
+            f"{_feat_label(ctx, str(c.get('feature', '')))} {c.get('value', '')}"
+            for c in _cbs[:2] if isinstance(c, dict) and c.get("feature")
+        )
+        if not _feats:
+            continue
+        _pred = ex.get("prediction", "-")
+        _true = ex.get("true", "-")
+        if _pred == _true:
+            _case_sents.append(f"'{_pred}' 예측 (근거: {_feats})")
+        else:
+            _case_sents.append(f"'{_pred}' 예측했으나 실제 '{_true}' (근거: {_feats}, 오분류)")
+    if _case_sents:
+        _nc = 1 if audience_register(ctx)["depth"] == "decision" else 2
+        _ltxt = "예측을 개별 사례로 트레이스하면, " + "; ".join(_case_sents[:_nc]) + "."
+        if len(_case_sents) > _nc:
+            _ltxt += " 전체 사례는 부록 9.1에 있다."
+        blocks.append(["개별 예측 사례 (추정)", _ltxt])
 
     # ── 5) 가장 큰 레버 (→ §7 자연 이행)
     proj = _scenario_projection(ctx)
     lever_sent = ""
     if proj:
-        lever_sent = _projection_sentence(proj, event) + " 구체 실행은 §7에서 다룬다."
+        lever_sent = _projection_sentence(proj, _adverse_noun(ctx)) + " 구체 실행은 §7에서 다룬다."
     elif best:
         lever_sent = (
             f"가장 큰 레버는 '{best[1]}' 집단을 '{best[3]}' 쪽으로 이동시키는 개입이다 — 구체 실행은 §7에서 다룬다."
@@ -1932,6 +2021,76 @@ def _build_appendix(ctx: ReportContext) -> list[SectionSpec]:
         repro_blocks.append(["코드·환경", " · ".join(_bits) + "."])
     else:
         repro_blocks.append(["재현 절차", "데이터 적재, 결측·이상 처리, 학습·검증 분할, 모델 학습, 검증 평가 순으로 재현한다. 동일 분할 기준과 동일 전처리에서 본문 수치가 재현된다."])
+    # [레지스터] 검증 지표 전체(정밀 4자리 + 95% CI) — 본문(§5)은 반올림 헤드라인, 정밀표는 여기로 이관
+    _ev_a = ctx.evaluation
+    _all_m = (_ev_a.metrics or {}) if _ev_a else {}
+    if _all_m:
+        _mlines = [f"{_ko_metric(_k)} {_fv(_m.get('value'))}" for _k, _m in _all_m.items()]
+        _pmv = pm.get("value")
+        _pmn = str(pm.get("name") or "").lower()
+        _ci = ""
+        if n_rows and isinstance(_pmv, (int, float)) and ("auc" in _pmn) and 0 < _pmv < 1:
+            import math as _math
+            _se = _math.sqrt(_pmv * (1 - _pmv) / n_rows)
+            _lo, _hi = max(0.0, _pmv - 1.96 * _se), min(1.0, _pmv + 1.96 * _se)
+            _ci = f" / {pm_ko} 95% CI {_lo:.4f}~{_hi:.4f} (N={n_rows:,})"
+        repro_blocks.append(["검증 지표 전체", ", ".join(_mlines) + "." + _ci])
+    # [로드맵2] 확률 보정 상세(ECE) — 부록
+    _cal_a = (_ev_a.calibration or {}) if _ev_a else {}
+    if isinstance(_cal_a, dict) and _cal_a.get("ece") is not None:
+        repro_blocks.append(["확률 보정(ECE)", f"기대 보정 오차 ECE {_cal_a['ece']:.3f}. 0에 가까울수록 예측 확률이 실제 적중률과 일치하며(완벽 0), 통상 0.05 이하면 양호."])
+    # [로드맵3] 혼동행렬 상세 — 부록(정탐·오탐·미탐·정상기각 건수)
+    _cm_a = (_ev_a.confusion_matrix or {}) if _ev_a else {}
+    if isinstance(_cm_a, dict) and _cm_a:
+        _tp = _cm_a.get("tp") or _cm_a.get("true_positive") or 0
+        _fp2 = _cm_a.get("fp") or _cm_a.get("false_positive") or 0
+        _fn2 = _cm_a.get("fn") or _cm_a.get("false_negative") or 0
+        _tn = _cm_a.get("tn") or _cm_a.get("true_negative") or 0
+        if any((_tp, _fp2, _fn2, _tn)):
+            repro_blocks.append(["혼동행렬", f"정탐(TP) {_tp:,}, 오탐(FP) {_fp2:,}, 미탐(FN) {_fn2:,}, 정상기각(TN) {_tn:,}. (미탐=놓침, 오탐=헛경보; 검증셋 기준)"])
+    # [로드맵4] 세그먼트 동인 전체 — 부록(본문은 상위만, 전체 코호트 인사이트는 여기)
+    _sd_a = (ctx.interpretation.segment_drivers or []) if ctx.interpretation else []
+    if _sd_a:
+        _sd_lines = []
+        for _s in _sd_a:
+            _t = _txt_from(_s, ("insight", "driver", "note", "summary"))
+            if _t:
+                _sd_lines.append(_t.rstrip("."))
+        if _sd_lines:
+            repro_blocks.append(["세그먼트 동인", " / ".join(_sd_lines) + "."])
+    # [로드맵1] 개별 예측 사례 전체 — 부록(예측/실제 + 근거)
+    _lx_a = (ctx.interpretation.local_examples or []) if ctx.interpretation else []
+    if _lx_a:
+        _lx_lines = []
+        for ex in _lx_a:
+            if not isinstance(ex, dict):
+                continue
+            _cbs = ex.get("contributions") or []
+            _fe = ", ".join(
+                f"{_feat_label(ctx, str(c.get('feature', '')))} {c.get('value', '')}"
+                for c in _cbs[:3] if isinstance(c, dict) and c.get("feature")
+            )
+            _p = ex.get("prediction", "-")
+            _t = ex.get("true", "-")
+            _ok = "정확" if _p == _t else "오분류"
+            _lx_lines.append(f"예측 '{_p}'/실제 '{_t}'({_ok}), 근거 {_fe}")
+        if _lx_lines:
+            repro_blocks.append(["개별 예측 사례", " / ".join(_lx_lines) + "."])
+    # [로드맵 세그먼트별 성능표] 전체 슬라이스 결과율 — 부록(본문 so-what은 §6 상/하위, 전체 표는 여기)
+    _ps_a = (_ev_a.per_segment or []) if _ev_a else []
+    _ps_rows = []
+    for s in _ps_a:
+        if not isinstance(s, dict):
+            continue
+        _nm = str(s.get("segment") or s.get("name") or "")
+        _rt = s.get("churn_rate", s.get("rate"))
+        if not (_nm and isinstance(_rt, (int, float))):
+            continue
+        _sz = s.get("size")
+        _szt = f"({int(_sz):,}건) " if isinstance(_sz, (int, float)) else ""
+        _ps_rows.append(f"{_nm}{_szt}{_rate(_adverse_noun(ctx))} {_rt * 100:.1f}%")
+    if _ps_rows:
+        repro_blocks.append(["세그먼트별 결과율", " / ".join(_ps_rows) + "."])
     sec_repro = make_section("appx_repro", "재현 정보", "appendix", [SlideSpec(
         id="appx_repro", section_id="appx_repro", layout="one_message", role="meta",
         so_what="동일 조건에서 본문 수치 재현", title_ko="재현 정보",
@@ -2013,7 +2172,7 @@ def _build_appendix(ctx: ReportContext) -> list[SectionSpec]:
 
 
 def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
-    """§7 비즈니스 함의 및 권고 — 인사이트를 실행으로 전환 (풍부 산문).
+    """§7 비즈니스 임팩트와 실행 — 인사이트를 실행으로 전환 (풍부 산문).
 
     구조: 임팩트(정량+정성) → 표적 개입 원칙(카테고리별) → 실행 레버(굵게 손잡이→효과)
          → 운영 적용(모델·재학습·모니터링) → 리스크·전제(정직한 한계).
@@ -2059,7 +2218,7 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
     else:
         impact_sents.append(f"정확한 '{target}' 판정을 자동화해 고위험·고우선 대상의 선별·처리에 일관성과 속도를 확보한다.")
     if proj:
-        impact_sents.append(_projection_sentence(proj, event))
+        impact_sents.append(_projection_sentence(proj, _adverse_noun(ctx)))
     blocks.append(["임팩트 (추정)", " ".join(impact_sents)])  # [C12] 미래 효과 = 추정
 
     # 1-2) 재무 임팩트 (ROI·페이백) — [풍부화 §7] 가짜 숫자 금지: proj 정량 / 없으면 산출 프레임
@@ -2116,7 +2275,18 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
     # 4) 운영 적용 — 모델·재학습·모니터링
     ops_sents: list[str] = []
     if has_model:
-        ops_sents.append(f"운영에는 '{chosen}' 모델을 {mdisp} 기준으로 적용하되, 분포 변화에 대응할 정기 재학습 주기(예: 분기)를 함께 둔다.")
+        # [로드맵5 재검증 주기] limitations.revalidation_window 실제 값 사용(없으면 폴백) — "예: 분기" 하드코딩 제거
+        _rev = (ctx.limitations.revalidation_window or "").strip() if ctx.limitations else ""
+        _rev_txt = f"{_rev} 재검증 주기" if _rev else "정기 재검증 주기"
+        ops_sents.append(f"운영에는 '{chosen}' 모델을 {mdisp} 기준으로 적용하되, 분포 변화에 대응할 {_rev_txt}를 함께 둔다.")
+        # [로드맵2 분포 변화 위험] distribution_shift_risk 감지 시 드리프트 트리거 규칙(조건부·없으면 스킵)
+        _shift = (ctx.limitations.distribution_shift_risk or {}) if ctx.limitations else {}
+        if isinstance(_shift, dict) and _shift.get("detected"):
+            _ev_txt = str(_shift.get("evidence") or "").strip().rstrip(".")
+            if _ev_txt:
+                ops_sents.append(f"{_ev_txt}. 이에 드리프트 감지 시 정기 주기와 별개로 즉시 재학습을 트리거한다.")
+            else:
+                ops_sents.append("운영 중 입력 분포 드리프트가 감지되면 정기 주기와 별개로 즉시 재학습을 트리거한다.")
     elif chosen and chosen != "-":
         ops_sents.append(f"'{chosen}' 모델 후보를 우선 검증한 뒤 운영 적용 여부를 결정한다.")
     if drv:
@@ -2175,7 +2345,7 @@ def _build_implications(ctx: ReportContext) -> Optional[SectionSpec]:
         title_ko="지금부터 누가 무엇을 언제까지 할 것인가",  # [B9 Headline=Message] 결론형 + C6 Action_OwnerDate 암시
         prose_blocks=blocks,
     )
-    return make_section("implications", "비즈니스 함의 및 권고", "recommendation", [slide])
+    return make_section("implications", "비즈니스 임팩트와 실행", "recommendation", [slide])
 
 
 def _build_conclusion(ctx: ReportContext) -> SectionSpec:
@@ -2344,6 +2514,149 @@ def _build_conclusion(ctx: ReportContext) -> SectionSpec:
     return make_section("conclusion", "결론", "recommendation", [slide])
 
 
+# [오디언스 적응형 70:30] 청중 → (본문%, 부록%, 본문 기술깊이). 70:30이 닻, 청중이 당김.
+_AUDIENCE_RATIO = {
+    "c_level": (80, 20, "decision"),   # 거의 결정만 (분석은 부록)
+    "exec": (80, 20, "decision"),
+    "manager": (70, 30, "balanced"),   # 기준(닻)
+    "analyst": (55, 45, "technical"),  # 본문에 분석 더
+    "external": (75, 25, "decision"),
+}
+
+
+def audience_register(ctx: ReportContext) -> dict[str, Any]:
+    """[오디언스 적응형 70:30 + 레지스터] 청중을 읽어 본문:부록 비율 + 본문 기술깊이 결정.
+
+    audience_inference(이미 추론된 숨은 자산) 또는 meta.audience 사용. 어떤 데이터든 자동.
+    반환: {audience, body_pct, appendix_pct, depth}. depth='decision'|'balanced'|'technical'.
+    자산들은 이걸 읽어 본문형(so-what)/부록형(기술) 비중을 정한다. 모르면 70:30(balanced).
+    """
+    aud = ""
+    try:
+        aud = (getattr(getattr(ctx, "meta", None), "audience", "") or "").lower()
+    except Exception:
+        pass
+    if not aud:
+        try:
+            ai = getattr(getattr(ctx, "domain", None), "audience_inference", None)
+            if ai is not None:
+                aud = (getattr(ai, "level", "") or (ai.get("level", "") if isinstance(ai, dict) else "")).lower()
+        except Exception:
+            pass
+    bp, ap, depth = _AUDIENCE_RATIO.get(aud, (70, 30, "balanced"))
+    return {"audience": aud or "manager", "body_pct": bp, "appendix_pct": ap, "depth": depth}
+
+
+def chairman_exec(ctx: ReportContext, plan) -> Optional[dict[str, Any]]:
+    """[회장님 Exec룰] 임원이 3초에 결정하는 1페이지 패키지(내용). 형식(레이아웃)은 carrier 가 그린다.
+
+    구성: BLUF(결정 한 줄) · 관통질문+답 · 3기둥(①무엇이 가르나 ②얼마나 믿나 ③얼마짜리인가) · 권고 · 단서.
+    전부 ctx 출처(가짜 수치 0). 어떤 데이터·카테고리든 동일 패키지. 오류 시 None → carrier 가 기존 Exec 로 폴백.
+    """
+    try:
+        target = ctx.dataset.detected_target or "타깃"
+        tlabel = _feat_label(ctx, target)
+        flags = _task_flags(ctx)
+        pm = (ctx.evaluation.primary_metric or {}) if ctx.evaluation else {}
+        pmval = pm.get("value")
+        has_model = pmval is not None
+        _mv = f"{pmval:.2f}" if (isinstance(pmval, (int, float)) and 0 < abs(pmval) < 1) else _fv(pmval)
+        mdisp = f"{_ko_metric(pm.get('name'))} {_mv}" if (has_model and pm.get("name")) else "검증 성능"
+        drivers = _driver_labels(ctx, 2) or []
+        best = _top_contrast(ctx)
+        proj = _scenario_projection(ctx)
+        adverse = _adverse_noun(ctx)
+        nt = getattr(plan, "narrative_thread", None)
+
+        bluf = (getattr(nt, "headline", "") if nt else "") or \
+            f"{_human_dataset_name(ctx)} 분석으로 '{tlabel}'{_josa(tlabel, 'obj')} 좌우하는 핵심 동인을 식별했다."
+
+        if flags.get("is_anom"):
+            question = "이상 탐지를 운영 점검 체계로 도입할 가치가 있는가?"
+        elif flags.get("is_ts"):
+            question = f"‘{tlabel}’ 예측을 계획 수립에 도입할 가치가 있는가?"
+        elif flags.get("is_reg"):
+            question = f"‘{tlabel}’ 추정을 의사결정에 도입할 가치가 있는가?"
+        else:
+            question = f"‘{tlabel}’ 판정 모델을 운영에 도입할 가치가 있는가?"
+        verdict = "있다 (조건부)" if has_model else "데이터 보강 후 재판단"
+
+        pillars: list[tuple[str, str]] = []
+        if best and len(best) >= 6:
+            d = "·".join(drivers) if drivers else str(best[1])
+            p1 = f"{d}{_josa(d, 'nom')} 가장 크게 가른다. {best[1]} {best[2]:.0f}% 대 {best[3]} {best[4]:.0f}% (약 {best[5]:.0f}배)."
+        elif drivers:
+            p1 = f"{'·'.join(drivers)}{_josa(drivers[0], 'nom')} 가장 크게 가른다."
+        else:
+            p1 = "분석이 핵심 동인을 식별했다."
+        pillars.append(("무엇이 가르나", p1))
+
+        p2 = (f"{mdisp}. 단순 추측을 결정적으로 상회해 도입 기준을 충족한다."
+              if has_model else "현 데이터로는 도입 판단에 추가 근거가 필요하다.")
+        pillars.append(("얼마나 믿나", p2))
+
+        if proj:
+            ar = _rate(adverse)
+            p3 = (f"‘{proj['high']}’ 집단을 ‘{proj['target']}’ 수준으로 끌어올리면 전체 {ar}"
+                  f"{_josa(ar, 'subj')} {proj['cur_churn'] * 100:.0f}%에서 {proj['new_churn'] * 100:.0f}%로 감축된다.")
+        elif drivers:
+            p3 = f"{drivers[0]} 중심의 표적 개입이 가장 큰 효과를 낸다."
+        else:
+            p3 = "전수가 아닌 고위험군 표적 개입으로 효율을 극대화한다."
+        pillars.append(("얼마짜리인가", p3))
+
+        if proj:
+            ask = f"‘{proj['high']}’ 고위험군에 표적 개입을 파일럿으로 시작하고, 성과 게이트 통과 시 단계 확대한다."
+        elif drivers:
+            ask = f"고위험({drivers[0]}) 세그먼트부터 표적 개입을 시작하고, 효과를 검증해 확대한다."
+        else:
+            ask = "고위험군 표적 개입을 파일럿으로 시작하고, 검증 후 단계 확대한다."
+
+        caveat = "단, 데이터의 표본·기간 한계 안에서 유효하며 외삽은 보수적으로 본다."
+
+        # Exec hero = 비즈니스 KPI/임팩트(모델지표 아님). business_kpi·투영에서 추출. 없으면 carrier 가 모델지표로 폴백.
+        _cols = ["#3A6FE0", "#243B5C", "#8478C8"]
+        hero_kpis: list[tuple[str, str, str]] = []
+        for k in ((ctx.evaluation.business_kpi or []) if ctx.evaluation else [])[:2]:
+            kn = getattr(k, "name", "") or (k.get("name", "") if isinstance(k, dict) else "")
+            ku = getattr(k, "unit", "") or (k.get("unit", "") if isinstance(k, dict) else "")
+            kv = getattr(k, "estimated_value", None)
+            if kv is None and isinstance(k, dict):
+                kv = k.get("estimated_value", k.get("value"))
+            if kn and kv is not None:
+                _vs = f"{kv:,.0f}" if (isinstance(kv, (int, float)) and float(kv).is_integer()) else _fv(kv)
+                hero_kpis.append((f"{_vs}{ku}", str(kn), _cols[len(hero_kpis) % 3]))
+        if proj:
+            _red = (proj.get("cur_churn", 0) - proj.get("new_churn", 0)) * 100
+            if _red > 0 and len(hero_kpis) < 3:
+                hero_kpis.append((f"{_red:.0f}%p", f"{_rate(adverse)} 감축", _cols[len(hero_kpis) % 3]))
+            if proj.get("avoided") and len(hero_kpis) < 3:
+                hero_kpis.append((f"{proj['avoided']:,.0f}건", f"{adverse} 감축", _cols[len(hero_kpis) % 3]))
+        hero_kpis = hero_kpis[:3]
+        if hero_kpis and proj:
+            ar = _rate(adverse)
+            _red2 = (proj.get("cur_churn", 0) - proj.get("new_churn", 0)) * 100
+            _av = proj.get("avoided")
+            if _red2 > 0 and _av:
+                hero_take = f"표적 개입으로 {ar}{_josa(ar, 'obj')} {_red2:.0f}%p(약 {_av:,.0f}건) 낮춘다."
+            elif _red2 > 0:
+                hero_take = f"표적 개입으로 {ar}{_josa(ar, 'obj')} {_red2:.0f}%p 낮춘다."
+            else:
+                hero_take = f"표적 개입으로 {ar}{_josa(ar, 'obj')} 의미 있게 낮춘다."
+            hero_unit, hero_src = "기간: 연간 환산", "출처: ADA 분석 · 주: 전환율 20% 가정(보수적), 추정치"
+        elif hero_kpis:
+            hero_take, hero_unit, hero_src = "분석이 가리키는 비즈니스 임팩트.", "단위: 추정치", "출처: ADA 분석"
+        else:
+            hero_take = hero_unit = hero_src = ""  # 비즈니스 KPI 없음 → carrier 가 모델지표 폴백
+
+        return {"bluf": bluf, "question": question, "verdict": verdict,
+                "pillars": pillars, "ask": ask, "caveat": caveat, "has_model": has_model,
+                "kpis": hero_kpis, "hero_take": hero_take, "hero_unit": hero_unit, "hero_src": hero_src,
+                "register": audience_register(ctx)}
+    except Exception:
+        return None
+
+
 # ==============================================================
 # Main builder
 # ==============================================================
@@ -2376,29 +2689,37 @@ def build(
     pmname_l = str(pm.get("name") or "").lower()
     # 한국어 지표 표현 (val_roc_auc → 검증 AUC 등)
     if pmval is None:
-        mphrase = "검증 성능"
+        pass
     elif "acc" in pmname_l and isinstance(pmval, (int, float)) and pmval <= 1:
-        mphrase = f"정확도 {pmval * 100:.1f}%"
+        f"정확도 {pmval * 100:.1f}%"
     elif "auc" in pmname_l:
-        mphrase = f"AUC {_fv(pmval)}"
+        f"AUC {_fv(pmval)}"
     elif "f1" in pmname_l:
-        mphrase = f"F1 {_fv(pmval)}"
+        f"F1 {_fv(pmval)}"
     else:
-        mphrase = f"{_ko_metric(pm.get('name'))} {_fv(pmval)}"
+        f"{_ko_metric(pm.get('name'))} {_fv(pmval)}"
     drivers_lbl = _driver_labels(ctx, 2)
     drivers_txt = ", ".join(drivers_lbl)
     top1 = drivers_lbl[0] if drivers_lbl else ""
     has_model = bool(chosen and chosen != "-" and pmval is not None)
     judgment = _perf_judgment(flags, pmval, pmname_l, maj)
     event = _event_noun(ctx)
+    adverse = _adverse_noun(ctx)  # 줄이는 나쁜 사건(생존→사망) — 집중 문장 라벨용
 
-    # ── 헤드라인 (결론 + 판단 '다만') — 한 줄
+    # ── 헤드라인 (의사결정중심: 무엇이 좌우하나 + 무엇을 할 수 있나. 모델 능력·AUC 는 exhibit 로 분리)
+    tlabel = _feat_label(ctx, target)  # 타깃 한국어 라벨(생존). "Survived" 영문 노출 회피
     if has_model:
-        headline = f"{name} 데이터({n_rows:,}건)로 '{target}'{_josa(target, 'obj')} {mphrase}{_josa(mphrase, 'with')} {verb}할 수 있다."
+        if top1:
+            headline = (
+                f"{name} 데이터({n_rows:,}건) 분석 결과, '{top1}'{_josa(top1, 'subj')} '{tlabel}'{_josa(tlabel, 'obj')} "
+                f"가장 크게 좌우하며 이를 {verb}할 근거를 확보했다."
+            )
+        else:
+            headline = f"{name} 데이터({n_rows:,}건)로 '{tlabel}'{_josa(tlabel, 'obj')} 좌우하는 핵심 요인을 식별하고 {verb} 근거를 확보했다."
         if judgment:
             headline += f" 다만 {judgment}."
     else:
-        headline = f"{name} 데이터({n_rows:,}건)로 '{target}' {verb} 가능성을 분석했다."
+        headline = f"{name} 데이터({n_rows:,}건)로 '{tlabel}'{_josa(tlabel, 'obj')} {verb}할 가능성을 분석했다."
     # [B11 페이지논제룰] Executive Summary 의 setup 슬롯에 페이지 논제 명시
     # — 3초 결론(headline) → 30초 근거(conflict) → 행동(resolution)/한계(recommendation) 3층 구조
     setup = (
@@ -2417,16 +2738,16 @@ def build(
     clauses: list[str] = []
     if conc and conc[1] >= 0.55:
         # [B18 평이한언어룰] '전체 {event}의' 표현은 분모가 모호함 → 세그먼트 점유율로 풀어쓰기
-        clauses.append(f"'{conc[0]}' 세그먼트가 전체 {event} 사례의 {conc[1] * 100:.0f}%를 차지한다")
+        clauses.append(f"'{conc[0]}' 세그먼트가 전체 {adverse} 사례의 {conc[1] * 100:.0f}%를 차지한다")
     if price_lbl and top1 and best:
         clauses.append(
             # [B18 평이한언어룰] 인용부호 남발 제거, 풀어쓰기
             f"통념과 달리 {price_lbl}(가격)이 아니라 {top1}{_josa(top1, 'nom')} 이를 가른다. "
-            f"{best[1]} 집단 발생률 {best[2]:.0f}%는 {best[3]} 집단 {best[4]:.0f}%의 {best[5]:.0f}배다"
+            f"{best[1]} 집단 {_rate(event)} {best[2]:.0f}%는 {best[3]} 집단 {best[4]:.0f}%의 {best[5]:.0f}배다"
         )
     elif best:
         # [B18 평이한언어룰] 인용부호 남발 제거, 풀어쓰기
-        clauses.append(f"{best[1]} 집단의 발생률 {best[2]:.0f}%는 {best[3]} 집단 {best[4]:.0f}%의 {best[5]:.0f}배다")
+        clauses.append(f"{best[1]} 집단의 {_rate(event)} {best[2]:.0f}%는 {best[3]} 집단 {best[4]:.0f}%의 {best[5]:.0f}배다")
     elif drivers_txt:
         clauses.append(f"'{target}'{_josa(target, 'subj')} 주로 {drivers_txt}{_josa(drivers_txt, 'with')} 갈린다")
     find_sents.extend(c + "." for c in clauses)
@@ -2475,7 +2796,7 @@ def build(
         _build_method(ctx),  # §4 분석 방법 — 믿어도 되는 이유
         _build_model_performance(ctx),  # §5 모델 성능 — 근거(조연)
         _build_key_insights(ctx),  # §6 핵심 인사이트 ★ — 그래서 무엇을 알았나
-        _build_implications(ctx),  # §7 비즈니스 함의 및 권고 — 인사이트→액션 (풍부 산문)
+        _build_implications(ctx),  # §7 비즈니스 임팩트와 실행 — 인사이트→액션 (풍부 산문)
         _build_conclusion(ctx),  # §8 결론 — 핵심 질문에 대한 답
     ]
     body_sections = [s for s in ordered if s is not None]
