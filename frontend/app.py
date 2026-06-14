@@ -2953,39 +2953,23 @@ def _login_dialog() -> None:
         "비밀번호는 따로 만들 필요가 없어요.</div></div>",
         unsafe_allow_html=True,
     )
-    # 구글 버튼 — iframe 안에서 top-level 을 {API}/auth/google 로 이동.
-    components.html(
-        """
-        <div style="display:flex;justify-content:center;padding:16px 0 8px;">
-          <button id="gbtn" style="display:flex;align-items:center;gap:11px;cursor:pointer;
-            background:#fff;border:1px solid #dadce0;border-radius:10px;padding:11px 22px;
-            font-size:.97rem;font-weight:600;color:#3c4043;font-family:'Segoe UI',Roboto,sans-serif;
-            box-shadow:0 1px 3px rgba(60,64,67,.2);transition:box-shadow .15s;"
-            onmouseover="this.style.boxShadow='0 2px 7px rgba(60,64,67,.3)';"
-            onmouseout="this.style.boxShadow='0 1px 3px rgba(60,64,67,.2)';">
-            <svg width="19" height="19" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.9 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9.1h12.4c-.5 2.9-2.1 5.3-4.6 6.9l7.1 5.5c4.1-3.8 6.5-9.4 6.5-16z"/><path fill="#FBBC05" d="M10.5 28.7c-.5-1.4-.7-2.9-.7-4.7s.2-3.3.7-4.7l-7.9-6.1C1 16.3 0 20 0 24s1 7.7 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.1-5.5c-2 1.3-4.5 2.1-8.8 2.1-6.3 0-11.7-3.7-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
-            구글로 로그인 / 회원가입
-          </button>
-        </div>
-        <script>
-        (function(){
-          function dest(){
-            var p='http:',h='localhost';
-            try{ p=window.top.location.protocol; h=window.top.location.hostname; }
-            catch(e){ try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e2){} }
-            if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost';
-            return (h==='localhost'||h==='127.0.0.1')
-              ? p+'//'+h+':8000/auth/google'
-              : p+'//'+h+'/api/auth/google';
-          }
-          var b=document.getElementById('gbtn');
-          if(b){ b.onclick=function(){ var u=dest();
-            try{ window.top.location.href=u; }
-            catch(e){ try{ window.parent.location.href=u; }catch(e2){ window.location.href=u; } } }; }
-        })();
-        </script>
-        """,
-        height=88,
+    # 구글 로그인 버튼 — iframe(components.html) 대신 Streamlit 네이티브 link_button.
+    #   구글 OAuth 동의화면은 작은 창/iframe 안에서 못 열리므로(구글 정책), 메인 페이지에서
+    #   전체 창으로 이동시키는 게 정석이자 가장 확실하다.
+    #   링크 URL 은 .env 의 GOOGLE_REDIRECT_URI 에서 base 를 추출(로컬/운영 자동 대응):
+    #     로컬 http://localhost:8000/auth/google/callback     → http://localhost:8000/auth/google
+    #     운영 https://ada-aiagent.com/api/auth/google/callback → https://ada-aiagent.com/api/auth/google
+    import os
+
+    _redirect = os.environ.get(
+        "GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback"
+    )
+    _login_url = _redirect.rsplit("/auth/google/callback", 1)[0] + "/auth/google"
+    st.link_button(
+        "🔵  Google 계정으로 로그인 / 회원가입",
+        _login_url,
+        use_container_width=True,
+        type="primary",
     )
     st.caption("🔒 로그인 시 접속 기록(시각·IP)이 안전하게 저장됩니다. 비밀번호는 저장하지 않습니다.")
     if st.button("취소", use_container_width=True):
