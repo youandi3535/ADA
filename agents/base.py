@@ -354,6 +354,7 @@ class BaseAgent(abc.ABC):
                         user_prompt=user_prompt,
                         max_tokens=max_tokens,
                         temperature=temperature,
+                        json_mode=json_mode,
                     )
             elif settings.anthropic_api_key:
                 text = await self._call_llm_api(
@@ -536,6 +537,7 @@ class BaseAgent(abc.ABC):
         user_prompt: str,
         max_tokens: int = 4096,
         temperature: float = 0.2,
+        json_mode: bool = False,
     ) -> str:
         """Ollama /api/chat 호출 (asyncio.to_thread + urllib).
 
@@ -551,28 +553,31 @@ class BaseAgent(abc.ABC):
         model = settings.ollama_model_analysis
 
         # HJ 2026-06-09 — G1 단축 T: stop 토큰은 module-level _OLLAMA_STOP_TOKENS 사용.
-        payload = _json.dumps(
-            {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "stream": False,
-                # HJ 2026-06-11 — 모델을 30분 메모리 상주시켜 G1→G2→G3 간 재로드(콜드스타트) 방지.
-                #   콜드스타트가 G2 재작성 타임아웃의 주원인 → 워밍 유지로 후속 호출 대폭 단축.
-                "keep_alive": "30m",
-                "options": {
-                    "num_predict": max_tokens,
-                    "temperature": temperature,
-                    "top_p": 0.9,
-                    "num_gpu": getattr(settings, "ollama_num_gpu", 0),
-                    "num_thread": getattr(settings, "ollama_num_thread", 8),
-                    "stop": _OLLAMA_STOP_TOKENS,
-                },
+        _body: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+            # HJ 2026-06-11 — 모델을 30분 메모리 상주시켜 G1→G2→G3 간 재로드(콜드스타트) 방지.
+            #   콜드스타트가 G2 재작성 타임아웃의 주원인 → 워밍 유지로 후속 호출 대폭 단축.
+            "keep_alive": "30m",
+            "options": {
+                "num_predict": max_tokens,
+                "temperature": temperature,
+                "top_p": 0.9,
+                "num_gpu": getattr(settings, "ollama_num_gpu", 0),
+                "num_thread": getattr(settings, "ollama_num_thread", 8),
+                "stop": _OLLAMA_STOP_TOKENS,
             },
-            ensure_ascii=False,
-        ).encode("utf-8")
+        }
+        # HJ 2026-06-14 — json_mode 면 Ollama 네이티브 JSON 강제(format=json).
+        #   qwen2.5:7b 가 JSON 앞뒤로 설명·markdown 을 섞어 _parse_json 실패→정적 폴백(1줄)으로
+        #   떨어지던 문제를 차단. 모델이 유효 JSON 완성까지 생성하도록 보장.
+        if json_mode:
+            _body["format"] = "json"
+        payload = _json.dumps(_body, ensure_ascii=False).encode("utf-8")
 
         from ada.core.langfuse_client import track_llm
 
@@ -816,7 +821,19 @@ class BaseAgent(abc.ABC):
         try:
             return json.loads(text)
         except Exception:
-            return None
+            pass
+        # HJ 2026-06-14 — Ollama 가 JSON 앞뒤로 설명을 붙이는 경우 복구:
+        #   본문에서 배열([...]) → 객체({...}) 순으로 최외곽 substring 을 추출해 재파싱.
+        #   format=json 이 1차 방어, 이 복구가 2차 방어. 기존 성공 케이스는 위에서 이미 반환.
+        for opener, closer in (("[", "]"), ("{", "}")):
+            start = text.find(opener)
+            end = text.rfind(closer)
+            if start != -1 and end != -1 and end > start:
+                try:
+                    return json.loads(text[start : end + 1])
+                except Exception:
+                    continue
+        return None
 
     def _spawn_insight_polish(
         self,

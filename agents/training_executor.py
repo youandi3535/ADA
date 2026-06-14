@@ -49,6 +49,29 @@ def _split_xy(df: Any, target: str | None) -> tuple[Any, Any]:
     return df.select_dtypes(include=[np.number]).fillna(0).values, np.zeros(len(df))
 
 
+def _resolve_timeseries_target(df: Any, date_col: str | None) -> str | None:
+    """HJ 2026-06-14 — timeseries forecasting 타깃 자동 결정.
+
+    target_column 미지정(단변량 시계열 등)일 때 _split_xy 가 y=np.zeros 로 폴백해
+    모든 평가지표가 0.000/None 으로 무너지던 버그(4단계 학습 결과 전부 0) 방어.
+    시간축(date_col)을 제외한 수치 컬럼 중 분산이 가장 큰 컬럼을 예측 대상으로 선택한다.
+    상수(분산 0) 컬럼만 있으면 그중 첫 컬럼, 수치 컬럼이 없으면 None.
+    """
+    numeric_cols = list(df.select_dtypes(include=[np.number]).columns)
+    candidates = [c for c in numeric_cols if c != date_col]
+    if not candidates:
+        return None
+    best, best_var = candidates[0], -1.0
+    for c in candidates:
+        try:
+            v = float(df[c].var())
+        except Exception:  # noqa: BLE001
+            v = 0.0
+        if v > best_var:
+            best, best_var = c, v
+    return best
+
+
 def _leakage_split_bounds(state: Any) -> tuple[int, int] | None:
     """leakage_safe_split 메타에서 (n_train, n_val) 경계. parquet 순서 [train|val|test].
     메타 불완전(val_row_count 없음)이면 None → caller 가 기존 split 폴백."""
@@ -79,7 +102,17 @@ class TrainingExecutorAgent(BaseAgent):
             except Exception as e:
                 return state.with_update(error=f"학습 데이터 로딩 실패: {e}", next_agent="error_recovery")
 
-            X, y = _split_xy(df, state.target_column)
+            # HJ 2026-06-14 — timeseries 타깃 미지정 방어: y=np.zeros 폴백(전 메트릭 0.000) 차단.
+            target_col = state.target_column
+            if state.category == "timeseries" and not (target_col and target_col in df.columns):
+                date_col = (state.data_profile or {}).get("date_col")
+                auto_t = _resolve_timeseries_target(df, date_col)
+                if auto_t:
+                    target_col = auto_t
+                    self.logger.info("ts_target_autoselected", target=target_col, date_col=date_col)
+                else:
+                    self.logger.warning("ts_target_autoselect_failed", n_cols=len(getattr(df, "columns", [])))
+            X, y = _split_xy(df, target_col)
             # 누수 차단: preprocessor 가 기록한 [train|val|test] 경계 재사용. test 는 슬라이스
             # 하지도 않아 학습·early-stop 에 안 샌다. 메타 없으면 기존 split 폴백.
             _bounds = _leakage_split_bounds(state)

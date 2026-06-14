@@ -310,7 +310,6 @@ _FLOW_HTML = """
   <div class="shell">
     <div class="brand"><svg width="42" height="42" viewBox="0 0 48 48" fill="none" style="flex:0 0 auto"><path d="M10 38 L24 10 L38 38" stroke="#dce8f7" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/><path d="M16.5 30 L31.5 30" stroke="#dce8f7" stroke-width="2.6" stroke-linecap="round"/></svg><span class="nm" style="letter-spacing:.04em;font-size:29px;">ada&nbsp;<span style="color:#6fa8ff;">studio</span></span><span style="background:#e8f1fe;color:#1d5fd6;font-size:1.12rem;font-weight:600;letter-spacing:.06em;padding:7px 20px;border-radius:999px;flex:0 0 auto;">AI 데이터 분석 에이전트</span><span class="status" id="status">대기</span><button class="btn-home" id="homeBtn" onclick="goToStart()" disabled>← 처음(시작화면)으로</button></div>
     <div class="steps" id="steps"></div>
-    <div class="prog-meta">현재 단계 <b id="curName">업로드</b> · 진행 <b id="curPct">0%</b> (<span id="curIdx">1</span>/<span id="curTot">7</span>)</div>
     <div class="card"><div class="content" id="content"></div><div id="pb-area"></div>
       <div class="footer">
         <button class="btn btn-ghost" id="prevBtn">← 이전 단계</button>
@@ -519,6 +518,10 @@ function _g2FirePrefetch(d){
 let _modalOpenedAt=null;
 let _modalOpenedCur=-1;
 const MODAL_CONTENT_DELAY_MS=5000;
+// HJ 2026-06-14 — 모달 노출 시간 폴백(ms). _shownPct 가 41% 에 못 미쳐도 분석이 이 시간만큼 진행되면 모달을 띄운다.
+//   06-13 에 제거했던 시간 폴백 복원 — G4 병렬튜닝 등으로 단계가 빨라지자 41% 도달 전 다음 게이트가 도착해
+//   4·5단계(G4·G5) 모달이 통째로 스킵되던 문제를 해결한다. (41% 는 1차 빠른 조건으로 유지.)
+const MODAL_TIME_FALLBACK_MS=6000;
 function _modalContentReady(){
   if(_modalOpenedAt==null) return false;
   return (Date.now()-_modalOpenedAt) >= MODAL_CONTENT_DELAY_MS;
@@ -1238,6 +1241,10 @@ async function poll(){
   //   전진 조건은 '타자기 글 작성 완료 + 3초'(=_modalShouldBeActive()=false) 단일 기준으로 통일(사용자 지시).
   //   (닫아도 위 [A] _active 경로가 모달 DOM 을 살려둬 타자기가 계속 → _typingHoldComplete() 정상 → 교착 없음)
   if(follow && !_modalShouldBeActive()) cur=Math.max(cur, frontier);
+  // HJ 2026-06-14 — G6(cur=LAST-1)에서 완료되면 follow 와 무관하게 완료페이지(LAST)로 전진.
+  //   산출물 선택 제출 후 follow=false 로 남으면 완료돼도 cur 이 6단계에 멈춰, 본문은 'G6 생성
+  //   중' 모달인데 진행바만 7단계로 보이던 불일치 해소. 단 타이핑 hold 중에는 모달 유지(전진 보류).
+  if(isCompleted() && !_g6TypingHold() && cur===LAST-1) cur=LAST;
   // cur 상한 = max(maxReached, frontier) — backend stale 일 때도 사용자 진행 단계 유지.
   cur=Math.max(0,Math.min(cur,Math.max(maxReached,frontier)));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
@@ -1670,6 +1677,13 @@ function g2TopicCards(d){
     +'</div></div>';
 }
 
+// HJ 2026-06-14 — 모달 노출 1차 게이트: 단계 진행률 41% 도달 OR 시간 폴백 경과.
+//   (G4/G5 처럼 빨라진 단계에서 41% 도달 전 다음 게이트가 와도 모달이 뜨도록 시간 폴백을 병행한다.)
+function _modalGateReady(){
+  if(_shownPct>=41) return true;
+  const _ana = analyzeStart ? (Date.now()-analyzeStart) : 0;
+  return _ana>=MODAL_TIME_FALLBACK_MS;
+}
 // HJ 2026-06-11 — 모달의 "논리적 활성" 조건. modalDismissed 와 무관 — backend 분석이 진행 중이고
 //   모달이 원래 떠야 하는 상태이면 true. render 가 이 값으로 콘텐츠/타자기 백그라운드 갱신 결정.
 //   사용자 요구: "모달 ✕ 닫아도 글 작성은 계속 진행. 다시 열면 그동안 작성된 글이 보임."
@@ -1685,7 +1699,8 @@ function _modalShouldBeActive(){
   // HJ 2026-06-13 — 롤백(무인 자동 재시도) 중에는 41% 임계를 우회해 모달을 띄운다.
   //   진행이 길어지는 롤백 구간에서 사용자가 빈 화면만 보지 않도록(진행 상태 가시화).
   const _rbActive=!!(((gateData&&gateData.stage_partial)||{}).rollback_active);
-  if(cur>=0 && cur<=5 && _shownPct<41 && !_rbActive) return false;
+  // HJ 2026-06-14 — 41% 단일 하드게이트 → '41% OR 시간폴백'(_modalGateReady) 으로 완화. G4/G5 모달 스킵 fix.
+  if(cur>=0 && cur<=5 && !_modalGateReady() && !_rbActive) return false;
   if(cur===0){
     const _p0=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
     if(_p0.length && curGate()==='G2' && _typingHoldComplete()) return false;
@@ -2188,7 +2203,7 @@ function modalInsightArea(d){
     if(d.best_model&&d.best_model.model_name) r.push(_labelRow('대상 모델', d.best_model.model_name, {mt:14, bold:true}));
     // === 📊 평가 인사이트 (backend 자연어 publish) ===
     if(Array.isArray(sp.g5_eval_insights)&&sp.g5_eval_insights.length){
-      var _g5eEmoji={'평가 결과':'📊','평가 메트릭':'📈','평가 요약':'💡','임계치 미달':'⚠️'};
+      var _g5eEmoji={'평가 결과':'📊','평가 메트릭':'📈','적응형 임계':'🎯','임계 기준':'🎯','평가 요약':'💡','임계치 미달':'⚠️'};
       r.push(_modalGroupedInsights(sp.g5_eval_insights, _g5eEmoji, 'g5-ev', 36));
     }
     // === 🔍 SHAP 인사이트 (상위 피처) ===
@@ -2201,12 +2216,25 @@ function modalInsightArea(d){
       var _g5fEmoji={'인사이트':'📝'};
       r.push(_modalGroupedInsights(sp.g5_final_insights, _g5fEmoji, 'g5-final', 28));
     }
-    // === 📊 평가 메트릭 ===
+    // === 📊 평가 메트릭 (HJ 2026-06-14 — 적응형 임계값 비교 표시: "지표: 값 (임계 thr ✓/✗)") ===
     if(d.eval_result&&d.eval_result.metrics&&typeof d.eval_result.metrics==='object'){
       const m=d.eval_result.metrics, ks=Object.keys(m).slice(0,6);
+      const _thr=(d.eval_result.thresholds&&typeof d.eval_result.thresholds==='object')?d.eval_result.thresholds:{};
       if(ks.length){
-        r.push(_modalSection('📊','평가 메트릭', ks.map(function(k){return k+': '+fmtNum(m[k]);}), {mt:32, twk:'g5-met'}));
+        r.push(_modalSection('📊','평가 메트릭', ks.map(function(k){
+          var _line=k+': '+fmtNum(m[k]);
+          if(_thr[k]!=null){
+            // 임계 metric 은 전부 higher-better (val_f1/val_roc_auc/val_r2 등)
+            var _pass=(Number(m[k])>=Number(_thr[k]));
+            _line+=' (임계 '+fmtNum(_thr[k])+' '+(_pass?'✓':'✗')+')';
+          }
+          return _line;
+        }), {mt:32, twk:'g5-met'}));
       }
+    }
+    // === 🎯 적응형 임계 기준 (데이터·카테고리에 따라 동적 산출 — 고정값 아님) ===
+    if(d.eval_result&&d.eval_result.threshold_basis){
+      r.push(_modalSection('🎯','임계 기준 (데이터·카테고리 적응형)', _toBullets(d.eval_result.threshold_basis, 220), {mt:20, twk:'g5-thr'}));
     }
     // === 💡 평가 요약 ===
     if(d.eval_result&&d.eval_result.rationale){
@@ -2566,12 +2594,22 @@ function render(){
     }
   }catch(e){}
   const sc=document.getElementById('steps');
-  const fillPct=(frontier/(N-1))*100;
+  // HJ 2026-06-14 — 완료표시·진행바는 단조증가 prog(=max(frontier,maxReached)) 기준으로 그린다.
+  //   backend 가 다음 단계 분석 초기에 stale 이전 게이트를 잠깐 publish 하면 computeFrontier 가
+  //   frontier 를 낮춰(예: 4단계(G4) 분석 시작 시 G2 publish → frontier=1) 이미 완료된 3단계 ✓ 가
+  //   풀려 원래 상태로 되돌아가던 버그를 수정. maxReached 는 절대 내려가지 않아 완료 단계가 유지된다.
+  let prog=Math.max(frontier,maxReached);
+  // HJ 2026-06-14 — 완료 신호가 와도 본문이 완료페이지(cur=LAST)로 전진하기 전(G6 산출물
+  //   생성·타이핑 hold 중)에는 마지막 7단계를 미리 done 처리하지 않는다.
+  //   (computeFrontier 가 isCompleted 시 frontier=LAST 로 점프 → 6단계 진행 중인데 7단계가
+  //    완료로 표시돼 "6단계 건너뛰고 7단계로 넘어간 것처럼" 보이던 버그.)
+  if(isCompleted() && cur<LAST) prog=Math.min(prog, cur);
+  const fillPct=(prog/(N-1))*100;
   let html='<div class="line"></div><div class="fill" style="width:calc((100% - 68px) * '+(fillPct/100)+')"></div>';
   steps.forEach(function(s,i){
     let cls, inner;
-    if(i===cur){ cls='active'; inner=(i<frontier?'✓':(i+1)); }
-    else if(i<=frontier){ cls='done'; inner='✓'; }
+    if(i===cur){ cls='active'; inner=(i<prog?'✓':(i+1)); }
+    else if(i<=prog){ cls='done'; inner='✓'; }
     else { cls='pending'; inner=(i+1); }
     if(i<=maxReached && i!==cur) cls+=' reachable';
     html+='<div class="step '+cls+'" data-i="'+i+'"><div class="dot">'+inner+'</div><div class="lab"><div class="nm">'+s.label+'</div><div class="sub">'+s.sub+'</div></div></div>';
@@ -2592,15 +2630,12 @@ function render(){
   if(_lmEl) _lmEl.textContent=loadMsg()+'…';
   var _laEl=document.getElementById('lagent');
   if(_laEl){var _agl2=_curAgentLabel();if(_agl2&&!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit)){_laEl.innerHTML='현재 작업: <b>'+esc(_agl2)+'</b>';}else{_laEl.textContent='';}}
-  document.getElementById('curName').textContent=steps[cur].label;
-  // 상단 헤더 진행률 — 단계 전체(7개) 기준 달성도. 카드 안 로딩바(_stageProgress)와 다른 지표.
-  document.getElementById('curPct').textContent=Math.round(frontier/(N-1)*100)+'%';
-  document.getElementById('curIdx').textContent=cur+1;
-  document.getElementById('curTot').textContent=N;
+  // HJ 2026-06-14 — 상단 'prog-meta'(현재 단계·진행률 문구) 제거(사용자 요구). 관련 DOM 갱신도 삭제.
   const stt=document.getElementById('status');
   if(paused){ stt.textContent='⏸ 일시정지됨'; stt.className='status paused'; }
   else if(isFailed()){ stt.textContent='⛔ 실패'; stt.className='status failed'; }
-  else if(isCompleted()){ stt.textContent='✓ 완료'; stt.className='status done'; }
+  else if(isCompleted() && cur>=LAST){ stt.textContent='✓ 완료'; stt.className='status done'; }
+  else if(isCompleted()){ stt.textContent='산출물 마무리 중'; stt.className='status'; }
   else if(jobId){ stt.textContent='진행 중'; stt.className='status'; }
   else { stt.textContent='대기'; stt.className='status'; }
   if(cur===0){
@@ -2737,6 +2772,10 @@ function render(){
         _modalOpenedCur=cur;
         setTimeout(function(){ if(_modalShouldBeActive()) try{render();}catch(_e){} }, MODAL_CONTENT_DELAY_MS+50);
       }
+      // HJ 2026-06-14 — 콘텐츠 생성([1]~[5])을 try 로 감싼다. 시계열·고열수(예: 738열) 등에서 한 호출이
+      //   예외를 던지면 아래 [B] 시각 표시 토글까지 건너뛰어 '진행률은 도는데 모달이 안 뜨는' 버그가 났다.
+      //   예외가 나도 모달은 띄우고(아래 [B]), 다음 render 주기에 콘텐츠를 재시도한다.
+      try{
       // [1] 제목 영역
       var _mh=modalHtml(); var _mb=document.getElementById('modal-body');
       if(_mb._last!==_mh){_mb._last=_mh;_mb.innerHTML=_mh;}
@@ -2757,6 +2796,7 @@ function render(){
       var _mlEl=document.getElementById('mlmsg');if(_mlEl)_mlEl.textContent=loadMsg()+'…';
       var _msiEl=document.getElementById('msubinfo');
       if(_msiEl){var _ml2=_curAgentLabel();var _sd={0:'데이터 출처·스키마·도메인·품질 점검 등을 진행하고 있습니다.',1:'EDA 분석 + 방법론 후보를 산출하고 있습니다.',2:'전처리·피처 엔지니어링 전략을 수립하고 있습니다.',3:'모델 선택·하이퍼파라미터 튜닝·학습을 진행하고 있습니다.',4:'파인튜닝·평가·설명·인사이트를 생성하고 있습니다.',5:'리포트를 합성하고 학습 결과를 저장하고 있습니다.'};var _sn={0:'분석 방향',1:'방법론',2:'모델 전략',3:'최적 모델',4:'산출물',5:'최종 결과'};var _d2=_sd[cur]||'다음 단계를 준비하고 있습니다.';var _n2=_sn[cur]||'다음 단계';_msiEl.innerHTML=_ml2?(_d2+' &nbsp;·&nbsp; 현재 작업: <b>'+esc(_ml2)+'</b> &nbsp;·&nbsp; 곧 <b>'+esc(_n2)+'</b> 카드가 표시됩니다.'):(_d2+' &nbsp;·&nbsp; 곧 <b>'+esc(_n2)+'</b> 카드가 표시됩니다.');}
+      }catch(_meErr){ try{ console.error('modal content render failed', _meErr); }catch(_e2){} }
     }
     // ── [B] 시각 표시 토글 — _show 만 보고 결정. modalDismissed=true 면 _show=false → 숨김 ──
     if(_show){
@@ -2779,7 +2819,7 @@ function render(){
   const _reBtn=document.getElementById('reopenModalBtn');
   if(_reBtn){
     let _shouldShow=false;
-    if(modalDismissed && _modalDismissedCur===cur && jobId && !isFailed() && !isCompleted() && cur>=0 && cur<=5 && _shownPct>=41){
+    if(modalDismissed && _modalDismissedCur===cur && jobId && !isFailed() && !isCompleted() && cur>=0 && cur<=5 && _modalGateReady()){
       if(cur===0){
         // G1: G2 proposals 미도착 (또는 도착했지만 타자기 미완료)이면 모달이 원래 떠야 함
         const _g2p=(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length;

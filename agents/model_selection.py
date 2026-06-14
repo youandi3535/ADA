@@ -251,10 +251,19 @@ class ModelSelectionAgent(BaseAgent):
                 .where(
                     SelfLearningKB.kb_type == "recipe",
                     SelfLearningKB.category == category,
+                    # R-504 — 철회된 레시피 재인용 금지. retract_low_confidence 는
+                    # confidence<0.20 KB 의 payload 에 retracted=True 만 달고 confidence 는
+                    # 그대로 두므로, confidence 하한(0.20)으로 철회분이 전부 걸러진다.
+                    SelfLearningKB.confidence >= 0.20,
                 )
                 .order_by(SelfLearningKB.success_count.desc())
                 .limit(5)
             )
-            return [{"hash": r.hash, "payload": r.payload, "success_count": r.success_count} for r in rows]
+            # payload.retracted=True (수동 철회 등 confidence 와 무관한 케이스) 방어적 제외.
+            return [
+                {"hash": r.hash, "payload": r.payload, "success_count": r.success_count}
+                for r in rows
+                if not (isinstance(r.payload, dict) and r.payload.get("retracted"))
+            ]
         except Exception:
             return []

@@ -261,8 +261,10 @@ class TestEvaluatorImprovementOverBaseline:
         assert result["improvement_over_baseline"] == {}
         assert result["baseline_used"] == {}
 
-    def test_picks_strongest_baseline_when_multiple(self):
-        """Dummy 와 LR 둘 다 있으면 더 강한 LR 을 baseline 으로 선택 (보수적)."""
+    def test_baseline_fixed_to_dummy_even_with_multiple_names(self):
+        """기준은 항상 Dummy (HJ 2026-06-14 지시). baseline_model_names 에 경쟁 모델
+        (LogisticRegression)이 끼어 있어도 Dummy 를 기준으로 격차를 판정한다 —
+        경쟁 모델을 '기준' 으로 삼으면 다른 모델의 임계치를 기준 삼는 셈이라 제외."""
         from ada.core.state import PipelineState
         from agents.handlers.tabular.evaluator import evaluate
 
@@ -276,14 +278,12 @@ class TestEvaluatorImprovementOverBaseline:
                 {"model_name": "LogisticRegression", "metrics": {"val_f1": 0.75}},
                 {"model_name": "XGBoost", "metrics": {"val_f1": 0.83}},
             ],
-            category_extras={
-                "tabular": {"baseline_model_names": ["Dummy", "LogisticRegression"]}
-            },
+            category_extras={"tabular": {"baseline_model_names": ["Dummy", "LogisticRegression"]}},
         )
         result = evaluate(state)
-        assert result["baseline_used"]["name"] == "LogisticRegression"
-        # 격차: XGB 0.83 - LR 0.75 = 0.08 (Dummy 0.51 대비 0.32 보다 보수적)
-        assert result["improvement_over_baseline"]["primary_lift"] == pytest.approx(0.08, abs=0.01)
+        assert result["baseline_used"]["name"] == "Dummy"
+        # 격차: XGB 0.83 - Dummy 0.51 = 0.32 (경쟁 모델 LR 은 기준에서 제외, Dummy 기준)
+        assert result["improvement_over_baseline"]["primary_lift"] == pytest.approx(0.32, abs=0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -364,8 +364,12 @@ class TestCvStats:
         X, y = clf_data
         pipe = TabularMLPipeline()
         result = pipe.evaluate_with_cv(
-            X, y, model_name="RandomForest", params={"n_estimators": 30, "random_state": 42},
-            n_splits=3, task="classification",
+            X,
+            y,
+            model_name="RandomForest",
+            params={"n_estimators": 30, "random_state": 42},
+            n_splits=3,
+            task="classification",
         )
         assert result["n_splits"] == 3
         assert len(result["fold_metrics"]) == 3
@@ -380,7 +384,12 @@ class TestCvStats:
         X, y = reg_data
         pipe = TabularMLPipeline()
         result = pipe.evaluate_with_cv(
-            X, y, model_name="Ridge", params={}, n_splits=3, task="regression",
+            X,
+            y,
+            model_name="Ridge",
+            params={},
+            n_splits=3,
+            task="regression",
         )
         assert result["primary_metric"] == "val_r2"
         # Ridge 가 진짜 선형 신호 학습 → R² > 0 평균
@@ -393,12 +402,20 @@ class TestCvStats:
         X, y = clf_data
         pipe = TabularMLPipeline()
         dummy = pipe.evaluate_with_cv(
-            X, y, model_name="Dummy", params={}, n_splits=3, task="classification",
+            X,
+            y,
+            model_name="Dummy",
+            params={},
+            n_splits=3,
+            task="classification",
         )
         rf = pipe.evaluate_with_cv(
-            X, y, model_name="RandomForest",
+            X,
+            y,
+            model_name="RandomForest",
             params={"n_estimators": 30, "random_state": 42},
-            n_splits=3, task="classification",
+            n_splits=3,
+            task="classification",
         )
         # RF 가 Dummy 보다 분명히 높아야 함 — 그렇지 않으면 baseline 비교 의미 없음
         assert rf["primary_mean"] > dummy["primary_mean"] + 0.1
@@ -455,7 +472,9 @@ class TestCvStats:
 
         # 대용량 → skip
         state_big = PipelineState(
-            job_id="t", file_id="m", category="tabular_ml",
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
             data_profile={"rows": 100000},
             trained_models=[{"model_name": "RandomForest", "metrics": {"val_f1": 0.8}}],
         )
@@ -463,7 +482,9 @@ class TestCvStats:
 
         # DL → skip
         state_dl = PipelineState(
-            job_id="t", file_id="m", category="tabular_dl",
+            job_id="t",
+            file_id="m",
+            category="tabular_dl",
             data_profile={"rows": 1000},
             trained_models=[{"model_name": "FTTransformer", "metrics": {"val_f1": 0.8}}],
         )
@@ -471,14 +492,18 @@ class TestCvStats:
 
         # trained_models 비어있음 (단발 테스트 시나리오) → skip
         state_no_trained = PipelineState(
-            job_id="t", file_id="m", category="tabular_ml",
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
             data_profile={"rows": 500},
         )
         assert _should_run_cv(state_no_trained) is False
 
         # 작은 tabular_ml + trained_models 있음 (운영) → run
         state_ok = PipelineState(
-            job_id="t", file_id="m", category="tabular_ml",
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
             data_profile={"rows": 500},
             trained_models=[{"model_name": "RandomForest", "metrics": {"val_f1": 0.8}}],
         )
@@ -603,7 +628,10 @@ class TestLearningCurve:
         from agents.handlers.tabular.output_extras import _build_learning_curve_chart
 
         state = PipelineState(
-            job_id="t", file_id="m", category="tabular_ml", target_column="y",
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            target_column="y",
             data_profile={"rows": 200},
         )
         assert _build_learning_curve_chart(state) is None
@@ -936,7 +964,10 @@ class TestResidualChart:
         from ada.core.state import PipelineState
 
         state = PipelineState(
-            job_id="t", file_id="m", category="tabular_ml", target_column="y",
+            job_id="t",
+            file_id="m",
+            category="tabular_ml",
+            target_column="y",
             task="classification",
             best_model={"model_name": "RandomForest", "metrics": {"val_f1": 0.83}},
         )
@@ -1096,11 +1127,13 @@ class TestEdaEnhancement:
         """unique_ratio ≥ 0.99 컬럼이 id_like_columns 에 잡힘."""
         from agents.handlers.tabular.profiler import profile
 
-        df = pd.DataFrame({
-            "user_id": range(100),  # 100% unique → id-like
-            "age": np.random.RandomState(42).randint(20, 70, size=100),
-            "y": np.random.RandomState(0).randint(0, 2, size=100),
-        })
+        df = pd.DataFrame(
+            {
+                "user_id": range(100),  # 100% unique → id-like
+                "age": np.random.RandomState(42).randint(20, 70, size=100),
+                "y": np.random.RandomState(0).randint(0, 2, size=100),
+            }
+        )
         result = profile(df, self._state())
         assert "id_like_columns" in result
         assert "user_id" in result["id_like_columns"]
@@ -1111,10 +1144,12 @@ class TestEdaEnhancement:
         """target 컬럼은 unique 해도 id-like 분류 제외."""
         from agents.handlers.tabular.profiler import profile
 
-        df = pd.DataFrame({
-            "x": np.random.RandomState(42).normal(size=50),
-            "y": range(50),  # target 이 100% unique 라도 무시
-        })
+        df = pd.DataFrame(
+            {
+                "x": np.random.RandomState(42).normal(size=50),
+                "y": range(50),  # target 이 100% unique 라도 무시
+            }
+        )
         result = profile(df, self._state())
         assert "y" not in result.get("id_like_columns", [])
 
@@ -1124,11 +1159,13 @@ class TestEdaEnhancement:
 
         rng = np.random.RandomState(42)
         y_val = rng.normal(size=200)
-        df = pd.DataFrame({
-            "leaky": y_val + rng.normal(0, 0.05, size=200),  # 거의 동일 → corr≈1
-            "noise": rng.normal(size=200),
-            "y": y_val,
-        })
+        df = pd.DataFrame(
+            {
+                "leaky": y_val + rng.normal(0, 0.05, size=200),  # 거의 동일 → corr≈1
+                "noise": rng.normal(size=200),
+                "y": y_val,
+            }
+        )
         state = self._state(target="y")
         state = state.with_update(task="regression")
         result = profile(df, state)
@@ -1142,11 +1179,13 @@ class TestEdaEnhancement:
         from agents.handlers.tabular.profiler import profile
 
         rng = np.random.RandomState(42)
-        df = pd.DataFrame({
-            "a": rng.normal(size=200),
-            "b": rng.normal(size=200),
-            "y": rng.randint(0, 2, size=200),
-        })
+        df = pd.DataFrame(
+            {
+                "a": rng.normal(size=200),
+                "b": rng.normal(size=200),
+                "y": rng.randint(0, 2, size=200),
+            }
+        )
         result = profile(df, self._state())
         assert result.get("target_leakage_suspects", []) == []
 
@@ -1159,12 +1198,14 @@ class TestEdaEnhancement:
         n = 300
         x_signal = rng.normal(size=n)
         y_binary = (x_signal > 0).astype(int)
-        df = pd.DataFrame({
-            "x_signal": x_signal,
-            "noise1": rng.normal(size=n),
-            "noise2": rng.normal(size=n),
-            "y": y_binary,
-        })
+        df = pd.DataFrame(
+            {
+                "x_signal": x_signal,
+                "noise1": rng.normal(size=n),
+                "noise2": rng.normal(size=n),
+                "y": y_binary,
+            }
+        )
         result = profile(df, self._state())
         mi_top = result.get("mutual_info_top", {})
         assert isinstance(mi_top, dict)
@@ -1178,11 +1219,13 @@ class TestEdaEnhancement:
 
         rng = np.random.RandomState(42)
         n = 200
-        df = pd.DataFrame({
-            "cat": rng.choice(["a", "b", "c"], size=n),
-            "num": rng.normal(size=n),
-            "y": rng.randint(0, 2, size=n),
-        })
+        df = pd.DataFrame(
+            {
+                "cat": rng.choice(["a", "b", "c"], size=n),
+                "num": rng.normal(size=n),
+                "y": rng.randint(0, 2, size=n),
+            }
+        )
         result = profile(df, self._state())
         # 예외 없이 dict 반환
         assert isinstance(result.get("mutual_info_top", {}), dict)
@@ -1192,11 +1235,13 @@ class TestEdaEnhancement:
         from agents.handlers.tabular.eda import charts
 
         rng = np.random.RandomState(42)
-        df = pd.DataFrame({
-            "age": rng.randint(20, 70, size=100),
-            "income": rng.normal(50000, 10000, size=100),
-            "y": rng.randint(0, 2, size=100),
-        })
+        df = pd.DataFrame(
+            {
+                "age": rng.randint(20, 70, size=100),
+                "income": rng.normal(50000, 10000, size=100),
+                "y": rng.randint(0, 2, size=100),
+            }
+        )
         # MinIO 없는 단위 환경 → save 가 실패하면 None 이 paths 에 안 들어감.
         # 2026-06-11 — charts() 는 (paths, meta) 튜플 반환 (EDAChart 메타 채널).
         result = charts(df, self._state())
@@ -1240,14 +1285,24 @@ class TestInsightFullPayload:
         state = self._state()
         payload = prompt_payload(state)
         expected_keys = {
-            "category", "user_intent", "best_model", "shap_top",
-            "eval_result", "metrics_full",
-            "improvement_over_baseline", "baseline_used",
-            "cv_stats", "baseline_cv_stats",
+            "category",
+            "user_intent",
+            "best_model",
+            "shap_top",
+            "eval_result",
+            "metrics_full",
+            "improvement_over_baseline",
+            "baseline_used",
+            "cv_stats",
+            "baseline_cv_stats",
             "model_scores",
-            "id_like_columns", "target_leakage_suspects", "mutual_info_top",
-            "optimal_threshold", "f1_at_optimal_threshold",
-            "class_imbalance_ratio", "n_rows",
+            "id_like_columns",
+            "target_leakage_suspects",
+            "mutual_info_top",
+            "optimal_threshold",
+            "f1_at_optimal_threshold",
+            "class_imbalance_ratio",
+            "n_rows",
             "leakage_safe_split_used",
         }
         missing = expected_keys - set(payload.keys())
@@ -1288,9 +1343,7 @@ class TestInsightFullPayload:
         from agents.handlers.tabular.insight import prompt_payload
 
         state = self._state(
-            category_extras={
-                "tabular": {"leakage_safe_split": {"method": "split_first_train_fit"}}
-            },
+            category_extras={"tabular": {"leakage_safe_split": {"method": "split_first_train_fit"}}},
         )
         payload = prompt_payload(state)
         assert payload["leakage_safe_split_used"] is True

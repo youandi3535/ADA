@@ -169,10 +169,23 @@ class HyperparameterTunerAgent(BaseAgent):
         """train+val 까지만 CV 사용 (test 격리). 메타 없으면 전체 폴백."""
         try:
             from agents.handlers.common.shared import load_dataframe_from_state
-            from agents.training_executor import _leakage_split_bounds, _split_xy
+            from agents.training_executor import (
+                _leakage_split_bounds,
+                _resolve_timeseries_target,
+                _split_xy,
+            )
 
             df = load_dataframe_from_state(state)
-            X, y = _split_xy(df, state.target_column)
+            # HJ 2026-06-14 — training_executor 와 동일하게 timeseries 타깃 미지정 방어.
+            #   y=np.zeros 폴백 시 CV improvement 가 전부 0 → best_params 가 무의미해진다.
+            target_col = state.target_column
+            if state.category == "timeseries" and not (target_col and target_col in df.columns):
+                date_col = (state.data_profile or {}).get("date_col")
+                auto_t = _resolve_timeseries_target(df, date_col)
+                if auto_t:
+                    target_col = auto_t
+                    self.logger.info("hpo_ts_target_autoselected", target=target_col)
+            X, y = _split_xy(df, target_col)
             bounds = _leakage_split_bounds(state)
             if bounds is not None:
                 cut = bounds[0] + bounds[1]

@@ -83,13 +83,12 @@ class EvalAgent(BaseAgent):
                     json_mode=True,
                 )
                 parsed = self._parse_json(raw)
-                if "passed" in parsed:
-                    eval_result["passed"] = bool(parsed["passed"])
-                    eval_result["rationale"] = parsed.get("rationale", eval_result["rationale"])
-                    eval_result["threshold_violations"] = parsed.get(
-                        "threshold_violations",
-                        eval_result["threshold_violations"],
-                    )
+                # HJ 2026-06-14 — 사용자 지시: LLM 은 '설명(rationale)'만. passed/violations(재시도를
+                #   유발하는 판정)은 규칙 기반(handler)으로 고정한다. 비결정적 LLM 이 규칙 통과를
+                #   미통과로 뒤집어 4·5단계가 끝없이 재시도(롤백)되던 문제를 제거한다.
+                _llm_comment = str(parsed.get("rationale") or "").strip()
+                if _llm_comment:
+                    eval_result["llm_comment"] = _llm_comment
             except Exception as e:
                 self.logger.warning("eval_llm_skip", error=str(e))
 
@@ -110,6 +109,22 @@ class EvalAgent(BaseAgent):
                         except (TypeError, ValueError):
                             _m_pairs.append(f"{k}={v}")
                     _g5_eval_insights.append(f"평가 메트릭: {', '.join(_m_pairs)}")
+                # HJ 2026-06-14 — 사용자 지시: 임계치는 고정값이 아니라 데이터·카테고리 적응형.
+                #   적응형 임계값과 지표 충족 여부(✓/✗)·산출 근거를 모달에 함께 표시해 비교 가능하게 한다.
+                _thr = eval_result.get("thresholds") or {}
+                if _thr:
+                    _t_pairs = []
+                    for _tk, _tv in list(_thr.items())[:5]:
+                        try:
+                            _mv = metrics.get(_tk)
+                            _ok = "✓" if (_mv is not None and float(_mv) >= float(_tv)) else "✗"
+                            _t_pairs.append(f"{_tk}≥{float(_tv):.3f} {_ok}")
+                        except (TypeError, ValueError):
+                            _t_pairs.append(f"{_tk}≥{_tv}")
+                    _g5_eval_insights.append(f"적응형 임계: {', '.join(_t_pairs)}")
+                _thr_basis = str(eval_result.get("threshold_basis") or "").strip()
+                if _thr_basis:
+                    _g5_eval_insights.append(f"임계 기준: {_thr_basis[:160]}")
                 rt = str(eval_result.get("rationale") or "").strip()
                 if rt:
                     _g5_eval_insights.append(f"평가 요약: {rt[:200]}")

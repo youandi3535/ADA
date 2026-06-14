@@ -73,10 +73,15 @@ class MetricsAggregatorAgent(BaseAgent):
             #   화면 유지: 재시도 중 BaseGate 가 baseline_re_loop_count>0 로 게이트 자동통과(current_gate=None)
             #     → frontend frontier=maxReached 유지 → cur 고정(이전 단계·팝업으로 안 돌아감).
             #   누수 안전: preprocessing→feature 재실행도 leakage_safe_split(train fit→val transform) 유지.
+            # HJ 2026-06-14 — 사용자 지시: 4단계 재시도 판정은 '가장 센 베이스라인(LR/Ridge)'이 아니라
+            #   Dummy(naive 바닥) 기준. 모델이 Dummy 만 이기면 재시도하지 않는다 — LR/Ridge 가 더 좋은
+            #   데이터는 재학습해도 영영 못 넘어 무한 롤백되던 문제(베이스라인보다 높은데도 재시도) 해결.
+            #   LR/Ridge 대비 격차·통계적 유의성은 evaluator/insight 가 별도 '참고'로 보고(재학습 유발 X).
             _bl_vals = [
                 float((m.get("metrics") or {}).get(metric_key))
                 for m in state.trained_models
-                if m.get("model_name") in _baseline_names and (m.get("metrics") or {}).get(metric_key) is not None
+                if str(m.get("model_name", "")).lower().startswith("dummy")
+                and (m.get("metrics") or {}).get(metric_key) is not None
             ]
             #   이미 사용자가 "계속 진행"을 수락한 상태(baseline_not_beaten=True)면 재판정하지 않는다
             #   — 5단계 re_loop 로 metrics 가 다시 와도 baseline 리루프를 또 돌리지 않도록(수락 존중).

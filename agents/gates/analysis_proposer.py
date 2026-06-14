@@ -195,18 +195,77 @@ _CUSTOM_OPTION: dict[str, Any] = {
     "is_custom": True,
 }
 
+# HJ 2026-06-14 — rationale 6줄(목표/방법/결과/장점/단점/기대) 보장 유틸.
+#   Ollama(qwen2.5:7b)가 형식을 덜 지켜 줄이 모자라거나 한 줄로 합쳐 보내도,
+#   프론트 카드 본문이 1줄로 깨지지 않도록 항상 6줄 글머리로 정규화한다.
+_RATIONALE_SKELETON: tuple[str, ...] = (
+    "목표: 분석의 핵심 목표",
+    "방법: 적용할 주요 기법",
+    "결과: 도출할 인사이트",
+    "장점: 이 방향의 강점",
+    "단점: 유의할 한계",
+    "기대: 기대 효과·지표",
+)
+# 줄머리 기호(•·-*▪◦ 등)·번호(1. 1)) 접두 제거용.
+_BULLET_RE = re.compile(r"^[\s•·\-\*▪◦‣>]+")
+_NUMBERED_RE = re.compile(r"^\d+[.)]\s*")
+
+
+def _r6(*lines: str) -> str:
+    """6줄 글머리 rationale 문자열 생성 (각 줄 '• ' 접두)."""
+    return "\n".join(f"• {ln}" for ln in lines)
+
+
+def _normalize_rationale(raw: Any) -> str:
+    r"""rationale 을 '• 라벨: 내용' 6줄로 정규화 — 항상 6줄을 보장한다.
+
+    - str  : 줄바꿈 단위로 분해. 리터럴 '\n' 도 실제 개행으로 처리.
+    - list : 각 항목을 한 줄로.
+    6줄 초과면 앞 6줄, 미만이면 _RATIONALE_SKELETON 으로 부족분을 보충.
+    """
+    if isinstance(raw, list):
+        candidates = [str(x) for x in raw]
+    else:
+        candidates = str(raw or "").replace("\\n", "\n").splitlines()
+    lines: list[str] = []
+    for ln in candidates:
+        s = _BULLET_RE.sub("", ln).strip()
+        s = _NUMBERED_RE.sub("", s).strip()
+        if s:
+            lines.append(s)
+    if len(lines) >= 6:
+        lines = lines[:6]
+    else:
+        lines.extend(_RATIONALE_SKELETON[len(lines) :])
+    return "\n".join(f"• {ln}" for ln in lines)
+
+
 _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
     "tabular_ml": [
         {
             "id": 1,
             "title": "분류/회귀 예측",
-            "rationale": "타겟 컬럼 기반 지도학습으로 결과를 예측합니다.",
+            "rationale": _r6(
+                "목표: 타깃 값 예측 모델 구축",
+                "방법: 지도학습 분류·회귀 적용",
+                "결과: 예측 성능 지표 산출",
+                "장점: 해석·운영이 용이",
+                "단점: 라벨 품질에 의존",
+                "기대: 의사결정 자동화 지원",
+            ),
             "score": 0.8,
         },
         {
             "id": 2,
             "title": "피처 중요도 분석",
-            "rationale": "예측에 영향을 미치는 주요 변수를 식별합니다.",
+            "rationale": _r6(
+                "목표: 핵심 영향 변수 규명",
+                "방법: 중요도·SHAP 분석 수행",
+                "결과: 변수 영향도 순위 도출",
+                "장점: 인사이트 설명력 우수",
+                "단점: 상관·인과 혼동 주의",
+                "기대: 데이터 전략 수립 지원",
+            ),
             "score": 0.6,
         },
     ],
@@ -214,25 +273,92 @@ _FALLBACK_DEFAULTS: dict[str, list[dict[str, Any]]] = {
         {
             "id": 1,
             "title": "TabTransformer 학습",
-            "rationale": "딥러닝 표현력으로 복잡한 패턴을 학습합니다.",
+            "rationale": _r6(
+                "목표: 복잡 패턴 표현 학습",
+                "방법: TabTransformer 딥러닝",
+                "결과: 고차원 예측 모델 확보",
+                "장점: 비선형 관계 포착 우수",
+                "단점: 학습 비용·시간 증가",
+                "기대: 정밀 예측 성능 향상",
+            ),
             "score": 0.8,
         },
         {
             "id": 2,
             "title": "FTTransformer 비교",
-            "rationale": "수치형 임베딩 방식으로 성능을 비교합니다.",
+            "rationale": _r6(
+                "목표: 임베딩 방식 성능 비교",
+                "방법: FTTransformer 벤치마크",
+                "결과: 모델별 성능 비교표 도출",
+                "장점: 수치형 처리에 강점",
+                "단점: 소규모 데이터엔 과적합",
+                "기대: 최적 구조 선택 근거 확보",
+            ),
             "score": 0.7,
         },
     ],
     "timeseries": [
-        {"id": 1, "title": "단기 예측", "rationale": "1~30일 구간의 미래 값을 예측합니다.", "score": 0.8},
-        {"id": 2, "title": "이상 시점 탐지", "rationale": "변동성이 비정상적으로 큰 시점을 식별합니다.", "score": 0.6},
+        {
+            "id": 1,
+            "title": "단기 예측",
+            "rationale": _r6(
+                "목표: 향후 1~30일 값 예측",
+                "방법: 추세·계절성 분해 학습",
+                "결과: 미래 수요 예측치 산출",
+                "장점: 단기 의사결정에 직결",
+                "단점: 장기 예측은 정확도 저하",
+                "기대: 재고·운영 비용 절감",
+            ),
+            "score": 0.8,
+        },
+        {
+            "id": 2,
+            "title": "이상 시점 탐지",
+            "rationale": _r6(
+                "목표: 비정상 변동 시점 식별",
+                "방법: 잔차·변동성 기반 탐지",
+                "결과: 이상 구간 타임라인 제공",
+                "장점: 조기 경보로 대응 가능",
+                "단점: 임계값 설정에 민감",
+                "기대: 장애·리스크 사전 차단",
+            ),
+            "score": 0.6,
+        },
     ],
     "anomaly_detection": [
-        {"id": 1, "title": "이상치 점수화", "rationale": "샘플별 anomaly score를 산출합니다.", "score": 0.85},
-        {"id": 2, "title": "정상 분포 학습", "rationale": "정상 패턴을 학습해 이탈 여부를 판단합니다.", "score": 0.7},
+        {
+            "id": 1,
+            "title": "이상치 점수화",
+            "rationale": _r6(
+                "목표: 샘플별 이상 점수 산출",
+                "방법: anomaly score 모델 학습",
+                "결과: 위험도 순위 리스트 제공",
+                "장점: 라벨 없이도 적용 가능",
+                "단점: 임계값 튜닝이 필요",
+                "기대: 이상 징후 신속 포착",
+            ),
+            "score": 0.85,
+        },
+        {
+            "id": 2,
+            "title": "정상 분포 학습",
+            "rationale": _r6(
+                "목표: 정상 패턴 분포 학습",
+                "방법: 밀도·재구성 기반 탐지",
+                "결과: 이탈 여부 판정 결과",
+                "장점: 미지 이상에도 견고",
+                "단점: 정상 정의에 민감",
+                "기대: 오탐·미탐 균형 확보",
+            ),
+            "score": 0.7,
+        },
     ],
 }
+
+# LLM·카테고리 폴백 모두 미해당 시 최종 기본(도메인 무관) — 6줄 보장.
+_GENERIC_FALLBACK: list[dict[str, Any]] = [
+    {"id": 1, "title": "기본 분석", "rationale": _r6(*_RATIONALE_SKELETON), "score": 0.5},
+]
 
 
 class AnalysisProposerAgent(BaseGate):
@@ -352,18 +478,13 @@ class AnalysisProposerAgent(BaseGate):
                     arr = []
 
             if arr:
-                llm_opts = arr[: self.n_proposals]
-                for i, opt in enumerate(llm_opts, start=1):
-                    opt["id"] = i
-                return llm_opts + [_CUSTOM_OPTION]
+                finalized = self._finalize_llm_options(arr)
+                if finalized:
+                    return finalized + [_CUSTOM_OPTION]
         except Exception as e:
             self.logger.warning("g2_llm_failed", error=str(e))
 
-        base = _FALLBACK_DEFAULTS.get(
-            state.category,
-            [{"id": 1, "title": "기본 분석", "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
-        )
-        return list(base) + [_CUSTOM_OPTION]
+        return self._fallback_options(state.category)
 
     @staticmethod
     def _has_non_korean(options: list[dict[str, Any]]) -> bool:
@@ -376,6 +497,29 @@ class AnalysisProposerAgent(BaseGate):
                 if isinstance(v, str) and looks_non_korean(v):
                     return True
         return False
+
+    def _finalize_llm_options(self, arr: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """HJ 2026-06-14 — LLM 결과 옵션 정리: id 재부여 + rationale 6줄 정규화.
+
+        Ollama 가 6줄을 다 안 줘도 _normalize_rationale 로 6줄을 보장한다.
+        dict 가 아닌 잡항목은 버린다(빈 리스트면 호출처가 폴백으로 전환).
+        """
+        out: list[dict[str, Any]] = []
+        for opt in arr[: self.n_proposals]:
+            if not isinstance(opt, dict):
+                continue
+            opt["id"] = len(out) + 1
+            opt["rationale"] = _normalize_rationale(opt.get("rationale"))
+            out.append(opt)
+        return out
+
+    def _fallback_options(self, category: str | None) -> list[dict[str, Any]]:
+        """HJ 2026-06-14 — 카테고리 폴백(6줄) + custom. rationale 6줄 정규화 보장."""
+        base = _FALLBACK_DEFAULTS.get(category or "", _GENERIC_FALLBACK)
+        opts = [dict(o) for o in base]
+        for o in opts:
+            o["rationale"] = _normalize_rationale(o.get("rationale"))
+        return opts + [_CUSTOM_OPTION]
 
     # ------------------------------------------------------------------
     # CS 2026-06-10 — G2 Sub-1 (주제 선정) LLM 호출.
@@ -475,17 +619,12 @@ class AnalysisProposerAgent(BaseGate):
                 except Exception:
                     arr = []
             if arr:
-                llm_opts = arr[: self.n_proposals]
-                for i, opt in enumerate(llm_opts, start=1):
-                    opt["id"] = i
-                return llm_opts + [_CUSTOM_OPTION]
+                finalized = self._finalize_llm_options(arr)
+                if finalized:
+                    return finalized + [_CUSTOM_OPTION]
         except Exception as e:
             self.logger.warning("g2_directions_with_topic_failed", error=str(e))
-        base = _FALLBACK_DEFAULTS.get(
-            state.category,
-            [{"id": 1, "title": "기본 분석", "rationale": "LLM 실패로 기본 제안", "score": 0.5}],
-        )
-        return list(base) + [_CUSTOM_OPTION]
+        return self._fallback_options(state.category)
 
     def _apply_choice(
         self,

@@ -313,6 +313,44 @@ services:
           memory: 500M
     networks: [ada-net]
 
+  beat:
+    profiles: ["core"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    image: ghcr.io/youandi3535/ada-worker:latest
+    container_name: ada-beat
+    restart: unless-stopped
+    # Celery Beat — orchestrator.runner.beat_schedule 의 4개 주기작업 트리거 전용.
+    # 이 프로세스가 없으면 다음이 "등록만 되고 아무도 실행하지 않는" 상태가 된다:
+    #   ada-error-handler-scan (30s)  — FailureLog 폴링 → 자동 오류 수정 승급
+    #   ada-kb-decay-daily     (24h)  — R-505 60일 미사용 KB confidence 감쇠
+    #   ada-kb-retract-daily   (24h)  — R-504 confidence<0.20 KB 철회
+    #   ada-fixer-promote-daily(24h)  — 검증된 fixer 를 generated_fixers 로 승급
+    # worker 와 달리 task 를 실행하지 않고 redis 로 트리거만 보내므로 메모리 최소.
+    # --schedule 을 /tmp 로 격리해 bind-mount 된 /app 루트를 더럽히지 않는다.
+    command: celery -A orchestrator.runner beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    env_file: ../.env
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONPATH: /app
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../ada:/app/ada
+      - ../agents:/app/agents
+      - ../orchestrator:/app/orchestrator
+      - ../pipelines:/app/pipelines
+      - ../tools:/app/tools
+      - ../outputs:/app/outputs
+      - ../assets:/app/assets
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    networks: [ada-net]
+
   nginx:
     profiles: ["core"]
     image: nginx:1.27-alpine
