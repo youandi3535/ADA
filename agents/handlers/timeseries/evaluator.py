@@ -878,7 +878,19 @@ def evaluate(state: Any) -> dict[str, Any]:
     leakage_signals = _detect_leakage_signals(metrics, fold_scores)
 
     # ── B-6 (신규 H3) : 증상 분류 ──
-    symptom = _classify_symptom(metrics, fold_diag, leakage_signals)
+    # 등급 1 #5 — naive_beats_all / residual_autocorr_strong / mase_zero_suspect 는
+    # "성능 나쁨" 또는 "타깃 정의 문제" 신호이며, symptom C("검증 성능 비현실적 좋음"=누수)
+    # 판정과는 의미가 반대다. C 판정용 서브셋에서 제외(leakage_suspect_signals 출력에는
+    # 전체 신호를 그대로 노출 — insight.py 의 분석불가 조기반환 등에서 계속 사용).
+    _symptom_c_kinds = {
+        "too_good_vs_naive",
+        "mase_too_low",
+        "smape_too_low",
+        "pi_coverage_too_high",
+        "single_fold_outlier_good",
+    }
+    leakage_signals_for_symptom = [s for s in leakage_signals if s.get("kind") in _symptom_c_kinds]
+    symptom = _classify_symptom(metrics, fold_diag, leakage_signals_for_symptom)
 
     # ── B-7 (L4) : task_kind 분류형 안내 — chosen_recipe.meta.task_kind 안전 추출 ──
     # 시계열의 이상 시점 recipe (proposer §F meta.task_kind="classification") 인 경우
