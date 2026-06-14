@@ -302,6 +302,9 @@ class BaseAgent(abc.ABC):
         temperature: float = 0.2,
         model_name: Optional[str] = None,
         json_mode: bool = False,
+        # HJ 2026-06-14 — json_mode 시 Ollama format=json 강제 여부. False 면 미강제 →
+        #   모델이 '5개 생성' 지시를 더 잘 따름(format=json 의 조기 종료 회피). 펜스제거·한국어가드는 유지.
+        force_json: bool = True,
         on_partial: Any = None,  # Callable[[str], None] — Ollama streaming 시만 활용
         force_backend: Optional[str] = None,  # "ollama"|"anthropic" 강제 (None=기본 라우팅)
         track_progress: bool = True,  # False 면 진행률 보간·llm_end publish 생략(보조 호출용)
@@ -355,6 +358,7 @@ class BaseAgent(abc.ABC):
                         max_tokens=max_tokens,
                         temperature=temperature,
                         json_mode=json_mode,
+                        force_json=force_json,
                     )
             elif settings.anthropic_api_key:
                 text = await self._call_llm_api(
@@ -538,6 +542,7 @@ class BaseAgent(abc.ABC):
         max_tokens: int = 4096,
         temperature: float = 0.2,
         json_mode: bool = False,
+        force_json: bool = True,
     ) -> str:
         """Ollama /api/chat 호출 (asyncio.to_thread + urllib).
 
@@ -575,7 +580,9 @@ class BaseAgent(abc.ABC):
         # HJ 2026-06-14 — json_mode 면 Ollama 네이티브 JSON 강제(format=json).
         #   qwen2.5:7b 가 JSON 앞뒤로 설명·markdown 을 섞어 _parse_json 실패→정적 폴백(1줄)으로
         #   떨어지던 문제를 차단. 모델이 유효 JSON 완성까지 생성하도록 보장.
-        if json_mode:
+        #   단 force_json=False 면 미강제 — format=json 이 'valid JSON 이면 조기 종료'를 유발해
+        #   모델이 5개 중 2개만 만들고 배열을 닫던 문제(주제 생성)에서 5개 지시를 따르게 한다.
+        if json_mode and force_json:
             _body["format"] = "json"
         payload = _json.dumps(_body, ensure_ascii=False).encode("utf-8")
 

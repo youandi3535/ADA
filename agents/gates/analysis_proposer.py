@@ -222,6 +222,35 @@ def _build_topic_fallback(data_profile: dict[str, Any] | None) -> list[dict[str,
     return [{"id": i, "title": t} for i, t in enumerate(uniq[:5], start=1)]
 
 
+def _merge_llm_with_fallback(
+    llm_topics: list[dict[str, Any]], data_profile: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """HJ 2026-06-14 — 하이브리드: LLM 제목 N개(0~5) + 폴백 보충 → 항상 5개.
+
+    LLM 이 format 조기종료 등으로 일부(예: 2개)만 만들어도 그 결과를 살리고,
+    부족분(5-N)을 _build_topic_fallback 으로 채운다. 제목 중복은 제거하고 id 를 재부여한다.
+    LLM 이 0개여도 폴백 5개로 안전(기존 동작 보존).
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for t in (llm_topics or [])[:5]:
+        title = str((t or {}).get("title") or "").strip()
+        if title and title not in seen:
+            out.append({"title": title})
+            seen.add(title)
+    if len(out) < 5:
+        for f in _build_topic_fallback(data_profile):
+            if len(out) >= 5:
+                break
+            ftitle = str(f.get("title") or "").strip()
+            if ftitle and ftitle not in seen:
+                out.append({"title": ftitle})
+                seen.add(ftitle)
+    for i, t in enumerate(out, start=1):
+        t["id"] = i
+    return out[:5]
+
+
 _UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
 
 # (category, keywords) — 앞쪽 항목일수록 우선순위 높음
@@ -649,29 +678,28 @@ class AnalysisProposerAgent(BaseGate):
         }
         # sample_rows 가 잘려나가지 않도록 상한을 3000→4500 으로 확대.
         user_payload = json.dumps(payload, ensure_ascii=False)[:4500]
+        # HJ 2026-06-14 — 하이브리드: LLM 이 만든 N개(0~5)를 살리고 부족분만 폴백 보충(전부 버리지 않음).
+        llm_topics: list[dict[str, Any]] = []
         try:
             raw = await self._call_llm(
                 system_prompt=TOPIC_SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                # HJ 2026-06-14 — 관점축 5슬롯 반영으로 출력이 약간 길어짐 → 500→600.
-                #   다양성 위해 temperature 0.5→0.6 (한자 리스크 회피 위해 과도하지 않게).
+                # HJ 2026-06-14 — 관점축 5슬롯 반영으로 출력이 약간 길어짐 → 500→600. 다양성 위해 0.6.
                 max_tokens=600,
                 temperature=0.6,
                 json_mode=True,
+                # HJ 2026-06-14 — format=json 미강제: format=json 이 'valid JSON 이면 조기 종료'를
+                #   유발해 qwen 이 5개 중 2개만 만들고 배열을 닫던 문제 해소(5개 지시를 따르게 함).
+                #   펜스제거·한국어가드는 json_mode=True 라 유지. 부족분은 _merge_llm_with_fallback 보충.
+                force_json=False,
             )
             arr = self._safe_parse_json_array(raw)
             if arr and not self._has_non_korean(arr):
-                topics = [t for t in arr[:5] if isinstance(t, dict) and t.get("title")]
-                for i, t in enumerate(topics, start=1):
-                    t["id"] = i
-                    # CS 2026-06-10 — em-dash 자동 strip 폐기 (의미 있는 부제 보호).
-                    # _strip_topic_subtitle 함수는 모듈 상단에 남겨두되 호출 X.
-                if len(topics) >= 3:
-                    return topics
+                llm_topics = [t for t in arr[:5] if isinstance(t, dict) and t.get("title") and str(t["title"]).strip()]
         except Exception as e:
             self.logger.warning("g2_topics_llm_failed", error=str(e))
-        # HJ 2026-06-14 — generic 정적 폴백 대신 data_profile 구조 기반 동적 폴백.
-        return _build_topic_fallback(dp)
+        # LLM N개 + 폴백 보충(중복 제거) → 항상 5개. LLM 0개여도 폴백 5개로 안전.
+        return _merge_llm_with_fallback(llm_topics, dp)
 
     # ------------------------------------------------------------------
     # CS 2026-06-10 — G2 Sub-2 (분석 방향) LLM 호출, selected_topic 입력.
