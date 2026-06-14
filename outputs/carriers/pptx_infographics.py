@@ -25,6 +25,23 @@ SLIDE_W = 33.867
 SLIDE_H = 19.05
 
 
+def _ws_cut(text, max_chars, suffix="…"):
+    """단어/어절 경계 기준 안전 절단 — 영문 단어·한글 어절 중간을 자르지 않음.
+
+    jh 2026-06-13 — carrier 곳곳의 raw 슬라이스(str(...)[:N])가 'accur' 처럼
+    단어 중간을 잘라 산출물에 그대로 노출되던 결함(S18 SWOT 등). 경계에서 끊고
+    말줄임표(…)를 붙여 '잘리다 만' 인상을 제거한다.
+    """
+    s = str(text or "")
+    if len(s) <= max_chars:
+        return s
+    cut = s[:max_chars]
+    bnd = max(cut.rfind(" "), cut.rfind("·"), cut.rfind(","), cut.rfind("/"), cut.rfind("—"))
+    if bnd >= max_chars * 0.5:
+        cut = cut[:bnd]
+    return cut.rstrip(" ,·/—") + suffix
+
+
 def _add_paragraphs(slide, x, y, w, h, lines, size_pt=12, color_hex="#0F172A",
                     bold=False, space_after_pt=8):
     """여러 줄을 단락 간격(space_after)과 함께 한 텍스트박스에 — 가독성용.
@@ -2095,14 +2112,14 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
                 y + 3.2,
                 cell_w - 1.0,
                 1.1,
-                f"{labels[i]} · {str(pts[0])[:46]}",
+                f"{labels[i]} · {_ws_cut(pts[0], 46)}",
                 size_pt=16,
                 bold=True,
                 color_hex="#FFFFFF",
                 align="left",
                 vcenter=False,
             )
-        detail = "\n".join(f"·  {str(p)[:70]}" for p in pts[1:]) if len(pts) > 1 else ""
+        detail = "\n".join(f"·  {_ws_cut(p, 70)}" for p in pts[1:]) if len(pts) > 1 else ""
         if not pts:
             detail = "(추가 분석 필요)"
         if detail:
