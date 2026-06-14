@@ -268,7 +268,11 @@ _FLOW_HTML = """
   @keyframes hgStream{0%,3%{opacity:0;}6%,72%{opacity:1;}76%,100%{opacity:0;}}
   @keyframes cmIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
   /* HJ 2026-06-10 — 모달 텍스트 타자기 효과. 글자 단위 reveal. 분석 시간 흡수용. */
-  .tw{display:inline;white-space:pre-wrap;}
+  /* HJ 2026-06-14 — 긴 한 줄(공백 없는 긴 토큰: 컬럼명·경로·모델명·숫자·JSON 등)이 박스 폭을 넘어
+     overflow-x:hidden 으로 잘려 "안 보이게 뒤로 작성"되던 문제 수정. pre-wrap 의 공백 줄바꿈에 더해
+     overflow-wrap/word-break 로 박스 경계에서 강제 줄바꿈 → 항상 박스 안에서 줄바뀜. */
+  .tw{display:inline;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;}
+  .twrow{overflow-wrap:break-word;word-break:break-word;}
   .tw-caret{display:inline-block;width:2px;height:1em;background:#1f3e5c;margin-left:2px;vertical-align:-2px;animation:twBlink 0.85s steps(2,start) infinite;opacity:.85;}
   @keyframes twBlink{to{visibility:hidden;}}
   /* HJ 2026-06-10 — 마일스톤 세그먼트 바. 각 segment = 단계의 한 agent. 완료/현재/대기 색상 구분. */
@@ -3009,9 +3013,7 @@ def _login_dialog() -> None:
     #     운영 https://ada-aiagent.com/api/auth/google/callback → https://ada-aiagent.com/api/auth/google
     import os
 
-    _redirect = os.environ.get(
-        "GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback"
-    )
+    _redirect = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
     _login_url = _redirect.rsplit("/auth/google/callback", 1)[0] + "/auth/google"
     st.link_button(
         "🔵  Google 계정으로 로그인 / 회원가입",
@@ -3174,12 +3176,11 @@ else:
             st.markdown(
                 f"<div style='font-size:.84rem;color:#5a7596;'>👤 <b>{_who}</b><br>"
                 f"<span style='font-size:.76rem;color:#9aa6b5;'>"
-                f"{st.session_state.get('auth_role','analyst')} 권한</span></div>",
+                f"{st.session_state.get('auth_role', 'analyst')} 권한</span></div>",
                 unsafe_allow_html=True,
             )
             if st.button("로그아웃", use_container_width=True):
-                for _k in ("auth_token", "auth_role", "auth_email",
-                           "studio_started", "_fresh_start"):
+                for _k in ("auth_token", "auth_role", "auth_email", "studio_started", "_fresh_start"):
                     st.session_state.pop(_k, None)
                 st.query_params.clear()
                 st.rerun()
