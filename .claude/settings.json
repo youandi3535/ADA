@@ -275,8 +275,20 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 scripts/run_hook.py collect_tool_use.py"
+          }
+        ]
+      }
     ]
   },
+
   "mcpServers": {
     "ada-team-kb": {
       "command": "python",
