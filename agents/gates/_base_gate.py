@@ -49,7 +49,11 @@ class BaseGate(BaseAgent):
                 self.logger.warning("gate_propose_failed", gate=self.gate_code, error=str(e))
                 proposals = [{"id": 1, "title": "기본 권장", "rationale": "LLM 실패로 fallback", "score": 0.5}]
 
-            if state.re_loop_count > 0 or state.baseline_re_loop_count > 0:
+            # HJ 2026-06-14 — 산출물 게이트(G6)는 재시도 카운터가 잔존해도 자동통과 금지.
+            #   G6 이 자동통과(current_gate=None)되면 runner 의 resume 루프가 그대로 통과해
+            #   report 까지 실행 → 완료 오판 → 6단계(산출물 선택)를 스킵하고 7단계로 점프하던 버그 수정.
+            #   (리루프 경로는 G5 이전으로만 되돌아가므로, G6 도달 시점엔 분석이 끝나 항상 인터럽트해야 한다.)
+            if self.gate_code != "G6" and (state.re_loop_count > 0 or state.baseline_re_loop_count > 0):
                 gate_responses = dict(state.gate_responses)
                 gate_responses[self.gate_code] = {
                     **(gate_responses.get(self.gate_code) or {}),

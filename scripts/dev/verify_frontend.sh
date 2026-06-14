@@ -65,7 +65,11 @@ fi
 
 if [ "$DOCKER_OK" -eq 1 ]; then
   # ── [2] 코드 문법 (컨테이너) ─────────────────────────────
-  if docker exec "$CONTAINER" python -m py_compile "$CONT_FILE" 2>/dev/null; then
+  # HJ 2026-06-14 — 컨테이너 내부 경로($CONT_FILE=/app/...)는 sh -c 따옴표 안에 넣어 전달한다.
+  #   Git Bash(MSYS)는 docker exec 의 '맨 인자'로 놓인 /app/... 을 윈도우 경로(C:/Program Files/Git/...)로
+  #   자동 변환해 컨테이너 점검(2·3·4)이 거짓 실패하지만, 따옴표 문자열 안의 경로는 변환하지 않아
+  #   컨테이너 경로가 그대로 도달한다. (host curl 의 /dev/null 등은 영향받지 않게 docker exec 만 감쌈.)
+  if docker exec "$CONTAINER" sh -c "python -m py_compile '$CONT_FILE'" 2>/dev/null; then
     add "2" "코드 문법 (컨테이너 py_compile)" "COMPILE_OK ✓"; ok
   else
     add "2" "코드 문법 (컨테이너 py_compile)" "COMPILE_FAIL ✗"; ng
@@ -73,7 +77,7 @@ if [ "$DOCKER_OK" -eq 1 ]; then
 
   # ── [3] 마운트 동기화 (호스트↔컨테이너 SHA256) ───────────
   HSHA="$(host_sha "$HOST_FILE")"
-  CSHA="$(docker exec "$CONTAINER" sha256sum "$CONT_FILE" 2>/dev/null | awk '{print $1}')"
+  CSHA="$(docker exec "$CONTAINER" sh -c "sha256sum '$CONT_FILE'" 2>/dev/null | awk '{print $1}')"
   if [ -n "$HSHA" ] && [ "$HSHA" = "$CSHA" ]; then
     add "3" "마운트 동기화 (SHA256)" "일치 ${HSHA:0:6}…${HSHA: -6} ✓"; ok
   else
@@ -84,7 +88,7 @@ if [ "$DOCKER_OK" -eq 1 ]; then
   if [ -n "$PATTERN" ]; then
     # grep -c 는 0건일 때 "0" 출력 + exit 1 → 뒤에 `|| echo 0` 을 붙이면 "0\n0" 두 줄이 되어
     # 정수 비교 실패(integer expression expected). 대입 실패 시 CNT=0 으로 단일 값 보장.
-    CNT="$(docker exec "$CONTAINER" grep -c -- "$PATTERN" "$CONT_FILE" 2>/dev/null)" || CNT=0
+    CNT="$(docker exec "$CONTAINER" sh -c "grep -c -- '$PATTERN' '$CONT_FILE'" 2>/dev/null)" || CNT=0
     CNT="${CNT//[^0-9]/}"; CNT="${CNT:-0}"
     if [ "$CNT" -ge 1 ]; then
       add "4" "변경 반영 (컨테이너 grep '$PATTERN')" "${CNT}건 검출 ✓"; ok

@@ -47,32 +47,25 @@ _CV_N_SPLITS = 5
 _SIGNIFICANCE_THRESHOLD_K = 2.0
 
 
-def _baseline_names(state: Any) -> list[str]:
-    """state.category_extras 에서 baseline 모델 이름 조회.
-
-    ModelSelectionAgent 가 selector.score 의 baselines 키를 받아 적립.
-    """
-    cat_key = "tabular" if state.category.startswith("tabular") else state.category
-    extras = (getattr(state, "category_extras", None) or {}).get(cat_key, {})
-    names = extras.get("baseline_model_names") or []
-    return [str(n) for n in names]
-
-
 def _find_baseline_metrics(state: Any) -> dict[str, Any]:
-    """trained_models 에서 baseline 모델 중 가장 좋은 점수 1개 선택.
+    """trained_models 에서 '기준(baseline)' = Dummy(naive) 1개 선택.
 
-    baseline 후보가 여럿이면(Dummy + LogisticRegression 등), val_f1/val_r2 기준
-    더 강한 baseline 선택 → "강 baseline 대비 격차" 라는 보수적 표현이 됨.
+    HJ 2026-06-14 — 사용자 지시: 기준은 Dummy 다. 경쟁 모델(LogisticRegression/Ridge)을
+    기준으로 삼으면 그건 '기준'이 아니다(다른 모델의 임계치를 기준 삼는 셈). 따라서 4단계
+    (metrics_aggregator)와 동일하게 5단계 격차(improvement_over_baseline)·통계적 유의성
+    (lift_significant)도 **Dummy 대비**로 판정한다. LR/Ridge 는 비교군에서 제외.
+    Dummy 가 없으면(일부 카테고리) 기준 없음 → {} (유의성 게이트 미적용 = 미패널티).
     """
-    baselines = _baseline_names(state)
-    if not baselines:
-        return {}
     trained = getattr(state, "trained_models", None) or []
-    candidates = [(m.get("model_name"), (m.get("metrics") or {})) for m in trained if m.get("model_name") in baselines]
-    if not candidates:
+    dummy_candidates = [
+        (m.get("model_name"), (m.get("metrics") or {}))
+        for m in trained
+        if str(m.get("model_name", "")).lower().startswith("dummy")
+    ]
+    if not dummy_candidates:
         return {}
 
-    # 가장 좋은 baseline 선택 (val_f1 → val_accuracy → val_r2 순)
+    # Dummy 가 여럿이면 가장 강한 Dummy(가장 보수적 기준) 선택.
     def _key(item: tuple[str, dict]) -> float:
         _, mtr = item
         for k in _BASELINE_COMPARE_METRICS:
@@ -81,7 +74,7 @@ def _find_baseline_metrics(state: Any) -> dict[str, Any]:
                 return float(v)
         return float("-inf")
 
-    name, metrics = max(candidates, key=_key)
+    name, metrics = max(dummy_candidates, key=_key)
     return {"name": name, "metrics": dict(metrics)}
 
 
@@ -459,6 +452,10 @@ def evaluate(state: Any) -> dict[str, Any]:
         "rationale": rationale,
         "threshold_violations": violations,
         "metrics": metrics,
+        # HJ 2026-06-14 — 적응형 임계값을 구조화 dict 로 노출(프런트 G5 모달이 "지표 vs 임계" 비교 표시).
+        #   resolve_thresholds() 가 데이터 종류(회귀/분류)·클래스 수·불균형비 등에 따라 동적으로 산출 →
+        #   고정값이 아니라 데이터·카테고리 적응형. {"val_f1": 0.55} / {"val_roc_auc": 0.55} / {"val_r2": 0.30} 등.
+        "thresholds": thr,
         # Day 12 (jh) — 평가 근거·test 봉인 상태 노출.
         "eval_basis": eval_basis,  # "test" | "val"
         "threshold_basis": thr_desc,  # HJ — 적응형 임계 근거(한국어)
