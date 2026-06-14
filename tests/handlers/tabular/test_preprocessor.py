@@ -770,6 +770,28 @@ class TestApplySplitLeakageGuard:
         assert len(df_tr) > 0 and len(df_val) > 0
         assert len(df_tr) + len(df_val) + len(df_test) == len(df)
 
+    def test_id_like_drop_removes_pk_from_all_splits(self):
+        """★ S13 누수 가드 — id_like_drop 스텝이 train/val/test 모두에서 PK 제거.
+
+        jh 2026-06-13 — profiler 가 id_like 를 감지해도 실행 핸들러가 없어
+        PassengerId 류 PK 가 모델·SHAP 에 남던 결함의 회귀 방지. 핸들러가
+        apply()(train)·_transform_only(val/test) 양쪽에서 동일 컬럼을 제거해야 한다.
+        """
+        from agents.handlers.tabular.preprocessor import apply_split
+
+        state = self._make_state()
+        df = self._make_df(seed=7).reset_index(drop=True)
+        df["pid"] = range(len(df))  # 행마다 고유 → PK(id-like)
+        plan_steps = [
+            {"name": "id_like_drop", "columns": ["pid"], "params": {}},
+            {"name": "scale_numeric", "method": "robust", "params": {}},
+        ]
+        df_tr, df_val, df_test, _ = apply_split(df, plan_steps, state, random_state=42)
+        for part_name, part in (("train", df_tr), ("val", df_val), ("test", df_test)):
+            assert "pid" not in part.columns, f"id_like_drop 후 {part_name} 에 PK 잔존 — 누수"
+        # target 은 보존되어야 함
+        assert "y" in df_tr.columns
+
     def test_leakage_guard_val_contamination_doesnt_affect_train(self):
         """★ 핵심 — val 의 극단값 오염이 train scaled 결과에 영향 0.
 
