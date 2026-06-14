@@ -250,7 +250,10 @@ def build_eda_slide_from_chart(
             },
         ),
         speaker_notes_hint=(
-            f"EDA #{slide_index} — {feature}. finding: {finding[:80]}. "
+            # jh 2026-06-13 — 노트 라벨을 chart.x(예: 상관 슬라이드의 "SibSp") 대신
+            # 서술적 title_ko 우선으로 (상관·관계 슬라이드에서 단일 변수명 오기 방지).
+            f"EDA #{slide_index} — {(getattr(chart, 'title_ko', '') or feature)}. "
+            f"finding: {finding[:80]}. "
             "KEY INSIGHTS 는 callouts → numbers → finding 순서로 자동 채워짐."
         ),
     )
