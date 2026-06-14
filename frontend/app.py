@@ -2933,6 +2933,51 @@ def _flow_screen() -> None:
 
 
 # ===========================================================================
+# 인증 — 구글 OAuth 로그인 팝업 (STEP 6)
+# ===========================================================================
+@st.experimental_dialog("ADA 시작하기")
+def _login_dialog() -> None:
+    """'시작하기' 클릭 시 뜨는 로그인 팝업.
+
+    구글 OAuth 는 전체 페이지가 구글 동의화면으로 이동해야 하므로(보안 표준),
+    팝업 안에서는 '구글로 로그인' 버튼만 제공하고 클릭 시 브라우저(top-level)를
+    백엔드 /auth/google 로 보낸다. API 주소 규칙은 본 파일 상단 JS(API) 와 동일:
+    로컬=http://localhost:8000, 운영=https://<host>/api.
+    구글 로그인은 '처음이면 가입, 있으면 로그인' 이 한 흐름이라 버튼 하나로 충분하다.
+    """
+    st.markdown(
+        "<div style='text-align:center;padding:2px 0 0;'>"
+        "<div style='font-size:1.04rem;font-weight:700;color:#15273d;'>로그인하고 시작하기</div>"
+        "<div style='color:#6b7787;font-size:.85rem;margin-top:7px;line-height:1.55;'>"
+        "구글 계정으로 로그인하면 <b>자동으로 가입</b>됩니다.<br>"
+        "비밀번호는 따로 만들 필요가 없어요.</div></div>",
+        unsafe_allow_html=True,
+    )
+    # 구글 로그인 버튼 — iframe(components.html) 대신 Streamlit 네이티브 link_button.
+    #   구글 OAuth 동의화면은 작은 창/iframe 안에서 못 열리므로(구글 정책), 메인 페이지에서
+    #   전체 창으로 이동시키는 게 정석이자 가장 확실하다.
+    #   링크 URL 은 .env 의 GOOGLE_REDIRECT_URI 에서 base 를 추출(로컬/운영 자동 대응):
+    #     로컬 http://localhost:8000/auth/google/callback     → http://localhost:8000/auth/google
+    #     운영 https://ada-aiagent.com/api/auth/google/callback → https://ada-aiagent.com/api/auth/google
+    import os
+
+    _redirect = os.environ.get(
+        "GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback"
+    )
+    _login_url = _redirect.rsplit("/auth/google/callback", 1)[0] + "/auth/google"
+    st.link_button(
+        "🔵  Google 계정으로 로그인 / 회원가입",
+        _login_url,
+        use_container_width=True,
+        type="primary",
+    )
+    st.caption("🔒 로그인 시 접속 기록(시각·IP)이 안전하게 저장됩니다. 비밀번호는 저장하지 않습니다.")
+    if st.button("취소", use_container_width=True):
+        st.session_state.pop("_show_login", None)
+        st.rerun()
+
+
+# ===========================================================================
 # 라우팅 — 랜딩 → 플로우
 # ===========================================================================
 # F5 새로고침 시 URL 쿼리 파라미터로 flow 상태 복원
@@ -2944,6 +2989,33 @@ if st.query_params.get("reset") == "1":
     for k in list(st.session_state.keys()):
         del st.session_state[k]
     st.query_params.clear()
+
+# ── 구글 OAuth 콜백 복귀 처리 (STEP 6) ──
+#   백엔드 콜백이 {FRONTEND_URL}/?token=<JWT>&role=&email= 로 돌려보낸다.
+#   토큰을 세션에 저장 → URL 에서 즉시 제거(노출 최소화) → 바로 스튜디오 진입.
+#   ※ 여기서 st.rerun() 은 호출하지 않는다(구글에서 막 돌아온 reload 직후라
+#     rerun 시 'SessionInfo before initialized' 위험 — reset 처리 주석과 동일 이유).
+if st.query_params.get("token"):
+    st.session_state["auth_token"] = st.query_params.get("token")
+    st.session_state["auth_role"] = st.query_params.get("role", "analyst")
+    st.session_state["auth_email"] = st.query_params.get("email", "")
+    st.session_state["studio_started"] = True
+    st.session_state["_fresh_start"] = True
+    st.session_state.pop("_show_login", None)
+    st.session_state.pop("_auth_error", None)
+    for _k in ("token", "role", "email"):
+        try:
+            del st.query_params[_k]
+        except Exception:  # noqa: BLE001
+            pass
+
+# 로그인 실패로 돌아온 경우 — 에러 코드만 세션에 보관(랜딩에서 표시)
+if st.query_params.get("auth_error"):
+    st.session_state["_auth_error"] = st.query_params.get("auth_error")
+    try:
+        del st.query_params["auth_error"]
+    except Exception:  # noqa: BLE001
+        pass
 
 if st.query_params.get("flow") == "1":
     st.session_state["studio_started"] = True
@@ -2995,10 +3067,15 @@ if not st.session_state.get("studio_started"):
             unsafe_allow_html=True,
         )
         if st.button("지금 시작하기", type="primary", use_container_width=True):
-            st.session_state["studio_started"] = True
-            st.session_state["_fresh_start"] = True
-            st.query_params["flow"] = "1"
-            st.rerun()
+            # STEP 6 — 로그인 안 했으면 먼저 로그인 팝업, 했으면 바로 스튜디오로.
+            if st.session_state.get("auth_token"):
+                st.session_state["studio_started"] = True
+                st.session_state["_fresh_start"] = True
+                st.query_params["flow"] = "1"
+                st.rerun()
+            else:
+                st.session_state["_show_login"] = True
+                st.rerun()
     with _R:
         st.markdown(
             """
@@ -3028,5 +3105,35 @@ if not st.session_state.get("studio_started"):
             """,
             unsafe_allow_html=True,
         )
+
+    # ── 로그인 실패 알림 + 팝업 트리거 (STEP 6) ──
+    if st.session_state.get("_auth_error"):
+        _err = st.session_state.get("_auth_error")
+        _msg = {
+            "google_oauth_failed": "구글 로그인에 실패했어요. 다시 시도해 주세요.",
+            "no_userinfo": "구글에서 계정 정보를 받지 못했어요. 다시 시도해 주세요.",
+            "email_not_verified": "이메일이 확인되지 않은 구글 계정이에요.",
+            "account_inactive": "비활성화된 계정입니다. 관리자에게 문의하세요.",
+        }.get(_err, "로그인 중 문제가 발생했어요. 다시 시도해 주세요.")
+        st.error(_msg)
+    if st.session_state.get("_show_login"):
+        _login_dialog()
 else:
+    # ── 로그인 사용자 표시 + 로그아웃 (사이드바, STEP 6) ──
+    if st.session_state.get("auth_token"):
+        with st.sidebar:
+            _who = st.session_state.get("auth_email") or "로그인됨"
+            st.markdown(
+                f"<div style='font-size:.84rem;color:#5a7596;'>👤 <b>{_who}</b><br>"
+                f"<span style='font-size:.76rem;color:#9aa6b5;'>"
+                f"{st.session_state.get('auth_role','analyst')} 권한</span></div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("로그아웃", use_container_width=True):
+                for _k in ("auth_token", "auth_role", "auth_email",
+                           "studio_started", "_fresh_start"):
+                    st.session_state.pop(_k, None)
+                st.query_params.clear()
+                st.rerun()
     _flow_screen()
+# ── STEP 6 (구글 OAuth 로그인 팝업·게이트) 끝 ──

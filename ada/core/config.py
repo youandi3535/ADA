@@ -53,6 +53,18 @@ class Settings(BaseSettings):
     jwt_algo: str = Field(default="HS256", validation_alias="JWT_ALGO")
     jwt_expire_min: int = Field(default=60, validation_alias="JWT_EXPIRE_MIN")
 
+    # ----- Google OAuth (v1 소셜 로그인) -----
+    # 값은 .env 에서 주입 (코드 하드코딩 금지 R-001). 미설정이면 구글 로그인만 비활성.
+    google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", validation_alias="GOOGLE_CLIENT_SECRET")
+    # 구글 콘솔의 '승인된 리디렉션 URI' 와 정확히 일치해야 함 (환경별로 다름).
+    google_redirect_uri: str = Field(
+        default="http://localhost:8000/auth/google/callback",
+        validation_alias="GOOGLE_REDIRECT_URI",
+    )
+    # OAuth 콜백 성공 후 사용자를 돌려보낼 프론트(Streamlit) 주소.
+    frontend_url: str = Field(default="http://localhost:8501", validation_alias="FRONTEND_URL")
+
     # ----- App -----
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     # HJ 2026-06-09 — 100 → 30 인하.

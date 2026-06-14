@@ -95,9 +95,8 @@ jobs:
             git fetch --depth=1 origin main
             git reset --hard origin/main
 
-            # 2) GHCR 로그인 (private 이미지면 PAT 사용)
-            echo "${{ secrets.GITHUB_TOKEN }}" \
-              | docker login ghcr.io -u ${{ github.actor }} --password-stdin || true
+            # 2) 패키지 public → 로그인 불필요. 만료 자격증명 잔존으로 pull denied 되지 않게 logout.
+            docker logout ghcr.io || true
 
             # 3) compose 파일이 있는 docker/ 로 이동
             cd docker

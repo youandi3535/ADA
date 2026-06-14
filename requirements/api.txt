@@ -40,6 +40,7 @@ langsmith==0.1.147        # 트레이싱
 python-jose[cryptography]==3.3.0   # JWT
 passlib[bcrypt]==1.7.4              # 패스워드 해시
 itsdangerous==2.2.0                 # 서명된 쿠키
+authlib==1.3.1                      # OAuth2/OIDC 클라이언트 (v1 구글 로그인) — httpx(anthropic 의존)·cryptography(python-jose) 재사용
 hvac==2.3.0                         # Vault 클라이언트
 slowapi==0.1.9                      # rate-limit
 celery==5.4.0                       # Celery 태스크 디스패치 (runner import)

@@ -306,6 +306,22 @@ def _brandize_png(png):
         return png
 
 
+def _fallback(plan, output_path) -> str:
+    """reportlab 미사용(미설치) 환경에서 PDF 생성 불가 시 — 최소 텍스트로 degrade.
+
+    PDF 렌더러가 통째로 없을 때만 타는 비상 경로. 호출 계약(경로 문자열 반환)은
+    지키되, 내용은 '렌더러 불가' 안내로 채운다.
+    """
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    title = getattr(plan, "title", None) or "데이터 분석 보고서"
+    out.write_text(
+        f"{title}\n\n(PDF 렌더러(reportlab)를 사용할 수 없어 텍스트로 대체했습니다.)\n",
+        encoding="utf-8",
+    )
+    return str(out)
+
+
 def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     try:
         from reportlab.lib import colors
@@ -342,7 +358,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     sw = PS("SW", fontName=_KG, fontSize=16, leading=23, textColor=colors.HexColor("#243B5C"), leftIndent=0)  # [B28][B29] sw 16pt 네이비
     body = PS("B", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=8)  # [B28][B30] body 14pt+들여쓰기 8
     bul = PS("BL", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=14, firstLineIndent=-10)  # [B28] bul 14pt
-    cap = PS("CP", fontName=_KS, fontSize=12, leading=16, textColor=black)  # [B28] cap 12pt
+    cap = PS("CP", fontName=_KS, fontSize=12, leading=16, textColor=colors.HexColor("#475569"))  # [B28] cap 12pt · [세련화] 뮤트 슬레이트
     PS("TOCE", fontName=_KS, fontSize=14, leading=20, textColor=black)  # [B28] toc_e 14pt  # 목차 항목명
     PS("TOCP", fontName=_KS, fontSize=12, leading=18, textColor=colors.HexColor("#475569"), alignment=TA_RIGHT)  # 목차 페이지(옅은 회색)
     # [목차룰] Executive Summary 강조 + TABLE OF CONTENTS 트래킹 라벨
@@ -380,6 +396,27 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     _BR_MUTE = colors.HexColor("#8A96A8")
     _BR_SUB = colors.HexColor("#6B7891")
     _BR_LINE = colors.HexColor("#EEF1F7")
+
+    class _HRule(Flowable):
+        """[세련화] 제목 밑 풀폭 룰 — 좌측 짧은 블루 악센트 + 우측 끝까지 헤어라인(쭉·깔끔, 기관 톤)."""
+
+        def __init__(self, w, accent=64.0):
+            Flowable.__init__(self)
+            self.width = float(w)
+            self.height = 3.0
+            self._a = accent
+
+        def wrap(self, _aw, _ah):
+            return (self.width, self.height)
+
+        def draw(self):
+            _c = self.canv
+            _c.setStrokeColor(_BR_DIV)
+            _c.setLineWidth(0.7)
+            _c.line(0, 1.3, self.width, 1.3)
+            _c.setStrokeColor(_BR_BLUE)
+            _c.setLineWidth(2.4)
+            _c.line(0, 1.3, self._a, 1.3)
     try:
         from outputs.architect.skeletons.report_skeleton import _human_dataset_name as _hdn
 
@@ -522,9 +559,11 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 return s[:_i] + "<br/>" + s[_i + 1:]
             return s
 
+        # [세련화·색 절제] KPI 색은 caller 값 무시 → hero=블루·나머지=네이비 통일(라벤더 제거, 1악센트 원칙)
+        _EXP = ["#3A6FE0", "#243B5C", "#243B5C", "#243B5C", "#243B5C"]
         _nums, _lbls = [], []
-        for _v, _l, _col in kpis:
-            _nums.append(Paragraph(f'<font color="{_col}"><b>{_v}</b></font>', _num_ps))
+        for _i2, (_v, _l, _col) in enumerate(kpis):
+            _nums.append(Paragraph(f'<font color="{_EXP[min(_i2, len(_EXP) - 1)]}"><b>{_v}</b></font>', _num_ps))
             _lbls.append(Paragraph(_lblbreak(_l), _lbl_ps))
         _kt = Table([_nums, _lbls], colWidths=[(width - 32) / _n] * _n)
         _kt.setStyle(TableStyle([
@@ -551,6 +590,83 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             ("TOPPADDING", (0, 0), (-1, -1), 16), ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
         ]))
         return KeepTogether([_box])
+
+    def _smart_table(cols, rows, total_w):
+        """[B32 본문표룰] 본문 표 — 내용 인식 컬럼 폭 + 셀 줄바꿈 + 헤더 가운데정렬.
+
+        어떤 데이터·어떤 컬럼이 와도 일반화(하드코딩 0). 특정 컬럼명·숫자에 의존하지 않고
+        '글자 폭'이라는 구조 신호만 본다:
+        - 열별 자연폭 = max(헤더, 셀들) stringWidth + 패딩. 단일 셀이 표를 독식 못 하게 상한.
+        - 짧은 열(번호·코드 등)은 그 폭만 차지해 자동 축소, 텍스트 긴 열(근거 등)이 남는 폭 흡수해 확장.
+        - 폭이 모자라면 '텍스트(평균초과) 열'만 비례 축소(짧은 열 보존) → 셀은 Paragraph 라 칸 안에서 자동 줄바꿈.
+        - 짧은/숫자형 열은 가운데, 텍스트 열은 좌측. 헤더는 전부 가운데(요청 반영).
+        """
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
+        _fs = 9          # 셀 폰트(헤더·본문 동일)
+        _pad = 26        # 좌우 패딩(셀 14) + 넉넉한 여유 — 짧은 숫자열 줄바꿈 확실히 방지
+        _minw = 0.85 * cm
+        n = max(len(cols), 1)
+        rows = [list(r) + [""] * (n - len(r)) for r in rows]  # 행 길이 정규화(데이터 안전)
+        _cap = 0.55 * total_w  # 단일 열 독식 방지 상한
+
+        nat, longest = [], []
+        for j in range(n):
+            _hw = stringWidth(str(cols[j]), _KG, _fs)
+            _cw = [stringWidth(str(r[j]), _KS, _fs) for r in rows] or [0.0]
+            nat.append(min(max(_hw, max(_cw)) + _pad, _cap))
+            longest.append(max((len(str(r[j])) for r in rows), default=0))
+
+        # 폭 배분: '텍스트(평균초과) 열'만 가변(flex), 짧은 열은 자연폭 고정 → 정규화로도 안 줄여 토큰 중간 줄바꿈 방지.
+        _avg = sum(nat) / n
+        _flex = [j for j in range(n) if nat[j] > _avg] or [max(range(n), key=lambda j: nat[j])]
+        _fixed = [j for j in range(n) if j not in _flex]
+        widths = [0.0] * n
+        for j in _fixed:
+            widths[j] = max(nat[j], _minw)          # 고정열: 자연폭 보존(가독 최소폭 보장)
+        _avail = total_w - sum(widths[j] for j in _fixed)
+        _fnat = sum(nat[j] for j in _flex) or 1.0
+        if _avail < _minw * len(_flex):
+            _s = sum(nat) or 1.0                     # 고정열 과대(드문 edge) → 전체 비례 축소 폴백
+            widths = [max(0.6 * _minw, w * total_w / _s) for w in nat]
+        else:
+            for j in _flex:
+                widths[j] = max(_minw, _avail * nat[j] / _fnat)  # 가변열: 남는 폭 비례
+        _drift = total_w - sum(widths)               # 부동소수 보정 차액은 최대 가변열만(고정열 폭 불변)
+        widths[max(_flex, key=lambda j: widths[j])] += _drift
+
+        def _is_short(j):
+            # 헤더·모든 셀이 짧은(숫자/코드성) 열 → 가운데 정렬. 컬럼명 하드코딩 없이 내용으로 판별.
+            if longest[j] > 6:
+                return False
+            _cells = [str(r[j]).strip() for r in rows if str(r[j]).strip()]
+            if not _cells:
+                return True
+            return all(c.replace(".", "").replace("-", "").replace("%", "").isdigit() or len(c) <= 3 for c in _cells)
+
+        def _esc(x):
+            return str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        _hdr = PS("TblH", fontName=_KG, fontSize=_fs, leading=_fs + 3, textColor=colors.white, alignment=TA_CENTER)
+        _cl = PS("TblL", fontName=_KS, fontSize=_fs, leading=_fs + 4, textColor=colors.HexColor("#1F2937"), alignment=TA_LEFT)
+        _cc = PS("TblC", fontName=_KS, fontSize=_fs, leading=_fs + 4, textColor=colors.HexColor("#1F2937"), alignment=TA_CENTER)
+        _al = [_cc if _is_short(j) else _cl for j in range(n)]
+        _data = [[Paragraph(_esc(c), _hdr) for c in cols]]
+        _data += [[Paragraph(_esc(r[j]), _al[j]) for j in range(n)] for r in rows]
+        _t = Table(_data, colWidths=widths, hAlign="LEFT", repeatRows=1)
+        _t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), primary),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.8, primary),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.5, colors.HexColor("#E8ECF4")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F7F9FC")]),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        return _t
 
     def _build_story(toc_render):
         """flowable 리스트 생성. toc_render=None 이면 1차(페이지 측정)용 placeholder 목차.
@@ -623,6 +739,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         _pkg = _chairman_exec(ctx, plan)  # 회장 패키지(내용=skeleton). None 이면 기존 Exec 폴백.
         if _pkg and (getattr(nt, "headline", "") or nt.resolution or nt.conflict):
             flow.append(Paragraph("Executive Summary", h1_toc))
+            flow.append(_HRule(17 * cm))  # [세련화] 풀폭 룰(좌 블루 악센트 + 우 헤어라인)
+            flow.append(Spacer(1, 0.15 * cm))
             flow.append(Paragraph(f"<b>{_nodash(_pkg['bluf'])}</b>", body))  # BLUF(결정 한 줄)
             flow.append(Spacer(1, 0.2 * cm))
             flow.append(Paragraph(  # 관통 질문 + 답
@@ -635,11 +753,14 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             flow.append(Spacer(1, 0.6 * cm))  # 3기둥과 exhibit 사이 한 줄 호흡(붙지 않게)
             _exec_hero(_pkg.get("kpis"), _pkg.get("hero_take"), _pkg.get("hero_unit"), _pkg.get("hero_src"))  # hero = 비즈니스 KPI
             flow.append(Spacer(1, 0.3 * cm))
-            _ask_t = Table([[Paragraph(f"<b>권고: {_nodash(_pkg['ask'])}</b>", sw)]], colWidths=[17 * cm])
+            _ask_w = PS("AskW", fontName=_KG, fontSize=13.5, textColor=colors.white, leading=19)
+            _ask_l = PS("AskL", fontName=_KG, fontSize=8, textColor=colors.HexColor("#9DB2E8"), leading=11)
+            _ask_t = Table([[[Paragraph("권 고", _ask_l), Spacer(1, 0.06 * cm), Paragraph(_nodash(_pkg['ask']), _ask_w)]]], colWidths=[17 * cm])
             _ask_t.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EAF1FD")),
-                ("LEFTPADDING", (0, 0), (-1, -1), 14), ("RIGHTPADDING", (0, 0), (-1, -1), 14),
-                ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, -1), _BR_NAVY),  # [세련화] 권고=네이비 CTA + 화이트 텍스트
+                ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 16), ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+                ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
             ]))
             flow.append(_ask_t)  # 권고(now-what)
             flow.append(Spacer(1, 0.15 * cm))
@@ -662,22 +783,46 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             if sec.id == "backup" or sec.kind == "cover":
                 continue
             # [고아 헤딩 방지] 섹션 제목을 첫 렌더 슬라이드와 한 덩어리로 묶어, 제목만 남고 내용이 다음 장으로 밀리는 현상 차단
-            _sec_head = [Paragraph(sec.title, h1_toc), Spacer(1, 0.35 * cm)]  # 규칙: 큰 제목 밑 한 줄 띄움
+            _sec_head = [Paragraph(sec.title, h1_toc), _HRule(17 * cm), Spacer(1, 0.2 * cm)]  # [세련화] 풀폭 룰(좌 블루 악센트 + 우 끝까지 헤어라인)
             _img_in_sec = 0  # 페이지당 차트 최대 2개 강제용
             _just_broke = False
             for sl in sec.slides:
                 if sl.role == "meta" and sl.layout in ("cover", "agenda", "closing"):
                     continue
-                sl_flow: list = [Paragraph(sl.title_ko or sl.id, h2)]
+                # [고아 제목 방지] 비-이미지 슬라이드(게이트·표·exhibit)만 제목+핵심+첫 블록을 한 덩어리로 묶어
+                #   다중 슬라이드 섹션(§4)에서 제목만 페이지 끝에 남는 현상 차단. 이미지 슬라이드(EDA 차트)는
+                #   '차트 2개/페이지' 로직 보존 위해 기존 평면 배치 유지(회귀 방지).
+                _vs0 = sl.visual_spec
+                _vis_img = bool(_vs0 and _vs0.type and _vs0.type not in ("gate_check", "exhibit_kpi", "issue_tree", "text_only") and not _vs0.type.startswith("table_"))
+                _head: list = []
+                if sl.title_ko:  # 제목 없으면 h2 생략(§4 등: 가짜 소제목 방지, 섹션 제목만)
+                    _head.append(Paragraph(sl.title_ko, h2))
                 if sl.so_what:  # 규칙: '핵심 —' 위아래 한 줄 띄움
-                    sl_flow.append(Spacer(1, 0.2 * cm))
-                    sl_flow.append(Paragraph(_nodash(f"핵심 — {sl.so_what}"), sw))
-                    sl_flow.append(Spacer(1, 0.2 * cm))
-                # 산문형 본문(라벨 + 단락) — 규칙: 소제목 사이 한 줄 더 띄움
-                for _blk in (getattr(sl, "prose_blocks", None) or []):
-                    if isinstance(_blk, (list, tuple)) and len(_blk) >= 2 and _blk[1]:
-                        sl_flow.append(Spacer(1, 0.42 * cm))
-                        if _blk[0]:  # 라벨 있으면 굵게, 없으면 단락만 (라벨 없는 흐름)
+                    _head.append(Spacer(1, 0.2 * cm))
+                    _head.append(Paragraph(_nodash(f"핵심 — {sl.so_what}"), sw))
+                    _head.append(Spacer(1, 0.2 * cm))
+                _pblocks = [
+                    _b for _b in (getattr(sl, "prose_blocks", None) or [])
+                    if isinstance(_b, (list, tuple)) and len(_b) >= 2 and _b[1]
+                ]
+                if _vis_img:
+                    sl_flow = list(_head)  # 이미지 슬라이드: 기존 평면 배치(차트 2개/페이지 로직 보존)
+                    for _blk in _pblocks:
+                        sl_flow.append(Spacer(1, 0.6 * cm))
+                        if _blk[0]:
+                            sl_flow.append(Paragraph(f"<b>{_blk[0]}</b>", sw))
+                        sl_flow.append(Paragraph(_nodash(str(_blk[1])), body))
+                else:
+                    if _pblocks:  # 비-이미지: 첫 블록을 제목과 한 덩어리(고아 방지)
+                        _b0 = _pblocks[0]
+                        _head.append(Spacer(1, 0.6 * cm))
+                        if _b0[0]:
+                            _head.append(Paragraph(f"<b>{_b0[0]}</b>", sw))
+                        _head.append(Paragraph(_nodash(str(_b0[1])), body))
+                    sl_flow = [KeepTogether(_head)]
+                    for _blk in _pblocks[1:]:  # 둘째 블록부터
+                        sl_flow.append(Spacer(1, 0.6 * cm))
+                        if _blk[0]:
                             sl_flow.append(Paragraph(f"<b>{_blk[0]}</b>", sw))
                         sl_flow.append(Paragraph(_nodash(str(_blk[1])), body))
                 for b in sl.body_outline:
@@ -745,31 +890,12 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     except Exception:
                         pass
                 elif vs and (vs.type or "").startswith("table_"):
-                    # 표는 이미지 대신 native reportlab Table — 선명·full-width·페이지 분할(헤더 반복)
+                    # [B32 본문표룰] native reportlab Table — _smart_table 이 내용인식 컬럼폭·셀 줄바꿈·헤더 가운데 처리
                     _cols = list((vs.spec or {}).get("columns") or [])
                     _rows = list((vs.spec or {}).get("rows") or [])
                     if _cols and _rows:
-                        _nc = len(_cols)
-                        _data = [list(_cols)] + [[str(c) for c in r] for r in _rows]
-                        _t = Table(_data, colWidths=[(17.0 / _nc) * cm] * _nc, hAlign="LEFT", repeatRows=1)
-                        _t.setStyle(
-                            TableStyle(
-                                [
-                                    ("BACKGROUND", (0, 0), (-1, 0), primary),
-                                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                                    ("FONTNAME", (0, 0), (-1, 0), _KG),
-                                    ("FONTNAME", (0, 1), (-1, -1), _KS),
-                                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
-                                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-                                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                                ]
-                            )
-                        )
-                        _grp: list = [Spacer(1, 0.2 * cm)]
+                        _t = _smart_table(_cols, _rows, 17.0 * cm)
+                        _grp: list = [Spacer(1, (0.35 if getattr(sec, "kind", "") == "appendix" else 0.9) * cm)]  # 표 앞 간격(부록은 고밀도)
                         if vs.title:
                             _grp.append(Paragraph(f"<b>{vs.title}</b>", sw))
                         _grp.append(_t)
@@ -782,7 +908,15 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                             # 실 파이프라인 차트 PNG 직접 임베드 (재렌더 불가 → 원본)
                             png = _fetch_png((vs.spec or {}).get("path"))
                         else:
+                            # [부록 차트제목룰] 부록 차트만 제목을 reportlab 로 크게(표 제목과 동일) → matplotlib 작은 제목 비움.
+                            # 본문 차트는 기존(matplotlib 제목) 유지 → §2 등 페이지 분량 불변.
+                            _is_appx = getattr(sec, "kind", "") == "appendix"
+                            _ch_title = (vs.title or "") if _is_appx else ""
+                            if _is_appx:
+                                vs.title = ""
                             png = render_visual_to_png(vs, ctx, slide=sl)
+                            if _is_appx:
+                                vs.title = _ch_title
                             png = _brandize_png(png)  # [PDF 전용] 차트 강조색 #185FA5→브랜드 블루 #3A6FE0
                         if png:
                             from PIL import Image as PI
@@ -791,20 +925,26 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                                 ar = im.width / im.height
                             # [B6 EDA페이지룰] 페이지당 2개 강제 — width 13cm / height 상한 4.8cm
                             # (섹션 헤딩 + 차트 2개가 첫 페이지에도 확실히 같이 들어가도록 높이 축소)
+                            # 차트 크기 일관: EDA(2개/페이지)는 4.8cm 캡, 단일 차트(부록·성능 등)는 7.4cm로 크게.
+                            _cap_h = 4.8 if getattr(sec, "id", "") == "eda" else 7.4
                             w_cm = 13.0
                             h_cm = w_cm / ar
-                            if h_cm > 4.8:
-                                h_cm = 4.8
+                            if h_cm > _cap_h:
+                                h_cm = _cap_h
                                 w_cm = h_cm * ar
-                            sl_flow.append(Spacer(1, 0.45 * cm))  # [B25] 그래프 앞 한 줄 띄움
-                            sl_flow.append(Image(png, width=w_cm * cm, height=h_cm * cm))
+                            sl_flow.append(Spacer(1, (0.9 if getattr(sec, "kind", "") == "appendix" else 0.45) * cm))  # [B25] 그래프 앞 — 부록은 프로즈↔제목 2줄 띄움
+                            if locals().get("_ch_title"):
+                                sl_flow.append(Paragraph(f"<b>{_ch_title}</b>", sw))
+                                sl_flow.append(Spacer(1, 0.12 * cm))
+                            sl_flow.append(Image(png, width=w_cm * cm, height=h_cm * cm, hAlign="CENTER"))
                             if vs.caption:
                                 sl_flow.append(Paragraph(_nodash(vs.caption), cap))
-                            sl_flow.append(Spacer(1, 0.4 * cm))  # [B25] 그래프 뒤 한 줄 띄움
+                            sl_flow.append(Spacer(1, (0.2 if getattr(sec, "kind", "") == "appendix" else 0.4) * cm))  # [B25] 그래프 뒤(부록 고밀도)
                             has_img = True
                     except Exception:
                         pass
                 sl_flow.append(Spacer(1, 0.25 * cm))
+                _had_head = _sec_head is not None
                 if _sec_head is not None:  # [고아 헤딩 방지] 첫 렌더 슬라이드 앞에 섹션 제목 결합 → 절대 분리 안 됨
                     sl_flow = _sec_head + sl_flow
                     _sec_head = None
@@ -820,6 +960,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     if _img_in_sec % 2 == 0:
                         flow.append(PageBreak())
                         _just_broke = True
+                elif _had_head and getattr(sec, "kind", "") == "appendix":
+                    flow.append(KeepTogether(sl_flow))  # [부록 고아방지] 9.x 제목 + 첫 exhibit 묶음 → 제목만 외톨이 금지
+                    _just_broke = False
                 else:
                     flow.extend(sl_flow)
                     _just_broke = False
@@ -926,32 +1069,28 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 cnv.setLineWidth(0.8)
                 cnv.line(M + 22, _ry - 12, W - M - 22, _ry - 12)
             _ry -= 29
-        # (5) KEY 지표 카드 — 좌(블루) 주지표 / 우(라벤더) 변수 수. 변수 없으면 주지표 full-width.
+        # (5) KEY 지표 카드 — [세련화] 흰 카드+헤어라인 보더, hero(주지표) 블루 상단룰·블루 숫자 / 보조 네이비 (소프트필·라벤더 제거·1악센트 절제)
         _ky, _kh, _gap = H - 572, 84, 14
+
+        def _kpi_card(_x, _w, _val, _lbl, _accent, _hero):
+            _round_card(cnv, _x, _ky, _w, _kh, 12, colors.white, _BR_BORDER)
+            if _hero:
+                cnv.setStrokeColor(_BR_BLUE)
+                cnv.setLineWidth(2)
+                cnv.line(_x + 9, _ky + _kh - 1.2, _x + _w - 9, _ky + _kh - 1.2)
+            cnv.setFont(_KG, 31)
+            cnv.setFillColor(_accent)
+            cnv.drawString(_x + 22, _ky + 33, _val)
+            cnv.setFont(_KS, 12)
+            cnv.setFillColor(_BR_SUB)
+            cnv.drawString(_x + 22, _ky + 15, _lbl)
+
         if _cv_m2v:
             _kw = (W - 2 * M - _gap) / 2
-            _round_card(cnv, M, _ky, _kw, _kh, 14, _BR_BLUEBG)
-            cnv.setFont(_KG, 33)
-            cnv.setFillColor(_BR_BLUE)
-            cnv.drawString(M + 22, _ky + 34, _cv_m1v)
-            cnv.setFont(_KS, 12.5)
-            cnv.setFillColor(_BR_SUB)
-            cnv.drawString(M + 22, _ky + 15, _cv_m1l)
-            _round_card(cnv, M + _kw + _gap, _ky, _kw, _kh, 14, _BR_LAVBG)
-            cnv.setFont(_KG, 33)
-            cnv.setFillColor(_BR_LAV)
-            cnv.drawString(M + _kw + _gap + 22, _ky + 34, _cv_m2v)
-            cnv.setFont(_KS, 12.5)
-            cnv.setFillColor(_BR_SUB)
-            cnv.drawString(M + _kw + _gap + 22, _ky + 15, _cv_m2l)
+            _kpi_card(M, _kw, _cv_m1v, _cv_m1l, _BR_BLUE, True)
+            _kpi_card(M + _kw + _gap, _kw, _cv_m2v, _cv_m2l, _BR_NAVY, False)
         else:
-            _round_card(cnv, M, _ky, W - 2 * M, _kh, 14, _BR_BLUEBG)
-            cnv.setFont(_KG, 33)
-            cnv.setFillColor(_BR_BLUE)
-            cnv.drawString(M + 22, _ky + 34, _cv_m1v)
-            cnv.setFont(_KS, 12.5)
-            cnv.setFillColor(_BR_SUB)
-            cnv.drawString(M + 22, _ky + 15, _cv_m1l)
+            _kpi_card(M, W - 2 * M, _cv_m1v, _cv_m1l, _BR_BLUE, True)
         # (6) 푸터 — 도메인 + 라벨
         cnv.setStrokeColor(_BR_DIV)
         cnv.setLineWidth(1.1)
@@ -1007,11 +1146,4 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     # ── 2차: 실제 페이지 범위 채워 최종 렌더
     doc = _mk(out)
     doc.build(_build_story(toc_render), onFirstPage=_draw_cover, onLaterPages=_foot)
-    return str(out)
-
-
-def _fallback(plan, output_path):
-    out = Path(str(output_path) + ".txt")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(f"[PDF Fallback {plan.skeleton}]", encoding="utf-8")
     return str(out)

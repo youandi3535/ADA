@@ -371,13 +371,13 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
     _max_idx = values.index(max(values)) if values else -1
     # jh 2026-06-12 — 강조 막대색을 팔레트 primary 로 (하드코딩 #185FA5 가 색상
     # 교체에 안 따라가던 결함, 사용자 지적). 묻힘색은 중립 슬레이트 유지.
-    _ACCENT = primary or "#185FA5"
+    _ACCENT = "#3A6FE0"  # 브랜드 블루(Exec 강조색) 고정 — 차트 색감 통일
     _MUTED = "#94A3B8"
     colors_list = [_ACCENT if i == _max_idx else _MUTED for i in range(len(values))]
 
     fig, ax = plt.subplots(figsize=(9, 4.8), dpi=120)
     fig.patch.set_facecolor("white")
-    bars = ax.bar(labels, values, color=colors_list, width=0.38, zorder=3, edgecolor="none")
+    bars = ax.bar(labels, values, color=colors_list, width=(0.62 if len(values) <= 4 else 0.7), zorder=3, edgecolor="none")
     for i, (bar, v) in enumerate(zip(bars, values)):
         y = bar.get_height()
         lbl = f"{v:.3f}" if 0 < v < 1 else (f"{int(v)}" if v == int(v) else f"{v:.1f}")
@@ -456,7 +456,7 @@ def _render_hbar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, 
     y = list(range(len(values)))[::-1]
     # jh 2026-06-12 — _render_bar 와 동일하게 팔레트 primary 강조 (하드코딩 제거)
     _max_idx = values.index(max(values)) if values else -1
-    _ACCENT = primary or "#185FA5"
+    _ACCENT = "#3A6FE0"  # 브랜드 블루(Exec 강조색) 고정 — 차트 색감 통일
     _MUTED = "#94A3B8"    # 묻힘 색
     colors_list = [_ACCENT if i == _max_idx else _MUTED for i in range(len(values))]
     _unit = "%" if "%" in (vs.title or "") else ""   # 제목에 % 있으면 라벨에 % 부착
