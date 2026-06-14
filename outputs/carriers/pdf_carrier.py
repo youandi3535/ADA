@@ -342,7 +342,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     sw = PS("SW", fontName=_KG, fontSize=16, leading=23, textColor=colors.HexColor("#243B5C"), leftIndent=0)  # [B28][B29] sw 16pt 네이비
     body = PS("B", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=8)  # [B28][B30] body 14pt+들여쓰기 8
     bul = PS("BL", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=14, firstLineIndent=-10)  # [B28] bul 14pt
-    cap = PS("CP", fontName=_KS, fontSize=12, leading=16, textColor=black)  # [B28] cap 12pt
+    cap = PS("CP", fontName=_KS, fontSize=12, leading=16, textColor=colors.HexColor("#475569"))  # [B28] cap 12pt · [세련화] 뮤트 슬레이트
     PS("TOCE", fontName=_KS, fontSize=14, leading=20, textColor=black)  # [B28] toc_e 14pt  # 목차 항목명
     PS("TOCP", fontName=_KS, fontSize=12, leading=18, textColor=colors.HexColor("#475569"), alignment=TA_RIGHT)  # 목차 페이지(옅은 회색)
     # [목차룰] Executive Summary 강조 + TABLE OF CONTENTS 트래킹 라벨
@@ -380,6 +380,27 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     _BR_MUTE = colors.HexColor("#8A96A8")
     _BR_SUB = colors.HexColor("#6B7891")
     _BR_LINE = colors.HexColor("#EEF1F7")
+
+    class _HRule(Flowable):
+        """[세련화] 제목 밑 풀폭 룰 — 좌측 짧은 블루 악센트 + 우측 끝까지 헤어라인(쭉·깔끔, 기관 톤)."""
+
+        def __init__(self, w, accent=64.0):
+            Flowable.__init__(self)
+            self.width = float(w)
+            self.height = 3.0
+            self._a = accent
+
+        def wrap(self, _aw, _ah):
+            return (self.width, self.height)
+
+        def draw(self):
+            _c = self.canv
+            _c.setStrokeColor(_BR_DIV)
+            _c.setLineWidth(0.7)
+            _c.line(0, 1.3, self.width, 1.3)
+            _c.setStrokeColor(_BR_BLUE)
+            _c.setLineWidth(2.4)
+            _c.line(0, 1.3, self._a, 1.3)
     try:
         from outputs.architect.skeletons.report_skeleton import _human_dataset_name as _hdn
 
@@ -522,9 +543,11 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 return s[:_i] + "<br/>" + s[_i + 1:]
             return s
 
+        # [세련화·색 절제] KPI 색은 caller 값 무시 → hero=블루·나머지=네이비 통일(라벤더 제거, 1악센트 원칙)
+        _EXP = ["#3A6FE0", "#243B5C", "#243B5C", "#243B5C", "#243B5C"]
         _nums, _lbls = [], []
-        for _v, _l, _col in kpis:
-            _nums.append(Paragraph(f'<font color="{_col}"><b>{_v}</b></font>', _num_ps))
+        for _i2, (_v, _l, _col) in enumerate(kpis):
+            _nums.append(Paragraph(f'<font color="{_EXP[min(_i2, len(_EXP) - 1)]}"><b>{_v}</b></font>', _num_ps))
             _lbls.append(Paragraph(_lblbreak(_l), _lbl_ps))
         _kt = Table([_nums, _lbls], colWidths=[(width - 32) / _n] * _n)
         _kt.setStyle(TableStyle([
@@ -618,9 +641,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         _t = Table(_data, colWidths=widths, hAlign="LEFT", repeatRows=1)
         _t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), primary),
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
             ("LINEBELOW", (0, 0), (-1, 0), 0.8, primary),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F7FB")]),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.5, colors.HexColor("#E8ECF4")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F7F9FC")]),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
@@ -700,6 +723,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         _pkg = _chairman_exec(ctx, plan)  # 회장 패키지(내용=skeleton). None 이면 기존 Exec 폴백.
         if _pkg and (getattr(nt, "headline", "") or nt.resolution or nt.conflict):
             flow.append(Paragraph("Executive Summary", h1_toc))
+            flow.append(_HRule(17 * cm))  # [세련화] 풀폭 룰(좌 블루 악센트 + 우 헤어라인)
+            flow.append(Spacer(1, 0.15 * cm))
             flow.append(Paragraph(f"<b>{_nodash(_pkg['bluf'])}</b>", body))  # BLUF(결정 한 줄)
             flow.append(Spacer(1, 0.2 * cm))
             flow.append(Paragraph(  # 관통 질문 + 답
@@ -712,11 +737,14 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             flow.append(Spacer(1, 0.6 * cm))  # 3기둥과 exhibit 사이 한 줄 호흡(붙지 않게)
             _exec_hero(_pkg.get("kpis"), _pkg.get("hero_take"), _pkg.get("hero_unit"), _pkg.get("hero_src"))  # hero = 비즈니스 KPI
             flow.append(Spacer(1, 0.3 * cm))
-            _ask_t = Table([[Paragraph(f"<b>권고: {_nodash(_pkg['ask'])}</b>", sw)]], colWidths=[17 * cm])
+            _ask_w = PS("AskW", fontName=_KG, fontSize=13.5, textColor=colors.white, leading=19)
+            _ask_l = PS("AskL", fontName=_KG, fontSize=8, textColor=colors.HexColor("#9DB2E8"), leading=11)
+            _ask_t = Table([[[Paragraph("권 고", _ask_l), Spacer(1, 0.06 * cm), Paragraph(_nodash(_pkg['ask']), _ask_w)]]], colWidths=[17 * cm])
             _ask_t.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EAF1FD")),
-                ("LEFTPADDING", (0, 0), (-1, -1), 14), ("RIGHTPADDING", (0, 0), (-1, -1), 14),
-                ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, -1), _BR_NAVY),  # [세련화] 권고=네이비 CTA + 화이트 텍스트
+                ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 16), ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+                ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
             ]))
             flow.append(_ask_t)  # 권고(now-what)
             flow.append(Spacer(1, 0.15 * cm))
@@ -739,7 +767,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             if sec.id == "backup" or sec.kind == "cover":
                 continue
             # [고아 헤딩 방지] 섹션 제목을 첫 렌더 슬라이드와 한 덩어리로 묶어, 제목만 남고 내용이 다음 장으로 밀리는 현상 차단
-            _sec_head = [Paragraph(sec.title, h1_toc), Spacer(1, 0.35 * cm)]  # 규칙: 큰 제목 밑 한 줄 띄움
+            _sec_head = [Paragraph(sec.title, h1_toc), _HRule(17 * cm), Spacer(1, 0.2 * cm)]  # [세련화] 풀폭 룰(좌 블루 악센트 + 우 끝까지 헤어라인)
             _img_in_sec = 0  # 페이지당 차트 최대 2개 강제용
             _just_broke = False
             for sl in sec.slides:
@@ -1025,32 +1053,28 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 cnv.setLineWidth(0.8)
                 cnv.line(M + 22, _ry - 12, W - M - 22, _ry - 12)
             _ry -= 29
-        # (5) KEY 지표 카드 — 좌(블루) 주지표 / 우(라벤더) 변수 수. 변수 없으면 주지표 full-width.
+        # (5) KEY 지표 카드 — [세련화] 흰 카드+헤어라인 보더, hero(주지표) 블루 상단룰·블루 숫자 / 보조 네이비 (소프트필·라벤더 제거·1악센트 절제)
         _ky, _kh, _gap = H - 572, 84, 14
+
+        def _kpi_card(_x, _w, _val, _lbl, _accent, _hero):
+            _round_card(cnv, _x, _ky, _w, _kh, 12, colors.white, _BR_BORDER)
+            if _hero:
+                cnv.setStrokeColor(_BR_BLUE)
+                cnv.setLineWidth(2)
+                cnv.line(_x + 9, _ky + _kh - 1.2, _x + _w - 9, _ky + _kh - 1.2)
+            cnv.setFont(_KG, 31)
+            cnv.setFillColor(_accent)
+            cnv.drawString(_x + 22, _ky + 33, _val)
+            cnv.setFont(_KS, 12)
+            cnv.setFillColor(_BR_SUB)
+            cnv.drawString(_x + 22, _ky + 15, _lbl)
+
         if _cv_m2v:
             _kw = (W - 2 * M - _gap) / 2
-            _round_card(cnv, M, _ky, _kw, _kh, 14, _BR_BLUEBG)
-            cnv.setFont(_KG, 33)
-            cnv.setFillColor(_BR_BLUE)
-            cnv.drawString(M + 22, _ky + 34, _cv_m1v)
-            cnv.setFont(_KS, 12.5)
-            cnv.setFillColor(_BR_SUB)
-            cnv.drawString(M + 22, _ky + 15, _cv_m1l)
-            _round_card(cnv, M + _kw + _gap, _ky, _kw, _kh, 14, _BR_LAVBG)
-            cnv.setFont(_KG, 33)
-            cnv.setFillColor(_BR_LAV)
-            cnv.drawString(M + _kw + _gap + 22, _ky + 34, _cv_m2v)
-            cnv.setFont(_KS, 12.5)
-            cnv.setFillColor(_BR_SUB)
-            cnv.drawString(M + _kw + _gap + 22, _ky + 15, _cv_m2l)
+            _kpi_card(M, _kw, _cv_m1v, _cv_m1l, _BR_BLUE, True)
+            _kpi_card(M + _kw + _gap, _kw, _cv_m2v, _cv_m2l, _BR_NAVY, False)
         else:
-            _round_card(cnv, M, _ky, W - 2 * M, _kh, 14, _BR_BLUEBG)
-            cnv.setFont(_KG, 33)
-            cnv.setFillColor(_BR_BLUE)
-            cnv.drawString(M + 22, _ky + 34, _cv_m1v)
-            cnv.setFont(_KS, 12.5)
-            cnv.setFillColor(_BR_SUB)
-            cnv.drawString(M + 22, _ky + 15, _cv_m1l)
+            _kpi_card(M, W - 2 * M, _cv_m1v, _cv_m1l, _BR_BLUE, True)
         # (6) 푸터 — 도메인 + 라벨
         cnv.setStrokeColor(_BR_DIV)
         cnv.setLineWidth(1.1)
