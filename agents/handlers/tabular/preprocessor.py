@@ -2109,6 +2109,12 @@ def apply(
     preprocess_warnings: list[dict] = []
 
     for step in plan_steps:
+        # jh 2026-06-14 — None/비정상 step 방어. preprocessing_plan 에 None 이 섞이면
+        # step.get 에서 "'NoneType' object has no attribute 'get'" 로 전처리 전체가
+        # 죽고 feature_engineer 가 폴백까지 실패하던 기존 버그(0612 로그 확인) 차단.
+        if not isinstance(step, dict):
+            preprocess_log.append({"step": "?", "ts": _ts(), "status": "skipped_malformed"})
+            continue
         name = step.get("name", "")
         try:
             if name in _BASIC_DISPATCH:
@@ -2390,6 +2396,9 @@ def _transform_only(
     hash_encoder = artifacts.get("hash_encoder") or {}
 
     for step in plan_steps:
+        # jh 2026-06-14 — None/비정상 step 방어 (apply 와 동일)
+        if not isinstance(step, dict):
+            continue
         name = step.get("name", "")
 
         # ----- impute_numeric: fitted median 사용 -----

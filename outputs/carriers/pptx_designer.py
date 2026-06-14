@@ -224,8 +224,21 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
     for sl in slides_flat:
         page_num += 1
         slide = prs.slides.add_slide(blank)
-        _draw_slide(slide, sl, ctx, primary, accent, secondary, ink, muted, light_bg, render_visual_to_png)
-        _draw_footer(slide, ctx, treat, page_num, total, muted, format_date_ko)
+        # jh 2026-06-14 — 슬라이드별 격리: 한 장의 draw 오류가 덱 전체 생성을 죽여
+        # "PPT 생성 실패" 가 나던 구조 방지. 실패 슬라이드는 로그 후 건너뛰고 계속.
+        try:
+            _draw_slide(slide, sl, ctx, primary, accent, secondary, ink, muted, light_bg, render_visual_to_png)
+        except Exception as _e:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("pptx_designer").warning(
+                "draw_slide_failed_skip: id=%s err=%s: %s",
+                getattr(sl, "id", "?"), type(_e).__name__, _e, exc_info=True,
+            )
+        try:
+            _draw_footer(slide, ctx, treat, page_num, total, muted, format_date_ko)
+        except Exception:  # noqa: BLE001
+            pass
         if sl.speaker_notes_hint:
             try:
                 slide.notes_slide.notes_text_frame.text = sl.speaker_notes_hint
