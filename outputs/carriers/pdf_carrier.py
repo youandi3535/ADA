@@ -370,6 +370,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     sw = PS(
         "SW", fontName=_KG, fontSize=16, leading=23, textColor=colors.HexColor("#243B5C"), leftIndent=0
     )  # [B28][B29] sw 16pt 네이비
+    lbl = PS(
+        "LBL", fontName=_KG, fontSize=14.5, leading=20, textColor=colors.HexColor("#3A6FE0")
+    )  # [세련화] 블록 라벨=블루 14.5pt(모듈 라벨) — so_what(리드) 네이비 16pt 와 위계 분리
     body = PS(
         "B", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=8
     )  # [B28][B30] body 14pt+들여쓰기 8
@@ -520,11 +523,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 elif kind == "main":
                     _two = bool(desc)
                     _by = y + 3 if _two else y
-                    c.setFillColor(_NV)
-                    c.roundRect(0, _by - 6, 25, 25, 6, fill=1, stroke=0)
-                    c.setFont(_KG, 12.5)
-                    c.setFillColor(colors.white)
-                    c.drawCentredString(12.5, _by + 1, num)
+                    c.setFont(_KG, 15.5)
+                    c.setFillColor(_BL)
+                    c.drawString(2, _by, num)
                     c.setFont(_KG, 14.5)
                     c.setFillColor(_NV)
                     c.drawString(38, _by, title)
@@ -915,20 +916,20 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     for _blk in _pblocks:
                         sl_flow.append(Spacer(1, 0.6 * cm))
                         if _blk[0]:
-                            sl_flow.append(Paragraph(f"<b>{_blk[0]}</b>", sw))
+                            sl_flow.append(Paragraph(f"<b>{_blk[0]}</b>", lbl))
                         sl_flow.append(Paragraph(_nodash(str(_blk[1])), body))
                 else:
                     if _pblocks:  # 비-이미지: 첫 블록을 제목과 한 덩어리(고아 방지)
                         _b0 = _pblocks[0]
                         _head.append(Spacer(1, 0.6 * cm))
                         if _b0[0]:
-                            _head.append(Paragraph(f"<b>{_b0[0]}</b>", sw))
+                            _head.append(Paragraph(f"<b>{_b0[0]}</b>", lbl))
                         _head.append(Paragraph(_nodash(str(_b0[1])), body))
                     sl_flow = [KeepTogether(_head)]
                     for _blk in _pblocks[1:]:  # 둘째 블록부터
                         sl_flow.append(Spacer(1, 0.6 * cm))
                         if _blk[0]:
-                            sl_flow.append(Paragraph(f"<b>{_blk[0]}</b>", sw))
+                            sl_flow.append(Paragraph(f"<b>{_blk[0]}</b>", lbl))
                         sl_flow.append(Paragraph(_nodash(str(_blk[1])), body))
                 for b in sl.body_outline:
                     sl_flow.append(Paragraph(f"• {_nodash(b)}", bul))
@@ -1202,6 +1203,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     def _foot(canvas, dc):
         # [푸터룰] 좌: 보고서 제목 (옅은 회색, 9pt) / 우: 페이지번호 (옅은 회색, 12pt)
         canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#E8ECF4"))  # [세련화] 푸터 위 얇은 헤어라인(앵커)
+        canvas.setLineWidth(0.6)
+        canvas.line(2 * cm, 1.45 * cm, A4[0] - 2 * cm, 1.45 * cm)
         # 좌측 제목 — 9pt 옅은 회색
         canvas.setFont(_KS, 9)
         canvas.setFillColor(colors.HexColor("#94A3B8"))

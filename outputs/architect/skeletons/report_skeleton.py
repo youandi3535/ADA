@@ -169,7 +169,9 @@ def _fv(v: Any) -> str:
     if v is None:
         return "-"
     if isinstance(v, float):
-        return f"{v:.4f}" if 0 < abs(v) < 1 else f"{v:,.2f}"
+        if 0 < abs(v) < 1:
+            return f"{v:.4f}"
+        return f"{v:,.0f}" if v == int(v) else f"{v:,.2f}"  # [세련화] 정수값 float 은 소수점 제거(82.00→82), 값 불변
     return str(v)
 
 
