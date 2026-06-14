@@ -25,6 +25,23 @@ SLIDE_W = 33.867
 SLIDE_H = 19.05
 
 
+def _ws_cut(text, max_chars, suffix="…"):
+    """단어/어절 경계 기준 안전 절단 — 영문 단어·한글 어절 중간을 자르지 않음.
+
+    jh 2026-06-13 — carrier 곳곳의 raw 슬라이스(str(...)[:N])가 'accur' 처럼
+    단어 중간을 잘라 산출물에 그대로 노출되던 결함(S18 SWOT 등). 경계에서 끊고
+    말줄임표(…)를 붙여 '잘리다 만' 인상을 제거한다.
+    """
+    s = str(text or "")
+    if len(s) <= max_chars:
+        return s
+    cut = s[:max_chars]
+    bnd = max(cut.rfind(" "), cut.rfind("·"), cut.rfind(","), cut.rfind("/"), cut.rfind("—"))
+    if bnd >= max_chars * 0.5:
+        cut = cut[:bnd]
+    return cut.rstrip(" ,·/—") + suffix
+
+
 def _add_paragraphs(slide, x, y, w, h, lines, size_pt=12, color_hex="#0F172A",
                     bold=False, space_after_pt=8):
     """여러 줄을 단락 간격(space_after)과 함께 한 텍스트박스에 — 가독성용.
@@ -2087,7 +2104,13 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
         # 페어 bullet 1개뿐이면 " — " 에서 분할해 헤드라인+세부 2층 구성
         if len(pts) == 1 and " — " in pts[0]:
             _head, _det = pts[0].split(" — ", 1)
-            pts = [_head.strip(), _det.strip()]
+            # jh 2026-06-14 — _head 가 "강점(S)"·"약점(W)" 류 카테고리명이면 큰 글자(S)·
+            # 이름(STRENGTHS)과 중복이므로 버리고, 세부를 헤드라인+상세로 다시 분할.
+            if _re.match(r"^\s*(?:강점|약점|기회|위협)\s*\([SWOT]\)\s*$", _head.strip()):
+                _re_parts = _det.split(", ", 1)
+                pts = [p.strip() for p in _re_parts] if len(_re_parts) == 2 else [_det.strip()]
+            else:
+                pts = [_head.strip(), _det.strip()]
         if pts:
             add_text_box(
                 slide,
@@ -2095,14 +2118,14 @@ def draw_swot_matrix(slide, items, primary, accent, ink, muted, light_bg):
                 y + 3.2,
                 cell_w - 1.0,
                 1.1,
-                f"{labels[i]} · {str(pts[0])[:46]}",
+                f"{labels[i]} · {_ws_cut(pts[0], 46)}",
                 size_pt=16,
                 bold=True,
                 color_hex="#FFFFFF",
                 align="left",
                 vcenter=False,
             )
-        detail = "\n".join(f"·  {str(p)[:70]}" for p in pts[1:]) if len(pts) > 1 else ""
+        detail = "\n".join(f"·  {_ws_cut(p, 70)}" for p in pts[1:]) if len(pts) > 1 else ""
         if not pts:
             detail = "(추가 분석 필요)"
         if detail:
@@ -3666,9 +3689,11 @@ def draw_roadmap_timeline(slide, phases, primary, accent, ink, muted, light_bg):
         add_text_box(slide, x, top_y + 1.5, cw, 0.7, str(p.get("period", "")), size_pt=13,
                      bold=True, color_hex=accent, align="center", vcenter=True)
 
-        # 카드
+        # 카드 — jh 2026-06-14: 높이를 내용에 맞게 고정(8.8cm)해 중간 빈 공간 제거.
+        # (기존 SLIDE_H 기준 가변 높이는 활동 텍스트가 짧으면 활동↔게이트 사이가 크게
+        #  비었음. 게이트·산출은 card_h 상대 위치라 card_h 만 줄이면 자동으로 위로 붙음.)
         card_y = top_y + 2.4
-        card_h = SLIDE_H - card_y - 1.8
+        card_h = 8.8
         add_rounded_rect(slide, x, card_y, cw, card_h, "#FFFFFF", line_hex=primary)
         # 제목 (primary 헤더) — jh 2026-06-13: 가운데 정렬 (단계 헤더 통일)
         add_rounded_rect(slide, x, card_y, cw, 1.2, primary)
@@ -3750,7 +3775,16 @@ def draw_policy_decision(slide, badge, kpis, rules, primary, accent, ink, muted,
         # jh 2026-06-12 — 문장 단위 줄바꿈 + 단락 간격 (빽빽함·잘림 해소, 사용자 지적)
         _cap = str(r.get("caption", "")).strip()
         _sents = [s.strip() for s in _cap.replace(". ", ".\n").split("\n") if s.strip()]
-        _add_paragraphs(slide, x + 0.5, ry + 2.3, rw - 1.0, rh - 2.6, _sents[:4],
+        # jh 2026-06-14 — 운영 룰에 데이터셋 설명문("이 데이터셋은 …")이 카피라이터 변환으로
+        # 섞여 들어오면 제거(행동 지침이 아니라 배경 설명이라 부적절).
+        _sents = [
+            s for s in _sents
+            if not s.lstrip().startswith(("이 데이터셋", "본 데이터셋", "데이터셋은", "이 데이터"))
+        ]
+        # jh 2026-06-13 — 문장이 카드 폭을 크게 넘으면 단어 경계 절단(…)으로 잘림면 방지
+        # + 최대 3문장으로 카드 높이 내 안착.
+        _sents = [_ws_cut(s, 72) for s in _sents][:3]
+        _add_paragraphs(slide, x + 0.5, ry + 2.3, rw - 1.0, rh - 2.6, _sents,
                         size_pt=12, color_hex=ink, space_after_pt=8)
 
 

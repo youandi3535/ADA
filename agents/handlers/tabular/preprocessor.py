@@ -1853,12 +1853,36 @@ def _apply_scale_numeric(df, step, state):
     return out, {}
 
 
+def _apply_id_like_drop(df, step, state):
+    """식별자(id-like) 컬럼 제거 — PK·유사식별자가 학습 피처로 누수되는 것 차단.
+
+    jh 2026-06-13 — profiler 는 id_like_columns(unique_ratio≥0.99)를 감지하고
+    archetype 는 preprocessing_must=['id_like_drop'] 를 요구했으나, 실제 실행
+    핸들러가 없어(_BASIC_DISPATCH 미등록) apply() 가 unknown_step 으로 스킵 →
+    PassengerId 같은 PK 가 모델·SHAP(전역 중요도)에 그대로 남던 결함(S13 누수) 수정.
+
+    step.columns(또는 scope)에 명시된 컬럼만 제거하며 target 은 절대 제거하지 않는다.
+    순수 컬럼 드롭이라 train/val/test 전부 동일 적용(_transform_only 도 처리).
+    """
+    target = getattr(state, "target_column", None)
+    cols = step.get("columns") or step.get("scope") or []
+    drop_cols = [c for c in cols if c in df.columns and c != target]
+    if not drop_cols:
+        return df, {"id_like_dropped": []}
+    out = df.drop(columns=drop_cols, errors="ignore")
+    return out, {"id_like_dropped": drop_cols}
+
+
 _BASIC_DISPATCH: dict[str, Any] = {
     "impute_numeric": _apply_impute_numeric,
     "impute_categorical": _apply_impute_categorical,
     "encode_categorical": _apply_encode_categorical,
     "label_encoding": _apply_label_encoding,
     "scale_numeric": _apply_scale_numeric,
+    "id_like_drop": _apply_id_like_drop,
+    # 별칭 — PreprocessingStrategist/LLM 플랜이 쓰는 op 이름도 동일 처리
+    "drop_id": _apply_id_like_drop,
+    "drop": _apply_id_like_drop,
 }
 
 
@@ -1973,6 +1997,19 @@ def plan(state: Any) -> list[dict[str, Any]]:
     #   - preprocessing_must: plan 에 없으면 추가 (catalog 미적용된 강제 룰)
     steps = _apply_archetype_rules_to_plan(steps, profile)
 
+    # jh 2026-06-13 — id-like(PK) 컬럼 학습 누수 차단 (S13). profiler 가 감지한
+    # id_like_columns(unique_ratio≥0.99)를 항상 최우선 드롭한다. id_overload
+    # archetype(컬럼의 30%↑)에만 의존하면 PassengerId 같은 단일 PK 가 누락돼
+    # 모델·SHAP 까지 누수되므로, 감지되면 무조건 첫 스텝으로 끼운다.
+    _id_like = list((profile or {}).get("id_like_columns") or [])
+    if _id_like and not any(
+        s.get("name") == "id_like_drop" and s.get("columns") for s in steps
+    ):
+        steps.insert(
+            0,
+            {"name": "id_like_drop", "columns": _id_like, "params": {}, "needs_review": False},
+        )
+
     # Store log for debugging
     if hasattr(state, "category_extras"):
         pass  # log stored in apply()
@@ -2072,6 +2109,12 @@ def apply(
     preprocess_warnings: list[dict] = []
 
     for step in plan_steps:
+        # jh 2026-06-14 — None/비정상 step 방어. preprocessing_plan 에 None 이 섞이면
+        # step.get 에서 "'NoneType' object has no attribute 'get'" 로 전처리 전체가
+        # 죽고 feature_engineer 가 폴백까지 실패하던 기존 버그(0612 로그 확인) 차단.
+        if not isinstance(step, dict):
+            preprocess_log.append({"step": "?", "ts": _ts(), "status": "skipped_malformed"})
+            continue
         name = step.get("name", "")
         try:
             if name in _BASIC_DISPATCH:
@@ -2353,6 +2396,9 @@ def _transform_only(
     hash_encoder = artifacts.get("hash_encoder") or {}
 
     for step in plan_steps:
+        # jh 2026-06-14 — None/비정상 step 방어 (apply 와 동일)
+        if not isinstance(step, dict):
+            continue
         name = step.get("name", "")
 
         # ----- impute_numeric: fitted median 사용 -----
@@ -2414,6 +2460,12 @@ def _transform_only(
                             out[col] = pt.transform(vals).ravel()
                 except Exception:
                     pass
+            continue
+
+        # ----- id_like_drop: train 과 동일 컬럼 drop (순수 컬럼 제거, 결정적) -----
+        if name in ("id_like_drop", "drop_id", "drop"):
+            _idc = step.get("columns") or step.get("scope") or []
+            out = out.drop(columns=[c for c in _idc if c in out.columns], errors="ignore")
             continue
 
         # ----- vif_drop / correlation_drop / pca_preview: 동일 컬럼 drop -----

@@ -144,17 +144,43 @@ def _shap_values_to_top(
 
     # 피처 수 매칭 가드
     n_features = len(mean_abs)
-    if len(feature_names) != n_features:
+    _synthetic_names = len(feature_names) != n_features
+    if _synthetic_names:
         feature_names = [f"feature_{i}" for i in range(n_features)]
 
-    idx_sorted = np.argsort(mean_abs)[::-1][:top_k]
-    out: list[dict[str, Any]] = []
-    for i in idx_sorted:
-        out.append({
-            "feature": str(feature_names[i]),
-            "mean_abs_shap": round(float(mean_abs[i]), 6),
-            "direction": "+" if float(signed_mean[i]) >= 0 else "-",
-        })
+    # jh 2026-06-14 — 원-핫 인코딩 컬럼을 베이스 피처로 합산 집계 (Sex_male+Sex_female→Sex,
+    # Embarked_C/Q/S→Embarked). '<base>_<value>' 형태이고 같은 base 형제가 2개 이상일 때만
+    # 묶어, 단일 언더스코어 피처(charge_per_tenure 등) 오병합을 방지한다.
+    import re as _re
+
+    # 폴백 합성 이름(feature_0, feature_1 …)은 실제 원-핫이 아니므로 집계 대상에서 제외.
+    _bases: dict[str, list[int]] = {}
+    if not _synthetic_names:
+        for _i, _fn in enumerate(feature_names):
+            _m = _re.match(r"^(.+)_[^_]+$", str(_fn))
+            if _m:
+                _bases.setdefault(_m.group(1), []).append(_i)
+    _agg = {b: idxs for b, idxs in _bases.items() if len(idxs) >= 2}
+    _grouped = {i for idxs in _agg.values() for i in idxs}
+
+    entries: list[tuple[str, float, float]] = []
+    for _b, _idxs in _agg.items():
+        _tot = float(sum(mean_abs[i] for i in _idxs))
+        _dom = max(_idxs, key=lambda i: mean_abs[i])
+        entries.append((_b, _tot, float(signed_mean[_dom])))
+    for _i in range(n_features):
+        if _i not in _grouped:
+            entries.append((str(feature_names[_i]), float(mean_abs[_i]), float(signed_mean[_i])))
+
+    entries.sort(key=lambda e: e[1], reverse=True)
+    out: list[dict[str, Any]] = [
+        {
+            "feature": _n,
+            "mean_abs_shap": round(_v, 6),
+            "direction": "+" if _s >= 0 else "-",
+        }
+        for _n, _v, _s in entries[:top_k]
+    ]
     return out
 
 

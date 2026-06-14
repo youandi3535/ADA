@@ -279,6 +279,11 @@ class LLMCopywriter(BaseAgent):
             # jh 2026-06-12 — 초과 제목은 기각 대신 절단 수용.
             # (기각 시 구식 초안 제목이 남아 새 so_what 과 불일치 — 운영 S10 실측)
             title = str(fill.get("title_ko", "") or "").strip()
+            # jh 2026-06-13 — error_analysis(S14)는 정분류(TN)+오류(FN/FP) 혼합 사례라
+            # LLM 이 "오예측 3건 / 왜 틀렸는가"로 단정하면 TN 사례와 모순된다. 이 슬라이드는
+            # skeleton 의 정확한 중립 제목("개별 예측 사례·3건")을 유지하도록 LLM 제목을 미채택.
+            if sid == "error_analysis":
+                title = ""
             if title:
                 limit = _BUDGET["title_ko"] + 10
                 if len(title) > limit:

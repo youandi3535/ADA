@@ -496,13 +496,12 @@ def _build_exec_summary_ml(ctx: ReportContext) -> SlideSpec:
 def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
     """슬라이드 4 — 분석 가설 (3개)."""
     pm = ctx.evaluation.primary_metric or {}
-    chosen = (ctx.model_selection.chosen or {}).get("name", "선정 모델")
     intent = ctx.meta.user_intent or "분석 과제"
     # jh 2026-06-12 — "가설문 — 증거 — 인사이트" 3분할 형식 (라벨 접두 금지).
     # carrier t_hyp_evidence_insight 가 " — " 기준으로 3칸에 분배한다.
     body = [
         f"상위 피처가 결과를 좌우한다 — Top 피처가 {pm.get('name', '지표')} 에 강한 신호 제공 — 핵심 변수 중심 해석 전략 수립",
-        f"{chosen} 이 본 데이터에 최적이다 — baseline 대비 우수 성과로 선정 — 운영 비용 대비 효율적 모델 확보",
+        "단일 변수보다 변수 간 구조·상호작용이 결과를 더 설명한다 — 상관·결측 등 데이터 구조에서 추가 신호 확인 — 파생·상호작용 피처 설계의 근거",
         "분포 변화에도 성능이 유지된다 — 임계 성능 유지 여부를 세그먼트 검증으로 확인 — drift 모니터링 설계의 근거",
     ]
     return SlideSpec(
@@ -583,12 +582,16 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
         purpose = f"{biz}. {purpose}"
 
     # Q박스 풍부화 — 질문 + 답(접근) + 왜 중요한가
+    # jh 2026-06-13 — 조사 자동 처리(_josa): _top 이 받침 없는 "변수"·"Fare" 여도
+    # "변수이/Fare이" 처럼 틀리던 조사 오류 수정 (영문 받침도 _josa 가 처리).
+    from outputs.architect.skeletons.report_skeleton import _josa
+
     _gi = list(ctx.interpretation.global_importance or [])
     _top = getattr(_gi[0], "feature", "핵심 변수") if _gi else "핵심 변수"
     questions = [
         (
-            f"{target}을 가장 강하게 결정하는 변수는?",
-            f"EDA 집단 격차와 SHAP 전역 중요도로 규명 — 분석 결과 {_top}이 최상위 신호로 확인됨",
+            f"{target}{_josa(target, 'obj')} 가장 강하게 결정하는 변수는?",
+            f"EDA 집단 격차와 SHAP 전역 중요도로 규명 — 분석 결과 {_top}{_josa(_top, 'nom')} 최상위 신호로 확인됨",
         ),
         (
             "그 구조가 데이터에 실제로 재현되는가?",

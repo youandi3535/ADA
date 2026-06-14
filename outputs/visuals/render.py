@@ -138,19 +138,9 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
             return _render_kpi_single(vs, ctx, primary, plt, slide)
         if vtype == "risk_matrix":
             return _render_risk_matrix(vs, ctx, primary, plt)
-        # jh 2026-06-12 — CM 수치 기반 히트맵 (MinIO 차트 부재 시에도 S15 시각화 보장)
-        # belt: 타입이 달라도 spec 에 confusion_matrix 수치가 있으면 무조건 그림
-        _cm_ctx = {}
-        try:
-            _cm_ctx = ctx.evaluation.confusion_matrix or {}
-        except Exception:
-            _cm_ctx = {}
-        if vtype == "diagram_confusion_matrix" or (vs.spec or {}).get("confusion_matrix") or _cm_ctx:
-            _p = _render_cm_heatmap(vs, primary, plt, ctx)
-            if _p:
-                return _p
-        # jh 2026-06-12 — 세그먼트 성능 가로 막대 (skeleton 시점에 per_segment 가
-        # 비어 segment_perf_table 로 굳어도 carrier 시점 ctx 로 차트 보장)
+        # jh 2026-06-14 — 세그먼트 차트는 CM belt 보다 *먼저* 처리한다.
+        # (segment_perf_table 타입이 아래 CM belt 의 `or _cm_ctx` 조건에 가로채여
+        #  S16 이 S15 와 동일한 혼동행렬로 그려지던 버그 — 차트 중복의 진짜 원인.)
         if vtype == "segment_perf_table":
             _segs = (vs.spec or {}).get("segments") or []
             if not _segs:
@@ -163,6 +153,17 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
             if _items:
                 vs.spec = {**(vs.spec or {}), "items": _items}
                 return _render_hbar(vs, ctx, primary, accent, plt)
+        # jh 2026-06-12 — CM 수치 기반 히트맵 (MinIO 차트 부재 시에도 S15 시각화 보장)
+        # belt: 타입이 달라도 spec 에 confusion_matrix 수치가 있으면 무조건 그림
+        _cm_ctx = {}
+        try:
+            _cm_ctx = ctx.evaluation.confusion_matrix or {}
+        except Exception:
+            _cm_ctx = {}
+        if vtype == "diagram_confusion_matrix" or (vs.spec or {}).get("confusion_matrix") or _cm_ctx:
+            _p = _render_cm_heatmap(vs, primary, plt, ctx)
+            if _p:
+                return _p
         # 기타 — KPI 카드들 또는 일반 다이어그램
         return _render_generic_box(vs, ctx, primary, plt, slide)
     except Exception as exc:  # noqa: BLE001

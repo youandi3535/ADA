@@ -804,6 +804,28 @@ def t_chart_key_insights(slide, sl, ctx, primary, accent, ink, muted, light_bg):
     from outputs.carriers.pptx_designer import _draw_chart_callout
     from outputs.visuals.render import render_visual_to_png
 
+    # jh 2026-06-13 — 세그먼트 슬라이드 타이밍 보정 (carrier-body-우선).
+    # per_segment 는 tabular output_extras 가 carrier 단계에서 채우므로, skeleton 시점엔
+    # 비어 body 가 "미적립" 폴백으로 굳는다(제목은 carrier 시점 보강돼 실수치 → 제목↔본문
+    # 모순). 폴백이 남아 있고 실데이터가 있으면 carrier 시점에 KEY INSIGHTS 를 재구성한다.
+    try:
+        _bo = list(getattr(sl, "body_outline", None) or [])
+        if any(("미적립" in str(b)) or ("per_segment 채움" in str(b)) for b in _bo):
+            _segs = [
+                s for s in (ctx.evaluation.per_segment or [])
+                if isinstance(s, dict) and s.get("value") is not None
+            ]
+            if _segs:
+                _sv = sorted(_segs, key=lambda s: float(s["value"]), reverse=True)
+                _new = []
+                for s in _sv[:6]:
+                    _nm = s.get("segment") or s.get("name") or "?"
+                    _mt = s.get("metric") or "accuracy"
+                    _new.append(f"{_nm} · {_mt} {float(s['value']):.3f}")
+                sl.body_outline = _new
+    except Exception:
+        pass
+
     _draw_chart_callout(slide, sl, ctx, primary, accent, ink, muted, light_bg, render_visual_to_png)
 
 
@@ -1012,7 +1034,7 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
                     cap = cap[:idx].rstrip(".")
                     break
             else:
-                cap = cap[:68].rstrip() + "…"
+                cap = I._ws_cut(cap, 70)
         # draw_5step_alt_callouts 는 "title" 키를 읽음 (label 로 넘기면 "STEP n" 폴백)
         items.append({"title": label[:20], "label": label[:20], "caption": cap})
     if not items:
@@ -1035,7 +1057,7 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         _why = _txt(w.get("why"))
         _res = _txt(w.get("result"))
         if _why or _res:
-            _cards.append((_h[:24], _why[:80], _res[:60]))
+            _cards.append((I._ws_cut(_h, 24), I._ws_cut(_why, 80), I._ws_cut(_res, 60)))
     if _cards:
         _cw = (I.SLIDE_W - 3.0 - (len(_cards) - 1) * 0.5) / len(_cards)
         _cy = 13.2

@@ -250,7 +250,10 @@ def build_eda_slide_from_chart(
             },
         ),
         speaker_notes_hint=(
-            f"EDA #{slide_index} — {feature}. finding: {finding[:80]}. "
+            # jh 2026-06-13 — 노트 라벨을 chart.x(예: 상관 슬라이드의 "SibSp") 대신
+            # 서술적 title_ko 우선으로 (상관·관계 슬라이드에서 단일 변수명 오기 방지).
+            f"EDA #{slide_index} — {(getattr(chart, 'title_ko', '') or feature)}. "
+            f"finding: {finding[:80]}. "
             "KEY INSIGHTS 는 callouts → numbers → finding 순서로 자동 채워짐."
         ),
     )
@@ -388,21 +391,28 @@ def build_method_steps(ctx: ReportContext) -> list[dict[str, str]]:
     """분석 방법 흐름의 5 단계 — 좌측 미니 흐름도 입력."""
     steps: list[dict[str, str]] = []
     pp_steps = list(ctx.preprocessing.applied_steps or [])
+    # jh 2026-06-14 — 각 노드에 caption 직접 부여(빈 노드·코드값 'impute_numeric'
+    # 노출 방지). t_method_5step 은 step.caption 을 최우선 사용한다.
     if pp_steps:
-        steps.append({"label": f"전처리 ({len(pp_steps)}단계)", "kind": "preprocessing"})
+        steps.append({"label": f"전처리 ({len(pp_steps)}단계)", "kind": "preprocessing",
+                      "caption": "결측 보정·인코딩·스케일 등 전처리 적용"})
     # jh 2026-06-12 — created 리스트가 비고 개수(final_feature_count)만 적립되는
     # 실제 파이프라인 케이스 폴백 (S7 단계 2 누락·번호 1·3·4 점프 결함)
     feats = list(ctx.features.created or [])
     _n_feat = len(feats) or (ctx.features.final_feature_count or 0)
     if _n_feat:
-        steps.append({"label": f"신규 피처 {_n_feat}개", "kind": "feature"})
+        steps.append({"label": f"신규 피처 {_n_feat}개", "kind": "feature",
+                      "caption": "비선형·상호작용 신호를 파생 피처로 보강"})
     chosen_name = (ctx.model_selection.chosen or {}).get("name") or ""
     if chosen_name:
-        steps.append({"label": f"모델 {chosen_name}", "kind": "model"})
+        steps.append({"label": f"모델 {chosen_name}", "kind": "model",
+                      "caption": "데이터 특성 점수로 후보 중 자동 선정"})
     if ctx.training.runs or chosen_name:
-        steps.append({"label": "학습 · 튜닝", "kind": "training"})
+        steps.append({"label": "학습 · 튜닝", "kind": "training",
+                      "caption": "하이퍼파라미터 탐색 후 학습 수행"})
     if ctx.evaluation.primary_metric:
-        steps.append({"label": "평가 · 검증", "kind": "evaluation"})
+        steps.append({"label": "평가 · 검증", "kind": "evaluation",
+                      "caption": "hold-out·Baseline 비교로 성능 검증"})
     if not steps:
         steps = [
             {"label": "1 · 전처리", "kind": "preprocessing"},

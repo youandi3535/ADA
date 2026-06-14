@@ -1107,21 +1107,49 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
     except Exception:
         pass
 
-    # 2) 세그먼트별 정확도 — 카디널리티 2~6 컬럼 상위 3개
+    # 2) 세그먼트별 정확도 — 카디널리티 2~6 의 *범주형* 컬럼 상위 3개
     # jh 2026-06-12 — numpy X_val 대신 복원한 raw_val(원본 컬럼) 사용.
     seg_df = raw_val if raw_val is not None else (X_val if hasattr(X_val, "columns") else None)
+
+    def _seg_ok(s) -> bool:
+        # jh 2026-06-14 — 의미 있는 범주형만 세그먼트로 사용. 식별자/연속·인코딩 float
+        # (예: target-encode 된 'Name' 의 0.0112 같은 값)이 'Name=0.0112' 무의미
+        # 세그먼트로 잡혀 취약 세그먼트·차트를 오염시키던 버그 차단.
+        try:
+            nun = int(s.nunique(dropna=True))
+        except Exception:
+            return False
+        if not (2 <= nun <= 6):
+            return False
+        if str(s.dtype).startswith("float"):
+            # 1.0/2.0/3.0 처럼 정수에 해당하는 float 만 허용, 연속 인코딩은 제외
+            try:
+                return all(float(v).is_integer() for v in s.dropna().unique())
+            except Exception:
+                return False
+        return True
+
+    def _seg_label(col, v) -> str:
+        # 1.0 → 1 처럼 정수형 float 는 깔끔하게 표기
+        try:
+            if isinstance(v, float) and float(v).is_integer():
+                v = int(v)
+        except Exception:
+            pass
+        return f"{col}={v}"
+
     try:
         if seg_df is not None:
             correct = yv == yp
             segs: list[dict[str, Any]] = []
-            cand = [c for c in seg_df.columns if 2 <= int(seg_df[c].nunique(dropna=True)) <= 6][:3]
+            cand = [c for c in seg_df.columns if _seg_ok(seg_df[c])][:3]
             for col in cand:
                 for v in seg_df[col].dropna().unique():
                     mask = (seg_df[col] == v).to_numpy()
                     n = int(mask.sum())
                     if n >= 10:
                         segs.append({
-                            "segment": f"{col}={v}",
+                            "segment": _seg_label(col, v),
                             "metric": "accuracy",
                             "value": round(float(correct[mask].mean()), 3),
                             "n": n,
