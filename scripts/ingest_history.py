@@ -87,6 +87,11 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 _SKIP_DIRS = {"outputs", "uploads", ".auto-memory", "node_modules", "__pycache__", ".claude"}
 _MIN_FILE_BYTES = 100
 
+# 서버 다운(502/타임아웃 등) 시 조기 중단 임계값.
+# 연속 N회 전송 실패하면 "서버 다운" 으로 판단하고 즉시 중단한다.
+# → 수백 건 502 폭주·로그 스팸·죽은 서버 가중 부하·15s×수백 타임아웃을 방지.
+_MAX_CONSECUTIVE_FAIL = 5
+
 
 def _get_transcript_sources() -> list[tuple[Path, str]]:
     """스캔할 (디렉토리, source_label) 목록 반환.
@@ -471,11 +476,17 @@ def main() -> None:
     state = {} if args.force else _load_state()
     new_state = dict(state)
     total_ok = total_skip = total_fail = 0
+    consecutive_fail = 0  # 서버 다운 감지용 — 성공 시 0 으로 리셋
+    aborted = False  # 연속 실패로 조기 중단했는지
 
     for base_dir, source_label in sources:
+        if aborted:
+            break
         log.info("── 스캔 중: %s  [%s]", base_dir, source_label)
 
         for fpath in _scan_files(base_dir):
+            if aborted:
+                break
             fkey = str(fpath)
             try:
                 mtime = fpath.stat().st_mtime
@@ -493,6 +504,10 @@ def main() -> None:
             session_id = fpath.stem
             log.info("  %s (%d쌍) [%s]", fpath.name, len(pairs), source_label)
 
+            # 이 파일에서 전송 실패가 하나라도 있으면 상태를 저장하지 않는다.
+            # → 서버 복구 후 다음 실행에서 자동 재시도 (데이터 유실 방지).
+            file_had_failure = False
+
             for question, answer in pairs:
                 if len(question) < 5 or len(answer) < 5:
                     total_skip += 1
@@ -505,22 +520,38 @@ def main() -> None:
                     ok = _post_qa(server_url, kb_secret, question, answer, team_member, session_id, source_label)
                     if ok:
                         total_ok += 1
+                        consecutive_fail = 0
                     else:
                         total_fail += 1
+                        file_had_failure = True
+                        consecutive_fail += 1
+                        if consecutive_fail >= _MAX_CONSECUTIVE_FAIL:
+                            log.error(
+                                "연속 %d회 전송 실패 → 서버 다운으로 판단, 중단합니다. "
+                                "(미처리 파일은 상태 미저장 → 서버 복구 후 다음 실행에 자동 재시도)",
+                                consecutive_fail,
+                            )
+                            aborted = True
+                            break
 
                 if args.limit > 0 and total_ok >= args.limit:
                     log.info("=== limit %d 도달, 중단 ===", args.limit)
+                    if not file_had_failure:
+                        new_state[fkey] = mtime
                     if not args.dry_run:
                         _save_state(new_state)
                     log.info("완료: ok=%d  skip=%d  fail=%d", total_ok, total_skip, total_fail)
                     return
 
-            new_state[fkey] = mtime
+            if not file_had_failure:
+                new_state[fkey] = mtime
 
     if not args.dry_run:
         _save_state(new_state)
 
     log.info("=== 완료: ok=%d  skip=%d  fail=%d ===", total_ok, total_skip, total_fail)
+    if aborted:
+        log.error("⚠️ 서버 연결 불가로 조기 중단됨 — 서버 상태를 확인하세요 (KB_SERVER_URL=%s)", server_url)
     if args.dry_run:
         log.info("(dry-run 모드 — 실제 전송 없음)")
 
