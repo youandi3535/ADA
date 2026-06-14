@@ -502,7 +502,7 @@ def _build_hypothesis(ctx: ReportContext) -> SlideSpec:
     # carrier t_hyp_evidence_insight 가 " — " 기준으로 3칸에 분배한다.
     body = [
         f"상위 피처가 결과를 좌우한다 — Top 피처가 {pm.get('name', '지표')} 에 강한 신호 제공 — 핵심 변수 중심 해석 전략 수립",
-        f"{chosen} 이 본 데이터에 최적이다 — baseline 대비 우수 성과로 선정 — 운영 비용 대비 효율적 모델 확보",
+        "단일 변수보다 변수 간 구조·상호작용이 결과를 더 설명한다 — 상관·결측 등 데이터 구조에서 추가 신호 확인 — 파생·상호작용 피처 설계의 근거",
         "분포 변화에도 성능이 유지된다 — 임계 성능 유지 여부를 세그먼트 검증으로 확인 — drift 모니터링 설계의 근거",
     ]
     return SlideSpec(
