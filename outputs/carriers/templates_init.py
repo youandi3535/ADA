@@ -1012,7 +1012,7 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
                     cap = cap[:idx].rstrip(".")
                     break
             else:
-                cap = cap[:68].rstrip() + "…"
+                cap = I._ws_cut(cap, 70)
         # draw_5step_alt_callouts 는 "title" 키를 읽음 (label 로 넘기면 "STEP n" 폴백)
         items.append({"title": label[:20], "label": label[:20], "caption": cap})
     if not items:
@@ -1035,7 +1035,7 @@ def t_method_5step(slide, sl, ctx, primary, accent, ink, muted, light_bg):
         _why = _txt(w.get("why"))
         _res = _txt(w.get("result"))
         if _why or _res:
-            _cards.append((_h[:24], _why[:80], _res[:60]))
+            _cards.append((I._ws_cut(_h, 24), I._ws_cut(_why, 80), I._ws_cut(_res, 60)))
     if _cards:
         _cw = (I.SLIDE_W - 3.0 - (len(_cards) - 1) * 0.5) / len(_cards)
         _cy = 13.2

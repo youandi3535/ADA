@@ -3767,7 +3767,10 @@ def draw_policy_decision(slide, badge, kpis, rules, primary, accent, ink, muted,
         # jh 2026-06-12 — 문장 단위 줄바꿈 + 단락 간격 (빽빽함·잘림 해소, 사용자 지적)
         _cap = str(r.get("caption", "")).strip()
         _sents = [s.strip() for s in _cap.replace(". ", ".\n").split("\n") if s.strip()]
-        _add_paragraphs(slide, x + 0.5, ry + 2.3, rw - 1.0, rh - 2.6, _sents[:4],
+        # jh 2026-06-13 — 문장이 카드 폭을 크게 넘으면(예: 데이터셋 설명 유입) 단어 경계
+        # 절단(…)으로 잘림면 노출 방지 + 최대 3문장으로 카드 높이 내 안착.
+        _sents = [_ws_cut(s, 72) for s in _sents][:3]
+        _add_paragraphs(slide, x + 0.5, ry + 2.3, rw - 1.0, rh - 2.6, _sents,
                         size_pt=12, color_hex=ink, space_after_pt=8)
 
 
