@@ -78,7 +78,11 @@ TOPIC_SYSTEM_PROMPT = (
     "- domain          : 데이터 산업·분야\n"
     "- dataset_summary : 데이터셋 1~2문장 요약\n"
     "- target_insight  : 예측 타겟의 의미·맥락\n"
-    "- column_meanings : 컬럼명·의미 사전 (영문 키 유지)\n\n"
+    "- column_meanings : 컬럼명·의미 사전 (영문 키 유지)\n"
+    "- data_structure  : 데이터 구조 힌트.\n"
+    "    is_timeseries=시계열 여부, date_column=시간축,\n"
+    "    segment_columns=비교 가능한 범주(성별·연령·지역·등급 등),\n"
+    "    measure_columns=수치 측정값, row_count=행 수\n\n"
     "[규칙]\n"
     "- 학회 컨퍼런스·기업 발표·연구 보고 표지에 그대로 박힐 발표 제목.\n"
     "- 길이: 제목 전체 25~50자.\n"
@@ -90,7 +94,15 @@ TOPIC_SYSTEM_PROMPT = (
     "- 방법론(ML / 예측 모델 / 클러스터링 / 전처리 / 파이프라인 등) 은 부제에서 명시 가능.\n"
     "  단, 본제·부제 어디에도 데이터셋명만 단순 반복하는 무의미한 부제 금지.\n"
     "- 청중이 발표를 듣고 싶게 만드는 구체적 가치 제안이 부제에 담겨야 함.\n"
-    "- 5개는 서로 다른 각도 (사회적 함의 / 파이프라인 / 호기심 / 메타 / 비즈니스 등) 로 다양화.\n"
+    "- 5개 제목은 아래 5가지 '분석 관점'을 각각 하나씩 담당 (관점 중복 금지):\n"
+    "  ① 시간·추이   : 기간 흐름·증감 추세·변곡점 (data_structure.is_timeseries=true 면 필수)\n"
+    "  ② 세그먼트 비교: segment_columns 의 범주 간 차이·격차 (예: 성별·연령대 비교)\n"
+    "  ③ 그룹·공간   : 지역·집단·카테고리별 분포·집중\n"
+    "  ④ 리스크·취약 : 위험군·이상·취약 세그먼트·경고 신호\n"
+    "  ⑤ 종합·메타   : 데이터 전체가 말하는 큰 그림·시사점\n"
+    "  ※ 해당 관점 재료가 데이터에 없으면(예: 시계열 아님·segment 없음) 그 슬롯은\n"
+    "    가장 가까운 다른 관점으로 대체하되, 5개가 서로 다른 각도가 되도록 한다.\n"
+    "- 제목에는 data_structure 의 실제 축(date_column·segment_columns)·domain 을 구체 반영.\n"
     "- 한국어만. 한자 금지.\n\n"
     "[좋은 예시 — 그대로 따라할 톤]\n"
     '  "타이타닉 생존율 분석: 사회적 불평등과 생존의 상관관계"\n'
@@ -114,7 +126,7 @@ TOPIC_SYSTEM_PROMPT = (
     '{"id":4,"title":"..."},{"id":5,"title":"..."}]'
 )
 
-# 주제 LLM 실패 시 정적 fallback (도메인 무관 일반 제목)
+# 주제 LLM 실패 + data_profile 도 비었을 때만 쓰는 최종 정적 fallback (도메인 무관)
 _TOPIC_FALLBACK_DEFAULTS: list[dict[str, Any]] = [
     {"id": 1, "title": "데이터로 보는 핵심 트렌드"},
     {"id": 2, "title": "주요 지표 심층 분석 보고서"},
@@ -122,6 +134,90 @@ _TOPIC_FALLBACK_DEFAULTS: list[dict[str, Any]] = [
     {"id": 4, "title": "리스크 요인 분석"},
     {"id": 5, "title": "데이터 종합 회고"},
 ]
+
+
+def _structure_hints_from_profile(dp: dict[str, Any]) -> dict[str, Any]:
+    """HJ 2026-06-14 — data_profile 에서 주제 관점 다양화 재료를 가공.
+
+    시계열 여부·세그먼트(저카디널리티 범주) 후보·수치 측정값 후보를 추출한다.
+    propose_topics(LLM 입력)와 _build_topic_fallback(폴백) 이 공유한다.
+    """
+    cols = [str(c) for c in (dp.get("columns") or [])]
+    dtypes = dp.get("dtypes") or {}
+    card = dp.get("cardinality") or {}
+    date_col = dp.get("date_col")
+    detected_cat = (dp.get("category_detection") or {}).get("detected_category")
+
+    seg_candidates: list[str] = []
+    measure_candidates: list[str] = []
+    for c in cols:
+        if c == date_col:
+            continue
+        nun = card.get(c)
+        dt = str(dtypes.get(c, ""))
+        # 세그먼트 후보: 저카디널리티(2~30) 범주/정수 컬럼 (float 측정값 제외)
+        if isinstance(nun, int) and 2 <= nun <= 30 and not dt.startswith("float"):
+            seg_candidates.append(c)
+        elif dt.startswith(("int", "float")):
+            measure_candidates.append(c)
+
+    return {
+        "is_timeseries": bool(date_col) or detected_cat == "timeseries",
+        "date_column": date_col,
+        "segment_columns": seg_candidates[:8],
+        "measure_columns": measure_candidates[:8],
+        "row_count": dp.get("rows"),
+    }
+
+
+def _build_topic_fallback(data_profile: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """HJ 2026-06-14 — LLM 실패 시 data_profile 구조 메타 기반 동적 폴백.
+
+    인코딩·도메인 분석이 살아 있으면 도메인명·시계열·세그먼트를 반영해
+    generic 5개(_TOPIC_FALLBACK_DEFAULTS) 대신 데이터에 맞는 제목을 생성한다.
+    도메인 정보가 전혀 없으면 정적 폴백으로 떨어진다.
+    """
+    dp = data_profile or {}
+    domain_info = dp.get("domain_analysis") or {}
+    domain = str(domain_info.get("domain") or "").strip()
+    if not domain:
+        return [dict(t) for t in _TOPIC_FALLBACK_DEFAULTS]
+
+    hints = _structure_hints_from_profile(dp)
+    is_ts = hints.get("is_timeseries")
+    segs = hints.get("segment_columns") or []
+    seg1 = segs[0] if segs else None
+    seg2 = segs[1] if len(segs) > 1 else None
+
+    titles: list[str] = []
+    # ① 시간·추이 / 종합
+    titles.append(f"{domain} 추이 분석: 기간별 변화와 변곡점" if is_ts else f"{domain} 핵심 지표 종합 분석 보고")
+    # ② 세그먼트 비교
+    if seg1:
+        titles.append(f"{seg1}(으)로 본 {domain}: 세그먼트별 패턴 비교")
+    # ③ 그룹·공간
+    if seg2:
+        titles.append(f"{seg2}별 분포로 읽는 {domain}의 집중과 격차")
+    # ④ 리스크·취약
+    titles.append(f"{domain} 리스크 진단: 취약 구간과 경고 신호")
+    # ⑤ 종합·메타
+    titles.append(f"데이터가 말하는 {domain}: 핵심 인사이트 종합")
+
+    # 중복 제거 + generic 으로 5개 보장
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for t in titles:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    for g in _TOPIC_FALLBACK_DEFAULTS:
+        if len(uniq) >= 5:
+            break
+        if g["title"] not in seen:
+            uniq.append(g["title"])
+            seen.add(g["title"])
+    return [{"id": i, "title": t} for i, t in enumerate(uniq[:5], start=1)]
+
 
 _UNSUPERVISED_CATEGORIES: frozenset[str] = frozenset({"anomaly_detection"})
 
@@ -389,7 +485,7 @@ class AnalysisProposerAgent(BaseGate):
                 topics = await self.propose_topics(state)
             except Exception as e:
                 self.logger.warning("g2_topics_main_flow_failed", error=str(e))
-                topics = [dict(t) for t in _TOPIC_FALLBACK_DEFAULTS]
+                topics = _build_topic_fallback(state.data_profile)
 
             gate_responses = dict(state.gate_responses or {})
             gate_responses[self.gate_code] = {
@@ -527,22 +623,29 @@ class AnalysisProposerAgent(BaseGate):
     # 도메인 지식만 입력 → PPT 표지용 발표 제목 5개 생성.
     # ------------------------------------------------------------------
     async def propose_topics(self, state: PipelineState) -> list[dict[str, Any]]:
-        """G2 Sub-1 — 도메인 지식 기반 PPT 표지 제목 5개 생성."""
+        """G2 Sub-1 — 도메인 지식 + 데이터 구조 기반 PPT 표지 제목 5개 생성."""
         dp = state.data_profile or {}
         domain = dp.get("domain_analysis") or {}
+        # HJ 2026-06-14 — 구조 힌트 주입 (관점 다양화 재료: 시계열·세그먼트·측정값).
+        hints = _structure_hints_from_profile(dp)
+        if getattr(state, "category", None) == "timeseries":
+            hints["is_timeseries"] = True
         payload = {
             "domain": domain.get("domain"),
             "dataset_summary": (domain.get("dataset_summary") or "")[:400],
             "target_insight": (domain.get("target_insight") or "")[:400],
             "column_meanings": dict(list((domain.get("column_meanings") or {}).items())[:20]),
+            "data_structure": hints,
         }
         user_payload = json.dumps(payload, ensure_ascii=False)[:3000]
         try:
             raw = await self._call_llm(
                 system_prompt=TOPIC_SYSTEM_PROMPT,
                 user_prompt=user_payload,
-                max_tokens=500,
-                temperature=0.5,
+                # HJ 2026-06-14 — 관점축 5슬롯 반영으로 출력이 약간 길어짐 → 500→600.
+                #   다양성 위해 temperature 0.5→0.6 (한자 리스크 회피 위해 과도하지 않게).
+                max_tokens=600,
+                temperature=0.6,
                 json_mode=True,
             )
             arr = self._safe_parse_json_array(raw)
@@ -556,7 +659,8 @@ class AnalysisProposerAgent(BaseGate):
                     return topics
         except Exception as e:
             self.logger.warning("g2_topics_llm_failed", error=str(e))
-        return [dict(t) for t in _TOPIC_FALLBACK_DEFAULTS]
+        # HJ 2026-06-14 — generic 정적 폴백 대신 data_profile 구조 기반 동적 폴백.
+        return _build_topic_fallback(dp)
 
     # ------------------------------------------------------------------
     # CS 2026-06-10 — G2 Sub-2 (분석 방향) LLM 호출, selected_topic 입력.
