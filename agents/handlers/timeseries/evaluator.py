@@ -215,14 +215,39 @@ def _diagnose_residuals(metrics: dict) -> dict[str, Any]:
         y_abs_mean = float(_np.mean(_np.abs(y_true_arr[mask])))
         mean_pct = float(abs(_np.mean(residuals)) / y_abs_mean) if y_abs_mean > 1e-9 else 0.0
 
+        # (2.5) Shapiro-Wilk 정규성 검정 (2026-06-14, Phase Ⅳ — P5)
+        # 잔차가 정규분포에 가까운지 → PI(예측구간)의 가정 충족 여부.
+        # p>0.05 → 정규성 통과. n>5000 시 skip(통계적 위양성 회피).
+        shapiro_p: Any = None
+        skew_v: Any = None
+        kurt_v: Any = None
+        try:
+            from scipy.stats import kurtosis, shapiro, skew  # noqa: WPS433
+
+            if 3 <= len(residuals) <= 5000:
+                _stat, _p = shapiro(residuals)
+                shapiro_p = float(_p)
+            skew_v = float(skew(residuals)) if len(residuals) >= 3 else None
+            kurt_v = float(kurtosis(residuals)) if len(residuals) >= 3 else None
+        except Exception:
+            pass
+
         # 판정
         bias_warn = mean_pct > 0.10
+        # 정규성 메타 (공통 키)
+        _norm_meta = {
+            "shapiro_p": round(shapiro_p, 4) if shapiro_p is not None else None,
+            "normal_ok": (shapiro_p is not None and shapiro_p > 0.05),
+            "skew": round(skew_v, 3) if skew_v is not None else None,
+            "kurtosis": round(kurt_v, 3) if kurt_v is not None else None,
+        }
         if ljung_p is not None and ljung_p > 0.05 and not bias_warn:
             return {
                 "kind": "white_noise",
                 "ljung_box_p": round(ljung_p, 4),
                 "mean_pct": round(mean_pct, 4),
                 "hint": "잔차가 백색잡음에 가까워 모델이 신호를 충분히 추출했습니다.",
+                **_norm_meta,
             }
         if ljung_p is not None and ljung_p <= 0.05:
             return {
@@ -233,6 +258,7 @@ def _diagnose_residuals(metrics: dict) -> dict[str, Any]:
                     f"잔차 자기상관 잔존 (Ljung-Box p={ljung_p:.3f} ≤ 0.05) — 모델이 잡지 못한 시간 의존성. "
                     "lag 추가 / 차분 차수 증가 / 더 큰 ARIMA 차수 검토."
                 ),
+                **_norm_meta,
             }
         if bias_warn:
             return {
@@ -240,8 +266,9 @@ def _diagnose_residuals(metrics: dict) -> dict[str, Any]:
                 "ljung_box_p": round(ljung_p, 4) if ljung_p is not None else None,
                 "mean_pct": round(mean_pct, 4),
                 "hint": f"잔차 평균 편향 +{mean_pct:.1%} — 추세 보정 / 상수항 추가 검토.",
+                **_norm_meta,
             }
-        return {"kind": "unknown", "ljung_box_p": ljung_p, "mean_pct": round(mean_pct, 4)}
+        return {"kind": "unknown", "ljung_box_p": ljung_p, "mean_pct": round(mean_pct, 4), **_norm_meta}
     except Exception as exc:  # noqa: BLE001
         return {"kind": "unknown", "reason": f"diagnose_failed: {exc}"}
 
@@ -810,24 +837,20 @@ def evaluate(state: Any) -> dict[str, Any]:
         rb = symptom.get("rollback_priority") or []
         if rb:
             rationale_parts.append(f"롤백 우선순위: {' > '.join(rb[:3])}")
-    # L4 — task_kind 분류형 안내
     if classification_hint:
         rationale_parts.append(classification_hint)
     rationale = " | ".join(rationale_parts)
 
     return {
-        # 기존 4 키 (불변, 회귀 0)
         "passed": passed,
         "rationale": rationale,
         "threshold_violations": violations,
-        "metrics": metrics,  # cs-day6 의 모든 키 그대로 전달
-        # 신규 3 키 (cs-day7 v3 디벨롭)
+        "metrics": metrics,
         "fold_diagnostics": fold_diag,
         "leakage_suspect_signals": leakage_signals,
         "symptom_classification": symptom,
         "fit_quality": _diagnose_fit_quality(metrics),
-        "residual_diagnostics": _diagnose_residuals(metrics),  # G15
-        "dm_test": dm,  # G13 (B-8 에서 1회 계산·재사용)
-        # L4 — task_kind 안내 (chosen_recipe 활용 시만)
+        "residual_diagnostics": _diagnose_residuals(metrics),
+        "dm_test": dm,
         "task_kind_hint": classification_hint,
     }

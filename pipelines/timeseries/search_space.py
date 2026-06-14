@@ -142,4 +142,94 @@ def get_search_space(model_name: str, trial: Any) -> dict[str, Any]:
     if model_name == "seasonal_naive":
         return {}
 
+    # ════════════════════════════════════════════════════════════════════
+    # Phase F (2026-06-14, B 길) — 신규 16 종 파라미터
+    # ═══════════════════════════════════════════════════════════════
+    if model_name == "STL":
+        return {
+            "seasonal_periods": trial.suggest_categorical("seasonal_periods", [7, 12, 30]),
+            "arima_order": (
+                trial.suggest_int("stl_arima_p", 0, 2),
+                trial.suggest_int("stl_arima_d", 0, 1),
+                trial.suggest_int("stl_arima_q", 0, 2),
+            ),
+        }
+    if model_name == "VAR":
+        var_max = min(10, max(2, n_rows // 50)) if n_rows > 0 else 5
+        return {
+            "maxlags": trial.suggest_int("var_maxlags", 1, var_max),
+            "ic": trial.suggest_categorical("var_ic", ["aic", "bic", "hqic"]),
+        }
+    if model_name == "VARMA":
+        return {"order": (trial.suggest_int("varma_p", 0, 2), trial.suggest_int("varma_q", 0, 2))}
+    if model_name == "GARCH":
+        return {
+            "p": trial.suggest_int("garch_p", 1, 2),
+            "q": trial.suggest_int("garch_q", 1, 2),
+            "egarch": trial.suggest_categorical("egarch", [False, True]),
+        }
+    if model_name == "AutoARIMA":
+        return {"season_length": trial.suggest_categorical("season_length", [7, 12, 30])}
+    if model_name == "AutoETS":
+        return {"season_length": trial.suggest_categorical("season_length", [7, 12, 30])}
+    if model_name == "NeuralProphet":
+        return {
+            "epochs": trial.suggest_int("np_epochs", 5, 20),
+            "n_lags": trial.suggest_int("np_n_lags", 0, 7),
+        }
+    if model_name == "LightGBM":
+        n_est_max = 100 if 0 < n_rows < 200 else 400
+        leaves_max = 15 if 0 < n_rows < 200 else 63
+        return {
+            "n_estimators": trial.suggest_int("lgb_n_estimators", 50, n_est_max),
+            "learning_rate": trial.suggest_float("lgb_lr", 1e-3, 0.3, log=True),
+            "num_leaves": trial.suggest_int("lgb_leaves", 7, leaves_max),
+            "max_depth": trial.suggest_int("lgb_max_depth", -1, 10),
+        }
+    if model_name == "XGBoost":
+        n_est_max = 100 if 0 < n_rows < 200 else 400
+        depth_max = 4 if 0 < n_rows < 200 else 10
+        return {
+            "n_estimators": trial.suggest_int("xgb_n_estimators", 50, n_est_max),
+            "learning_rate": trial.suggest_float("xgb_lr", 1e-3, 0.3, log=True),
+            "max_depth": trial.suggest_int("xgb_max_depth", 3, depth_max),
+        }
+    if model_name == "CatBoost":
+        n_iter_max = 100 if 0 < n_rows < 200 else 400
+        depth_max = 4 if 0 < n_rows < 200 else 8
+        return {
+            "iterations": trial.suggest_int("cb_iterations", 50, n_iter_max),
+            "learning_rate": trial.suggest_float("cb_lr", 1e-3, 0.3, log=True),
+            "depth": trial.suggest_int("cb_depth", 3, depth_max),
+        }
+    if model_name == "RandomForest":
+        return {
+            "n_estimators": trial.suggest_int("rf_n_estimators", 100, 500),
+            "max_depth": trial.suggest_categorical("rf_max_depth", [None, 5, 10, 20]),
+        }
+    if model_name == "Ridge":
+        return {"alpha": trial.suggest_float("ridge_alpha", 1e-3, 100.0, log=True)}
+    if model_name == "Lasso":
+        return {
+            "alpha": trial.suggest_float("lasso_alpha", 1e-4, 10.0, log=True),
+            "max_iter": trial.suggest_int("lasso_max_iter", 1000, 10000),
+        }
+    if model_name in ("TCN", "NHiTS", "NBEATS"):
+        return {
+            "input_chunk_length": trial.suggest_int("dl_input_chunk", 7, 28),
+            "output_chunk_length": trial.suggest_int("dl_output_chunk", 1, 14),
+            "n_epochs": trial.suggest_int("dl_n_epochs", 10, 50),
+            "batch_size": trial.suggest_categorical("dl_batch", [16, 32, 64]),
+            "dropout": trial.suggest_float("dl_dropout", 0.0, 0.3),
+        }
+    if model_name in ("LSTM", "GRU", "RNN", "DeepAR"):
+        return {
+            "input_chunk_length": trial.suggest_int("rnn_input_chunk", 7, 28),
+            "hidden_dim": trial.suggest_categorical("rnn_hidden", [8, 16, 32]),
+            "n_rnn_layers": trial.suggest_int("rnn_layers", 1, 2),
+            "training_length": trial.suggest_int("rnn_training_len", 14, 40),
+            "n_epochs": trial.suggest_int("rnn_n_epochs", 10, 50),
+            "batch_size": trial.suggest_categorical("rnn_batch", [16, 32, 64]),
+        }
+
     raise ValueError(f"Unknown timeseries model for search_space: {model_name}")

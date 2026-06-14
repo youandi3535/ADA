@@ -1,17 +1,17 @@
 # =============================================================
 # handlers-timeseries.txt  -  시계열 카테고리 (CS 단독)
 # =============================================================
-# 본 파일은 CS (timeseries 종주) 가 단독 수정.
-# .github/CODEOWNERS 에 @cs 로 강제.
-#
-# 의존성 추가 시 worker.txt 의 -r 라인이 자동으로 끌어옴.
+# 2026-06-14 — 26종 모델 확장 (B 길 / 정책 갱신)
+#   환경: CPU 중심 추론 + GTX 1060 3GB 보조
 # =============================================================
-
-# 통계 시계열
-statsmodels==0.14.2          # ARIMA / SARIMA / STL decompose / ADF·KPSS
-prophet==1.1.5               # Facebook Prophet (seasonality)
-
-# 신경망 시계열 (Day 6 CS 본구현 시 활성화)
-# darts==0.30.0              # TFT / N-BEATS / RNN unified API
-# statsforecast==1.7.5       # R-1007: 시계열 기본 후보
-# neuralforecast==1.7.2      # Informer / PatchTST
+statsmodels==0.14.2
+arch==6.3.0
+prophet==1.1.5
+statsforecast==1.7.5
+neuralprophet==0.9.0
+lightgbm==4.3.0
+xgboost==2.0.3
+catboost==1.2.5
+scikit-learn>=1.4.0
+darts==0.30.0
+torch==2.2.0

@@ -311,6 +311,30 @@ def _recommend_retrain_schedule(state: Any) -> dict:
         triggers.append(f"짧은 계열 (n={n_rows}) — 데이터 누적 우선")
         urgency = "low"
 
+    # 5. P2 (2026-06-14) — 결측 비율 30% 이상 시 horizon 강등 권고
+    missing_ratio = None
+    try:
+        mr = profile.get("missing_ratio")
+        if mr is None and isinstance(eda, dict):
+            mr = eda.get("missing_ratio")
+        if mr is not None:
+            missing_ratio = float(mr)
+    except (TypeError, ValueError):
+        missing_ratio = None
+    horizon_degrade_warning = None
+    if missing_ratio is not None and missing_ratio >= 0.30:
+        base_days = max(7, int(base_days * 0.6))
+        suggested_h = max(1, int(horizon * 0.5))
+        triggers.append(f"결측률 {missing_ratio:.0%} — horizon 강등 권고")
+        horizon_degrade_warning = {
+            "missing_ratio": round(missing_ratio, 3),
+            "current_horizon": horizon,
+            "suggested_horizon": suggested_h,
+            "reason": "결측 30% 이상 — 모델 신뢰도 낮음",
+        }
+        if urgency != "high":
+            urgency = "medium"
+
     interval_days = max(7, min(int(base_days), 365))
 
     if urgency == "high":
@@ -329,6 +353,7 @@ def _recommend_retrain_schedule(state: Any) -> dict:
         "urgency_ko": urgency_ko,
         "expert_voice": voice,
         "triggers": triggers,
+        "horizon_degrade_warning": horizon_degrade_warning,
     }
 
 
@@ -633,12 +658,8 @@ def _build_fallback(state: Any) -> str:
 
 
 # ════════════════════════════════════════════════════════════════
-# 진입점 (dispatcher 자동 등록, "generate" capability)
+# 진입점 (dispatcher 자동 등록)
 # ════════════════════════════════════════════════════════════════
 def generate(state: Any) -> str:
-    """HANDLER_REGISTRY 등록 진입점 — InsightAgent dispatcher 가 호출.
-
-    LLM 기반 생성은 dispatcher 가 담당하고, 여기서는 규칙 기반 fallback 을 반환한다.
-    dispatcher 가 LLM 응답을 받으면 이 결과 대신 LLM 결과를 사용한다.
-    """
+    """HANDLER_REGISTRY 등록 진입점 — InsightAgent dispatcher 가 호출."""
     return fallback(state)

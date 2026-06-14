@@ -126,6 +126,41 @@ def _exog_columns(state: Any) -> list[str]:
         return []
 
 
+def _ccf_top_lags(state: Any) -> dict[str, int]:
+    """P4 (2026-06-14) — profiler.ccf_top_lags 추출. {col_name: best_lag}."""
+    try:
+        profile = getattr(state, "data_profile", None) or {}
+        if not isinstance(profile, dict):
+            return {}
+        ccf_meta = profile.get("ccf_top_lags")
+        if not isinstance(ccf_meta, dict):
+            inner = profile.get("ccf_leakage")
+            ccf_meta = inner.get("ccf_top_lags") if isinstance(inner, dict) else None
+        if not isinstance(ccf_meta, dict):
+            return {}
+        out: dict[str, int] = {}
+        for col, meta in ccf_meta.items():
+            if isinstance(meta, dict):
+                lag = int(meta.get("lag") or 0)
+                if lag >= 1:
+                    out[col] = lag
+        return out
+    except (TypeError, AttributeError, ValueError):
+        return {}
+
+
+def _is_multiplicative(state: Any) -> bool:
+    """P3 (2026-06-14) — profiler.multiplicative.is_multiplicative 신호 추출."""
+    try:
+        profile = getattr(state, "data_profile", None) or {}
+        if not isinstance(profile, dict):
+            return False
+        mult = profile.get("multiplicative")
+        return bool(mult.get("is_multiplicative")) if isinstance(mult, dict) else False
+    except (TypeError, AttributeError):
+        return False
+
+
 def _decide_lags(state: Any, n_rows: int, horizon: int = 1) -> list[int]:
     """data_profile 기반 lag 목록 결정 (horizon-aware — 누수 1-2 차단).
 
@@ -216,19 +251,22 @@ def plan(state: Any) -> list[dict[str, Any]]:
         }
     )
 
-    # Phase 2: 비정상 or 계절성 있을 때 분산 안정화
-    # lag/rolling 보다 반드시 앞에 위치해야 스케일 일관성 보장
-    if not stationary or period is not None:
-        steps.append(
-            {
-                "name": "boxcox",
-                "shift_min": True,  # min<=0 이면 offset=|min|+1 자동 추가
-                "lambda_clip": (-5.0, 5.0),  # 수치 오버플로 방지 lambda 범위
-                "fallback": "log1p",  # boxcox 실패(상수 시리즈 등) 시 대체
-                "leakage_safe": True,
-                "needs_review": True,
-            }
-        )
+    # Phase 2: 비정상 or 계절성 있을 때 분산 안정화 (P3 — multiplicative 도 트리거)
+    is_multi = _is_multiplicative(state)
+    if not stationary or period is not None or is_multi:
+        bc_step: dict[str, Any] = {
+            "name": "boxcox",
+            "shift_min": True,
+            "lambda_clip": (-5.0, 5.0),
+            "fallback": "log1p",
+            "leakage_safe": True,
+            "needs_review": True,
+        }
+        if is_multi:
+            # P3 — 승법 구조 명시 → lambda=0 (log) 강제
+            bc_step["force_lambda"] = 0.0
+            bc_step["reason"] = "multiplicative — log 변환 강제 (P3)"
+        steps.append(bc_step)
 
     # Phase 3: 변화량 특성 (target 변환 아님, 추가 feature)
     # ADF p > 0.1(강하게 비정상)이면 2차 차분도 추가
@@ -291,14 +329,23 @@ def plan(state: Any) -> list[dict[str, Any]]:
     # Phase 6: 외생변수 (target 특성 생성 이후)
     if exog_cols:
         exog_windows = [w for w in windows if w <= 14]
+        # P4 (2026-06-14) — CCF top_lags 자동 병합 (외생변수 시차 자동화)
+        ccf_lags_map = _ccf_top_lags(state)
+        exog_lags = list(lags)
+        h_guard = max(1, _horizon(state))
+        for col, ccf_lag in ccf_lags_map.items():
+            if col in exog_cols and ccf_lag >= h_guard and ccf_lag not in exog_lags:
+                exog_lags.append(ccf_lag)
+        exog_lags = sorted(set(exog_lags))[:8]  # 과적합 방어 — 최대 8개
         steps.append(
             {
                 "name": "exog",
                 "columns": exog_cols,
-                "lags": lags,
+                "lags": exog_lags,
                 "rolling_windows": exog_windows or [7],
                 "leakage_safe": True,
                 "needs_review": False,
+                "ccf_lags_used": {c: ccf_lags_map[c] for c in ccf_lags_map if c in exog_cols},
             }
         )
 
@@ -427,7 +474,8 @@ def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
                     shift_min=step.get("shift_min", True),
                     lambda_clip=step.get("lambda_clip", (-5.0, 5.0)),
                     fallback=step.get("fallback", "log1p"),
-                    train_ratio=_train_ratio,  # ★ λ 는 train 구간만으로 추정, 변환은 전체 적용
+                    train_ratio=_train_ratio,
+                    force_lambda=step.get("force_lambda"),  # P3 — multiplicative 시 lambda=0
                 )
 
             elif name == "diff":
@@ -588,6 +636,7 @@ def _apply_boxcox(
     lambda_clip: tuple[float, float] = (-5.0, 5.0),
     fallback: str = "log1p",
     train_ratio: float | None = None,
+    force_lambda: float | None = None,
 ) -> Any:
     """{target}_bc 컬럼 생성. 원본 target 절대 수정 안 함.
 
@@ -634,8 +683,11 @@ def _apply_boxcox(
         from scipy.special import boxcox as boxcox_transform  # noqa: WPS433
         from scipy.stats import boxcox  # noqa: WPS433
 
-        _, lam = boxcox(fit_part)  # λ 는 학습 구간만으로 추정
-        lam = float(np.clip(lam, lambda_clip[0], lambda_clip[1]))
+        if force_lambda is not None:
+            lam = float(force_lambda)  # P3 — multiplicative → lambda=0 (log) 강제
+        else:
+            _, lam = boxcox(fit_part)  # λ 는 학습 구간만으로 추정
+            lam = float(np.clip(lam, lambda_clip[0], lambda_clip[1]))
         transformed = boxcox_transform(shifted.values, lam)  # 전체에 train λ 로 변환
     except Exception as exc:
         logger.warning("boxcox 실패(%s) → fallback=%r", exc, fallback)
@@ -1007,53 +1059,26 @@ def _apply_fill_feature_nans(
     feature_cols = [c for c in out.columns if c != target and c != "_split"]
 
     if strategy == "drop":
-        warmup_range = out.iloc[:max_warmup]
-        has_nan = warmup_range[feature_cols].isna().any(axis=1)
-        drop_idx = warmup_range.index[has_nan]
-        out = out.drop(index=drop_idx).reset_index(drop=True)
-
+        drop_mask = out.iloc[:max_warmup][feature_cols].isna().any(axis=1)
+        keep_idx = list(out.index[max_warmup:]) + list(out.index[:max_warmup][~drop_mask])
+        out = out.loc[sorted(keep_idx)].reset_index(drop=True)
     elif strategy == "zero":
-        fill_cols = feature_cols if protect_target else [c for c in feature_cols if c != target]
+        fill_cols = feature_cols if not protect_target else [c for c in feature_cols if c != target]
         for col in fill_cols:
             out[col] = out[col].fillna(0.0)
-
     elif strategy == "none":
         pass
-
     else:
         logger.warning("fill_feature_nans: 알 수 없는 strategy=%r — none 처리", strategy)
-
     return out
 
 
-# ════════════════════════════════════════════════════════
-# Phase 8 — time_order_split
-# ════════════════════════════════════════════════════════
-
-
-def _apply_time_order_split(
-    df: Any,
-    test_ratio: float = 0.2,
-    gap: int = 0,
-) -> Any:
-    """시간 순서 보존 분할 → _split 컬럼 ("train"|"gap"|"test").
-
-    분할 로직:
-    - split_idx = max(1, int(n * (1 - test_ratio))).
-      예) n=100, ratio=0.2 → split_idx=80.
-    - [0, split_idx): "train"
-    - [split_idx, split_idx+gap): "gap"  (gap>0 시)
-      이유: 예측 horizon h 만큼의 행은 train 마지막이 test 레이블에
-      포함될 수 있어 look-ahead bias 위험. gap=h 로 차단.
-    - [split_idx+gap, n): "test"
-
-    shuffle 절대 없음 — 시계열에서 shuffle 은 미래 누설.
-    """
+def _apply_time_order_split(df: Any, test_ratio: float = 0.2, gap: int = 0) -> Any:
+    """시간 순서 보존 분할 → _split 컬럼 ("train"|"gap"|"test")."""
     out = df.copy()
     n = len(out)
     split_idx = max(1, int(n * (1.0 - test_ratio)))
     gap_end = min(n, split_idx + gap)
-
     out["_split"] = "train"
     if gap > 0 and gap_end > split_idx:
         out.iloc[split_idx:gap_end, out.columns.get_loc("_split")] = "gap"
