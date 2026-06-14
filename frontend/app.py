@@ -994,6 +994,17 @@ function isCompleted(){
   return false;
 }
 function analyzing(){ return !!(jobId && !curGate() && !isCompleted() && !isFailed()); }
+// HJ 2026-06-14 — 이전 단계(뒤로가기) 게이트 표시. 정지 후 prev 로 지난 단계로 가면
+//   분석/로딩 화면이 아니라 그 단계의 옵션 카드(첫 화면)가 떠야 한다.
+//   기존엔 상위 단계 분석이 계속 도는 동안 analyzing()=true 라 캐시를 버리고 로딩을 띄웠다.
+//   → 캐시에 실제 proposals(또는 G2 topic_proposals)가 있으면 분석 중이어도 그 카드를 복원한다.
+//   (방금 제출한 게이트 case 는 호출부의 lastSubmittedGate 가드가 먼저 잡아 로딩을 유지하므로 영향 없음.)
+function _gateBack(tg){
+  const c=gateCache[tg];
+  const ready=!!(c && (((c.proposals||[]).filter(function(p){return !p.is_custom;}).length) || ((c.topic_proposals||[]).length)));
+  if(ready) return c;
+  return analyzing()?{}:(gateCache[tg]||{});
+}
 // 시프트 후 (2026-06-04) 매핑:
 //   백엔드 gate_code 'G2' (분석 방향) → 화면 cur=1  ←→  화면 G2 라벨
 //   백엔드 gate_code 'G3' (방법론)    → 화면 cur=2  ←→  화면 G3 라벨
@@ -1204,7 +1215,10 @@ async function poll(){
   try{ status=await api('/pipeline/status/'+jobId,{}); }catch(e){ status={_err:e.message}; }
   try{ gateData=await api('/pipeline/gate/'+jobId,{}); }catch(e){ gateData={proposals:[], _err:e.message}; }
   // proposals 가 있는 게이트 응답은 캐시 — 이전 단계 뒤로가기 시 재사용
-  if(gateData.gate && (gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length){
+  // HJ 2026-06-14 — G2 주제 선정은 proposals 없이 topic_proposals 만 있으므로 함께 캐시한다.
+  //   (미캐싱 시 polling 중 gateData.gate 가 한 번이라도 비면 _gateBack 이 {} 를 반환 →
+  //    d.topic_proposals 가 사라져 주제 팝업이 깜빡이며 없어지던 버그.)
+  if(gateData.gate && ((gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length || (gateData.topic_proposals||[]).length)){
     gateCache[gateData.gate]=gateData;
   }
   // HTTP 4xx → 세션 만료(서버 재시작·DB 초기화): localStorage 정리 후 업로드 화면으로
@@ -1354,7 +1368,7 @@ function _stageProgress(){
     } else {
       const tg='G'+(cur+1); const ag=curGate();
       const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
-      const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
+      const d=_staleRun?{}:((ag===tg)?gateData:_gateBack(tg));
       const ps=((d.proposals)||[]).filter(function(p){return !p.is_custom;});
       if(ps.length&&!(lastSubmittedGate===tg&&!ag)) _completing=true;
     }
@@ -1447,7 +1461,7 @@ function isGateLoading(){
   const ag=curGate();
   if(lastSubmittedGate===tg && !ag) return true;
   const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
-  const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
+  const d=_staleRun?{}:((ag===tg)?gateData:_gateBack(tg));
   const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
   return !llmProps.length;
 }
@@ -1690,6 +1704,9 @@ function _modalGateReady(){
 function _modalShouldBeActive(){
   if(!jobId) return false;
   if(isFailed()) return false;
+  // HJ 2026-06-14 — 정지 후 prev 로 G1(업로드 첫 화면)로 돌아온 경우엔 분석 모달을 띄우지 않는다.
+  //   (업로드 드롭존을 모달이 덮어 새 분석을 못 하는 것을 방지.)
+  if(cur===0 && _suppressG1Advance) return false;
   // HJ 2026-06-12 — G6 는 완료돼도 팝업 타이핑이 끝나기 전이면 모달 유지 (조기 종료·7단계 점프 방지).
   if(isCompleted() && !_g6TypingHold()) return false;
   // HJ 2026-06-13 — 모달 생성 기준은 '단계 진행률 41%' 단일 기준(사용자 지시).
@@ -2373,8 +2390,14 @@ function contentGate(){
   // 실시간: ag===tg면 gateData, 뒤로가기 등 이전 단계: 캐시 사용
   // stale: resume 직후 analyzing() 미확인 구간은 이전 gate_data 무시
   const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
-  const d=_staleRun?{}:((ag===tg)?gateData:(analyzing()?{}:(gateCache[tg]||{})));
+  let d=_staleRun?{}:((ag===tg)?gateData:_gateBack(tg));
   const g=tg;
+  // HJ 2026-06-14 — G2 주제 단계에서 transient gateData(gate 빈값)로 topic_proposals 가
+  //   사라져 모달이 깜빡이며 없어지는 것을 방지: 캐시에 보존된 topic_proposals 로 폴백.
+  if(g==='G2' && g2SubStage==='topic' && !(d.topic_proposals||[]).length){
+    var _c2=gateCache['G2'];
+    if(_c2 && (_c2.topic_proposals||[]).length) d=_c2;
+  }
   const props=(d.proposals)||[];
   // CS 2026-06-10 — G2 Sub-1 (주제 선정 팝업).
   // g2SubStage='topic' + topic_proposals 도착했을 때만 팝업 모달 표시.
@@ -2467,7 +2490,10 @@ function content(i){
     //   (a) jobId 없음 → 파일 선택·의도 입력 화면(기존)
     //   (b) jobId 있음 + 분석 중 → 데이터 파악 진행 화면(15단계 백엔드 작업).
     //       이 화면을 끝까지 보여주다 G2 proposals 도착 시 poll() 이 cur=1 로 전환.
-    if(jobId){
+    // HJ 2026-06-14 — 정지 후 prev 로 G1 복귀(_suppressG1Advance) 시엔 분석 화면이 아니라
+    //   업로드 첫 화면(드롭존)을 띄운다. 사용자가 다른 파일·의도로 새로 분석할 수 있게.
+    //   (라이브 G1 분석 중에는 _suppressG1Advance=false 라 기존 분석 화면 유지.)
+    if(jobId && !_suppressG1Advance){
       // HJ 2026-06-10 — 모달 활성 시 카드 본문은 헤더만 (모달이 partial domain·loadingBlock 모두 표시).
       if(inModalLoading()){
         return '<div class="ahdr" style="opacity:.55"><h2>데이터를 파악하는 중입니다</h2>'
@@ -2696,17 +2722,25 @@ function render(){
   if(sb){
     sb.onclick=async function(){
       if(sb.disabled) return;
-      var d=gateData; var tps=(d&&d.topic_proposals)||[];
+      // HJ 2026-06-14 — 뒤로가기로 G2 주제 화면에 돌아온 경우 gateData 가 비어있을 수 있어
+      //   캐시(gateCache['G2'])를 폴백으로 써 주제 후보를 항상 확보(라이브 땐 gateData 우선).
+      var d=(gateData&&(gateData.topic_proposals||[]).length)?gateData:(gateCache['G2']||gateData);
+      var tps=(d&&d.topic_proposals)||[];
       var topicText='';
       if(selectedTopic.custom!==undefined){ topicText=topicCustomText.trim(); }
       else { var t=tps.find(function(x){return x.id===selectedTopic.id;}); topicText=(t&&t.title)||''; }
       if(!topicText){ return; }
       g2DirectionsBusy=true; g2DirectionsStartedAt=Date.now(); render();
       try{
-        await api('/pipeline/gate/G2/directions/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:topicText})});
+        var _resp=await api('/pipeline/gate/G2/directions/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:topicText})});
         window._g2_selectedTopicText=topicText;
         g2DirectionsReady=true;
         g2SubStage='direction';
+        // HJ 2026-06-14 — 재생성된 분석 방향을 캐시에 즉시 반영. 뒤로가기(폴링 정지) 상태에서도
+        //   새 방향 카드가 곧바로 보인다. (폴링 재시작은 백엔드 상위 단계로 끌려가므로 하지 않음.)
+        if(_resp && (_resp.proposals||[]).length){
+          var _g2c=gateCache['G2']||{}; _g2c.gate='G2'; _g2c.proposals=_resp.proposals; gateCache['G2']=_g2c;
+        }
         saveState();
       }catch(e){ errMsg='분석 방향 생성 실패 — '+e.message; }
       finally{ g2DirectionsBusy=false; g2DirectionsStartedAt=null; render(); }
@@ -2846,15 +2880,29 @@ document.getElementById('prevBtn').onclick=function(){
     if(ov){ ov.style.display='flex'; }
     return;
   }
+  // HJ 2026-06-14 — G2 는 2단 화면(주제 선정 → 분석 방향). 뒤로가기는 하위 화면부터 역순으로.
+  //   분석 방향 카드에서 prev → 같은 G2 의 주제 선정 화면으로(cur 유지). 주제 선정에서 한 번 더 prev →
+  //   아래 cur>0 분기로 G1 업로드 화면. 주제를 다시 고를 수 있게 g2DirectionsReady 도 리셋.
+  if(cur===1 && g2SubStage==='direction'){
+    g2SubStage='topic'; g2DirectionsReady=false; paused=false; follow=false; render();
+    return;
+  }
   if(cur>0){
     const goTo=cur-1;
     if(goTo===0) _suppressG1Advance=true;  // G1 화면에서 자동 G2 전환 억제
+    if(goTo===1) g2SubStage='direction';   // G3→G2 복귀 시 분석 방향 카드부터 노출
     // HJ 2026-06-11 — 이전 단계로 가도 앞 단계 진행 결과(캐시·frontier·maxReached) 보존.
     //   다시 next 로 돌아와 이어서 진행할 수 있게. 하위 단계 폐기는 '재진행(doResume)' 누르는 순간에만 수행.
-    cur=goTo; follow=false; render();
+    // HJ 2026-06-14 — paused 해제: 지난 단계 옵션 카드를 볼 땐 일시정지 상태가 아니라 선택 가능 상태.
+    cur=goTo; follow=false; paused=false; render();
   }
 };
-document.getElementById('nextBtn').onclick=function(){ _suppressG1Advance=false; if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); } };
+document.getElementById('nextBtn').onclick=function(){
+  _suppressG1Advance=false;
+  // HJ 2026-06-14 — G2 2단 화면: 주제 선정 → 분석 방향 으로 한 칸 전진(cur 유지). prev 와 대칭.
+  if(cur===1 && g2SubStage==='topic'){ g2SubStage='direction'; render(); return; }
+  if(cur<maxReached){ cur++; if(cur>=frontier) follow=true; render(); }
+};
 document.getElementById('stopBtn').onclick=function(){
   navUnlocked=!navUnlocked;
   // HJ 2026-06-12 — 분석 진행(로딩) 중 정지 → 화면 일시정지(폴링·타자기 정지, 진행 표시 고정).
