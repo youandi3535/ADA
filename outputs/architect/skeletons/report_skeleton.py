@@ -956,7 +956,6 @@ def _build_data_understanding(ctx: ReportContext) -> SectionSpec:
         )
     if high_card:
         key_bits.append(f"{', '.join(_feat_label(ctx, c) for c in high_card[:2])} 등 범주가 많은 변수는 인코딩 설계가 중요하다")
-    p_key = ". ".join(key_bits) + "."
 
     # ── 변수 품질 진단 — 고카디널리티 인코딩 전략 + 분포 왜도(이상치). 전부 ds.cardinality·numeric_stats 자동.
     q_bits: list[str] = []
@@ -1392,7 +1391,6 @@ def _build_method(ctx: ReportContext) -> Optional[SectionSpec]:
         if feats.created:
             top_feat = feats.created[0]
             tf_name = getattr(top_feat, "name", "") or (top_feat.get("name", "") if isinstance(top_feat, dict) else "")
-            tf_rat = getattr(top_feat, "rationale", "") or (top_feat.get("rationale", "") if isinstance(top_feat, dict) else "")
             if tf_name:
                 fb_parts.append(
                     f"파생 피처 {len(feats.created)}개를 생성했다 — 생성 방식과 근거는 표로 정리했다."

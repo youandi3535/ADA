@@ -306,6 +306,22 @@ def _brandize_png(png):
         return png
 
 
+def _fallback(plan, output_path) -> str:
+    """reportlab 미사용(미설치) 환경에서 PDF 생성 불가 시 — 최소 텍스트로 degrade.
+
+    PDF 렌더러가 통째로 없을 때만 타는 비상 경로. 호출 계약(경로 문자열 반환)은
+    지키되, 내용은 '렌더러 불가' 안내로 채운다.
+    """
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    title = getattr(plan, "title", None) or "데이터 분석 보고서"
+    out.write_text(
+        f"{title}\n\n(PDF 렌더러(reportlab)를 사용할 수 없어 텍스트로 대체했습니다.)\n",
+        encoding="utf-8",
+    )
+    return str(out)
+
+
 def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     try:
         from reportlab.lib import colors
