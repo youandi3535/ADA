@@ -583,12 +583,16 @@ def _build_market_context(ctx: ReportContext) -> SlideSpec:
         purpose = f"{biz}. {purpose}"
 
     # Q박스 풍부화 — 질문 + 답(접근) + 왜 중요한가
+    # jh 2026-06-13 — 조사 자동 처리(_josa): _top 이 받침 없는 "변수"·"Fare" 여도
+    # "변수이/Fare이" 처럼 틀리던 조사 오류 수정 (영문 받침도 _josa 가 처리).
+    from outputs.architect.skeletons.report_skeleton import _josa
+
     _gi = list(ctx.interpretation.global_importance or [])
     _top = getattr(_gi[0], "feature", "핵심 변수") if _gi else "핵심 변수"
     questions = [
         (
-            f"{target}을 가장 강하게 결정하는 변수는?",
-            f"EDA 집단 격차와 SHAP 전역 중요도로 규명 — 분석 결과 {_top}이 최상위 신호로 확인됨",
+            f"{target}{_josa(target, 'obj')} 가장 강하게 결정하는 변수는?",
+            f"EDA 집단 격차와 SHAP 전역 중요도로 규명 — 분석 결과 {_top}{_josa(_top, 'nom')} 최상위 신호로 확인됨",
         ),
         (
             "그 구조가 데이터에 실제로 재현되는가?",

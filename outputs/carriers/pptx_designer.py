@@ -144,7 +144,7 @@ def generate_pptx_designed(plan: ReportPlan, ctx: ReportContext, output_path) ->
         "eda_findings": "SHAP — 전역 importance",
         "error_analysis": "SHAP — 개별 케이스 해석",
         "insights_derived": "Error Analysis — 어디서 틀리는가",
-        "as_is_to_be": "약 segment — 취약 구간 식별",
+        "as_is_to_be": "세그먼트 성능 — 취약 구간 식별",
         "i3_roi": "운영 정책 — 도입 룰",
         "risk_mitigation": "Risk & Drift — SWOT",
         "roadmap": "실행 로드맵 — 후속 작업",
