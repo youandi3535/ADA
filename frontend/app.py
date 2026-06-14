@@ -1241,6 +1241,10 @@ async function poll(){
   //   전진 조건은 '타자기 글 작성 완료 + 3초'(=_modalShouldBeActive()=false) 단일 기준으로 통일(사용자 지시).
   //   (닫아도 위 [A] _active 경로가 모달 DOM 을 살려둬 타자기가 계속 → _typingHoldComplete() 정상 → 교착 없음)
   if(follow && !_modalShouldBeActive()) cur=Math.max(cur, frontier);
+  // HJ 2026-06-14 — G6(cur=LAST-1)에서 완료되면 follow 와 무관하게 완료페이지(LAST)로 전진.
+  //   산출물 선택 제출 후 follow=false 로 남으면 완료돼도 cur 이 6단계에 멈춰, 본문은 'G6 생성
+  //   중' 모달인데 진행바만 7단계로 보이던 불일치 해소. 단 타이핑 hold 중에는 모달 유지(전진 보류).
+  if(isCompleted() && !_g6TypingHold() && cur===LAST-1) cur=LAST;
   // cur 상한 = max(maxReached, frontier) — backend stale 일 때도 사용자 진행 단계 유지.
   cur=Math.max(0,Math.min(cur,Math.max(maxReached,frontier)));
   if(analyzing()){ if(analyzeStart==null) analyzeStart=Date.now(); } else { analyzeStart=null; }
@@ -2594,7 +2598,12 @@ function render(){
   //   backend 가 다음 단계 분석 초기에 stale 이전 게이트를 잠깐 publish 하면 computeFrontier 가
   //   frontier 를 낮춰(예: 4단계(G4) 분석 시작 시 G2 publish → frontier=1) 이미 완료된 3단계 ✓ 가
   //   풀려 원래 상태로 되돌아가던 버그를 수정. maxReached 는 절대 내려가지 않아 완료 단계가 유지된다.
-  const prog=Math.max(frontier,maxReached);
+  let prog=Math.max(frontier,maxReached);
+  // HJ 2026-06-14 — 완료 신호가 와도 본문이 완료페이지(cur=LAST)로 전진하기 전(G6 산출물
+  //   생성·타이핑 hold 중)에는 마지막 7단계를 미리 done 처리하지 않는다.
+  //   (computeFrontier 가 isCompleted 시 frontier=LAST 로 점프 → 6단계 진행 중인데 7단계가
+  //    완료로 표시돼 "6단계 건너뛰고 7단계로 넘어간 것처럼" 보이던 버그.)
+  if(isCompleted() && cur<LAST) prog=Math.min(prog, cur);
   const fillPct=(prog/(N-1))*100;
   let html='<div class="line"></div><div class="fill" style="width:calc((100% - 68px) * '+(fillPct/100)+')"></div>';
   steps.forEach(function(s,i){
@@ -2625,7 +2634,8 @@ function render(){
   const stt=document.getElementById('status');
   if(paused){ stt.textContent='⏸ 일시정지됨'; stt.className='status paused'; }
   else if(isFailed()){ stt.textContent='⛔ 실패'; stt.className='status failed'; }
-  else if(isCompleted()){ stt.textContent='✓ 완료'; stt.className='status done'; }
+  else if(isCompleted() && cur>=LAST){ stt.textContent='✓ 완료'; stt.className='status done'; }
+  else if(isCompleted()){ stt.textContent='산출물 마무리 중'; stt.className='status'; }
   else if(jobId){ stt.textContent='진행 중'; stt.className='status'; }
   else { stt.textContent='대기'; stt.className='status'; }
   if(cur===0){
@@ -2762,6 +2772,10 @@ function render(){
         _modalOpenedCur=cur;
         setTimeout(function(){ if(_modalShouldBeActive()) try{render();}catch(_e){} }, MODAL_CONTENT_DELAY_MS+50);
       }
+      // HJ 2026-06-14 — 콘텐츠 생성([1]~[5])을 try 로 감싼다. 시계열·고열수(예: 738열) 등에서 한 호출이
+      //   예외를 던지면 아래 [B] 시각 표시 토글까지 건너뛰어 '진행률은 도는데 모달이 안 뜨는' 버그가 났다.
+      //   예외가 나도 모달은 띄우고(아래 [B]), 다음 render 주기에 콘텐츠를 재시도한다.
+      try{
       // [1] 제목 영역
       var _mh=modalHtml(); var _mb=document.getElementById('modal-body');
       if(_mb._last!==_mh){_mb._last=_mh;_mb.innerHTML=_mh;}
@@ -2782,6 +2796,7 @@ function render(){
       var _mlEl=document.getElementById('mlmsg');if(_mlEl)_mlEl.textContent=loadMsg()+'…';
       var _msiEl=document.getElementById('msubinfo');
       if(_msiEl){var _ml2=_curAgentLabel();var _sd={0:'데이터 출처·스키마·도메인·품질 점검 등을 진행하고 있습니다.',1:'EDA 분석 + 방법론 후보를 산출하고 있습니다.',2:'전처리·피처 엔지니어링 전략을 수립하고 있습니다.',3:'모델 선택·하이퍼파라미터 튜닝·학습을 진행하고 있습니다.',4:'파인튜닝·평가·설명·인사이트를 생성하고 있습니다.',5:'리포트를 합성하고 학습 결과를 저장하고 있습니다.'};var _sn={0:'분석 방향',1:'방법론',2:'모델 전략',3:'최적 모델',4:'산출물',5:'최종 결과'};var _d2=_sd[cur]||'다음 단계를 준비하고 있습니다.';var _n2=_sn[cur]||'다음 단계';_msiEl.innerHTML=_ml2?(_d2+' &nbsp;·&nbsp; 현재 작업: <b>'+esc(_ml2)+'</b> &nbsp;·&nbsp; 곧 <b>'+esc(_n2)+'</b> 카드가 표시됩니다.'):(_d2+' &nbsp;·&nbsp; 곧 <b>'+esc(_n2)+'</b> 카드가 표시됩니다.');}
+      }catch(_meErr){ try{ console.error('modal content render failed', _meErr); }catch(_e2){} }
     }
     // ── [B] 시각 표시 토글 — _show 만 보고 결정. modalDismissed=true 면 _show=false → 숨김 ──
     if(_show){
