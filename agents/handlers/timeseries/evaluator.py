@@ -232,6 +232,38 @@ def _diagnose_residuals(metrics: dict) -> dict[str, Any]:
         except Exception:
             pass
 
+        # 등급 1 #6 (2026-06-14) — noise 확률 산출
+        # Hurst exponent (랜덤워크 판정) + Spectral entropy (균등 분포 판정)
+        # 둘 다 noise 지표 → 0~1 noise_probability 통합 점수.
+        hurst_v: Any = None
+        spec_ent: Any = None
+        noise_prob: Any = None
+        try:
+            if len(residuals) >= 50:
+                # Hurst: R/S 분석 — H≈0.5 = 랜덤워크 (예측 불가)
+                lags = _np.arange(2, min(20, len(residuals) // 5))
+                tau = [_np.std(_np.subtract(residuals[lag:], residuals[:-lag])) for lag in lags]
+                tau_valid = [(lag_v, t) for lag_v, t in zip(lags, tau) if t > 1e-12]
+                if len(tau_valid) >= 3:
+                    log_lag = _np.log([lag_v for lag_v, _ in tau_valid])
+                    log_tau = _np.log([t for _, t in tau_valid])
+                    hurst_v = float(_np.polyfit(log_lag, log_tau, 1)[0])
+            if len(residuals) >= 32:
+                # Spectral entropy: 균등 분포 = 1.0 (완전 noise), 집중 = 0.0
+                fft = _np.abs(_np.fft.rfft(residuals - _np.mean(residuals)))
+                psd = fft**2
+                psd_sum = psd.sum()
+                if psd_sum > 1e-12:
+                    psd_norm = psd / psd_sum
+                    ent = -_np.sum(psd_norm * _np.log(psd_norm + 1e-12))
+                    spec_ent = float(ent / _np.log(len(psd_norm)))  # 정규화 0~1
+            # noise_probability — Hurst≈0.5 + Spectral entropy 높음 → noise 확률 ↑
+            if hurst_v is not None and spec_ent is not None:
+                hurst_noise = max(0.0, 1.0 - 2.0 * abs(hurst_v - 0.5))  # H=0.5 → 1, H=0/1 → 0
+                noise_prob = float(0.5 * hurst_noise + 0.5 * spec_ent)
+        except Exception:
+            pass
+
         # 판정
         bias_warn = mean_pct > 0.10
         # 정규성 메타 (공통 키)
@@ -240,6 +272,10 @@ def _diagnose_residuals(metrics: dict) -> dict[str, Any]:
             "normal_ok": (shapiro_p is not None and shapiro_p > 0.05),
             "skew": round(skew_v, 3) if skew_v is not None else None,
             "kurtosis": round(kurt_v, 3) if kurt_v is not None else None,
+            # 등급 1 #6 — noise 확률 진단
+            "hurst_exponent": round(hurst_v, 3) if hurst_v is not None else None,
+            "spectral_entropy": round(spec_ent, 3) if spec_ent is not None else None,
+            "noise_probability": round(noise_prob, 3) if noise_prob is not None else None,
         }
         if ljung_p is not None and ljung_p > 0.05 and not bias_warn:
             return {
@@ -606,6 +642,67 @@ def _detect_leakage_signals(metrics: dict, fold_scores: Optional[list[float]]) -
         except (TypeError, ValueError):
             pass
 
+    # 등급 1 #5 (2026-06-14) — 자각 신호 3 종 추가
+    # (d) residual_autocorr_strong — 잔차에 강한 시계열성 남음 = 타깃 잘못 정함
+    residual_diag = metrics.get("residual_diagnostics") or {}
+    if isinstance(residual_diag, dict):
+        lb_p = residual_diag.get("ljung_box_p")
+        if lb_p is not None:
+            try:
+                lb_pf = float(lb_p)
+                if lb_pf < 0.01:
+                    signals.append(
+                        {
+                            "kind": "residual_autocorr_strong",
+                            "ljung_box_p": round(lb_pf, 4),
+                            "hint": (
+                                f"잔차에 강한 자기상관 잔존 (Ljung-Box p={lb_pf:.4f} < 0.01). "
+                                "타깃이 잘못 정의됐을 가능성 — 잔차 자체가 진짜 타깃일 수 있음. "
+                                "차분·로그 변환 후 재학습 권장."
+                            ),
+                        }
+                    )
+            except (TypeError, ValueError):
+                pass
+
+    # (e) naive_beats_all — naïve 가 모델보다 우수 = 학습 가치 없음
+    improvement = metrics.get("rmse_improvement_vs_naive")  # 등급 1 #5 — 로컬 추출
+    if improvement is not None:
+        try:
+            imp_f2 = float(improvement)
+            if imp_f2 <= -0.05:  # naïve 가 5%+ 우수
+                signals.append(
+                    {
+                        "kind": "naive_beats_all",
+                        "improvement": round(imp_f2, 4),
+                        "hint": (
+                            f"naïve 기준선이 모델보다 {abs(imp_f2):.1%} 우수합니다. "
+                            "이 타깃은 시계열 학습 가치가 낮음 — 타깃 재정의 또는 분석 불가 보고 권장."
+                        ),
+                    }
+                )
+        except (TypeError, ValueError):
+            pass
+
+    # (f) mase_zero_suspect — MASE 가 정확히 0 = trivial 타깃
+    mase = metrics.get("MASE")  # 등급 1 #5 — 로컬 추출
+    if mase is not None:
+        try:
+            mase_f2 = float(mase)
+            if mase_f2 == 0.0:
+                signals.append(
+                    {
+                        "kind": "mase_zero_suspect",
+                        "MASE": 0.0,
+                        "hint": (
+                            "MASE=0.0 — 타깃 변동이 0 이거나 완벽 누수. "
+                            "타깃 컬럼이 상수에 가깝거나 피처에 타깃 포함 의심."
+                        ),
+                    }
+                )
+        except (TypeError, ValueError):
+            pass
+
     # (c) 특정 fold 만 비정상 좋음 — fold 경계 누수
     if fold_scores and len(fold_scores) >= 3:
         m = _safe_mean(fold_scores)
@@ -764,7 +861,6 @@ def evaluate(state: Any) -> dict[str, Any]:
     if smape is not None and smape > th["sMAPE_max"]:
         violations.append(f"sMAPE>{th['sMAPE_max']} (got {smape:.1f})")
 
-    if cov is not None and cov < th["pi_coverage_min"]:
         violations.append(f"pi_coverage<{th['pi_coverage_min']} (got {cov:.3f})")
 
     # ── B-3 (신규) : fold_scores + fold_metrics 추출 ──

@@ -227,6 +227,25 @@ class DataProfilerAgent(BaseAgent):
 
             merged_extras = _merge_pii_extras(state.category_extras, pii_extras)
 
+            # 등급 2 #9 (2026-06-14, 본인 허락) — target_column=None 시 CS X1 target_candidates 자동 승격
+            # 본인 정책: 최소 침습 + 회귀 0. category=="timeseries" + LLM 실패 시만 적용.
+            if (not target_column or target_column not in df.columns) and category == "timeseries":
+                try:
+                    cands = profile.get("target_candidates") if isinstance(profile, dict) else None
+                    if isinstance(cands, list) and cands:
+                        top = cands[0]
+                        if isinstance(top, dict) and top.get("column") in df.columns:
+                            target_column = str(top["column"])
+                            self.logger.info(
+                                "auto_target_promotion",
+                                column=target_column,
+                                score=top.get("score"),
+                                domain_kw=top.get("domain_kw"),
+                                granger=top.get("granger_score"),
+                            )
+                except (TypeError, AttributeError, KeyError):
+                    pass
+
             # HJ 2026-06-09 G1 단축 I — task 결정을 여기서 (supervisor LLM 제거 대응)
             # target dtype·nunique 가 확정된 현 시점이 룰 분류 정확도 100%.
             final_task = _resolve_task_from_profile(state.task, category, target_column, df)
@@ -1258,7 +1277,10 @@ def _category_specific_checks(
 
                     ts = pd.to_datetime(df[time_cols_kind[0]], errors="coerce").dropna().sort_values()
                     if len(ts) > 1:
-                        diffs = ts.diff().dropna()
+                        diffs = ts.diff().dropna().dt.total_seconds()
+                        if len(diffs) > 0:
+                            checks["time_step_seconds"] = float(diffs.median())
+                            checks["time_axis_monotonic"] = bool((diffs > 0).all())
                         if not diffs.empty:
                             checks["frequency_hint"] = str(diffs.mode().iloc[0])
                             checks["timezone"] = str(ts.dt.tz) if ts.dt.tz else "naive"

@@ -897,16 +897,119 @@ def _phase10_changepoints(series: Any, stl_result: dict[str, Any], period: int) 
 # ════════════════════════════════════════════════════════════════
 # X1 (2026-06-05) — 타겟 자동 추천 (target_column 누락 시 graceful)
 # ════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+# 등급 1 #1 (2026-06-14) — 도메인 키워드 가중치
+# ════════════════════════════════════════════════════════════════
+# 컬럼명에 도메인 키워드 포함 시 점수 가산. 표준 도메인 (가격·매출·거래 등)
+# 자동 식별 정확도 향상. BTC priceUSD 같은 표준 케이스 → 자동 1순위.
+_DOMAIN_KEYWORDS: dict[str, float] = {
+    # 강한 신호 (가격·매출 — 분석 1순위 대상)
+    "price": 0.10,
+    "close": 0.10,
+    "open": 0.08,
+    "sales": 0.10,
+    "revenue": 0.10,
+    "amount": 0.08,
+    "demand": 0.08,
+    # 중간 신호 (가치·거래액)
+    "value": 0.08,
+    "fee": 0.06,
+    "cost": 0.06,
+    # 약한 신호 (활동성·카운트)
+    "count": 0.06,
+    "active": 0.06,
+    "transactions": 0.06,
+    "users": 0.06,
+    "rate": 0.06,
+    "ratio": 0.04,
+    # 기타 도메인
+    "load": 0.06,
+    "consumption": 0.06,
+    "temperature": 0.06,
+    "humidity": 0.04,
+    "pressure": 0.04,
+}
+
+
+def _domain_keyword_bonus(col_name: str) -> tuple[float, str]:
+    """컬럼명 → 도메인 키워드 매칭 가중치 + matched 키워드.
+
+    가장 강한 매칭 1 개만 적용 (중복 방지).
+    """
+    low = str(col_name).lower()
+    best_bonus = 0.0
+    best_kw = ""
+    for kw, bonus in _DOMAIN_KEYWORDS.items():
+        if kw in low and bonus > best_bonus:
+            best_bonus = bonus
+            best_kw = kw
+    return best_bonus, best_kw
+
+
+def _granger_target_score(df: Any, target_col: str, date_col: Optional[str] = None) -> float:
+    """등급 1 #2 — Granger F-통계로 "다른 컬럼들이 이 컬럼을 예측 가능한 정도" 점수 (0~1).
+
+    개념: 시계열 분석의 타깃은 "다른 변수들이 인과적으로 영향을 주는 종착점".
+    target_col 이 다른 모든 수치 컬럼으로부터 Granger 인과 받는 정도 평균 → 0~1 점수.
+    인과 받는 정도 강할수록 타깃 후보로 합리적.
+
+    실패 시 0.0 반환 (graceful).
+    """
+    import numpy as _np
+    import pandas as _pd
+
+    try:
+        from statsmodels.tsa.stattools import grangercausalitytests
+    except Exception:
+        return 0.0
+    if not isinstance(df, _pd.DataFrame) or target_col not in df.columns:
+        return 0.0
+    try:
+        tgt = _pd.to_numeric(df[target_col], errors="coerce").dropna()
+        if len(tgt) < 20:
+            return 0.0
+        # 다른 수치 컬럼 5 개만 샘플 (비용 절약)
+        exclude = {date_col, target_col} if date_col else {target_col}
+        numeric_cols = [c for c in df.columns if c not in exclude and _pd.api.types.is_numeric_dtype(df[c])][:5]
+        if not numeric_cols:
+            return 0.0
+        scores = []
+        for ex_col in numeric_cols:
+            try:
+                ex = _pd.to_numeric(df[ex_col], errors="coerce").dropna()
+                merged = _pd.concat([tgt, ex], axis=1).dropna()
+                if len(merged) < 20:
+                    continue
+                # H0: ex_col 이 target_col 을 Granger 인과 X
+                # p < 0.05 → 인과 있음 → 점수 ↑
+                res = grangercausalitytests(merged.iloc[:, [0, 1]].values, maxlag=2, verbose=False)
+                p_val = min(res[lag][0]["ssr_ftest"][1] for lag in res)
+                if p_val < 0.05:
+                    scores.append(1.0)
+                elif p_val < 0.10:
+                    scores.append(0.5)
+                else:
+                    scores.append(0.0)
+            except Exception:
+                continue
+        return float(_np.mean(scores)) if scores else 0.0
+    except Exception:
+        return 0.0
+
+
 def _suggest_target_candidates(df: Any, date_col: Optional[str] = None, top_k: int = 3) -> list[dict[str, Any]]:
     """수치형 컬럼 중 시계열 타겟으로 적합한 top_k 자동 추천.
 
-    적합도 점수:
-      + 분산 > 0 (상수 제외)
-      + 결측 비율 < 50%
-      + autocorr(lag=1) > 0.3 (시계열성)
-      + 추세/계절성 신호 (간단 std/mean 비)
-    반환: [{column, score, reason, autocorr, std, missing_ratio}, ...]
+    적합도 점수 (등급 1 #3 통합, 2026-06-14):
+      0.4 × autocorr_lag1    — 시계열성 (가장 핵심)
+      0.2 × (1-missing_ratio) — 데이터 완전성
+      0.1 × std_norm          — 변동성
+      0.2 × domain_kw_bonus   — 도메인 키워드 매칭 (price·sales·value 등)
+      0.1 × granger_score     — 다른 컬럼 → 이 컬럼 인과 강도
 
+    기존 (0.6/0.3/0.1) 대비 — 도메인 키워드 + Granger 신호 추가.
+
+    반환: [{column, score, reason, autocorr, std, missing_ratio, domain_kw, granger}, ...]
     사용자가 target_column 안 줬을 때 profile["target_candidates"] 에 노출.
     """
     import numpy as _np
@@ -923,7 +1026,6 @@ def _suggest_target_candidates(df: Any, date_col: Optional[str] = None, top_k: i
             series = _pd.to_numeric(df[col], errors="coerce")
         except Exception:
             continue
-        # 수치형 변환 후 NaN 비율 점검
         missing_ratio = float(series.isna().mean())
         if missing_ratio >= 0.5:
             continue
@@ -936,14 +1038,32 @@ def _suggest_target_candidates(df: Any, date_col: Optional[str] = None, top_k: i
             ac1 = 0.0
         if _np.isnan(ac1):
             ac1 = 0.0
-        # 점수 — autocorr 60% + (1-missing_ratio) 30% + 분산 정규화 10%
         std_norm = min(1.0, float(valid.std()) / (abs(float(valid.mean())) + 1e-9))
-        score = 0.6 * max(0.0, ac1) + 0.3 * (1.0 - missing_ratio) + 0.1 * std_norm
+        # 등급 1 #1 — 도메인 키워드 가중치
+        domain_bonus, matched_kw = _domain_keyword_bonus(col)
+        # 등급 1 #2 — Granger (상위 후보만 산출 — 비용 절약)
+        # 1차 prescreen 점수
+        prescreen = 0.6 * max(0.0, ac1) + 0.3 * (1.0 - missing_ratio) + 0.1 * std_norm + domain_bonus
+        granger_sc = 0.0
+        if prescreen >= 0.4:  # 후보군에 들 만한 컬럼만 Granger 계산
+            granger_sc = _granger_target_score(df, str(col), date_col)
+        # 등급 1 #3 — 통합 점수
+        score = (
+            0.4 * max(0.0, ac1)
+            + 0.2 * (1.0 - missing_ratio)
+            + 0.1 * std_norm
+            + 0.2 * domain_bonus * 5.0  # bonus 최대 0.10 → 정규화 0.5 → 0.2 가중 시 최대 0.10
+            + 0.1 * granger_sc
+        )
         reasons = []
         if ac1 > 0.5:
             reasons.append(f"autocorr={ac1:.2f}")
         elif ac1 > 0.3:
             reasons.append(f"weak_autocorr={ac1:.2f}")
+        if matched_kw:
+            reasons.append(f"domain_kw={matched_kw}(+{domain_bonus:.2f})")
+        if granger_sc >= 0.5:
+            reasons.append(f"granger_strong={granger_sc:.2f}")
         if missing_ratio < 0.05:
             reasons.append("low_missing")
         candidates.append(
@@ -953,6 +1073,9 @@ def _suggest_target_candidates(df: Any, date_col: Optional[str] = None, top_k: i
                 "autocorr_lag1": round(ac1, 3),
                 "missing_ratio": round(missing_ratio, 3),
                 "std": round(float(valid.std()), 3),
+                "domain_kw": matched_kw or None,
+                "domain_bonus": round(domain_bonus, 3),
+                "granger_score": round(granger_sc, 3),
                 "reason": ", ".join(reasons) if reasons else "수치형 + 분산>0",
             }
         )
@@ -1444,7 +1567,6 @@ def profile(df: Any, state: Any) -> dict[str, Any]:
     except Exception as e:
         logger.warning("phase2_failed", error=str(e), n=len(series))
     extra["stationarity"] = stationarity
-
     # Phase 3 — ACF/PACF (stationarity 가 None 이어도 .get("diff_order", 0) 으로 안전)
     try:
         extra["acf_pacf"] = _phase3_acf_pacf(series, stationarity or {}, period)

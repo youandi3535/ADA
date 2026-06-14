@@ -41,7 +41,21 @@ from orchestrator.training_tasks import HEAVY_MODELS, is_heavy_model
 from pipelines.factory import PipelineFactory
 
 
-def _split_xy(df: Any, target: str | None) -> tuple[Any, Any]:
+def _split_xy(df: Any, target: str | None, state: Any = None) -> tuple[Any, Any]:
+    # 등급 2 #8 (2026-06-14, 본인 허락) — target=None 시 CS profiler target_candidates top1 자동 채택
+    # 본인 정책: 최소 침습 + 회귀 0. 기존 분기 보존, 새 분기 1 개 추가.
+    if not (target and target in df.columns) and state is not None:
+        try:
+            profile = getattr(state, "data_profile", None) or {}
+            cands = profile.get("target_candidates") if isinstance(profile, dict) else None
+            if isinstance(cands, list) and cands:
+                cand_top = cands[0]
+                if isinstance(cand_top, dict):
+                    auto_col = cand_top.get("column")
+                    if auto_col and auto_col in df.columns:
+                        target = str(auto_col)  # 자동 승격
+        except (TypeError, AttributeError):
+            pass
     if target and target in df.columns:
         X = df.drop(columns=[target])
         y = df[target]
@@ -103,16 +117,26 @@ class TrainingExecutorAgent(BaseAgent):
                 return state.with_update(error=f"학습 데이터 로딩 실패: {e}", next_agent="error_recovery")
 
             # HJ 2026-06-14 — timeseries 타깃 미지정 방어: y=np.zeros 폴백(전 메트릭 0.000) 차단.
+            # CS 2026-06-14 — profiler.target_candidates(도메인/Granger 점수화) 우선, 실패 시 분산기반 폴백.
             target_col = state.target_column
             if state.category == "timeseries" and not (target_col and target_col in df.columns):
                 date_col = (state.data_profile or {}).get("date_col")
-                auto_t = _resolve_timeseries_target(df, date_col)
+                auto_t = None
+                cands = (state.data_profile or {}).get("target_candidates")
+                if isinstance(cands, list) and cands:
+                    cand_top = cands[0]
+                    if isinstance(cand_top, dict):
+                        c = cand_top.get("column")
+                        if c and c in df.columns:
+                            auto_t = str(c)
+                if not auto_t:
+                    auto_t = _resolve_timeseries_target(df, date_col)
                 if auto_t:
                     target_col = auto_t
                     self.logger.info("ts_target_autoselected", target=target_col, date_col=date_col)
                 else:
                     self.logger.warning("ts_target_autoselect_failed", n_cols=len(getattr(df, "columns", [])))
-            X, y = _split_xy(df, target_col)
+            X, y = _split_xy(df, target_col, state)  # 등급 2 #8 — state 유지(자동승격 이중 안전망)
             # 누수 차단: preprocessor 가 기록한 [train|val|test] 경계 재사용. test 는 슬라이스
             # 하지도 않아 학습·early-stop 에 안 샌다. 메타 없으면 기존 split 폴백.
             _bounds = _leakage_split_bounds(state)
@@ -307,13 +331,7 @@ class TrainingExecutorAgent(BaseAgent):
         try:
             # AsyncResult.get 은 동기 블로킹 → asyncio.to_thread 로 이벤트 루프 해방.
             info = await asyncio.to_thread(async_result.get, timeout=timeout)
-        except Exception as e:  # noqa: BLE001  (celery.exceptions.TimeoutError 포함)
-            self.logger.warning(
-                "remote_train_timeout_or_error",
-                model=model_name,
-                timeout_sec=timeout,
-                error=str(e),
-            )
+        except Exception:  # noqa: BLE001  (celery                self.logger.warning("remote_train_timeout", model=model_name, timeout=timeout, error=str(e))
             # 큐에 남은 태스크 revoke (워커가 늦게 받더라도 결과는 폐기)
             try:
                 async_result.revoke(terminate=False)

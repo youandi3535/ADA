@@ -456,6 +456,28 @@ def _build_fallback(state: Any) -> str:
     if not metrics:
         metrics = eval_result_dict.get("metrics") or {}
 
+    # 등급 1 #7 (2026-06-14) — 정직 실패 보고 강화
+    # noise_probability ≥ 0.7 또는 naive_beats_all 신호 시 "분석 불가" 명시 보고.
+    # 거짓 결과 안 내고 정직히 한계 알림.
+    residual_diag = eval_result_dict.get("residual_diagnostics") or metrics.get("residual_diagnostics") or {}
+    noise_prob = None
+    if isinstance(residual_diag, dict):
+        noise_prob = residual_diag.get("noise_probability")
+    leakage_signals = eval_result_dict.get("leakage_suspect_signals") or []
+    naive_beats = any(isinstance(s, dict) and s.get("kind") == "naive_beats_all" for s in leakage_signals)
+    try:
+        nprob_f = float(noise_prob) if noise_prob is not None else None
+    except (TypeError, ValueError):
+        nprob_f = None
+    if (nprob_f is not None and nprob_f >= 0.7) or naive_beats:
+        parts = ["이번 데이터는 의미 있는 예측 모델을 만들 수 없습니다 (분석 불가)."]
+        if nprob_f is not None and nprob_f >= 0.7:
+            parts.append(f"잔차 noise 확률 {nprob_f:.0%} — 데이터에 예측 가능한 신호가 약합니다.")
+        if naive_beats:
+            parts.append("naïve 기준선이 모든 모델을 이겼습니다 — 학습 가치 없음.")
+        parts.append("타깃 재정의·외생변수 추가·다른 시간 단위 시도 또는 anomaly 모드 권장.")
+        return " ".join(parts)
+
     # ── F-1 : direction 한국어 ──
     trend = data_profile.get("trend") or {}
     direction_en = trend.get("direction")
@@ -638,28 +660,16 @@ def _build_fallback(state: Any) -> str:
             lambda s: s.startswith("walk-forward"),
             lambda s: "주기 계절성" in s,
             lambda s: "운영팀은" in s and "모니터링" in s,
-            lambda s: task_hint and s == task_hint,
         ]
         for pred in drop_patterns:
             if len(sentences) <= 5:
                 break
-            for i, s in enumerate(sentences):
-                if pred(s):
-                    sentences.pop(i)
-                    break
-        if len(sentences) > 5:
-            sentences = sentences[:5]
-
-    # 3~5 문장 보장
-    while len(sentences) < 3:
-        sentences.append("추가 검증이 필요한 시점입니다.")
+            sentences = [s for s in sentences if not pred(s)]
+        sentences = sentences[:5]
 
     return " ".join(sentences)
 
 
-# ════════════════════════════════════════════════════════════════
-# 진입점 (dispatcher 자동 등록)
-# ════════════════════════════════════════════════════════════════
 def generate(state: Any) -> str:
     """HANDLER_REGISTRY 등록 진입점 — InsightAgent dispatcher 가 호출."""
     return fallback(state)

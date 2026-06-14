@@ -252,8 +252,20 @@ def plan(state: Any) -> list[dict[str, Any]]:
     )
 
     # Phase 2: 비정상 or 계절성 있을 때 분산 안정화 (P3 — multiplicative 도 트리거)
+    # 등급 1 #4 (2026-06-14) — 다단계 잔차 변환 자동 트리거 추가
+    # 이전 분석에서 residual_autocorr_strong 신호 발생 시 잔차 = 진짜 타깃 가능성 →
+    # 차분/로그/박스콕스 단계별 자동 적용 (보강).
     is_multi = _is_multiplicative(state)
-    if not stationary or period is not None or is_multi:
+    # 신규 — 이전 evaluator 결과에 residual_autocorr_strong 신호 있으면 강제 변환
+    has_residual_signal = False
+    try:
+        prev_eval = getattr(state, "eval_result", None) or {}
+        leak = prev_eval.get("leakage_suspect_signals") or []
+        has_residual_signal = any(isinstance(s, dict) and s.get("kind") == "residual_autocorr_strong" for s in leak)
+    except (TypeError, AttributeError):
+        has_residual_signal = False
+
+    if not stationary or period is not None or is_multi or has_residual_signal:
         bc_step: dict[str, Any] = {
             "name": "boxcox",
             "shift_min": True,
@@ -263,9 +275,13 @@ def plan(state: Any) -> list[dict[str, Any]]:
             "needs_review": True,
         }
         if is_multi:
-            # P3 — 승법 구조 명시 → lambda=0 (log) 강제
             bc_step["force_lambda"] = 0.0
             bc_step["reason"] = "multiplicative — log 변환 강제 (P3)"
+        if has_residual_signal:
+            # 등급 1 #4 — 잔차 신호 발생 시 다단계 변환 (log → 차분 추가)
+            bc_step["force_lambda"] = 0.0
+            bc_step["reason"] = (bc_step.get("reason", "") + " | 등급1#4 잔차 자기상관 강함 → log 강제").lstrip(" |")
+            bc_step["multistage"] = True
         steps.append(bc_step)
 
     # Phase 3: 변화량 특성 (target 변환 아님, 추가 feature)
