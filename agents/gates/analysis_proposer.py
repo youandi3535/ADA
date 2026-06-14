@@ -73,7 +73,8 @@ KOREAN_RETRY_HINT = (
 # 방법론·알고리즘 단독 제목 금지 (G3 영역). 도메인 스토리·관점 중심.
 TOPIC_SYSTEM_PROMPT = (
     "당신은 학회·기업 발표 자료 기획자.\n"
-    "데이터 도메인 정보를 보고 PPT/PDF 표지에 그대로 들어갈 발표 제목 5개를 JSON 으로 제안.\n\n"
+    "1단계 데이터 분석 자료(도메인 정보)와 데이터 원본 샘플을 함께 보고 "
+    "PPT/PDF 표지에 그대로 들어갈 발표 제목 5개를 JSON 으로 제안.\n\n"
     "[입력 필드]\n"
     "- domain          : 데이터 산업·분야\n"
     "- dataset_summary : 데이터셋 1~2문장 요약\n"
@@ -82,7 +83,9 @@ TOPIC_SYSTEM_PROMPT = (
     "- data_structure  : 데이터 구조 힌트.\n"
     "    is_timeseries=시계열 여부, date_column=시간축,\n"
     "    segment_columns=비교 가능한 범주(성별·연령·지역·등급 등),\n"
-    "    measure_columns=수치 측정값, row_count=행 수\n\n"
+    "    measure_columns=수치 측정값, row_count=행 수\n"
+    "- sample_rows     : 데이터 원본 상위 행(실제 값 예시). 제목에 구체적 값·범주·"
+    "스케일을 녹이는 근거로 활용 (단, 개별 값을 그대로 노출하지 말고 패턴·맥락으로 추상화)\n\n"
     "[규칙]\n"
     "- 학회 컨퍼런스·기업 발표·연구 보고 표지에 그대로 박힐 발표 제목.\n"
     "- 길이: 제목 전체 25~50자.\n"
@@ -623,21 +626,29 @@ class AnalysisProposerAgent(BaseGate):
     # 도메인 지식만 입력 → PPT 표지용 발표 제목 5개 생성.
     # ------------------------------------------------------------------
     async def propose_topics(self, state: PipelineState) -> list[dict[str, Any]]:
-        """G2 Sub-1 — 도메인 지식 + 데이터 구조 기반 PPT 표지 제목 5개 생성."""
+        """G2 Sub-1 — 1단계 도메인 분석 자료 + 데이터 원본 샘플 기반 PPT 표지 제목 5개 생성."""
         dp = state.data_profile or {}
         domain = dp.get("domain_analysis") or {}
         # HJ 2026-06-14 — 구조 힌트 주입 (관점 다양화 재료: 시계열·세그먼트·측정값).
         hints = _structure_hints_from_profile(dp)
         if getattr(state, "category", None) == "timeseries":
             hints["is_timeseries"] = True
+        # HJ 2026-06-14 — 데이터 원본 샘플 주입(사용자 요구): 1단계 도메인 분석 자료뿐 아니라
+        #   실제 데이터 값(상위 행)을 함께 보고 제목을 짓도록 한다.
+        #   넓은 데이터 대비 3행·행당 25컬럼으로 제한해 프롬프트 비용·한자 리스크를 관리한다.
+        sample_rows = [
+            {k: r[k] for k in list(r)[:25]} for r in (dp.get("sample_rows") or [])[:3] if isinstance(r, dict)
+        ]
         payload = {
             "domain": domain.get("domain"),
             "dataset_summary": (domain.get("dataset_summary") or "")[:400],
             "target_insight": (domain.get("target_insight") or "")[:400],
             "column_meanings": dict(list((domain.get("column_meanings") or {}).items())[:20]),
             "data_structure": hints,
+            "sample_rows": sample_rows,
         }
-        user_payload = json.dumps(payload, ensure_ascii=False)[:3000]
+        # sample_rows 가 잘려나가지 않도록 상한을 3000→4500 으로 확대.
+        user_payload = json.dumps(payload, ensure_ascii=False)[:4500]
         try:
             raw = await self._call_llm(
                 system_prompt=TOPIC_SYSTEM_PROMPT,
