@@ -433,13 +433,13 @@ def _titanic_ctx():
             chosen={
                 "name": "CatBoost",
                 "family": "GBM",
-                "justification": "범주형(Sex·Embarked·Pclass) 자동 처리 + 작은 표본에서 정규화 강점",
+                "justification": "범주형(Sex·Embarked·Pclass)을 인코딩 없이 순서형 부스팅으로 직접 처리하고, 891건 소표본에서도 정규화가 강해 과적합을 억제한다. 결측과 비선형 상호작용에 강건하며, 추가 튜닝의 한계 효용까지 고려해 선정했다",
             },
             candidates=[
                 ModelCandidate(name="CatBoost", score=0.862, family="GBM", why_tried="범주형 자동 처리·소표본 안정성"),
-                ModelCandidate(name="XGBoost", score=0.851, why_dropped="범주형 수동 인코딩 + 891건 규모에 약간 과적합 경향"),
-                ModelCandidate(name="RandomForest", score=0.842, why_dropped="확률 보정 약하고 상호작용 포착 제한적"),
-                ModelCandidate(name="LogReg", score=0.821, why_dropped="비선형(나이×등급×성별) 상호작용을 담지 못함"),
+                ModelCandidate(name="XGBoost", score=0.851, why_dropped="범주형을 직접 다루지 못해 원-핫 인코딩이 필요하고, 891건 소표본에서 트리를 깊게 키우면 학습-검증 격차가 벌어지는 과적합 신호를 보였다"),
+                ModelCandidate(name="RandomForest", score=0.842, why_dropped="배깅 특성상 확률 출력의 보정이 약해 임계값을 의사결정에 바로 쓰기 어렵고, 나이×등급×성별 같은 고차 상호작용 포착이 부스팅 계열보다 얕았다"),
+                ModelCandidate(name="LogReg", score=0.821, why_dropped="선형 결정경계라 등급·성별·나이의 결합(비선형) 효과를 구조적으로 담지 못해, 해석은 쉬우나 본 데이터에서 성능 상한이 분명했다"),
             ],
             baselines=BaselineSet(naive={"name": "다수 클래스(사망) 예측", "score": 0.616}),
         ),

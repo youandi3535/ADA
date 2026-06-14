@@ -23,6 +23,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -54,6 +55,35 @@ class User(Base):
     last_login_at = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
     mfa_secret = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    # v1 소셜 로그인 (migration 0005) — 구글 OAuth 도입
+    name = Column(String(100))  # 구글 프로필 이름 (표시용)
+    is_verified = Column(Boolean, default=False)  # 이메일 인증 여부 (구글=true)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OAuthAccount(Base):
+    """소셜 로그인 연동 (1 user : N provider). v1=google. (migration 0005)
+
+    인증은 구글에 위임하고 우리는 구글 sub(provider_account_id)만 보관한다.
+    비밀번호는 저장하지 않는다 — 구글 전용 사용자는 users.password_hash 가 NULL.
+    """
+
+    __tablename__ = "oauth_accounts"
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_account_id", name="uq_oauth_provider_account"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider = Column(String(20), nullable=False)  # 'google'
+    provider_account_id = Column(String(255), nullable=False)  # 구글 sub (고유 ID)
+    email = Column(String(255))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -540,6 +570,7 @@ class CircuitBreakerEvent(Base):
 
 __all__ = [
     "User",
+    "OAuthAccount",
     "Upload",
     "Job",
     "AgentRun",

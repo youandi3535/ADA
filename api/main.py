@@ -110,6 +110,17 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
+# OAuth state/nonce 저장용 세션 쿠키 (구글 로그인 v1).
+# same_site="lax" 라야 구글 콜백(top-level GET 리다이렉트)에서 쿠키가 유지된다.
+from starlette.middleware.sessions import SessionMiddleware  # noqa: E402
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key,
+    same_site="lax",
+    https_only=(settings.environment == "production"),
+)
+
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next: Any) -> Any:
