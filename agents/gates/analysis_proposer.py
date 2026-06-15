@@ -712,7 +712,25 @@ class AnalysisProposerAgent(BaseGate):
         domain = dp.get("domain_analysis") or {}
         missing = dp.get("missing") or {}
         missing_hi = {k: round(float(v), 3) for k, v in missing.items() if isinstance(v, (int, float)) and v > 0.05}
+        # success_pattern KB — 동일 카테고리 과거 성공 사례를 방향 제안 컨텍스트로 인용(best-effort).
+        _past = []
+        try:
+            from ada.harness.rag import KBRAG
+
+            if self.session is not None:
+                _sp = await KBRAG(self.session).fetch_success_patterns(state.category, top_k=3)
+                _past = [
+                    {
+                        "intent": (pp.get("user_intent") or "")[:120],
+                        "target": pp.get("target"),
+                        "outputs": pp.get("requested_outputs") or [],
+                    }
+                    for pp in _sp
+                ]
+        except Exception:
+            _past = []
         payload: dict[str, Any] = {
+            "past_success_patterns": _past,
             "selected_topic": topic,
             "user_intent": (state.user_intent or state.user_question or "")[:500],
             "category": state.category,

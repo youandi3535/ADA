@@ -107,7 +107,25 @@ class HyperparameterTunerAgent(BaseAgent):
             #   _run_optuna 는 loop.run_in_executor 기반이라 gather 시 스레드로 동시 실행된다.
             #   한 모델 study 가 끝나는 즉시 그 best_params 인사이트를 누적 publish → 사용자가
             #   "모아서 한 번에"가 아니라 완료되는 순서대로 실시간 확인.
+            # hpo_warm_start KB — 동일 카테고리 과거 best_params 를 모델별로 미리 조회(best-effort).
+            _warm_map: dict[str, dict] = {}
+            try:
+                from ada.harness.rag import KBRAG
+
+                if self.session is not None:
+                    _warm_map = await KBRAG(self.session).fetch_warm_start_map(state.category)
+            except Exception:
+                _warm_map = {}
+
             async def _tune_one(model_name: str) -> None:
+                _ws = _warm_map.get(model_name)
+                if _ws:
+                    try:
+                        from ada.observability.metrics import record_kb_citation
+
+                        record_kb_citation(source="hpo_warm_start_kb")
+                    except Exception:
+                        pass
                 best = await self._run_optuna(
                     state,
                     model_name,
@@ -117,6 +135,7 @@ class HyperparameterTunerAgent(BaseAgent):
                     ss_module,
                     n_trials=_eff_n_trials,
                     timeout_sec=_eff_timeout,
+                    warm_start=_ws,
                 )
                 # asyncio 단일 스레드 — await 종료 후 아래 동기 구간은 원자적(race 없음).
                 best_params[model_name] = best
@@ -219,6 +238,7 @@ class HyperparameterTunerAgent(BaseAgent):
         *,
         n_trials: int | None = None,
         timeout_sec: int | None = None,
+        warm_start: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         _n_trials = int(n_trials) if n_trials is not None else self.n_trials
         _timeout_sec = int(timeout_sec) if timeout_sec is not None else self.timeout_per_model_sec
@@ -239,6 +259,12 @@ class HyperparameterTunerAgent(BaseAgent):
                 study_name=f"{state.job_id}-{model_name}",
                 sampler=optuna.samplers.TPESampler(seed=reloop_seed(state)),
             )
+            # hpo_warm_start — 과거 best_params 를 첫 trial 로 enqueue (미일치 키는 Optuna 가 무시).
+            if warm_start:
+                try:
+                    study.enqueue_trial(dict(warm_start))
+                except Exception as _we:  # noqa: BLE001
+                    self.logger.warning("warm_start_enqueue_failed", model=model_name, error=str(_we))
 
             from pipelines.factory import PipelineFactory
 

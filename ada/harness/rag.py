@@ -122,6 +122,86 @@ class KBRAG:
         return results
 
     # ------------------------------------------------------------------
+    async def fetch_warm_start_map(self, category: str) -> dict[str, dict[str, Any]]:
+        """hpo_warm_start KB → {model_name: best_params}. 인용은 실제 적용 시 호출측에서."""
+        try:
+            rows = await self.session.scalars(
+                select(SelfLearningKB)
+                .where(
+                    SelfLearningKB.kb_type == "hpo_warm_start",
+                    SelfLearningKB.category == category,
+                    SelfLearningKB.confidence >= 0.20,
+                )
+                .order_by(SelfLearningKB.success_count.desc())
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("warm_start_fetch_failed", error=str(e))
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            pl = r.payload if isinstance(r.payload, dict) else {}
+            if pl.get("retracted"):
+                continue
+            model = pl.get("model")
+            params = pl.get("best_params")
+            if model and isinstance(params, dict) and params and model not in out:
+                out[model] = params  # 동일 모델은 success_count 최상위 1건
+        return out
+
+    async def fetch_eda_template(self, category: str, *, cite: bool = True) -> dict[str, Any] | None:
+        """eda_template KB(카테고리) 최상위 1건 payload. cite=True 면 인용 카운트."""
+        try:
+            row = await self.session.scalar(
+                select(SelfLearningKB)
+                .where(
+                    SelfLearningKB.kb_type == "eda_template",
+                    SelfLearningKB.category == category,
+                    SelfLearningKB.confidence >= 0.20,
+                )
+                .order_by(SelfLearningKB.success_count.desc())
+                .limit(1)
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("eda_template_fetch_failed", error=str(e))
+            return None
+        if row is None or not isinstance(row.payload, dict) or row.payload.get("retracted"):
+            return None
+        if cite:
+            try:
+                from ada.observability.metrics import record_kb_citation
+
+                record_kb_citation(source="eda_template_kb")
+            except Exception:
+                pass
+        return row.payload
+
+    async def fetch_success_patterns(self, category: str, top_k: int = 3, *, cite: bool = True) -> list[dict[str, Any]]:
+        """success_pattern KB(카테고리) 상위 N건 payload. cite=True 면 사용분만큼 인용."""
+        try:
+            rows = await self.session.scalars(
+                select(SelfLearningKB)
+                .where(
+                    SelfLearningKB.kb_type == "success_pattern",
+                    SelfLearningKB.category == category,
+                    SelfLearningKB.confidence >= 0.20,
+                )
+                .order_by(SelfLearningKB.success_count.desc())
+                .limit(top_k)
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("success_pattern_fetch_failed", error=str(e))
+            return []
+        out = [r.payload for r in rows if isinstance(r.payload, dict) and not r.payload.get("retracted")]
+        if cite and out:
+            try:
+                from ada.observability.metrics import record_kb_citation
+
+                for _ in out:
+                    record_kb_citation(source="success_pattern_kb")
+            except Exception:
+                pass
+        return out
+
     async def index_lesson(self, kb_id: Any, summary: str) -> None:
         emb = self.embed(summary)
         # ON CONFLICT (kb_id) DO UPDATE — 같은 kb_id 재색인 시 덮어쓰기 (중복 방지)

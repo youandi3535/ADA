@@ -3020,7 +3020,11 @@ document.getElementById('stopBtn').onclick=function(){
 };
 document.getElementById('primaryBtn').onclick=function(){
   if(busy) return;
-  if(paused){ _resumeFromPause(); render(); return; }
+  // HJ 2026-06-15 [resume-always-doResume] — '재진행' 버튼은 정지(paused) 상태여도 항상 doResume 로 보낸다.
+  //   doResume 가 _shownPct=0·_barFlowPct=0·하위단계 폐기까지 수행 → 재진행은 언제나 0% 부터 재분석.
+  //   이전엔 paused 면 _resumeFromPause(직전 진행률 그대로 이어하기)로 가로채, 정지 시점 진행률(예 95%)
+  //   이 모달에 그대로 이어지던 버그(=재진행인데 95% 로 시작). 정지 후 '같은 진행률 이어하기' 는 정지
+  //   버튼(stopBtn) 재토글이 담당하므로 기능 손실 없음. (doResume 1242줄에서 paused·_pauseStart 도 해제)
   // HJ 2026-06-15 — 누르는 즉시 비활성화(시각 피드백). 2단계+ 는 doResume 가 busy=true 직후
   //   무거운 render(모달·카드·타자기 빌드)를 같은 task 에서 동기 실행해 브라우저 repaint 가 막혀
   //   비활성화가 몇 초 늦게 보였다(1단계는 render 가 가벼워 즉시). → 여기서 동기로 먼저 비활성화하고
