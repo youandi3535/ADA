@@ -159,12 +159,10 @@ def _load_via_minio(minio_path: str, expected_sha256: Optional[str] = None) -> A
     """
     import joblib  # noqa: WPS433
 
-    from ada.core.config import settings
     from tools.minio_tool import get_minio_client
 
     mc = get_minio_client()
-    bucket_prefix = f"s3://{settings.minio_bucket}/"
-    object_name = minio_path.removeprefix(bucket_prefix)
+    object_name = mc.object_key(minio_path)  # 버킷명 무관 s3:// 접두 제거 (단일 진입점)
 
     raw_bytes = mc.download_bytes(object_name)
 

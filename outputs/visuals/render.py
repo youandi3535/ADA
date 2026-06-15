@@ -103,9 +103,7 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
         except Exception as _fe:  # noqa: BLE001
             import logging
 
-            logging.getLogger("visuals.render").warning(
-                "chart_fetch_failed: %s err=%s", _chart_path[:80], _fe
-            )
+            logging.getLogger("visuals.render").warning("chart_fetch_failed: %s err=%s", _chart_path[:80], _fe)
 
     try:
         vtype = vs.type or ""
@@ -172,7 +170,10 @@ def render_visual_to_png(vs: VisualSpec, ctx: ReportContext, *, slide: SlideSpec
 
         logging.getLogger("visuals.render").warning(
             "render_visual_failed: type=%s slide=%s err=%s: %s",
-            vs.type, getattr(slide, "id", "?"), type(exc).__name__, exc,
+            vs.type,
+            getattr(slide, "id", "?"),
+            type(exc).__name__,
+            exc,
         )
         return None
 
@@ -221,10 +222,10 @@ def _render_cm_heatmap(vs, primary: str, plt, ctx=None) -> Optional[str]:
     for r in range(2):
         for c in range(2):
             color = "#FFFFFF" if mat[r, c] > thresh else "#0F172A"
-            ax.text(c, r - 0.12, labels[r][c], ha="center", va="center",
-                    fontsize=15, color=color, fontweight="bold")
-            ax.text(c, r + 0.16, f"{int(mat[r, c])}", ha="center", va="center",
-                    fontsize=26, color=color, fontweight="bold")
+            ax.text(c, r - 0.12, labels[r][c], ha="center", va="center", fontsize=15, color=color, fontweight="bold")
+            ax.text(
+                c, r + 0.16, f"{int(mat[r, c])}", ha="center", va="center", fontsize=26, color=color, fontweight="bold"
+            )
     ax.set_xticks([0, 1])
     ax.set_xticklabels(["Pred 0", "Pred 1"], fontsize=12, color="#475569")
     ax.set_yticks([0, 1])
@@ -233,8 +234,7 @@ def _render_cm_heatmap(vs, primary: str, plt, ctx=None) -> Optional[str]:
     for s in ax.spines.values():
         s.set_visible(False)
     if vs.title:
-        ax.set_title(_ensure_ascii(vs.title), fontsize=15, color="#0F172A", pad=12,
-                     loc="left", fontweight="bold")
+        ax.set_title(_ensure_ascii(vs.title), fontsize=15, color="#0F172A", pad=12, loc="left", fontweight="bold")
     out = _tmp_png()
     fig.tight_layout()
     fig.savefig(out, bbox_inches="tight", facecolor="white")
@@ -258,7 +258,7 @@ def _fetch_chart_png(path: str) -> Optional[str]:
         from tools.minio_tool import get_minio_client
 
         mc = get_minio_client()
-        key = path.replace(f"s3://{mc.bucket}/", "") if path.startswith("s3://") else path
+        key = mc.object_key(path)
         data = mc.download_bytes(key)
         if not data:
             return None
@@ -325,10 +325,7 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
     # (skeleton 빌드 시점에 interpretation 이 비어 있던 경우의 안전망)
     if not items and vs.type == "chart_annotated_bar":
         try:
-            items = [
-                (str(g.feature), float(g.importance))
-                for g in (ctx.interpretation.global_importance or [])[:5]
-            ]
+            items = [(str(g.feature), float(g.importance)) for g in (ctx.interpretation.global_importance or [])[:5]]
         except Exception:
             items = []
     # 슬라이드 고유 numbers (EDA meta) 가 metrics 폴백보다 우선.
@@ -378,7 +375,9 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
 
     fig, ax = plt.subplots(figsize=(9, 4.8), dpi=120)
     fig.patch.set_facecolor("white")
-    bars = ax.bar(labels, values, color=colors_list, width=(0.62 if len(values) <= 4 else 0.7), zorder=3, edgecolor="none")
+    bars = ax.bar(
+        labels, values, color=colors_list, width=(0.62 if len(values) <= 4 else 0.7), zorder=3, edgecolor="none"
+    )
     for i, (bar, v) in enumerate(zip(bars, values)):
         y = bar.get_height()
         lbl = f"{v:.3f}" if 0 < v < 1 else (f"{int(v)}" if v == int(v) else f"{v:.1f}")
@@ -386,8 +385,14 @@ def _render_bar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, p
         _fs = 22 if i == _max_idx else 19
         _fw = "bold" if i == _max_idx else "semibold"
         ax.text(
-            bar.get_x() + bar.get_width() / 2, y + y_off, lbl,
-            ha="center", va="bottom", fontsize=_fs, color="#0F172A", fontweight=_fw,
+            bar.get_x() + bar.get_width() / 2,
+            y + y_off,
+            lbl,
+            ha="center",
+            va="bottom",
+            fontsize=_fs,
+            color="#0F172A",
+            fontweight=_fw,
         )
     if vs.title:  # 제목은 옵션 (슬라이드 헤딩과 중복되면 빈 값으로 생략)
         ax.set_title(_ensure_ascii(vs.title), fontsize=17, color="#0F172A", pad=16, loc="left", fontweight="bold")
@@ -421,12 +426,24 @@ def _render_line(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, 
     fig, ax = plt.subplots(figsize=(9, 4.8), dpi=120)
     fig.patch.set_facecolor("white")
     _lc = primary or "#185FA5"
-    ax.plot(x, values, color=_lc, linewidth=3.5, marker="o", markersize=11,
-            markerfacecolor=_lc, markeredgecolor="white", markeredgewidth=2.5, zorder=3)
+    ax.plot(
+        x,
+        values,
+        color=_lc,
+        linewidth=3.5,
+        marker="o",
+        markersize=11,
+        markerfacecolor=_lc,
+        markeredgecolor="white",
+        markeredgewidth=2.5,
+        zorder=3,
+    )
     ax.fill_between(x, values, mn - (mx - mn + 1) * 0.3, color=_lc, alpha=0.07, zorder=1)
     for xi, v in zip(x, values):
         lbl = f"{int(v)}" if v == int(v) else f"{v:.1f}"
-        ax.text(xi, v + (mx - mn + 1) * 0.05, lbl, ha="center", va="bottom", fontsize=21, color="#0F172A", fontweight="bold")
+        ax.text(
+            xi, v + (mx - mn + 1) * 0.05, lbl, ha="center", va="bottom", fontsize=21, color="#0F172A", fontweight="bold"
+        )
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     if vs.title:
@@ -458,14 +475,14 @@ def _render_hbar(vs: VisualSpec, ctx: ReportContext, primary: str, accent: str, 
     # jh 2026-06-12 — _render_bar 와 동일하게 팔레트 primary 강조 (하드코딩 제거)
     _max_idx = values.index(max(values)) if values else -1
     _ACCENT = "#3A6FE0"  # 브랜드 블루(Exec 강조색) 고정 — 차트 색감 통일
-    _MUTED = "#94A3B8"    # 묻힘 색
+    _MUTED = "#94A3B8"  # 묻힘 색
     colors_list = [_ACCENT if i == _max_idx else _MUTED for i in range(len(values))]
-    _unit = "%" if "%" in (vs.title or "") else ""   # 제목에 % 있으면 라벨에 % 부착
+    _unit = "%" if "%" in (vs.title or "") else ""  # 제목에 % 있으면 라벨에 % 부착
     _track = mx * 1.16
     fig, ax = plt.subplots(figsize=(9, max(3.0, len(values) * 0.82)), dpi=120)
     fig.patch.set_facecolor("white")
     ax.barh(y, [_track] * len(values), color="#F1F5F9", height=0.58, zorder=1)  # 트랙(배경 진행바)
-    ax.barh(y, values, color=colors_list, height=0.58, zorder=3)                # 값 막대
+    ax.barh(y, values, color=colors_list, height=0.58, zorder=3)  # 값 막대
     for yi, v in zip(y, values):
         lbl = (f"{int(v)}" if v == int(v) else f"{v:.1f}") + _unit
         ax.text(v + mx * 0.025, yi, lbl, va="center", ha="left", fontsize=20, color="#0F172A", fontweight="bold")
@@ -500,8 +517,12 @@ def _render_roadmap(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -> st
     ax.axis("off")
     for i, lab in enumerate(steps):
         if i < n - 1:
-            ax.annotate("", xy=(i + 0.74, 0.66), xytext=(i + 0.26, 0.66),
-                        arrowprops=dict(arrowstyle="-|>", color="#B6C6DA", lw=2.4))
+            ax.annotate(
+                "",
+                xy=(i + 0.74, 0.66),
+                xytext=(i + 0.26, 0.66),
+                arrowprops=dict(arrowstyle="-|>", color="#B6C6DA", lw=2.4),
+            )
         ax.scatter([i], [0.66], s=1700, color="#185FA5", zorder=3, edgecolors="white", linewidths=2.5)
         ax.text(i, 0.66, str(i + 1), ha="center", va="center", color="white", fontsize=17, fontweight="bold", zorder=4)
         ax.text(i, 0.24, lab, ha="center", va="center", color="#0F172A", fontsize=14, fontweight="bold")
@@ -763,15 +784,55 @@ def _render_risk_matrix(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -
     fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
     fig.patch.set_facecolor("white")
     # 사분면 배경 (axhspan/axvspan 사용)
-    ax.fill_betweenx([0, 0.5], 0, 0.5, color="#D1FAE5", alpha=0.7, zorder=0)   # 좌하 녹색
+    ax.fill_betweenx([0, 0.5], 0, 0.5, color="#D1FAE5", alpha=0.7, zorder=0)  # 좌하 녹색
     ax.fill_betweenx([0, 0.5], 0.5, 1.0, color="#FEF3C7", alpha=0.7, zorder=0)  # 우하 노랑
     ax.fill_betweenx([0.5, 1.0], 0, 0.5, color="#FEF3C7", alpha=0.7, zorder=0)  # 좌상 노랑
     ax.fill_betweenx([0.5, 1.0], 0.5, 1.0, color="#FECACA", alpha=0.7, zorder=0)  # 우상 빨강
     # 사분면 라벨 (모서리)
-    ax.text(0.02, 0.97, _ensure_ascii("모니터링"), ha="left", va="top", fontsize=12, color="#92400E", fontweight="bold", zorder=2)
-    ax.text(0.98, 0.97, _ensure_ascii("즉각 대응"), ha="right", va="top", fontsize=12, color="#991B1B", fontweight="bold", zorder=2)
-    ax.text(0.02, 0.03, _ensure_ascii("무시 가능"), ha="left", va="bottom", fontsize=12, color="#065F46", fontweight="bold", zorder=2)
-    ax.text(0.98, 0.03, _ensure_ascii("주의"), ha="right", va="bottom", fontsize=12, color="#92400E", fontweight="bold", zorder=2)
+    ax.text(
+        0.02,
+        0.97,
+        _ensure_ascii("모니터링"),
+        ha="left",
+        va="top",
+        fontsize=12,
+        color="#92400E",
+        fontweight="bold",
+        zorder=2,
+    )
+    ax.text(
+        0.98,
+        0.97,
+        _ensure_ascii("즉각 대응"),
+        ha="right",
+        va="top",
+        fontsize=12,
+        color="#991B1B",
+        fontweight="bold",
+        zorder=2,
+    )
+    ax.text(
+        0.02,
+        0.03,
+        _ensure_ascii("무시 가능"),
+        ha="left",
+        va="bottom",
+        fontsize=12,
+        color="#065F46",
+        fontweight="bold",
+        zorder=2,
+    )
+    ax.text(
+        0.98,
+        0.03,
+        _ensure_ascii("주의"),
+        ha="right",
+        va="bottom",
+        fontsize=12,
+        color="#92400E",
+        fontweight="bold",
+        zorder=2,
+    )
     # 격자 가운데 선
     ax.axhline(0.5, color="#475569", linewidth=1.5, zorder=1)
     ax.axvline(0.5, color="#475569", linewidth=1.5, zorder=1)
@@ -782,7 +843,9 @@ def _render_risk_matrix(vs: VisualSpec, ctx: ReportContext, primary: str, plt) -
         _label, prob, impact = str(item[0]), float(item[1]), float(item[2])
         # 점
         ax.scatter([prob], [impact], s=550, color=(primary or "#185FA5"), edgecolor="white", linewidth=2.5, zorder=4)
-        ax.text(prob, impact, str(idx), ha="center", va="center", fontsize=14, color="white", fontweight="bold", zorder=5)
+        ax.text(
+            prob, impact, str(idx), ha="center", va="center", fontsize=14, color="white", fontweight="bold", zorder=5
+        )
     # 축
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)

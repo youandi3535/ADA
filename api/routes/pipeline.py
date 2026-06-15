@@ -483,7 +483,7 @@ async def download_output(job_id: str, output_code: str) -> None:
 
     try:
         mc = get_minio_client()
-        key = minio_path.replace(f"s3://{mc.bucket}/", "") if minio_path.startswith("s3://") else minio_path
+        key = mc.object_key(minio_path)
         body = mc.download_bytes(key)
     except Exception as e:
         raise HTTPException(500, f"파일 다운로드 실패: {e}")
