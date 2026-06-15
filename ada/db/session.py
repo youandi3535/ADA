@@ -31,14 +31,44 @@ else:
     ASYNC_URL = RAW_URL
 
 # --- Engine + Session --------------------------------------------------------
-engine = create_async_engine(
-    ASYNC_URL,
-    pool_size=int(os.environ.get("DB_POOL_SIZE", "20")),
-    max_overflow=int(os.environ.get("DB_POOL_OVERFLOW", "10")),
-    pool_timeout=30,
-    pool_pre_ping=True,
-    echo=os.environ.get("LOG_LEVEL", "INFO").upper() == "DEBUG",
-)
+# HJ 2026-06-15 — Celery 워커는 태스크마다 asyncio.run() 으로 새 이벤트루프를 만든다.
+#   QueuePool 에 캐시된 asyncpg 커넥션은 그 커넥션을 생성한 (이전·이미 닫힌) 루프에 묶여 있어,
+#   다음 태스크의 새 루프에서 재사용하면 "Event loop is closed / Future attached to a different
+#   loop" 가 난다(_set_job_terminal 등 status/progress 갱신 간헐 실패의 근본 원인).
+#   → 워커에서는 NullPool(풀링 없음): 매 세션마다 현재 루프에 묶인 새 커넥션을 만들고 세션 종료 시
+#     즉시 닫아 루프 간 재사용을 원천 차단. 워커 태스크는 초·분 단위라 커넥션 생성 오버헤드(수 ms)는
+#     무시 가능하다. API(uvicorn, 단일 장수 루프)는 성능을 위해 기존 QueuePool 을 유지한다.
+_DB_POOL_OVERRIDE = os.environ.get("ADA_DB_POOL", "").strip().lower()
+
+
+def _use_nullpool() -> bool:
+    if _DB_POOL_OVERRIDE in ("null", "nullpool"):  # 운영/테스트 강제 오버라이드 우선
+        return True
+    if _DB_POOL_OVERRIDE in ("pool", "queuepool", "default"):
+        return False
+    import sys as _sys  # noqa: WPS433
+
+    _argv = " ".join(_sys.argv).lower()  # celery worker/beat 프로세스 자동 감지
+    return "celery" in _argv and ("worker" in _argv or "beat" in _argv)
+
+
+if _use_nullpool():
+    from sqlalchemy.pool import NullPool  # noqa: WPS433
+
+    engine = create_async_engine(
+        ASYNC_URL,
+        poolclass=NullPool,  # 커넥션 풀링 비활성 — 루프 간 커넥션 재사용 차단
+        echo=os.environ.get("LOG_LEVEL", "INFO").upper() == "DEBUG",
+    )
+else:
+    engine = create_async_engine(
+        ASYNC_URL,
+        pool_size=int(os.environ.get("DB_POOL_SIZE", "20")),
+        max_overflow=int(os.environ.get("DB_POOL_OVERFLOW", "10")),
+        pool_timeout=30,
+        pool_pre_ping=True,
+        echo=os.environ.get("LOG_LEVEL", "INFO").upper() == "DEBUG",
+    )
 
 AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine,

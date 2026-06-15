@@ -913,6 +913,16 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         load_checkpoint(checkpointer, job_id)
         graph = build_graph(checkpointer=checkpointer)
         config = {"configurable": {"thread_id": job_id}}
+        # HJ 2026-06-15 — 재개 즉시(상태 'running' 전환 전) 이전 실행의 stale 라이브 피드를 비운다.
+        #   publish_stage_partial 은 ada:stage_partial:{job_id} 에 '누적 머지'만 하고 절대 지우지 않으므로,
+        #   이전 단계(또는 되감기 전 상위 단계)의 eda_insights·methodology_candidates·차트수 등이 남아
+        #   다음 단계 모달에 그대로 떠 '재진행했는데 이미 분석이 끝난 내용이 채워진 채 95% 부터 시작'하던
+        #   버그를 유발했다. 다음 단계 agent 가 곧 자기 키를 fresh 로 republish 하므로 여기서 비우는 것이 안전.
+        #   (상태 'running' 전에 지워야 프론트의 stale 가드 해제 시점에 이미 깨끗하다.)
+        try:
+            _get_redis().delete(f"ada:stage_partial:{job_id}")
+        except Exception:  # noqa: BLE001
+            pass
         await _set_job_terminal(job_id, "running")
 
         gate_code = gate_response.get("gate", "G?")

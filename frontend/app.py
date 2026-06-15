@@ -491,6 +491,10 @@ let _sawAnalyzingAfterSubmit=false;  // resume 후 analyzing() 상태를 거쳤�
 //   값이 set 인 동안 isCompleted()=false 로 유지 → 모달·진행바 표시 + 폴링 지속. 백엔드가 새 실행을
 //   'running' 으로 전환(또는 안전 타임아웃)하면 해제되어 새 산출물(PDF) 완료를 정상 표시한다.
 let _awaitingResume=0;
+// HJ 2026-06-15 — 재제출 시각(ms). 재실행이 너무 빨리 끝나(캐시 히트 등) 프론트가 analyzing 을 한 번도
+//   못 본 경우에도 lastSubmittedGate 가 영구히 안 비워져 로딩에 고착되지 않게 하는 안전망(폴백).
+//   정상 시엔 백엔드 resume_lock 로 analyzing 이 즉시 관측돼 _sawAnalyzingAfterSubmit 가 먼저 켜진다.
+let _resumeSubmitMs=0;
 // HJ 2026-06-10 — 모달 닫기 (사용자가 ✕ 누름). 같은 cur 동안만 유효, 다음 단계 진입 시 자동 reset.
 let modalDismissed=false;
 let _modalDismissedCur=-1;     // dismissed 가 발생한 cur — cur 변경되면 자동 해제
@@ -662,7 +666,12 @@ function resetAll(){
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
   gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={}; _g5ContinueChosen=false;
   _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;
-  _awaitingResume=0;
+  _awaitingResume=0; _resumeSubmitMs=0;
+  // HJ 2026-06-15 — 전체 초기화 시에도 G2 주제 sub-stage 상태를 디폴트('topic')로 되돌려, 다음 분석이
+  //   G2 도달 시 주제 선택 팝업부터 정상 표시되게 한다(주제 화면 → 옵션 화면 순서 복원).
+  g2SubStage='topic'; selectedTopic={id:1}; topicCustomText=''; g2DirectionsReady=false;
+  g2DirectionsBusy=false; topicDismissed=false; _topicDismissedCur=-1; window._g2_selectedTopicText=null;
+  _twState={}; _twAllDoneAt=null; _twDotsShownAt=0;  // 전체 초기화 — 이전 타자기 잔존 제거
   render();
 }
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',preprocessing_choice:'전처리 옵션 확정',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',fine_tune_executor:'파인튜닝 실행',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
@@ -1042,6 +1051,11 @@ function _gateBack(tg){
 // 즉 frontier = parseInt(gate_code[1]) - 1.
 function computeFrontier(){
   if(isCompleted()){ frontier=LAST; return; }
+  // HJ 2026-06-15 — 재진행 직후 stale 가드(버그3 fix): 방금 제출한 게이트(lastSubmittedGate)가
+  //   있고 아직 분석 시작(analyzing)을 확인하기 전이면, 백엔드가 직전 단계의 stale 게이트를
+  //   잠깐 반환해도 frontier 를 올리지 않는다. (예: 2단계 재진행 후 백엔드가 직전 4단계 G5 를
+  //   잠깐 publish → cur 가 4단계로 점프하며 멈춘 단계부터 이어지던 버그.)
+  if(lastSubmittedGate && !_sawAnalyzingAfterSubmit){ frontier=Math.min(frontier, cur); return; }
   const g=curGate();
   // 게이트 없음(분석 중): frontier=0 으로 리셋하면 follow=true 상태에서 cur 도 0 으로
   // snap-back 되어 업로드 화면이 잠깐 보이다 다음 게이트로 점프하는 현상 발생.
@@ -1186,6 +1200,12 @@ async function doUpload(){
     // render() 없으면 첫 poll() 완료(~2.5s)까지 업로드 화면이 그대로 남는다.
     jobId=stt.job_id; follow=false; cur=0; frontier=0; maxReached=0; busy=false;
     gateData={}; analyzeStart=Date.now();
+    // HJ 2026-06-15 — 새 분석 시작 시 G2 주제 sub-stage 상태 초기화. 이전 분석에서 'direction' 으로
+    //   넘어간 g2SubStage 가 남아 있으면 새 job 이 G2 에 도달할 때 주제 선택 팝업을 건너뛰고 바로
+    //   방향 분석으로 빠지던 버그 방지(주제 화면 → 옵션 화면 순서 복원).
+    g2SubStage='topic'; selectedTopic={id:1}; topicCustomText=''; g2DirectionsReady=false;
+    g2DirectionsBusy=false; topicDismissed=false; _topicDismissedCur=-1; window._g2_selectedTopicText=null;
+    _twState={}; _twAllDoneAt=null; _twDotsShownAt=0;  // 새 분석 — 이전 타자기 잔존 제거(새 G1 부터 fresh 타이핑)
     render();
     saveState();
     startPolling();
@@ -1193,15 +1213,18 @@ async function doUpload(){
 }
 async function doResume(){
   const tg='G'+(cur+1);  // cur(화면 인덱스) → 백엔드 게이트 코드. cur=1(분석방향)=G2 ... cur=5(산출물)=G6
-  // CS 2026-06-10 — G2 가드: 사용자가 endpoint(주제 선택) 거치지 않고 resume 시도하면 차단
-  if(tg==='G2' && !g2DirectionsReady){
-    errMsg='주제를 먼저 선택하고 "선택 완료 ▶" 를 눌러주세요.';
-    render(); return;
-  }
   const ag=curGate();
   // cur 기준으로 올바른 proposals 선택 (이전 단계 재진행 시 캐시 사용)
   const d=(ag===tg)?gateData:(gateCache[tg]||{});
   const props=(d.proposals)||[];
+  // CS 2026-06-10 — G2 가드: 주제 미선택 시 차단.
+  // HJ 2026-06-15 — 단, 분석 방향 proposals(주제 선택 후 생성)가 이미 있으면 = 주제 선택 완료 상태.
+  //   뒤로가기로 2단계 복귀 시 g2DirectionsReady=false 로 남아 있어도 분석 방향 카드가 떠 있으면
+  //   재진행 허용(4단계→정지→2단계 복귀 후 옵션만 바꿔 재진행하는 케이스).
+  if(tg==='G2' && !g2DirectionsReady && !props.filter(function(p){return !p.is_custom;}).length){
+    errMsg='주제를 먼저 선택하고 "선택 완료 ▶" 를 눌러주세요.';
+    render(); return;
+  }
   let choice;
   if(tg==='G6'){
     const outs=[];
@@ -1222,6 +1245,7 @@ async function doResume(){
       body:JSON.stringify({gate:gate,choice:choice})});
     lastSubmittedGate=gate;
     _awaitingResume=Date.now();  // HJ 2026-06-15 — 재실행 가드: 직전 완료 status(stale)에 latch 차단
+    _resumeSubmitMs=Date.now();  // HJ 2026-06-15 — 재실행 고착 방지 안전망(폴백) 기준 시각
     // 제출 게이트 이후 캐시 삭제 — 현재 게이트(tg) 캐시는 유지(뒤로가기 복원용)
     var _tgNum=parseInt(tg[1],10);
     Object.keys(gateCache).forEach(function(k){
@@ -1236,6 +1260,10 @@ async function doResume(){
     // (이전엔 cur=cur+1 즉시 점프 → "단계 2 분석"이 단계 3 화면에서 표시되는 오프셋 발생)
     follow=true; busy=false; gateData={}; analyzeStart=Date.now();
     _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;  // gate 제출 직후 리셋
+    // HJ 2026-06-15 — 재진행 시 모달 타자기/도트/hold 상태도 초기화. 이전 실행에서 끝까지 타이핑된
+    //   _twState 가 남아 있으면 같은 stableKey 의 새 콘텐츠가 0 부터 타이핑되지 않고 '이미 다 채워진'
+    //   상태로 보이고 뒤에 글이 이어붙던 회귀 방지(재진행=그 단계 처음부터 재작성).
+    _twState={}; _twAllDoneAt=null; _twDotsShownAt=0;
     saveState();
     startPolling();
   }catch(e){ errMsg='전송 실패 — '+e.message; busy=false; render(); }
@@ -1316,7 +1344,13 @@ async function poll(){
   //     (구 `curGate()!==lastSubmittedGate` 는 stale G2 에 속아 모달이 분석 도중 사라지고 선택화면으로 빠짐)
   //   • _typingHoldComplete(): 모달의 실시간 분석 내용을 끝까지 작성 + 3초 hold 후에만 전진 (사용자 요구).
   //     hold 미완료면 lastSubmittedGate 유지 → inModalLoading()=true → 모달이 계속 내용 작성.
-  if(_nextGateArrived() && _typingHoldComplete()){
+  // HJ 2026-06-15 — _sawAnalyzingAfterSubmit 가드 추가: 이전 단계(예: G3에서 정지→G2 복귀) 재진행
+  //   직후 백엔드가 직전 실행의 stale 상위 게이트(G3)를 잠깐 반환하면 _nextGateArrived(G3>G2)에
+  //   속아 lastSubmittedGate 를 조기 클리어 → frontier 가 G3로 올라가 cur 이 G3로 되튕기던 버그
+  //   (재진행 첫 클릭이 분석으로 안 가고 화면만 깜박이며 '진행'으로 바뀜). 재제출 후 실제 분석
+  //   (analyzing) 을 한 번이라도 본 뒤에만 클리어 — computeFrontier(1049)·_staleRun 과 동일 가드.
+  if(_nextGateArrived() && _typingHoldComplete()
+     && (_sawAnalyzingAfterSubmit || (_resumeSubmitMs && Date.now()-_resumeSubmitMs > 20000))){
     lastSubmittedGate=null;
     follow=true;  // 진행 완료 → 새 게이트로 자동 전진 복구
   }
@@ -1434,7 +1468,12 @@ function _stageProgress(){
     const totalSec=(STAGE_EST_SEC[stageKey]||60);
     target=Math.min(95, elSec/totalSec*100);
   }
-  const rawP=gateData.progress_pct;
+  // HJ 2026-06-15 — 재진행 직후(새 실행 analyzing 확인 전) 에는 직전 실행의 stale 글로벌 progress_pct 를
+  //   무시한다. (이전 단계 재진행 시 직전 실행의 높은 진행률이 현재 단계 STAGE_RANGE 를 넘겨 95% 로
+  //   클램프 → 재진행이 0% 가 아니라 95% 부터 시작하던 버그.) 가드 해제 후엔 백엔드가 재개 시 덮어쓴
+  //   신선한 progress_pct 를 따른다. 그 전까지는 시간 기반 baseline(_stageStart 0 부터) 만 사용.
+  const _progStale=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+  const rawP=_progStale?null:gateData.progress_pct;
   if(rawP!=null && Number.isFinite(Number(rawP))){
     const rng=STAGE_RANGE[cur];
     if(rng){
@@ -1562,13 +1601,18 @@ function gateHeader(g){
   const cat=(gateData.category && gateData.category!=='pending')?('<span>카테고리 <b>'+esc(gateData.category)+'</b></span>'):'';
   const tgt=gateData.target_column?('<span>타깃 <b>'+esc(gateData.target_column)+'</b></span>'):'';
   const props=(gateData.proposals||[]).filter(function(p){return !p.is_custom;});
+  // HJ 2026-06-15 — G2(주제 선정)는 proposals 가 아니라 topic_proposals 를 쓴다.
+  //   topic 도착도 '카드/팝업 도착(=사용자 결정 시점)'으로 인정해야 한다. 그러지 않으면
+  //   cur=1(2단계 주제 선정) 도착 시 props.length===0 이라 로딩 분기로 빠져
+  //   loading[cur+1]=loading[2]('EDA 분석 중') 헤더가 떠 "2단계인데 EDA 화면" 버그가 난다.
+  const cardsReady=props.length || (gateData.topic_proposals||[]).length;
   const stage=STAGE_TRANSITION_DESC[cur+1];
   // CS 2026-06-11 — 본인 명시 "강제 X". frontend 휴리스틱 override 제거.
   // backend 의 LLM 분류 결과를 그대로 신뢰. 미확정/빈값이면 _default 폴백.
   let catKey=gateData.category;
   let h2, en, desc;
-  if(props.length){
-    // proposals 도착 = 사용자 결정 시점
+  if(cardsReady){
+    // proposals 또는 G2 topic_proposals 도착 = 사용자 결정 시점 (카드/팝업 표시)
     const cmap=GATE_HEADER_BY_CATEGORY.static[cur]||{};
     const byCat=cmap[catKey]||cmap._default;   // catKey 매칭 없으면 _default 사용 (어떤 데이터든 대응)
     if(byCat){ h2=byCat.h2; en=byCat.en; desc=byCat.desc||'업로드하신 데이터를 ADA가 분석해 제안한 결과입니다.'; }
@@ -2822,12 +2866,21 @@ function render(){
   const atFailedRetry=isFailed()&&cur>=1&&cur<=5&&(_llmCount(_cd)>0||_llmCount(gateData)>0);
   const atGate=atCurrentGate||atPastGate||atFailedRetry;
   const g5ok=curGate()!=='G6'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
+  // HJ 2026-06-15 — 진행(resume) 직후 분석이 도는 동안 진행 버튼 잠금.
+  //   doResume() 가 resume 성공 후 busy=false 로 풀기 때문에, 분석 중(제출 후~다음 게이트 도착 전)
+  //   에 stale gate_data 로 atGate=true 가 되어 진행 버튼이 다시 활성화되던 버그.
+  //   contentGate 가 loadingBlock(분석 중)을 띄우는 조건과 동일 신호로 버튼도 잠가 일관성 확보.
+  //   (예: 2단계 분석방향 제출 → EDA 분석 중에도 '진행 ▶' 가 활성으로 남던 문제.)
+  const _agBtn=curGate();
+  const _agStaleLowBtn=!_agBtn || (/^G[2-6]$/.test(_agBtn) && parseInt(_agBtn.slice(1),10) < parseInt(_tg.slice(1),10));
+  const _submitAnalyzing=(lastSubmittedGate===_tg) && _agStaleLowBtn;
   prim.innerHTML=primaryLabel();
   prim.classList.toggle('resume', paused);
   if(busy) prim.disabled=true;
   else if(paused) prim.disabled=false;
   else if(cur===0) prim.disabled=(!selectedFile || !!jobId);
   else if(cur===LAST) prim.disabled=true;
+  else if(_submitAnalyzing) prim.disabled=true;
   else prim.disabled=!atGate||!g5ok;
   // HJ 2026-06-11 — 모달 토글 로직 재구성: 콘텐츠 갱신과 시각 표시 분리.
   //   _active = _modalShouldBeActive() : backend 분석 진행 중 + 모달 단계 = 콘텐츠 백그라운드 갱신 계속
@@ -2857,7 +2910,7 @@ function render(){
       if(_pbEl) _pbEl.innerHTML=progressBar(true);  // HJ 2026-06-11 — 모달 내부 진행바는 isGateLoading 무관 항상 표시(사라짐 버그 fix)
       // [3] insight 영역 — modalInsightArea 가 모달 콘텐츠 생성. modalDismissed 와 무관하게 새 데이터 도착 시 갱신.
       var _miEl=document.getElementById('modal-insight');
-      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _iHtml=modalInsightArea(gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){var _msc=document.getElementById('modal-scroll');var _mst=_msc?_msc.scrollTop:0;_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;if(_msc)_msc.scrollTop=_mst;_twTick();}}
+      if(_miEl){var _MPH={0:'📊 데이터 도메인을 분석하는 중입니다…',1:'📊 EDA · 방법론 후보를 분석하는 중입니다…',2:'🧪 전처리 · 피처 엔지니어링 전략을 수립하는 중입니다…',3:'🏋️ 모델 선택 · 학습 · 하이퍼파라미터 튜닝을 진행하는 중입니다…',4:'📈 모델 평가 · 설명 · 인사이트를 생성하는 중입니다…',5:'📦 리포트 · 산출물을 합성하는 중입니다…'};var _miStale=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);var _iHtml=modalInsightArea(_miStale?{}:gateData)||(_MPH[cur]?'<div class="modal-placeholder">'+_MPH[cur]+'</div>':'');if(_miEl._last!==_iHtml){var _msc=document.getElementById('modal-scroll');var _mst=_msc?_msc.scrollTop:0;_miEl._last=_iHtml;_miEl.innerHTML=_iHtml;if(_msc)_msc.scrollTop=_mst;_twTick();}}
       // [3.5] 타자기 엔진 — modalDismissed 여도 setInterval 계속 도는 핵심.
       //   _twTick 가 span.tw[data-tw] 들을 95ms 마다 1글자씩 채움. 모달 숨겨져 있어도 DOM 은 살아있어 글자 누적.
       //   사용자가 다시 열면 그동안 그려진 글자가 그대로 보임.
@@ -2923,7 +2976,10 @@ document.getElementById('prevBtn').onclick=function(){
   //   분석 방향 카드에서 prev → 같은 G2 의 주제 선정 화면으로(cur 유지). 주제 선정에서 한 번 더 prev →
   //   아래 cur>0 분기로 G1 업로드 화면. 주제를 다시 고를 수 있게 g2DirectionsReady 도 리셋.
   if(cur===1 && g2SubStage==='direction'){
-    g2SubStage='topic'; g2DirectionsReady=false; paused=false; follow=false; render();
+    // HJ 2026-06-15 — 주제 화면 복귀 시 topicDismissed 리셋. 같은 cur(=1)에서 서브스테이지만
+    //   바뀌므로 cur 변경 기반 자동 리셋(2452)이 안 걸려, 이전에 닫힌 상태가 남아 주제 팝업
+    //   대신 '주제 선정 팝업이 닫혔습니다' 폴백이 뜨던 버그 수정.
+    g2SubStage='topic'; g2DirectionsReady=false; topicDismissed=false; paused=false; follow=false; render();
     return;
   }
   if(cur>0){
@@ -2958,8 +3014,13 @@ document.getElementById('stopBtn').onclick=function(){
 document.getElementById('primaryBtn').onclick=function(){
   if(busy) return;
   if(paused){ _resumeFromPause(); render(); return; }
-  if(cur===0){ _suppressG1Advance=false; doUpload(); return; }
-  if(cur>=1 && cur<=5){ doResume(); return; }
+  // HJ 2026-06-15 — 누르는 즉시 비활성화(시각 피드백). 2단계+ 는 doResume 가 busy=true 직후
+  //   무거운 render(모달·카드·타자기 빌드)를 같은 task 에서 동기 실행해 브라우저 repaint 가 막혀
+  //   비활성화가 몇 초 늦게 보였다(1단계는 render 가 가벼워 즉시). → 여기서 동기로 먼저 비활성화하고
+  //   실제 작업은 setTimeout(0) 으로 한 틱 미뤄 브라우저가 비활성화를 먼저 그리게 한다.
+  this.disabled=true;
+  if(cur===0){ _suppressG1Advance=false; setTimeout(doUpload, 0); return; }
+  if(cur>=1 && cur<=5){ setTimeout(doResume, 0); return; }
 };
 // ── F5 복원: localStorage 에 저장된 jobId 있으면 현재 단계 유지, API 폴링 재개 ──
 // _FRESH_START=true 면 시작 버튼으로 진입 → 상태 초기화 후 업로드 화면
@@ -3020,6 +3081,32 @@ def _flow_screen() -> None:
             "var _FRESH_START=true;// __FRESH_START_INJECT__",
         )
     components.html(flow_html, height=900, scrolling=True)
+
+
+def _render_agent_board() -> None:
+    """랜딩 우측 상단 '에이전트 소개' 아이콘(?board=1) → 28개 에이전트 협력 현황판 모달."""
+    from pathlib import Path
+
+    st.markdown(
+        """
+        <style>
+        [data-testid="stAppViewContainer"]{background:#070a1f;}
+        [data-testid="stHeader"]{display:none;}
+        [data-testid="stMain"] .block-container{max-width:100% !important;padding:1.1rem 1rem 0 !important;}
+        .ada-board-close{position:fixed;top:16px;right:22px;z-index:99999;display:inline-flex;align-items:center;gap:6px;
+          background:rgba(150,170,235,.14);color:#dbe3ff;border:1px solid rgba(150,170,235,.32);
+          padding:8px 15px;border-radius:999px;font:700 .82rem 'Pretendard','Inter',sans-serif;text-decoration:none;}
+        .ada-board-close:hover{background:rgba(150,170,235,.24);}
+        </style>
+        <a href="?board=0" target="_self" class="ada-board-close">✕ 닫기</a>
+        """,
+        unsafe_allow_html=True,
+    )
+    try:
+        _board_html = (Path(__file__).parent / "agent_board.html").read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        _board_html = "<p style='color:#fff;padding:24px'>현황판을 불러오지 못했습니다.</p>"
+    components.html(_board_html, height=1040, scrolling=True)
 
 
 # ===========================================================================
@@ -3109,6 +3196,10 @@ if st.query_params.get("flow") == "1":
     st.session_state["studio_started"] = True
 
 if not st.session_state.get("studio_started"):
+    # HJ 2026-06-15 — '에이전트 소개'(우측 상단 아이콘) 클릭 → ?board=1 시 현황판 모달
+    if st.query_params.get("board") == "1":
+        _render_agent_board()
+        st.stop()
     # ── 스플래시(랜딩) ── (화면 세로 중앙 정렬, 히어로 이미지·폴백 공통)
     # F5 복원은 saveState() 가 URL 해시(#ada=…)에 상태를 기록하고,
     # F5 후 ?flow=1 이 URL 에 남아 Python 이 자동으로 플로우 화면을 보여주는 방식으로 처리.
@@ -3118,7 +3209,7 @@ if not st.session_state.get("studio_started"):
         """
         <style>
         [data-testid="stAppViewContainer"]{background:#f4f6fa;}
-        [data-testid="stHeader"]{background:transparent;}
+        [data-testid="stHeader"]{background:transparent;pointer-events:none;}
         .block-container{min-height:calc(100vh - 4rem);max-width:1060px;
             display:flex;flex-direction:column;justify-content:center;}
         /* HJ 2026-06-12 — st.columns(vertical_alignment=) 는 1.36+ 전용. 1.35 호환 위해 CSS 로 세로 중앙 정렬. */
@@ -3167,7 +3258,8 @@ if not st.session_state.get("studio_started"):
     with _R:
         st.markdown(
             """
-            <div style="background:#ffffff;border:1px solid #e6ebf3;border-radius:18px;padding:22px;box-shadow:0 18px 44px rgba(31,55,99,.10);">
+            <div style="background:#ffffff;border:1px solid #e6ebf3;border-radius:18px;padding:22px;box-shadow:0 18px 44px rgba(31,55,99,.10);position:relative;">
+              <a href="?board=1" target="_self" style="position:absolute;top:-106px;right:0;display:inline-flex;align-items:center;gap:7px;background:linear-gradient(180deg,#eaf1ff,#dbe7fb);color:#1d5fd6;border:1px solid #c4d6f5;padding:8px 15px;border-radius:999px;font-weight:700;font-size:.84rem;text-decoration:none;box-shadow:0 8px 22px rgba(47,111,237,.18);">✦ 에이전트 소개</a>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
                 <span style="font-size:.95rem;font-weight:600;color:#15273d;">분석 리포트(예시)</span>
                 <span style="background:#e3f7ef;color:#0f9d6a;font-size:.74rem;font-weight:600;padding:3px 11px;border-radius:999px;">● 완료</span>

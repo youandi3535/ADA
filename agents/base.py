@@ -612,7 +612,7 @@ class BaseAgent(abc.ABC):
                 method="POST",
             )
             try:
-                with _ur.urlopen(req, timeout=180) as resp:
+                with _ur.urlopen(req, timeout=220) as resp:
                     data = _json.loads(resp.read())
                 # HJ 2026-06-12 — Ollama 네이티브 타이밍 메트릭 로깅 (병목 진단).
                 #   load=콜드스타트(모델 로딩), prompt_eval=입력 처리, eval=토큰 생성.
@@ -711,6 +711,9 @@ class BaseAgent(abc.ABC):
                     {"role": "user", "content": user_prompt},
                 ],
                 "stream": True,
+                # HJ 2026-06-15 — non-streaming 과 동일하게 모델 30분 상주(콜드스타트 방지).
+                #   _dynamic_insights 가 streaming 으로 전환되며 단계 간 재로드가 생기지 않게 유지.
+                "keep_alive": "30m",
                 "options": {
                     "num_predict": max_tokens,
                     "temperature": temperature,
@@ -734,7 +737,7 @@ class BaseAgent(abc.ABC):
                 method="POST",
             )
             try:
-                with _ur.urlopen(req, timeout=180) as resp:
+                with _ur.urlopen(req, timeout=220) as resp:
                     for raw_line in resp:
                         if not raw_line:
                             continue
@@ -959,11 +962,19 @@ class BaseAgent(abc.ABC):
             if fb == "anthropic":
                 timeout_s = 30.0
             else:
-                # HJ 2026-06-11 — ollama(qwen 7B·CPU)는 항목 많을수록 + 콜드스타트로 느림.
-                #   고정 60s 는 G2(8항목)에서 자주 타임아웃 → 템플릿 폴백 버그. 항목수 비례로
-                #   넉넉히 잡되 urlopen(180s) 안쪽으로 상한. 8항목=160s, 4항목=80s(최소).
-                timeout_s = min(165.0, max(80.0, len(prompt_items) * 20.0))
+                # HJ 2026-06-15 — ollama(qwen 7B·CPU, ~5 tok/s) 실측: EDA 8항목 윤색 total ~161s
+                #   (prompt_eval 20~60s 고정비 + eval). 기존 상한 165s/공식 n*20 이 1~2초 차이로
+                #   wait_for 타임아웃 → dynamic_insights_llm_failed(error="") → 전 항목 템플릿 폴백.
+                #   prompt_eval 고정비 흡수 위해 base 120s, 항목 비례 n*22, urlopen(220s) 안쪽 상한 210s.
+                timeout_s = min(210.0, max(120.0, len(prompt_items) * 22.0))
 
+        # HJ 2026-06-15 — 부분 성공 보존(전 단계 공통, 모두 ollama 윤색):
+        #   ollama 를 streaming 으로 받아 on_partial 로 누적분을 보관 → 타임아웃/중단 시 그 시점까지
+        #   완성된 `번호|해석` 줄만 LLM 글로 채택하고, 못 받은 항목은 아래 머지에서 템플릿 유지.
+        #   끊긴 마지막 줄은 제거해 중간에 끊긴 문장이 노출되지 않게 한다(사용자 요구).
+        _partial = {"raw": ""}
+        _op = (lambda acc: _partial.__setitem__("raw", acc)) if fb == "ollama" else None
+        timed_out = False
         try:
             raw = await asyncio.wait_for(
                 self._call_llm(
@@ -973,15 +984,46 @@ class BaseAgent(abc.ABC):
                     temperature=0.5,
                     force_backend=fb,
                     track_progress=False,
+                    on_partial=_op,
                 ),
                 timeout=timeout_s,
             )
-        except Exception as e:  # noqa: BLE001 — 타임아웃·호출실패 모두 원본 유지
+        except asyncio.TimeoutError:
+            raw = _partial["raw"]
+            timed_out = True
             try:
-                self.logger.warning("dynamic_insights_llm_failed", error=str(e)[:200], backend=fb, n=len(prompt_items))
+                self.logger.warning(
+                    "dynamic_insights_llm_timeout_partial",
+                    backend=fb,
+                    n=len(prompt_items),
+                    partial_chars=len(raw),
+                )
             except Exception:
                 pass
-            return lines
+        except Exception as e:  # noqa: BLE001 — 기타 실패도 누적된 부분 응답 활용
+            raw = _partial["raw"]
+            timed_out = True
+            try:
+                self.logger.warning(
+                    "dynamic_insights_llm_failed",
+                    error=str(e)[:200],
+                    backend=fb,
+                    n=len(prompt_items),
+                    partial_chars=len(raw),
+                )
+            except Exception:
+                pass
+
+        if not raw:
+            return lines  # 받은 게 전혀 없음 → 전부 템플릿
+
+        # 부분(타임아웃/중단) 응답은 끊긴 마지막 줄을 제거 — 완성된 줄까지만 채택해
+        # 중간에 끊긴 문장이 노출되지 않게 한다. (정상 완료면 전체 파싱)
+        if timed_out and not raw.endswith("\n"):
+            _nl = raw.rfind("\n")
+            raw = raw[: _nl + 1] if _nl >= 0 else ""
+            if not raw:
+                return lines  # 완성된 줄이 하나도 없음 → 전부 템플릿
 
         raw = self._strip_md_fence(raw or "")
         new_tails = {}
