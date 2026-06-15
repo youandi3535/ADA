@@ -1,0 +1,44 @@
+<div class="rfeng">
+<div class="rfe-kick">ADA를 움직이는 세 가지 엔진</div>
+<div class="rfe-head">한 번 쓰고 끝나지 않습니다.</div>
+<p class="rfe-lead">ADA는 쓸수록 <b class="t">더 단단해지고</b>, <b class="v">더 똑똑해지고</b>, <b class="a">스스로 회복하도록</b> 설계되었습니다. 그 비결은 분석 화면 아래에서 조용히 돌아가는 세 개의 엔진입니다.</p>
+<div class="rfe-card c-t">
+<div class="rfe-ct"><span class="rfe-no n-t">01</span><span class="rfe-tt tt-t">하네스 엔지니어링</span><span class="rfe-sub">— 28개 에이전트를 감싸는 제어판</span></div>
+<p class="rfe-p">하네스는 28개 에이전트가 똑같이 딛고 서는 <b class="t">실행 인프라</b>입니다. 모든 LLM 호출은 단일 게이트웨이 한 곳으로 모이고(Claude·Ollama 자동 라우팅), 상태는 정해진 규칙으로만 갱신되며, 모든 실행은 자동으로 기록·추적됩니다.</p>
+<p class="rfe-p">그 위에 안전장치가 겹겹이 깔립니다 — <b class="t">PII 자동 마스킹</b>, 보안 가드 에이전트, 외부 호출 회로차단. 여기에 <b class="t">LangGraph 오케스트레이터</b>가 에이전트들의 흐름을 지휘해, 제각각이 아니라 한 몸처럼 협업하게 만듭니다. 화려한 분석을 조용히 떠받치는 '엔진룸'입니다.</p>
+<p class="rfe-p">무엇보다 <b class="t">검증</b>이 핵심입니다 — 모든 단계의 출력은 스키마·가드레일·인용·기준선 <b class="t">검증 게이트</b>를 통과해야만 다음으로 넘어가, 틀린 결과가 파이프라인을 타고 번지지 않습니다.</p>
+</div>
+<div class="rfe-card c-v">
+<div class="rfe-ct"><span class="rfe-no n-v">02</span><span class="rfe-tt tt-v">데이터 분석 자동 학습</span><span class="rfe-sub">— 쓸수록 똑똑해지는 두뇌</span></div>
+<p class="rfe-p">분석이 한 번 끝날 때마다, ADA는 그 전 과정을 스스로 <b class="v">증류해 지식으로 저장</b>합니다. 성공 패턴, 전처리·모델 레시피, EDA 템플릿, 하이퍼파라미터 웜스타트, 실패 교훈 — 다섯 갈래의 경험이 차곡차곡 쌓입니다.</p>
+<p class="rfe-p">다음 분석에서는 이 경험을 검색해 다시 활용합니다. 비슷한 데이터면 과거 성공 레시피에서 출발하고, 튜너는 지난 최적값에서 탐색을 시작하며, 분석 방향에는 과거 성공 사례를 근거로 인용합니다. 같은 일을 반복할수록 <b class="v">더 빠르고 정확해지는</b>, 경험이 누적되는 강화형 학습입니다.</p>
+</div>
+<div class="rfe-card c-a">
+<div class="rfe-ct"><span class="rfe-no n-a">03</span><span class="rfe-tt tt-a">오류 자동 캐치·수정 &amp; 학습</span><span class="rfe-sub">— 같은 곳에서 다시 넘어지지 않는</span></div>
+<p class="rfe-p">파이프라인 어디서 오류가 나든, 전담 에이전트가 <b class="a">즉시 감지</b>해 원인을 분류하고 스스로 복구를 시도합니다. 재시도, 대체 전략 전환, 기준선 미달 시 재학습 루프까지 사람의 개입 없이 진행됩니다.</p>
+<p class="rfe-p">그리고 그 오류와 해결책은 <b class="a">교훈으로 저장</b>됩니다. 다음에 같은 상황이 오면 미리 피하거나 더 빨리 풀어냅니다 — 오류마저 학습 자산이 되는 구조입니다.</p>
+</div>
+<div class="rfe-foot">⬇ 아래 다이어그램에서 세 엔진이 어떻게 맞물려 도는지 한눈에 확인하세요.</div>
+</div>
+<style>
+.rfeng{max-width:1100px;margin:0 auto 18px;padding:26px 30px 22px;border-radius:20px;border:1px solid rgba(130,150,255,.18);background:linear-gradient(180deg,rgba(26,17,70,.55),rgba(11,16,48,.55));color:#dfe6ff;font-family:'Pretendard','Inter',system-ui,-apple-system,sans-serif;box-shadow:0 18px 50px rgba(8,6,30,.4);}
+.rfe-kick{font-size:.82rem;letter-spacing:.14em;text-transform:uppercase;color:#8aa0c8;margin:0 0 10px;font-weight:700;}
+.rfe-head{font-size:1.7rem;font-weight:800;color:#f3f6ff;margin:0 0 8px;letter-spacing:.3px;}
+.rfe-lead{font-size:1.06rem;line-height:1.85;color:#cbd6f3;margin:0 0 20px;}
+.rfe-card{background:rgba(255,255,255,.035);border-radius:14px;padding:16px 20px 14px;margin:0 0 14px;border-left:3px solid #888;}
+.rfe-card.c-t{border-left-color:#4fd1c5;}
+.rfe-card.c-v{border-left-color:#a78bfa;}
+.rfe-card.c-a{border-left-color:#fbbf24;}
+.rfe-ct{display:flex;align-items:center;gap:10px;margin:0 0 8px;flex-wrap:wrap;}
+.rfe-no{font-size:.76rem;font-weight:800;color:#0b1226;border-radius:6px;padding:3px 8px;}
+.n-t{background:#4fd1c5;}.n-v{background:#a78bfa;}.n-a{background:#fbbf24;}
+.rfe-tt{font-size:1.2rem;font-weight:800;}
+.tt-t{color:#7af0e2;}.tt-v{color:#c9b6ff;}.tt-a{color:#ffd873;}
+.rfe-sub{font-size:.86rem;color:#909db3;}
+.rfe-p{font-size:1.0rem;line-height:1.85;color:#d4ddf5;margin:0 0 9px;}
+.rfe-p:last-child{margin-bottom:0;}
+.t{color:#62e3d4;font-weight:800;}
+.v{color:#bda4ff;font-weight:800;}
+.a{color:#fbcf5b;font-weight:800;}
+.rfe-foot{margin:16px 0 0;border:1px dashed rgba(255,255,255,.18);border-radius:12px;padding:13px 16px;color:#9fb0cc;font-size:.96rem;}
+</style>

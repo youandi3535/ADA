@@ -57,6 +57,93 @@ _STEP_KO: dict[str, str] = {
 }
 
 
+def _leakage_safe_fallback(df, plan, state):
+    """HJ 2026-06-15 — Fix 4: apply_split 예외 시 누수 있는 full apply() 대신 인라인 안전 분할.
+
+    위치 기반 train/val 분할 → train 으로만 apply()(fit) → val 은 카테고리 transform-only.
+    성공 시 (df_concat, new_state) 반환(leakage_safe_split 경계 기록 → training 위치분할 소비).
+    미지원·실패·출력 비정상이면 **None** 반환 → 호출측이 기존 full apply() 폴백(무회귀).
+
+    완전 가드: 모든 예외를 삼키고 None 을 돌려, 이 경로가 어떤 경우에도 기존 동작보다
+    나쁘게 만들지 않는다(최악의 경우 = 오늘과 동일).
+    """
+    try:
+        import pandas as pd  # noqa: WPS433
+
+        cat = getattr(state, "category", "") or ""
+        if df is None or len(df) < 8:
+            return None
+        apply_handler = get_handler(cat, "apply")
+        if apply_handler is None:
+            return None
+
+        # transform-only 콜러블 결정 (카테고리별)
+        kind = None
+        to_fn = None
+        if cat.startswith("tabular"):
+            from agents.handlers.tabular.preprocessor import _transform_only as _to  # noqa: WPS433
+
+            kind, to_fn = "tabular", _to
+        else:
+            ah = get_handler(cat, "apply_transform")
+            if ah is not None:
+                kind, to_fn = "apply_transform", ah
+        if to_fn is None:
+            return None
+
+        split = max(1, int(len(df) * 0.8))
+        df_train = df.iloc[:split].reset_index(drop=True)
+        df_val = df.iloc[split:].reset_index(drop=True)
+        if len(df_train) == 0 or len(df_val) == 0:
+            return None
+
+        res = apply_handler(df_train, plan or [], state)
+        if isinstance(res, tuple) and len(res) == 2:
+            df_train_proc, state2 = res
+        else:
+            df_train_proc, state2 = res, state
+
+        cat_key = "tabular" if cat.startswith("tabular") else cat
+        cat_block = (getattr(state2, "category_extras", None) or {}).get(cat_key, {}) or {}
+        artifacts = cat_block.get("preprocess_artifacts") or cat_block.get("preprocessor_artifacts") or {}
+
+        if kind == "tabular":
+            df_val_proc = to_fn(df_val, plan or [], artifacts, state2)
+        else:
+            x_val = to_fn(df_val, artifacts)
+            df_val_proc = pd.DataFrame(x_val, columns=list(df_train_proc.columns))
+
+        # 컬럼 정합 강제 (train 스키마 기준)
+        if list(df_val_proc.columns) != list(df_train_proc.columns):
+            df_val_proc = df_val_proc.reindex(columns=list(df_train_proc.columns), fill_value=0)
+
+        n_tr = int(len(df_train_proc))
+        n_val = int(len(df_val_proc))
+        if n_tr <= 0 or n_val <= 0 or df_train_proc.shape[1] == 0:
+            return None
+
+        df_concat = pd.concat([df_train_proc, df_val_proc], axis=0, ignore_index=True)
+
+        extras = dict(getattr(state2, "category_extras", None) or {})
+        cat_extras = dict(extras.get(cat_key, {}))
+        meta = dict(cat_extras.get("leakage_safe_split") or {})
+        meta.update(
+            {
+                "method": "inline_positional_fallback",
+                "train_row_count_for_reorder": n_tr,
+                "val_row_count": n_val,
+                "n_train": n_tr,
+                "n_val": n_val,
+            }
+        )
+        cat_extras["leakage_safe_split"] = meta
+        extras[cat_key] = cat_extras
+        state2 = state2.with_update(category_extras=extras)
+        return df_concat, state2
+    except Exception:  # noqa: BLE001 — 어떤 실패든 None → 기존 full apply() 폴백(무회귀)
+        return None
+
+
 class FeatureEngineerAgent(BaseAgent):
     uses_llm = False
 
@@ -122,6 +209,7 @@ class FeatureEngineerAgent(BaseAgent):
 
                         df_tr, df_val, state = result
                         n_tr = int(len(df_tr))
+                        n_val = int(len(df_val))
                         df = _pd.concat([df_tr, df_val], axis=0, ignore_index=True)
                         try:
                             extras = dict(state.category_extras or {})
@@ -129,6 +217,9 @@ class FeatureEngineerAgent(BaseAgent):
                             cat_extras = dict(extras.get(cat_key, {}))
                             split_meta = dict(cat_extras.get("leakage_safe_split") or {})
                             split_meta["train_row_count_for_reorder"] = n_tr
+                            # HJ 2026-06-15 — Fix 1: val_row_count 도 기록해야 _leakage_split_bounds 가
+                            #   경계를 완성(둘 다 필요)한다. 누락 시 None → 무작위 재분할 누수 폴백.
+                            split_meta["val_row_count"] = n_val
                             cat_extras["leakage_safe_split"] = split_meta
                             extras[cat_key] = cat_extras
                             state = state.with_update(category_extras=extras)
@@ -148,6 +239,15 @@ class FeatureEngineerAgent(BaseAgent):
                         error=str(e),
                     )
                     used_leakage_safe = False
+
+            if not used_leakage_safe and handler is not None:
+                # HJ 2026-06-15 — Fix 4: full apply()(전체 fit_transform=누수) 직전, 인라인 안전 분할
+                #   폴백을 먼저 시도. 성공 시 누수 없이 진행, 실패(None)면 기존 full apply()로 폴백.
+                _safe = _leakage_safe_fallback(df, state.preprocessing_plan or [], state)
+                if _safe is not None:
+                    df, state = _safe
+                    used_leakage_safe = True
+                    self.logger.info("feature_engineer_inline_safe_fallback_used", category=state.category)
 
             if not used_leakage_safe and handler is not None:
                 try:
