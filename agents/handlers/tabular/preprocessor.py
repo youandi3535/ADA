@@ -1850,7 +1850,32 @@ def _apply_scale_numeric(df, step, state):
     out = df.copy()
     scaler = RobustScaler() if method == "robust" else StandardScaler()
     out[num_cols] = scaler.fit_transform(out[num_cols])
-    return out, {}
+    # jh/HJ 2026-06-14 — fitted 통계를 artifacts(fitted_scalers)로 반환해야
+    #   _transform_only 가 val/test 에 train 과 동일한 스케일을 재적용한다.
+    #   누락(기존 `return out, {}`) 시 val/test 가 raw 로 남아 train(스케일)·val(raw)
+    #   스케일 불일치 → 트리는 전부 다수클래스, 선형은 계수 폭발 → 전 모델 무작위
+    #   성능(타이타닉 AUC 0.5, 더미만도 못함) 버그. _transform_only schema 와 동일:
+    #   robust→{median,iqr}, standard→{mean,scale}.
+    fitted_scalers = {}
+    if method == "robust":
+        centers = getattr(scaler, "center_", None)
+        scales = getattr(scaler, "scale_", None)
+        for i, c in enumerate(num_cols):
+            fitted_scalers[c] = {
+                "method": "robust",
+                "median": float(centers[i]) if centers is not None else 0.0,
+                "iqr": float(scales[i]) if scales is not None else 1.0,
+            }
+    else:
+        means = getattr(scaler, "mean_", None)
+        scales = getattr(scaler, "scale_", None)
+        for i, c in enumerate(num_cols):
+            fitted_scalers[c] = {
+                "method": "standard",
+                "mean": float(means[i]) if means is not None else 0.0,
+                "scale": float(scales[i]) if scales is not None else 1.0,
+            }
+    return out, {"fitted_scalers": fitted_scalers}
 
 
 def _apply_id_like_drop(df, step, state):
@@ -2002,9 +2027,7 @@ def plan(state: Any) -> list[dict[str, Any]]:
     # archetype(컬럼의 30%↑)에만 의존하면 PassengerId 같은 단일 PK 가 누락돼
     # 모델·SHAP 까지 누수되므로, 감지되면 무조건 첫 스텝으로 끼운다.
     _id_like = list((profile or {}).get("id_like_columns") or [])
-    if _id_like and not any(
-        s.get("name") == "id_like_drop" and s.get("columns") for s in steps
-    ):
+    if _id_like and not any(s.get("name") == "id_like_drop" and s.get("columns") for s in steps):
         steps.insert(
             0,
             {"name": "id_like_drop", "columns": _id_like, "params": {}, "needs_review": False},

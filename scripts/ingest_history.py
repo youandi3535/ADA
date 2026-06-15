@@ -19,7 +19,7 @@
   Cowork (Claude Desktop App):
     - 훅 메커니즘이 없음 → Stop 훅 불가
     - ingest_history.py만이 유일한 수집 경로
-    - 5분 cron으로 주기적 실행 권장
+    - 30분 cron으로 주기적 실행 권장
 
 동작 흐름
 ---------
@@ -36,15 +36,15 @@
   python scripts/ingest_history.py --force      # 이력 무시, 전체 재처리
   python scripts/ingest_history.py --limit 200  # Q&A 최대 200건만 전송
 
-5분 cron 설정 (리눅스/Mac) — Cowork 실시간 학습
+30분 cron 설정 (리눅스/Mac) — Cowork 주기 학습
 -------------------------------------------------
-  */5 * * * * cd /path/to/ADA && python3 scripts/ingest_history.py >> /var/log/ada_ingest.log 2>&1
+  */30 * * * * cd /path/to/ADA && python3 scripts/ingest_history.py >> /var/log/ada_ingest.log 2>&1
 
 Windows 작업 스케줄러 (PowerShell)
 -----------------------------------
-  # 5분마다 실행 등록 (관리자 권한 불필요)
+  # 30분마다 실행 등록 (관리자 권한 불필요)
   $action = New-ScheduledTaskAction -Execute "python" -Argument "scripts/ingest_history.py" -WorkingDirectory "C:\\IT\\workspace_python\\ADA"
-  $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 5) -Once -At (Get-Date)
+  $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 30) -Once -At (Get-Date)
   Register-ScheduledTask -TaskName "ADA-IngestHistory" -Action $action -Trigger $trigger
 
 환경변수
