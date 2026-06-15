@@ -486,6 +486,11 @@ let g5Checked={};  // G6 멀티선택 상태 {proposal_id: bool}
 let _g5ContinueChosen=false;  // HJ 2026-06-13 — G5 baseline 미달 선택 팝업에서 '계속 진행' 누름 여부
 let gateCache={};  // {G2: gateData, G3: gateData, ...} — 이전 단계 뒤로가기 시 재표시용
 let _sawAnalyzingAfterSubmit=false;  // resume 후 analyzing() 상태를 거쳤는지 — stale gate 차단
+// HJ 2026-06-15 — 완료된 job 재실행(예: 7→6 복귀 후 PDF 추가 생성) 가드. 제출 직후 직전 완료
+//   status(stale 'completed')에 latch 돼 7단계로 점프·폴링중단·옛 산출물(PPT) 고착되던 버그 방지.
+//   값이 set 인 동안 isCompleted()=false 로 유지 → 모달·진행바 표시 + 폴링 지속. 백엔드가 새 실행을
+//   'running' 으로 전환(또는 안전 타임아웃)하면 해제되어 새 산출물(PDF) 완료를 정상 표시한다.
+let _awaitingResume=0;
 // HJ 2026-06-10 — 모달 닫기 (사용자가 ✕ 누름). 같은 cur 동안만 유효, 다음 단계 진입 시 자동 reset.
 let modalDismissed=false;
 let _modalDismissedCur=-1;     // dismissed 가 발생한 cur — cur 변경되면 자동 해제
@@ -611,10 +616,25 @@ function saveState(){
     window.parent.history.replaceState({}, '', u.pathname+u.search+'#ada='+encodeURIComponent(d));
   }catch(e){}
   try{ window.parent.localStorage.setItem(_SK, d); }catch(e){}
+  // HJ 2026-06-15 — gateCache(이전 단계 옵션 카드) 별도 보존: F5 후에도 정지/완료 상태에서
+  //   뒤로가기 시 그 단계 옵션 선택 화면이 떠야 한다(빈 캐시면 로딩 화면으로 잘못 뜸).
+  //   URL 해시엔 넣지 않는다(용량 큼) — localStorage 전용. 카드 렌더 필수 필드만 트림.
+  try{
+    var _gc={};
+    Object.keys(gateCache).forEach(function(k){
+      var c=gateCache[k]||{};
+      if((c.proposals&&c.proposals.length)||(c.topic_proposals&&c.topic_proposals.length)){
+        _gc[k]={gate:c.gate,proposals:c.proposals||[],topic_proposals:c.topic_proposals||[],
+                category:c.category,target_column:c.target_column,requested_outputs:c.requested_outputs};
+      }
+    });
+    window.parent.localStorage.setItem(_SK+'_gc', JSON.stringify(_gc));
+  }catch(e){}
 }
 function clearState(){
   try{ window.parent.history.replaceState({}, '', window.parent.location.pathname); }catch(e){}
   try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
+  try{ window.parent.localStorage.removeItem(_SK+'_gc'); }catch(e){}
 }
 function startFromLanding(){
   var ov=document.getElementById('landingOverlay');
@@ -642,6 +662,7 @@ function resetAll(){
   intentText=''; errMsg=''; analyzeStart=null; animatedGate=null;
   gateCache={}; lastSubmittedGate=null; selGate=null; g5Checked={}; _g5ContinueChosen=false;
   _progressKey=null; _shownPct=0; _sawAnalyzingAfterSubmit=false; _stageStart=null; _barFlowPct=0;
+  _awaitingResume=0;
   render();
 }
 const AGENT_KO={supervisor:'작업 분류',intent_elicitor:'분석 의도 파악',data_profiler:'데이터 프로파일링',schema_validator:'스키마 검증',gate_direction:'분석 방향 제안 생성',eda_agent:'탐색적 분석(EDA)',gate_methodology:'방법론 제안',preprocessing_strategist:'전처리 전략',feature_engineer:'피처 엔지니어링',preprocessing_choice:'전처리 옵션 확정',gate_model_strategy:'모델 전략 제안',model_selection:'모델 선택',hyperparameter_tuner:'하이퍼파라미터 튜닝',training_executor:'모델 학습',training_monitor:'학습 모니터링',metrics_aggregator:'지표 집계',gate_best_model:'최적 모델 선정',fine_tune_executor:'파인튜닝 실행',eval_agent:'평가',explainability:'설명가능성',insight:'인사이트 생성',gate_outputs:'산출물 선택',report_composer:'리포트 생성',
@@ -990,6 +1011,10 @@ function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g &&
 function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
 function isFailed(){ return (gateData.pipeline_status==='failed') || (status.status==='failed'); }
 function isCompleted(){
+  // HJ 2026-06-15 — 재실행 대기 중에는 직전 완료(stale)를 완료로 보지 않는다.
+  //   (완료된 job 에서 6단계로 돌아와 산출물을 추가 생성할 때, 새 실행이 시작되기 전의
+  //    옛 'completed' 에 latch 돼 7단계로 점프·옛 산출물 고착되던 버그 방지.)
+  if(_awaitingResume) return false;
   // 백엔드 status 를 우선 — 세 번째 fallback 조건은 G6 이후 최종 결과가 모두 갖춰진 경우만 허용.
   // (jobId && !curGate() && hasResults()) 만으로는 분석 중간에도 true 가 되어
   // clearState() 가 호출되므로, 반드시 pipeline_status 확인을 추가한다.
@@ -1196,6 +1221,7 @@ async function doResume(){
     await api('/pipeline/resume/'+jobId,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gate:gate,choice:choice})});
     lastSubmittedGate=gate;
+    _awaitingResume=Date.now();  // HJ 2026-06-15 — 재실행 가드: 직전 완료 status(stale)에 latch 차단
     // 제출 게이트 이후 캐시 삭제 — 현재 게이트(tg) 캐시는 유지(뒤로가기 복원용)
     var _tgNum=parseInt(tg[1],10);
     Object.keys(gateCache).forEach(function(k){
@@ -1224,6 +1250,15 @@ async function poll(){
   //    d.topic_proposals 가 사라져 주제 팝업이 깜빡이며 없어지던 버그.)
   if(gateData.gate && ((gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length || (gateData.topic_proposals||[]).length)){
     gateCache[gateData.gate]=gateData;
+  }
+  // HJ 2026-06-15 — 재실행 가드 해제: 백엔드가 새 실행을 'running' 으로 전환했거나(=재실행 시작),
+  //   새 게이트가 떴거나, 안전 타임아웃(150s) 경과 시 해제. 그 전까지는 isCompleted()=false 가
+  //   유지돼 모달·진행바가 뜨고 폴링이 지속되며, 해제 후 새 산출물(PDF) 완료가 정상 표시된다.
+  if(_awaitingResume){
+    if(status.status==='running' || gateData.pipeline_status==='running' || !!curGate()
+       || (Date.now()-_awaitingResume > 150000)){
+      _awaitingResume=0;
+    }
   }
   // HTTP 4xx → 세션 만료(서버 재시작·DB 초기화): localStorage 정리 후 업로드 화면으로
   if(status._err && /HTTP 4[0-9][0-9]/.test(status._err)){
@@ -2933,6 +2968,7 @@ document.getElementById('primaryBtn').onclick=function(){
     // 시작 버튼: 이전 데이터·해시 제거, ?flow=1 은 유지 (F5 시 플로우 화면 유지)
     try{ window.parent.history.replaceState({}, '', window.parent.location.pathname+'?flow=1'); }catch(e){}
     try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
+    try{ window.parent.localStorage.removeItem(_SK+'_gc'); }catch(e){}
     render(); return;
   }
   var raw=_stateRead();
@@ -2946,6 +2982,8 @@ document.getElementById('primaryBtn').onclick=function(){
       if(s.selectedTopic) selectedTopic=s.selectedTopic;
       if(typeof s.topicCustomText==='string') topicCustomText=s.topicCustomText;
       if(s.g2DirectionsReady) g2DirectionsReady=s.g2DirectionsReady;
+      // HJ 2026-06-15 — gateCache 복원: F5 후 이전 단계 옵션 카드(정지/완료 상태)가 로딩 대신 뜨도록.
+      try{ var _gcRaw=window.parent.localStorage.getItem(_SK+'_gc'); if(_gcRaw){ var _gcObj=JSON.parse(_gcRaw); if(_gcObj&&typeof _gcObj==='object') gateCache=_gcObj; } }catch(e){}
       render();  // 폴링 완료 전에 로딩 상태 즉시 렌더링
       startPolling(); return;
     }
