@@ -116,16 +116,19 @@ class HyperparameterTunerAgent(BaseAgent):
                     _warm_map = await KBRAG(self.session).fetch_warm_start_map(state.category)
             except Exception:
                 _warm_map = {}
+            # warm-start 인용은 부모 컨텍스트에서 카운트(gather 태스크는 ContextVar 격리됨).
+            if _warm_map:
+                try:
+                    from ada.observability.metrics import record_kb_citation
+
+                    for _m in state.model_candidates:
+                        if _warm_map.get(_m):
+                            record_kb_citation(source="hpo_warm_start_kb")
+                except Exception:
+                    pass
 
             async def _tune_one(model_name: str) -> None:
                 _ws = _warm_map.get(model_name)
-                if _ws:
-                    try:
-                        from ada.observability.metrics import record_kb_citation
-
-                        record_kb_citation(source="hpo_warm_start_kb")
-                    except Exception:
-                        pass
                 best = await self._run_optuna(
                     state,
                     model_name,
@@ -182,6 +185,10 @@ class HyperparameterTunerAgent(BaseAgent):
                 },
             )
 
+            try:
+                self._run_payload_extra["best_params"] = {m: p for m, p in best_params.items() if p}
+            except Exception:
+                pass
             return state.with_update(best_params=best_params, next_agent="training_executor")
 
     async def _load_xy(self, state: PipelineState):

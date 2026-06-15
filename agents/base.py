@@ -214,6 +214,7 @@ class BaseAgent(abc.ABC):
         self._current_job_id = state.job_id
         # Day 11 — per-agent KB 인용 카운터 리셋 (KP9 측정용)
         reset_kb_citation_counter()
+        self._run_payload_extra = {}  # 에이전트가 자기 run payload 에 보존할 키(예: best_params)
 
         # phase 단위 진행률 발행 — start 시점.
         # 호환을 위해 기존 AGENT_PROGRESS_MAP/publish_progress 사용. end 는 finally 블록에서.
@@ -303,9 +304,13 @@ class BaseAgent(abc.ABC):
                     row.input_tokens = self._last_input_tokens
                     row.output_tokens = self._last_output_tokens
                     row.error = error
-                    if kb_count > 0:
+                    _extra = getattr(self, "_run_payload_extra", None) or {}
+                    if kb_count > 0 or _extra:
                         existing = row.payload if isinstance(row.payload, dict) else {}
-                        existing["kb_citations"] = kb_count
+                        if kb_count > 0:
+                            existing["kb_citations"] = kb_count
+                        if _extra:
+                            existing.update(_extra)
                         row.payload = existing
                     await self.session.flush()
 
