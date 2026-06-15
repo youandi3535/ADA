@@ -30,7 +30,7 @@ def test_pipeline_supported_models_26():
 
 def test_pipeline_new_branches_present():
     """신규 19 종 모델 분기가 _train_dispatch 에 존재."""
-    pp_src = open("pipelines/timeseries/pipeline.py").read()
+    pp_src = open("pipelines/timeseries/pipeline.py", encoding="utf-8").read()
     new_models = [
         "STL",
         "VAR",
@@ -142,7 +142,7 @@ def test_selector_expert_dimensions_26():
 
 def test_selector_candidate_pool_includes_new_models():
     """selector 의 recipe_key 별 candidates 풀이 신규 모델 포함."""
-    sel_src = open("agents/handlers/timeseries/selector.py").read()
+    sel_src = open("agents/handlers/timeseries/selector.py", encoding="utf-8").read()
     # 단기 예측 candidates 에 신규 ML/STL 포함
     assert "LightGBM" in sel_src
     assert "STL" in sel_src
@@ -157,7 +157,7 @@ def test_selector_candidate_pool_includes_new_models():
 
 def test_requirements_includes_new_libs():
     """handlers-timeseries.txt 에 신규 라이브러리 포함."""
-    req = open("requirements/handlers-timeseries.txt").read()
+    req = open("requirements/handlers-timeseries.txt", encoding="utf-8").read()
     for lib in (
         "arch",
         "statsforecast",

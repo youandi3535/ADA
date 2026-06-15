@@ -157,7 +157,9 @@ def _shap_values_to_top(
     _bases: dict[str, list[int]] = {}
     if not _synthetic_names:
         for _i, _fn in enumerate(feature_names):
-            _m = _re.match(r"^(.+)_[^_]+$", str(_fn))
+            # 숫자 접미사(pca_1, sales_2023, important_1 등 연속/인덱스 피처)는 원-핫이
+            # 아니므로 제외 — 동일 base 형제로 오인해 잘못 합산되는 것을 방지한다.
+            _m = _re.match(r"^(.+)_(?![0-9]+$)[^_]+$", str(_fn))
             if _m:
                 _bases.setdefault(_m.group(1), []).append(_i)
     _agg = {b: idxs for b, idxs in _bases.items() if len(idxs) >= 2}
@@ -232,7 +234,8 @@ def explain(state: Any) -> dict[str, Any]:
 
     try:
         feature_names = (
-            list(X_sample.columns) if hasattr(X_sample, "columns")
+            list(X_sample.columns)
+            if hasattr(X_sample, "columns")
             else [f"feature_{i}" for i in range(X_sample.shape[1])]
         )
 
@@ -257,9 +260,7 @@ def explain(state: Any) -> dict[str, Any]:
 
         top_features = _shap_values_to_top(shap_values, feature_names, _TOP_K)
         summary_path = _build_summary_chart(shap_values, X_sample, feature_names, state)
-        dependence_paths = _build_dependence_charts(
-            shap_values, X_sample, feature_names, top_features, state
-        )
+        dependence_paths = _build_dependence_charts(shap_values, X_sample, feature_names, top_features, state)
 
         return {
             "shap_top_features": top_features,
@@ -299,17 +300,13 @@ def _build_summary_chart(
             sv = sv[..., 0]
 
         fig = plt.figure(figsize=(8, max(4, _TOP_K * 0.4)), dpi=100)
-        _shap.summary_plot(
-            sv, X_sample, feature_names=feature_names, show=False, max_display=_TOP_K
-        )
+        _shap.summary_plot(sv, X_sample, feature_names=feature_names, show=False, max_display=_TOP_K)
         fig = plt.gcf()
         model_name = (getattr(state, "best_model", None) or {}).get("model_name", "모델")
         fig.suptitle(f"SHAP Summary — {model_name}", fontsize=12)
         fig.tight_layout()
 
-        return save_chart_to_minio(
-            fig, kind="tabular/shap_summary", job_id=getattr(state, "job_id", "")
-        )
+        return save_chart_to_minio(fig, kind="tabular/shap_summary", job_id=getattr(state, "job_id", ""))
     except Exception as exc:
         logger.warning("shap_summary_chart_failed: %s", exc)
         return None
@@ -340,15 +337,17 @@ def _build_dependence_charts(
             try:
                 fig = plt.figure(figsize=(6.5, 5), dpi=100)
                 _shap.dependence_plot(
-                    feat, sv, X_sample, feature_names=feature_names,
-                    show=False, interaction_index=None,
+                    feat,
+                    sv,
+                    X_sample,
+                    feature_names=feature_names,
+                    show=False,
+                    interaction_index=None,
                 )
                 fig = plt.gcf()
                 fig.suptitle(f"SHAP Dependence — {feat}", fontsize=11)
                 fig.tight_layout()
-                path = save_chart_to_minio(
-                    fig, kind=f"tabular/shap_dependence_{feat}", job_id=job_id
-                )
+                path = save_chart_to_minio(fig, kind=f"tabular/shap_dependence_{feat}", job_id=job_id)
                 if path:
                     paths.append(path)
             except Exception as exc:
@@ -370,11 +369,7 @@ def shap_summary_chart(state: Any) -> str | None:
     state.category_extras["tabular"]["shap"] 가 비어있으면 explain() 한 번 실행
     후 결과를 거기에 저장 (중복 계산 방지). 이미 있으면 캐시된 path 반환.
     """
-    cached = (
-        (getattr(state, "category_extras", None) or {})
-        .get("tabular", {})
-        .get("shap")
-    )
+    cached = (getattr(state, "category_extras", None) or {}).get("tabular", {}).get("shap")
     if isinstance(cached, dict) and cached.get("shap_summary_path"):
         return cached["shap_summary_path"]
     # 계산 트리거 — 결과는 caller (output_extras) 가 category_extras 에 저장해야 함.
@@ -388,11 +383,7 @@ def shap_top_features(state: Any) -> list[dict[str, Any]]:
 
     state.explanations 가 정식 위치이지만 dispatcher 미연결 시 본 함수 사용.
     """
-    cached = (
-        (getattr(state, "category_extras", None) or {})
-        .get("tabular", {})
-        .get("shap")
-    )
+    cached = (getattr(state, "category_extras", None) or {}).get("tabular", {}).get("shap")
     if isinstance(cached, dict) and cached.get("shap_top_features"):
         return list(cached["shap_top_features"])
     return list(explain(state).get("shap_top_features") or [])

@@ -88,15 +88,40 @@ def _resolve_timeseries_target(df: Any, date_col: str | None) -> str | None:
 
 def _leakage_split_bounds(state: Any) -> tuple[int, int] | None:
     """leakage_safe_split 메타에서 (n_train, n_val) 경계. parquet 순서 [train|val|test].
-    메타 불완전(val_row_count 없음)이면 None → caller 가 기존 split 폴백."""
+
+    HJ 2026-06-15 — Fix 1(키 정합): 카테고리별로 경계 키 이름이 달랐다.
+      - tabular(feature_engineer): train_row_count_for_reorder / val_row_count
+      - anomaly(apply_split):       n_train / n_val
+    소비측이 tabular 키만 보던 탓에 anomaly 는 항상 None → training 단계에서 무작위
+    train_test_split 폴백 → 전처리(train-fit) 후 데이터를 다시 셔플 분할하며 스케일 누수
+    재유입(스케일 민감 모델만 부풀던 버그)이 일어났다. 두 키 네이밍을 모두 인정해
+    카테고리 무관하게 경계를 소비한다(하위호환: 기존 tabular 키를 1순위로 유지).
+    메타 불완전이면 None → caller 가 fail-closed 위치분할 폴백."""
     cat = getattr(state, "category", "") or ""
     cat_key = "tabular" if cat.startswith("tabular") else cat
     meta = ((getattr(state, "category_extras", None) or {}).get(cat_key, {}) or {}).get("leakage_safe_split") or {}
     n_tr = meta.get("train_row_count_for_reorder")
+    if n_tr is None:
+        n_tr = meta.get("n_train")
     n_val = meta.get("val_row_count")
+    if n_val is None:
+        n_val = meta.get("n_val")
     if isinstance(n_tr, int) and isinstance(n_val, int) and n_tr > 0 and n_val > 0:
         return n_tr, n_val
     return None
+
+
+def _has_leakage_split_marker(state: Any) -> bool:
+    """leakage_safe_split 메타(=split-first 전처리로 train-fit 된 흔적)가 있는지.
+
+    HJ 2026-06-15 — Fix 3(fail-closed) 판단용. 마커가 있으면 데이터는 이미
+    [train|val(|test)] 순서로 train-fit 전처리된 것이라, 무작위 셔플 재분할은
+    train 통계를 val 에 재유입(누수)시킨다 → 위치 기반 holdout 으로 안전 분할해야 한다.
+    마커가 없으면(split 기반 전처리가 아니었던 레거시 경로) 기존 무작위 분할 유지(무회귀)."""
+    cat = getattr(state, "category", "") or ""
+    cat_key = "tabular" if cat.startswith("tabular") else cat
+    meta = ((getattr(state, "category_extras", None) or {}).get(cat_key, {}) or {}).get("leakage_safe_split")
+    return isinstance(meta, dict) and bool(meta)
 
 
 class TrainingExecutorAgent(BaseAgent):
@@ -148,12 +173,21 @@ class TrainingExecutorAgent(BaseAgent):
                 split = int(len(X) * 0.8)
                 X_tr, X_val = X[:split], X[split:]
                 y_tr, y_val = y[:split], y[split:]
+            elif _has_leakage_split_marker(state):
+                # HJ 2026-06-15 — Fix 3(fail-closed): split 기반 전처리(train-fit) 흔적은 있는데
+                #   경계 메타가 불완전한 경우. 무작위 셔플 분할은 train-fit 통계를 val 에 재유입시켜
+                #   스케일 민감 모델만 부풀리는 누수를 만든다. parquet 행 순서가 [train|val(|test)]
+                #   이므로 위치 기반 holdout(끝 20%)으로 안전 분할한다(전처리된 val 영역=transform-only).
+                split = max(1, int(len(X) * 0.8))
+                X_tr, X_val = X[:split], X[split:]
+                y_tr, y_val = y[:split], y[split:]
             else:
                 from sklearn.model_selection import train_test_split
 
                 # HJ 2026-06-14 — 재시도 회차별 분할 시드. 고정 42 면 재시도해도 train/val 이
                 #   동일해 metric 이 안 변한다 → 회차마다 다른 holdout 분할로 수치 변동(첫 실행 42).
-                #   (누수-safe bounds·시계열 시간분할 경로는 위에서 별도 처리 — 여기 미해당.)
+                #   (누수-safe bounds·시계열 시간분할·fail-closed 경로는 위에서 별도 처리 — 여기 미해당.
+                #    이 경로는 split 기반 전처리가 아니었던 레거시 케이스 = 무회귀.)
                 X_tr, X_val, y_tr, y_val = train_test_split(
                     X,
                     y,

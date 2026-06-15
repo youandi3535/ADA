@@ -681,14 +681,17 @@ def _knn_apply(df, step, state):
 
     imputer = KNNImputer(n_neighbors=k, weights=weights, metric="nan_euclidean")
     out = df.copy()
+    # jh/HJ 2026-06-15 — Fix 2: train 컬럼별 median 박제 → _transform_only 의 val 폴백이
+    #   val 자기 median 대신 train median 사용(누수 차단). KNN 자체는 train fit. train 출력 동일.
+    train_median = {c: (float(out[c].median()) if out[c].notna().any() else 0.0) for c in cols}
     try:
         out[cols] = imputer.fit_transform(out[cols])
     except Exception as exc:
         warnings.warn(f"KNN impute failed: {exc}, falling back to median")
         for c in cols:
-            out[c] = out[c].fillna(out[c].median())
+            out[c] = out[c].fillna(train_median.get(c, 0.0))
 
-    artifact = {"n_neighbors": k, "fitted": True, "weights": weights, "columns": cols}
+    artifact = {"n_neighbors": k, "fitted": True, "weights": weights, "columns": cols, "train_median": train_median}
     return out, {"knn_imputer": artifact}
 
 
@@ -1785,10 +1788,19 @@ def _apply_impute_numeric(df, step, state):
     out = df.copy()
     fitted: dict = {}
     for c in num_cols:
+        # jh/HJ 2026-06-15 — Fix 2: train 채움값(통계)을 박제해 _transform_only 가 val/test 에
+        #   동일 train 값으로 fillna 한다(기존엔 strategy 문자열만 저장 → val 자기 median 사용 누수).
+        #   NaN 유무와 무관하게 모든 수치열의 train 통계를 저장(val 에만 NaN 인 경우 대비).
+        #   train 출력 df 는 기존과 동일(같은 median 으로 fillna) — 무회귀.
+        try:
+            fill_val = float(out[c].median()) if strategy == "median" else 0.0
+        except Exception:  # noqa: BLE001
+            fill_val = 0.0
+        if not np.isfinite(fill_val):
+            fill_val = 0.0
+        fitted[c] = {"strategy": strategy, "value": fill_val}
         if out[c].isna().any():
-            val = out[c].median() if strategy == "median" else 0.0
-            out[c] = out[c].fillna(val)
-            fitted[c] = strategy
+            out[c] = out[c].fillna(fill_val)
     return out, {"fitted_imputers": fitted}
 
 
@@ -1796,12 +1808,16 @@ def _apply_impute_categorical(df, step, state):
     target = state.target_column
     cat_cols = [c for c in df.select_dtypes(include=["object", "category"]).columns if c != target]
     out = df.copy()
+    fitted_cat: dict = {}
     for c in cat_cols:
+        # jh/HJ 2026-06-15 — Fix 2: train mode 를 박제(_transform_only 가 val 에 train mode 사용).
+        #   train 출력은 기존과 동일(같은 mode fillna) — 무회귀.
+        m = out[c].mode(dropna=True)
+        fill_val = m.iloc[0] if not m.empty else "missing"
+        fitted_cat[c] = fill_val
         if out[c].isna().any():
-            m = out[c].mode(dropna=True)
-            fill_val = m.iloc[0] if not m.empty else "missing"
             out[c] = out[c].fillna(fill_val)
-    return out, {}
+    return out, {"fitted_cat_imputers": fitted_cat}
 
 
 def _apply_encode_categorical(df, step, state):
@@ -1812,17 +1828,24 @@ def _apply_encode_categorical(df, step, state):
     out = df.copy()
     cat_cols = [c for c in out.select_dtypes(include=["object", "category"]).columns if c != target]
     te_cols = set(step.get("params", {}).get("te_cols", []))
+    encoders: dict = {}
     for c in cat_cols:
         if c in te_cols:
             continue
         nun = out[c].nunique(dropna=True)
         if nun <= threshold:
             dummies = pd.get_dummies(out[c], prefix=str(c), drop_first=True, dtype=float)
+            # jh/HJ 2026-06-15 — Fix 2: train one-hot 출력 컬럼 스키마를 박제.
+            #   _transform_only 가 val 을 동일 컬럼으로 reindex(없으면 0, 초과 drop)해
+            #   train/val 컬럼 불일치(미관측 카테고리)와 스키마 누수를 차단. train 출력 동일 — 무회귀.
+            encoders[c] = {"method": "onehot", "columns": [str(x) for x in dummies.columns]}
             out = pd.concat([out.drop(columns=[c]), dummies], axis=1)
         else:
             freq = out[c].value_counts(normalize=True)
+            # train 빈도 맵 박제 → val 은 train 빈도로 매핑(미관측 → 0). train 출력 동일.
+            encoders[c] = {"method": "freq", "freq_map": {str(k): float(v) for k, v in freq.items()}}
             out[c] = out[c].map(freq).fillna(0.0)
-    return out, {}
+    return out, {"categorical_encoder": encoders}
 
 
 def _apply_label_encoding(df, step, state):
@@ -2120,8 +2143,10 @@ def apply(
         "smote_meta": None,
         "dl_imbalance_strategy": None,
         "fitted_imputers": {},
+        "fitted_cat_imputers": {},  # jh/HJ 2026-06-15 Fix 2 — impute_categorical train mode 박제
         "knn_imputer": None,
         "fitted_scalers": {},
+        "categorical_encoder": {},  # jh/HJ 2026-06-15 Fix 2 — encode_categorical train 스키마/빈도 박제
         "distribution_transforms": {},
         "datetime_extracted": {},
         "missing_indicators": [],
@@ -2157,8 +2182,12 @@ def apply(
             for k, v in step_artifacts.items():
                 if k == "fitted_imputers" and isinstance(v, dict):
                     artifacts["fitted_imputers"].update(v)
+                elif k == "fitted_cat_imputers" and isinstance(v, dict):
+                    artifacts["fitted_cat_imputers"].update(v)
                 elif k == "fitted_scalers" and isinstance(v, dict):
                     artifacts["fitted_scalers"].update(v)
+                elif k == "categorical_encoder" and isinstance(v, dict):
+                    artifacts["categorical_encoder"].update(v)
                 elif k == "distribution_transforms" and isinstance(v, dict):
                     artifacts["distribution_transforms"].update(v)
                 elif k == "datetime_extracted" and isinstance(v, dict):
@@ -2409,7 +2438,10 @@ def _transform_only(
     # Step별 transform (plan_steps 순서대로 순회 — train 과 동일 순서)
     # ------------------------------------------------------------------
     fitted_imputers = artifacts.get("fitted_imputers") or {}
+    fitted_cat_imputers = artifacts.get("fitted_cat_imputers") or {}  # Fix 2 — train mode 박제
     fitted_scalers = artifacts.get("fitted_scalers") or {}
+    categorical_encoder = artifacts.get("categorical_encoder") or {}  # Fix 2 — train 스키마/빈도 박제
+    knn_imputer_meta = artifacts.get("knn_imputer") or {}  # Fix 2 — train median 폴백값
     dist_transforms = artifacts.get("distribution_transforms") or {}
     vif_dropped = artifacts.get("vif_dropped") or []
     corr_dropped = artifacts.get("correlation_dropped") or []
@@ -2424,25 +2456,33 @@ def _transform_only(
             continue
         name = step.get("name", "")
 
-        # ----- impute_numeric: fitted median 사용 -----
+        # ----- impute_numeric: train fitted 통계값으로 fillna (Fix 2) -----
         if name == "impute_numeric":
-            for col, strategy in (fitted_imputers or {}).items():
-                if col in out.columns and out[col].isna().any():
-                    # fitted_imputers 는 strategy 만 저장 → train median 을 다시 계산할 수 없음.
-                    # 대신 val 자체의 median 으로 fillna (best-effort).
-                    # ※ 정밀 처리 위해선 향후 fitted_imputers 에 train 통계값 저장 필요.
-                    val = out[col].median() if strategy == "median" else 0.0
+            for col, spec in (fitted_imputers or {}).items():
+                if col not in out.columns or not out[col].isna().any():
+                    continue
+                # Fix 2: train 통계값(dict {strategy,value}) 우선. 구 스키마(str strategy)는
+                #   train 값이 없으므로 val median 폴백(하위호환 — 무회귀).
+                if isinstance(spec, dict):
+                    out[col] = out[col].fillna(spec.get("value", 0.0))
+                else:
+                    val = out[col].median() if spec == "median" else 0.0
                     out[col] = out[col].fillna(val)
             continue
 
-        # ----- impute_categorical: mode 로 fillna (val mode 사용 — 결정적) -----
+        # ----- impute_categorical: train mode 박제값으로 fillna (Fix 2) -----
         if name == "impute_categorical":
             cat_cols = [c for c in out.select_dtypes(include=["object", "category"]).columns if c != target]
             for c in cat_cols:
-                if out[c].isna().any():
+                if not out[c].isna().any():
+                    continue
+                # Fix 2: train mode 박제값 우선. 없으면(하위호환) val mode 폴백.
+                if c in fitted_cat_imputers:
+                    fill = fitted_cat_imputers[c]
+                else:
                     m = out[c].mode(dropna=True)
                     fill = m.iloc[0] if not m.empty else "missing"
-                    out[c] = out[c].fillna(fill)
+                out[c] = out[c].fillna(fill)
             continue
 
         # ----- scale_numeric / scale_robust: fitted statistics 정확 transform -----
@@ -2536,24 +2576,35 @@ def _transform_only(
                     out = out.drop(columns=[col])
             continue
 
-        # ----- encode_categorical: train one-hot 컬럼으로 정합성 강제 -----
+        # ----- encode_categorical: train 박제 스키마/빈도로 정확 재현 (Fix 2) -----
         if name == "encode_categorical":
-            # train one-hot 컬럼은 artifacts 에 명시 저장이 없으므로,
-            # val 에서 동일 변환을 수행 후 train 결과와 비교는 호출측 책임.
-            # 여기선 train 과 동일하게 수행 (high_card 임계 동일).
+            # Fix 2: train 의 categorical_encoder(컬럼목록/빈도맵)를 재사용해
+            #   one-hot 은 train 컬럼으로 reindex(미관측→0, 초과→drop)하고, 빈도는 train 빈도로 매핑.
+            #   → train/val 컬럼 스키마 불일치 + val 빈도 누수를 동시에 차단.
+            #   박제 스키마가 없으면(하위호환) 기존처럼 val 재계산 폴백(무회귀).
             threshold = step.get("params", {}).get("high_card_threshold", 50)
             te_cols = set(step.get("params", {}).get("te_cols", []))
             cat_cols = [c for c in out.select_dtypes(include=["object", "category"]).columns if c != target]
             for c in cat_cols:
                 if c in te_cols:
                     continue
-                nun = out[c].nunique(dropna=True)
-                if nun <= threshold:
+                enc = categorical_encoder.get(c) if isinstance(categorical_encoder, dict) else None
+                if enc and enc.get("method") == "onehot":
                     dummies = pd.get_dummies(out[c], prefix=str(c), drop_first=True, dtype=float)
+                    dummies = dummies.reindex(columns=list(enc.get("columns", [])), fill_value=0.0)
                     out = pd.concat([out.drop(columns=[c]), dummies], axis=1)
+                elif enc and enc.get("method") == "freq":
+                    fmap = enc.get("freq_map", {})
+                    out[c] = out[c].astype(str).map(fmap).fillna(0.0)
                 else:
-                    freq = out[c].value_counts(normalize=True)
-                    out[c] = out[c].map(freq).fillna(0.0)
+                    # 하위호환 폴백 — train 박제 없음 → 기존 동작(val 재계산).
+                    nun = out[c].nunique(dropna=True)
+                    if nun <= threshold:
+                        dummies = pd.get_dummies(out[c], prefix=str(c), drop_first=True, dtype=float)
+                        out = pd.concat([out.drop(columns=[c]), dummies], axis=1)
+                    else:
+                        freq = out[c].value_counts(normalize=True)
+                        out[c] = out[c].map(freq).fillna(0.0)
             continue
 
         # ----- hash_encoding: 결정적 해시라 train·val 동일 결과 -----
@@ -2595,14 +2646,47 @@ def _transform_only(
         if name == "smote_resample":
             continue
 
-        # ----- knn_impute: train statistics 부족 → median fallback -----
+        # ----- knn_impute: train median 박제값으로 폴백 (Fix 2) -----
         if name == "knn_impute":
+            knn_med = (knn_imputer_meta.get("train_median") if isinstance(knn_imputer_meta, dict) else {}) or {}
             num_cols = [c for c in out.select_dtypes(include=[np.number]).columns if c != target]
             for c in num_cols:
                 if out[c].isna().any():
-                    out[c] = out[c].fillna(out[c].median())
+                    # Fix 2: train median 우선, 없으면(하위호환) val median 폴백.
+                    fill = knn_med.get(c)
+                    if fill is None:
+                        fill = out[c].median()
+                    out[c] = out[c].fillna(fill)
             continue
 
         # 그 외 알려지지 않은 step: 무시 (warning artifact 에는 미기록 — caller 책임)
 
     return out
+
+
+# ===========================================================================
+# Fix 5 (jh/HJ 2026-06-15) — 폴드별 누수 없는 전처리 헬퍼 (evaluator CV 재사용)
+# ===========================================================================
+def fit_transform_train_val(
+    df_train_raw: Any,
+    df_val_raw: Any,
+    plan_steps: list[dict[str, Any]],
+    state: Any,
+) -> tuple[Any, Any]:
+    """raw train/val 을 받아 train 으로만 fit(apply) → val 은 transform-only.
+
+    evaluator 의 누수 없는 CV(폴드마다 raw 에서 재전처리)가 재사용한다. apply() 와
+    _transform_only() 를 그대로 묶은 thin wrapper 라 동작은 apply_split 의 train/val
+    단계와 동일(누수 없음). 컬럼 스키마는 train 기준으로 정합화한다.
+
+    Returns
+    -------
+    (df_train_proc, df_val_proc)
+    """
+    df_train_proc, state_after = apply(df_train_raw, plan_steps, state)
+    extras = (getattr(state_after, "category_extras", None) or {}).get("tabular", {}) or {}
+    artifacts = extras.get("preprocess_artifacts", {}) or {}
+    df_val_proc = _transform_only(df_val_raw, plan_steps, artifacts, state_after)
+    if list(df_val_proc.columns) != list(df_train_proc.columns):
+        df_val_proc = df_val_proc.reindex(columns=list(df_train_proc.columns), fill_value=0)
+    return df_train_proc, df_val_proc

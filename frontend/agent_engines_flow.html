@@ -1,0 +1,80 @@
+<style>
+html,body{margin:0;background:#070a1f;font-family:'Pretendard','Inter',system-ui,-apple-system,sans-serif;}
+.ewrap{max-width:860px;margin:0 auto;padding:4px 10px 8px;}
+.ehead{color:#eef3ff;font-size:1.32rem;font-weight:800;margin:6px 2px 2px;letter-spacing:.3px;}
+.esub{color:#a9b4dd;font-size:.98rem;font-weight:600;margin:0 2px 8px;}
+.ewrap svg{width:100%;height:auto;display:block;}
+</style>
+<div class="ewrap">
+<div class="ehead">세 엔진이 맞물려 도는 작동 흐름</div>
+<div class="esub">맨 아래 하네스가 전체를 떠받치고 — 단계마다 ✓ 검증 게이트를 통과 — 위·아래 피드백 루프가 결과를 다음 실행으로 되먹입니다</div>
+<svg viewBox="0 0 820 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ADA 세 엔진 입체 작동 흐름도 + 하네스 검증 게이트">
+<title>ADA 세 엔진 + 검증 게이트</title>
+<defs>
+<marker id="apur" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L11,6 L0,12 Z" fill="#a78bfa"/></marker>
+<marker id="aamb" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L11,6 L0,12 Z" fill="#fbbf24"/></marker>
+<radialGradient id="bgGrad" cx="50%" cy="38%" r="82%"><stop offset="0%" stop-color="#16203c"/><stop offset="100%" stop-color="#090e1d"/></radialGradient>
+<radialGradient id="orbPur" cx="36%" cy="30%" r="72%"><stop offset="0%" stop-color="#efe9ff"/><stop offset="42%" stop-color="#a78bfa"/><stop offset="100%" stop-color="#4a2e9c"/></radialGradient>
+<radialGradient id="orbAmb" cx="36%" cy="30%" r="72%"><stop offset="0%" stop-color="#fff3d4"/><stop offset="42%" stop-color="#fbbf24"/><stop offset="100%" stop-color="#8a5e07"/></radialGradient>
+<radialGradient id="orbTeal" cx="36%" cy="30%" r="72%"><stop offset="0%" stop-color="#d6fff7"/><stop offset="42%" stop-color="#2fe6d0"/><stop offset="100%" stop-color="#0a6457"/></radialGradient>
+<radialGradient id="haloPur" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#a78bfa" stop-opacity=".55"/><stop offset="100%" stop-color="#a78bfa" stop-opacity="0"/></radialGradient>
+<radialGradient id="haloAmb" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fbbf24" stop-opacity=".5"/><stop offset="100%" stop-color="#fbbf24" stop-opacity="0"/></radialGradient>
+<radialGradient id="haloTeal" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#2fe6d0" stop-opacity=".55"/><stop offset="100%" stop-color="#2fe6d0" stop-opacity="0"/></radialGradient>
+<linearGradient id="platTop" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#43f0dc"/><stop offset="100%" stop-color="#159a8c"/></linearGradient>
+<linearGradient id="platFront" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0f7669"/><stop offset="100%" stop-color="#0a4339"/></linearGradient>
+<linearGradient id="pill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#24386a"/><stop offset="100%" stop-color="#0f1830"/></linearGradient>
+<linearGradient id="modTile" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#26d6c2"/><stop offset="100%" stop-color="#0c6b61"/></linearGradient>
+<linearGradient id="beam" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#2fe6d0" stop-opacity=".18"/><stop offset="100%" stop-color="#2fe6d0" stop-opacity="0"/></linearGradient>
+<filter id="g" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<rect x="0" y="0" width="820" height="600" rx="20" fill="url(#bgGrad)" stroke="rgba(255,255,255,.08)"/>
+<rect x="190" y="150" width="46" height="270" fill="url(#beam)"/><rect x="397" y="150" width="46" height="270" fill="url(#beam)"/><rect x="604" y="150" width="46" height="270" fill="url(#beam)"/>
+<text x="410" y="60" text-anchor="middle" fill="#c3b4fb" font-family="sans-serif" font-size="13" font-weight="600">② 데이터 분석 자동 학습 <tspan fill="#9a8fc4" font-weight="400">· 완료 → 증류 → KB 5종 → 검색·인용 → 다음 분석 강화</tspan></text>
+<polyline points="652,188 652,112 168,112 168,188" fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-opacity=".5"/>
+<circle cx="168" cy="112" r="54" fill="url(#haloPur)"/><circle cx="410" cy="112" r="58" fill="url(#haloPur)"/><circle cx="652" cy="112" r="54" fill="url(#haloPur)"/>
+<circle cx="652" cy="112" r="32" fill="url(#orbPur)" stroke="#cbbafe" stroke-opacity=".5"/><text x="652" y="116" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="13" font-weight="600">증류</text>
+<circle cx="410" cy="112" r="35" fill="url(#orbPur)" stroke="#e2d8ff" filter="url(#g)"><animate attributeName="r" values="34;37;34" dur="2.4s" repeatCount="indefinite"/></circle><text x="410" y="116" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="13" font-weight="600">KB·5종</text>
+<circle cx="168" cy="112" r="32" fill="url(#orbPur)" stroke="#cbbafe" stroke-opacity=".5"/><text x="168" y="116" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="12">검색·인용</text>
+<text x="410" y="170" text-anchor="middle" fill="#7af1e2" font-family="sans-serif" font-size="12.5" font-weight="600">✓ 하네스 검증 게이트 <tspan fill="#86c7c0" font-weight="400">— 스키마·가드레일·인용·기준선 통과만 다음 단계로</tspan></text>
+<line x1="120" y1="206" x2="700" y2="206" stroke="#6f7f9c" stroke-width="7" stroke-opacity=".14" stroke-linecap="round"/>
+<line x1="120" y1="206" x2="700" y2="206" stroke="#b7c2d6" stroke-width="2" stroke-dasharray="2 11" stroke-linecap="round" opacity=".8"><animate attributeName="stroke-dashoffset" from="0" to="-39" dur="1s" repeatCount="indefinite"/></line>
+<g font-family="sans-serif" font-size="13" text-anchor="middle">
+<rect x="120" y="188" width="96" height="36" rx="11" fill="url(#pill)" stroke="rgba(150,170,210,.45)"/><rect x="125" y="191" width="86" height="8" rx="4" fill="#fff" opacity=".08"/><text x="168" y="211" fill="#eef2f8">입력</text>
+<rect x="241" y="188" width="96" height="36" rx="11" fill="url(#pill)" stroke="rgba(150,170,210,.45)"/><rect x="246" y="191" width="86" height="8" rx="4" fill="#fff" opacity=".08"/><text x="289" y="211" fill="#eef2f8" font-size="12">데이터 진단</text>
+<rect x="362" y="188" width="96" height="36" rx="11" fill="url(#pill)" stroke="rgba(150,170,210,.45)"/><rect x="367" y="191" width="86" height="8" rx="4" fill="#fff" opacity=".08"/><text x="410" y="211" fill="#eef2f8" font-size="12">모델링·튜닝</text>
+<rect x="483" y="188" width="96" height="36" rx="11" fill="url(#pill)" stroke="rgba(150,170,210,.45)"/><rect x="488" y="191" width="86" height="8" rx="4" fill="#fff" opacity=".08"/><text x="531" y="211" fill="#eef2f8">평가</text>
+<rect x="604" y="188" width="96" height="36" rx="11" fill="url(#pill)" stroke="rgba(150,170,210,.45)"/><rect x="609" y="191" width="86" height="8" rx="4" fill="#fff" opacity=".08"/><text x="652" y="211" fill="#eef2f8">산출물</text>
+</g>
+<text x="410" y="278" text-anchor="middle" fill="#f7cc6a" font-family="sans-serif" font-size="13" font-weight="600">③ 오류 자동 캐치·수정 &amp; 학습 <tspan fill="#c9a86a" font-weight="400">· 감지 → 분류·복구(재시도·재학습) → ErrorKB → 예방</tspan></text>
+<polyline points="652,222 652,338 168,338 168,222" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-opacity=".5"/>
+<circle cx="168" cy="338" r="52" fill="url(#haloAmb)"/><circle cx="410" cy="338" r="56" fill="url(#haloAmb)"/><circle cx="652" cy="338" r="52" fill="url(#haloAmb)"/>
+<circle cx="652" cy="338" r="31" fill="url(#orbAmb)" stroke="#ffe6b3" stroke-opacity=".5"/><text x="652" y="342" text-anchor="middle" fill="#3a2a05" font-family="sans-serif" font-size="13" font-weight="600">오류감지</text>
+<circle cx="410" cy="338" r="33" fill="url(#orbAmb)" stroke="#fff0c8"><animate attributeName="r" values="32;35;32" dur="2.4s" begin="1.2s" repeatCount="indefinite"/></circle><text x="410" y="342" text-anchor="middle" fill="#3a2a05" font-family="sans-serif" font-size="12" font-weight="600">분류·복구</text>
+<circle cx="168" cy="338" r="31" fill="url(#orbAmb)" stroke="#ffe6b3" filter="url(#g)"/><text x="168" y="342" text-anchor="middle" fill="#3a2a05" font-family="sans-serif" font-size="12" font-weight="600">ErrorKB</text>
+<ellipse cx="410" cy="502" rx="350" ry="46" fill="url(#haloTeal)"/>
+<polygon points="190,418 630,418 726,506 94,506" fill="url(#platTop)" stroke="#7df3e4" stroke-opacity=".55"/>
+<polygon points="94,506 726,506 726,534 94,534" fill="url(#platFront)" stroke="#0c5a51" stroke-opacity=".6"/>
+<text x="410" y="404" text-anchor="middle" fill="#7af1e2" font-family="sans-serif" font-size="22" font-weight="600" filter="url(#g)">① 하네스 엔지니어링</text>
+<g font-family="sans-serif" font-size="11.5" text-anchor="middle" fill="#063b35" font-weight="600">
+<rect x="138" y="446" width="84" height="26" rx="7" fill="url(#modTile)" stroke="#9af2e6" stroke-opacity=".5"/><text x="180" y="463">게이트웨이</text>
+<rect x="232" y="446" width="78" height="26" rx="7" fill="url(#modTile)" stroke="#9af2e6" stroke-opacity=".5"/><text x="271" y="463">상태관리</text>
+<rect x="320" y="446" width="92" height="26" rx="7" fill="url(#modTile)" stroke="#9af2e6" stroke-opacity=".5"/><text x="366" y="463">가드레일·PII</text>
+<rect x="422" y="446" width="64" height="26" rx="7" fill="url(#modTile)" stroke="#fff6c8" stroke-opacity=".85"/><text x="454" y="463">검증</text>
+<rect x="496" y="446" width="72" height="26" rx="7" fill="url(#modTile)" stroke="#9af2e6" stroke-opacity=".5"/><text x="532" y="463">회로차단</text>
+<rect x="578" y="446" width="94" height="26" rx="7" fill="url(#modTile)" stroke="#9af2e6" stroke-opacity=".5"/><text x="625" y="463">LangGraph</text>
+</g>
+<text x="410" y="524" text-anchor="middle" fill="#bdf3ea" font-family="sans-serif" font-size="12.5" font-weight="600">ADA의 심장 — 28개 에이전트가 모두 이 위에서 돈다</text>
+<circle r="3.5" fill="#eef3fb"><animateMotion dur="3.4s" repeatCount="indefinite" path="M 120 206 L 700 206"/></circle>
+<circle r="3.5" fill="#eef3fb"><animateMotion dur="3.4s" begin="-1.7s" repeatCount="indefinite" path="M 120 206 L 700 206"/></circle>
+<g><circle r="10" fill="url(#haloPur)"/><circle r="5" fill="#d8ccff"/><animateMotion dur="5.4s" repeatCount="indefinite" path="M 652 188 L 652 112 L 168 112 L 168 188"/></g>
+<g><circle r="9" fill="url(#haloPur)"/><circle r="4" fill="#d8ccff"/><animateMotion dur="5.4s" begin="-2.7s" repeatCount="indefinite" path="M 652 188 L 652 112 L 168 112 L 168 188"/></g>
+<g><circle r="10" fill="url(#haloAmb)"/><circle r="5" fill="#ffe6a8"/><animateMotion dur="5.4s" repeatCount="indefinite" path="M 652 222 L 652 338 L 168 338 L 168 222"/></g>
+<g><circle r="9" fill="url(#haloAmb)"/><circle r="4" fill="#ffe6a8"/><animateMotion dur="5.4s" begin="-2.7s" repeatCount="indefinite" path="M 652 222 L 652 338 L 168 338 L 168 222"/></g>
+<line x1="168" y1="152" x2="168" y2="188" stroke="#a78bfa" stroke-width="3" marker-end="url(#apur)"/>
+<line x1="168" y1="260" x2="168" y2="224" stroke="#fbbf24" stroke-width="3" marker-end="url(#aamb)"/>
+<g><circle cx="228" cy="206" r="13" fill="url(#haloTeal)"/><circle cx="228" cy="206" r="10" fill="url(#orbTeal)" stroke="#7df3e4" stroke-width="1.2"/><path d="M 223,206 L 226.5,209.5 L 233,201.5" fill="none" stroke="#06302b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="228" cy="206" r="10" fill="none" stroke="#9af7ea"><animate attributeName="stroke-opacity" values=".25;1;.25" dur="2s" begin="0s" repeatCount="indefinite"/></circle></g>
+<g><circle cx="349" cy="206" r="13" fill="url(#haloTeal)"/><circle cx="349" cy="206" r="10" fill="url(#orbTeal)" stroke="#7df3e4" stroke-width="1.2"/><path d="M 344,206 L 347.5,209.5 L 354,201.5" fill="none" stroke="#06302b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="349" cy="206" r="10" fill="none" stroke="#9af7ea"><animate attributeName="stroke-opacity" values=".25;1;.25" dur="2s" begin=".5s" repeatCount="indefinite"/></circle></g>
+<g><circle cx="470" cy="206" r="13" fill="url(#haloTeal)"/><circle cx="470" cy="206" r="10" fill="url(#orbTeal)" stroke="#7df3e4" stroke-width="1.2"/><path d="M 465,206 L 468.5,209.5 L 475,201.5" fill="none" stroke="#06302b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="470" cy="206" r="10" fill="none" stroke="#9af7ea"><animate attributeName="stroke-opacity" values=".25;1;.25" dur="2s" begin="1s" repeatCount="indefinite"/></circle></g>
+<g><circle cx="591" cy="206" r="13" fill="url(#haloTeal)"/><circle cx="591" cy="206" r="10" fill="url(#orbTeal)" stroke="#7df3e4" stroke-width="1.2"/><path d="M 586,206 L 589.5,209.5 L 596,201.5" fill="none" stroke="#06302b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="591" cy="206" r="10" fill="none" stroke="#9af7ea"><animate attributeName="stroke-opacity" values=".25;1;.25" dur="2s" begin="1.5s" repeatCount="indefinite"/></circle></g>
+</svg>
+</div>

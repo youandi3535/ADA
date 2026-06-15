@@ -166,16 +166,109 @@ def _should_run_cv(state: Any) -> bool:
     return True
 
 
+def _compute_cv_stats_leakage_safe(state: Any, model_name: str, params: dict) -> dict[str, Any]:
+    """Fix 5 (jh/HJ 2026-06-15) — 폴드마다 raw 에서 전처리 재적합한 누수 없는 CV.
+
+    기존 _compute_cv_stats 는 '이미 전처리된(스케일된) 행렬'을 받아 KFold 재분할만 했다.
+    그러면 스케일/인코딩 통계가 train 전체로 한 번 fit 된 값이라 fold 간에 새어, 스케일
+    민감 모델(LR/Ridge)의 CV 평균을 부풀리고 baseline_cv_std 를 줄여 유의성 판정을 왜곡했다.
+    여기선 raw 데이터를 다시 읽어 각 fold 마다 train 으로만 fit(apply) → val 은 transform-only
+    (preprocessor.fit_transform_train_val) 한 뒤 평가 → fold 간 누수 0.
+
+    실패/미지원(raw 로드 실패·plan 없음·tabular 아님 등)이면 {} 반환 → 호출측이 기존
+    행렬 CV 로 폴백(무회귀). 모든 예외를 삼킨다.
+    """
+    try:
+        cat = getattr(state, "category", "") or ""
+        if not cat.startswith("tabular"):
+            return {}
+        plan = getattr(state, "preprocessing_plan", None) or []
+        if not plan:
+            return {}
+        import numpy as np  # noqa: WPS433
+        from sklearn.model_selection import KFold, StratifiedKFold
+
+        from agents.handlers.common.shared import load_dataframe_from_state
+        from agents.handlers.tabular.preprocessor import fit_transform_train_val
+        from agents.training_executor import _split_xy
+        from pipelines.factory import PipelineFactory
+
+        target = getattr(state, "target_column", None)
+        df_raw = load_dataframe_from_state(state, prefer_processed=False)
+        if df_raw is None or not target or target not in df_raw.columns:
+            return {}
+        df_raw = df_raw.reset_index(drop=True)
+        if len(df_raw) < (2 * _CV_N_SPLITS):
+            return {}
+        y_full = df_raw[target]
+
+        pipeline = PipelineFactory.create(state.category)
+        if not (hasattr(pipeline, "train") and hasattr(pipeline, "evaluate")):
+            return {}
+        task = _resolve_task_for_cv(state)
+        use_strat = task == "classification" and int(y_full.nunique(dropna=True)) <= 50
+        splitter = (
+            StratifiedKFold(n_splits=_CV_N_SPLITS, shuffle=True, random_state=42)
+            if use_strat
+            else KFold(n_splits=_CV_N_SPLITS, shuffle=True, random_state=42)
+        )
+        split_iter = splitter.split(df_raw, y_full) if use_strat else splitter.split(df_raw)
+
+        fold_metrics: list[dict[str, float]] = []
+        all_keys: set[str] = set()
+        for tr_idx, val_idx in split_iter:
+            df_tr = df_raw.iloc[tr_idx].reset_index(drop=True)
+            df_va = df_raw.iloc[val_idx].reset_index(drop=True)
+            df_tr_proc, df_va_proc = fit_transform_train_val(df_tr, df_va, plan, state)
+            x_tr, y_tr = _split_xy(df_tr_proc, target)
+            x_va, y_va = _split_xy(df_va_proc, target)
+            if x_tr is None or x_va is None or len(x_tr) == 0 or len(x_va) == 0:
+                return {}  # 비정상 → 폴백
+            model = pipeline.train(x_tr, y_tr, model_name=model_name, params=params or {})
+            m = pipeline.evaluate(model, x_va, y_va, task=task)
+            fold_metrics.append({k: float(v) for k, v in m.items() if isinstance(v, (int, float))})
+            all_keys.update(fold_metrics[-1].keys())
+
+        if not fold_metrics:
+            return {}
+        mean_dict: dict[str, float] = {}
+        std_dict: dict[str, float] = {}
+        for k in all_keys:
+            vals = [fm[k] for fm in fold_metrics if k in fm]
+            if vals:
+                mean_dict[k] = float(np.mean(vals))
+                std_dict[k] = float(np.std(vals))
+        primary = "val_f1" if task == "classification" else "val_r2"
+        return {
+            "n_splits": int(_CV_N_SPLITS),
+            "fold_metrics": fold_metrics,
+            "mean": mean_dict,
+            "std": std_dict,
+            "primary_metric": primary,
+            "primary_mean": float(mean_dict.get(primary, 0.0)),
+            "primary_std": float(std_dict.get(primary, 0.0)),
+            "leakage_safe_cv": True,
+        }
+    except Exception:  # noqa: BLE001 — 어떤 실패든 {} → 기존 행렬 CV 폴백(무회귀)
+        return {}
+
+
 def _compute_cv_stats(state: Any, model_name: str, params: dict) -> dict[str, Any]:
     """주어진 모델을 CV 로 재평가 → fold 통계 반환.
 
     Day 12 (jh): CV 데이터를 train+val(=[:n_tr+n_val]) 로 제한해 봉인된 test 가
     CV 에도 새지 않도록 한다. 경계 메타가 없으면(폴백) 기존처럼 전체 사용.
 
+    Fix 5 (2026-06-15): 누수 없는 폴드별 재전처리 CV 를 우선 시도하고, 실패/미지원 시
+    아래 기존 행렬 CV 로 폴백한다(무회귀).
+
     실패/예외 시 빈 dict (graceful). 운영 회귀 방지를 위해 모든 오류 catch.
     """
     if not _should_run_cv(state):
         return {}
+    _ls = _compute_cv_stats_leakage_safe(state, model_name, params)
+    if _ls:
+        return _ls
     try:
         from agents.handlers.common.shared import load_dataframe_from_state
         from agents.training_executor import _split_xy

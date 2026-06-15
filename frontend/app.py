@@ -3124,6 +3124,8 @@ def _render_agent_board() -> None:
     components.html(_rdf("agent_flow.html"), height=510, scrolling=False)
     st.markdown(_rdf("agent_intro.html"), unsafe_allow_html=True)
     components.html(_rdf("agent_board.html"), height=1080, scrolling=False)
+    st.markdown(_rdf("agent_engines.html"), unsafe_allow_html=True)
+    components.html(_rdf("agent_engines_flow.html"), height=715, scrolling=False)
 
 
 # ===========================================================================
