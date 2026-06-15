@@ -3102,11 +3102,17 @@ def _render_agent_board() -> None:
         """,
         unsafe_allow_html=True,
     )
-    try:
-        _board_html = (Path(__file__).parent / "agent_board.html").read_text(encoding="utf-8")
-    except Exception:  # noqa: BLE001
-        _board_html = "<p style='color:#fff;padding:24px'>현황판을 불러오지 못했습니다.</p>"
-    components.html(_board_html, height=1040, scrolling=True)
+    _base = Path(__file__).parent
+
+    def _rdf(_n: str) -> str:
+        try:
+            return (_base / _n).read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    components.html(_rdf("agent_flow.html"), height=510, scrolling=False)
+    st.markdown(_rdf("agent_intro.html"), unsafe_allow_html=True)
+    components.html(_rdf("agent_board.html"), height=1080, scrolling=False)
 
 
 # ===========================================================================
