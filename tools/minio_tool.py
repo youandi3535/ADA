@@ -158,6 +158,20 @@ class MinIOClient:
         self.s3.put_object(Bucket=self.bucket, Key=object_name, Body=body, ContentType=content_type)
         return f"s3://{self.bucket}/{object_name}"
 
+    def object_key(self, minio_path: str) -> str:
+        """``s3://<bucket>/<key>`` 또는 순수 key 문자열 → object key (단일 진입점).
+
+        버킷명과 무관하게 ``s3://*/`` 접두 한 단계만 제거한다. 호출부가
+        ``path.replace(f"s3://{self.bucket}/", "")`` 로 직접 벗기면 저장 당시 버킷명과
+        현재 ``self.bucket`` 이 다를 때(설정 변경·오래된 DB 경로) 접두가 안 벗겨져
+        key 에 ``s3://옛버킷/...`` 가 남아 NoSuchKey 를 유발한다. 모든 다운로드 경로는
+        이 메서드로 key 를 해석한다.
+        """
+        if minio_path.startswith("s3://"):
+            parts = minio_path.split("/", 3)  # ['s3:', '', '<bucket>', '<key>']
+            return parts[3] if len(parts) >= 4 else minio_path
+        return minio_path
+
     def download_bytes(self, object_name: str) -> bytes:
         resp = self.s3.get_object(Bucket=self.bucket, Key=object_name)
         return resp["Body"].read()

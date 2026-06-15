@@ -95,7 +95,7 @@ def _ttf_via_matplotlib():
     try:
         for fam in _KO_FAMILIES:  # 선호 순서대로
             for fe in fm.fontManager.ttflist:
-                fname = (getattr(fe, "fname", "") or "")
+                fname = getattr(fe, "fname", "") or ""
                 if not fname.lower().endswith(".ttf") or (getattr(fe, "name", "") or "") != fam:
                     continue
                 is_bold = (getattr(fe, "weight", "normal") in (700, "bold")) or ("bold" in fname.lower())
@@ -197,7 +197,7 @@ def _fetch_png(path):
         from tools.minio_tool import get_minio_client
 
         mc = get_minio_client()
-        key = path.replace(f"s3://{mc.bucket}/", "") if str(path).startswith("s3://") else path
+        key = mc.object_key(str(path))
         data = mc.download_bytes(key)
         if not data:
             return None
@@ -351,22 +351,46 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
 
     # 글씨는 모두 검은색 — 표 헤더(파란 배경+흰 글씨)만 예외로 유지.
     black = colors.black
-    h1 = PS("H1", fontName=_KG, fontSize=22, leading=30, textColor=colors.HexColor("#243B5C"), spaceBefore=14, spaceAfter=8)  # [B28] h1 22pt · 브랜드 네이비
+    h1 = PS(
+        "H1", fontName=_KG, fontSize=22, leading=30, textColor=colors.HexColor("#243B5C"), spaceBefore=14, spaceAfter=8
+    )  # [B28] h1 22pt · 브랜드 네이비
     # h1_toc: h1 과 모양 동일하되 목차 페이지 추적 대상(afterFlowable 가 style.name 으로 식별)
-    h1_toc = PS("H1TOC", fontName=_KG, fontSize=22, leading=30, textColor=colors.HexColor("#243B5C"), spaceBefore=14, spaceAfter=8)
-    h2 = PS("H2", fontName=_KG, fontSize=18, leading=26, textColor=colors.HexColor("#243B5C"), spaceBefore=10, spaceAfter=6)  # [B28] h2 18pt · 브랜드 네이비
-    sw = PS("SW", fontName=_KG, fontSize=16, leading=23, textColor=colors.HexColor("#243B5C"), leftIndent=0)  # [B28][B29] sw 16pt 네이비
-    body = PS("B", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=8)  # [B28][B30] body 14pt+들여쓰기 8
-    bul = PS("BL", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=14, firstLineIndent=-10)  # [B28] bul 14pt
-    cap = PS("CP", fontName=_KS, fontSize=12, leading=16, textColor=colors.HexColor("#475569"))  # [B28] cap 12pt · [세련화] 뮤트 슬레이트
+    h1_toc = PS(
+        "H1TOC",
+        fontName=_KG,
+        fontSize=22,
+        leading=30,
+        textColor=colors.HexColor("#243B5C"),
+        spaceBefore=14,
+        spaceAfter=8,
+    )
+    h2 = PS(
+        "H2", fontName=_KG, fontSize=18, leading=26, textColor=colors.HexColor("#243B5C"), spaceBefore=10, spaceAfter=6
+    )  # [B28] h2 18pt · 브랜드 네이비
+    sw = PS(
+        "SW", fontName=_KG, fontSize=16, leading=23, textColor=colors.HexColor("#243B5C"), leftIndent=0
+    )  # [B28][B29] sw 16pt 네이비
+    body = PS(
+        "B", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=8
+    )  # [B28][B30] body 14pt+들여쓰기 8
+    bul = PS(
+        "BL", fontName=_KS, fontSize=14, leading=20, textColor=black, leftIndent=14, firstLineIndent=-10
+    )  # [B28] bul 14pt
+    cap = PS(
+        "CP", fontName=_KS, fontSize=12, leading=16, textColor=colors.HexColor("#475569")
+    )  # [B28] cap 12pt · [세련화] 뮤트 슬레이트
     PS("TOCE", fontName=_KS, fontSize=14, leading=20, textColor=black)  # [B28] toc_e 14pt  # 목차 항목명
-    PS("TOCP", fontName=_KS, fontSize=12, leading=18, textColor=colors.HexColor("#475569"), alignment=TA_RIGHT)  # 목차 페이지(옅은 회색)
+    PS(
+        "TOCP", fontName=_KS, fontSize=12, leading=18, textColor=colors.HexColor("#475569"), alignment=TA_RIGHT
+    )  # 목차 페이지(옅은 회색)
     # [목차룰] Executive Summary 강조 + TABLE OF CONTENTS 트래킹 라벨
     PS("TOCEE", fontName=_KG, fontSize=13, leading=20, textColor=colors.HexColor("#243B5C"))  # Exec Summary 강조
     PS("TOCPE", fontName=_KS, fontSize=13, leading=20, textColor=colors.HexColor("#243B5C"), alignment=TA_RIGHT)
     PS("TOCSE", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), leftIndent=16)  # 부록 하위
     PS("TOCSP", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), alignment=TA_RIGHT)
-    toc_label = PS("TOCLbl", fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#94A3B8"))  # TABLE OF CONTENTS
+    toc_label = PS(
+        "TOCLbl", fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#94A3B8")
+    )  # TABLE OF CONTENTS
 
     # 카테고리 한글 매핑 (표지·사이트 톤 통일) — _draw_cover 에서 사용
     _CAT_KO = {
@@ -417,6 +441,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             _c.setStrokeColor(_BR_BLUE)
             _c.setLineWidth(2.4)
             _c.line(0, 1.3, self._a, 1.3)
+
     try:
         from outputs.architect.skeletons.report_skeleton import _human_dataset_name as _hdn
 
@@ -533,14 +558,24 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         kpis=[(값, 라벨, 색hex)]. 결론제목(takeaway)이 핵심 — 제목만 읽어도 논리가 흐르게. 전부 ctx 출처.
         """
         _exn = PS("ExN", fontName=_KG, fontSize=9.5, textColor=colors.HexColor("#3A6FE0"), leading=13)
-        _ext = PS("ExT", fontName=_KG, fontSize=14.5, textColor=colors.HexColor("#243B5C"), leading=20, spaceBefore=4, spaceAfter=2)
+        _ext = PS(
+            "ExT",
+            fontName=_KG,
+            fontSize=14.5,
+            textColor=colors.HexColor("#243B5C"),
+            leading=20,
+            spaceBefore=4,
+            spaceAfter=2,
+        )
         _exs = PS("ExS", fontName=_KS, fontSize=9, textColor=colors.HexColor("#64748B"), leading=13)
         from reportlab.lib.enums import TA_CENTER
         from reportlab.pdfbase.pdfmetrics import stringWidth
+
         # [B-Exhibit] KPI 밴드 = 2행(숫자행/라벨행). 숫자=같은 베이스라인(BOTTOM)+가운데, 라벨=같은 줄 시작(TOP)+가운데.
         _num_ps = PS("ExKNum", fontName=_KG, fontSize=22, leading=24, alignment=TA_CENTER)
-        _lbl_ps = PS("ExKLbl", fontName=_KS, fontSize=10, textColor=colors.HexColor("#6B7891"),
-                     leading=13, alignment=TA_CENTER)
+        _lbl_ps = PS(
+            "ExKLbl", fontName=_KS, fontSize=10, textColor=colors.HexColor("#6B7891"), leading=13, alignment=TA_CENTER
+        )
         _n = len(kpis) or 1
         _lbl_max = (width - 32) / _n - 18  # 라벨 한 줄 가용 폭(좌우 패딩 제외)
 
@@ -556,7 +591,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             if _sp:
                 _md = len(s) / 2
                 _i = min(_sp, key=lambda x: abs(x - _md))
-                return s[:_i] + "<br/>" + s[_i + 1:]
+                return s[:_i] + "<br/>" + s[_i + 1 :]
             return s
 
         # [세련화·색 절제] KPI 색은 caller 값 무시 → hero=블루·나머지=네이비 통일(라벤더 제거, 1악센트 원칙)
@@ -566,29 +601,45 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             _nums.append(Paragraph(f'<font color="{_EXP[min(_i2, len(_EXP) - 1)]}"><b>{_v}</b></font>', _num_ps))
             _lbls.append(Paragraph(_lblbreak(_l), _lbl_ps))
         _kt = Table([_nums, _lbls], colWidths=[(width - 32) / _n] * _n)
-        _kt.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FC")),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("VALIGN", (0, 0), (-1, 0), "BOTTOM"),   # 숫자행: 같은 베이스라인
-            ("VALIGN", (0, 1), (-1, 1), "TOP"),      # 라벨행: 같은 줄에서 시작
-            ("TOPPADDING", (0, 0), (-1, 0), 14), ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
-            ("TOPPADDING", (0, 1), (-1, 1), 3), ("BOTTOMPADDING", (0, 1), (-1, 1), 14),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.HexColor("#E3E8F2")),
-        ]))
+        _kt.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FC")),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, 0), "BOTTOM"),  # 숫자행: 같은 베이스라인
+                    ("VALIGN", (0, 1), (-1, 1), "TOP"),  # 라벨행: 같은 줄에서 시작
+                    ("TOPPADDING", (0, 0), (-1, 0), 14),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+                    ("TOPPADDING", (0, 1), (-1, 1), 3),
+                    ("BOTTOMPADDING", (0, 1), (-1, 1), 14),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.HexColor("#E3E8F2")),
+                ]
+            )
+        )
         _inner = [
             Paragraph(f"E X H I B I T &nbsp;&nbsp; {num}", _exn),
-            Paragraph(takeaway, _ext), Spacer(1, 0.25 * cm), _kt, Spacer(1, 0.2 * cm),
+            Paragraph(takeaway, _ext),
+            Spacer(1, 0.25 * cm),
+            _kt,
+            Spacer(1, 0.2 * cm),
             Paragraph(f"{unit}<br/>{source}", _exs),
         ]
         _box = Table([[_inner]], colWidths=[width])
-        _box.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")),
-            ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")),
-            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
-            ("LEFTPADDING", (0, 0), (-1, -1), 20), ("RIGHTPADDING", (0, 0), (-1, -1), 20),
-            ("TOPPADDING", (0, 0), (-1, -1), 16), ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
-        ]))
+        _box.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")),
+                    ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")),
+                    ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 20),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 20),
+                    ("TOPPADDING", (0, 0), (-1, -1), 16),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+                ]
+            )
+        )
         return KeepTogether([_box])
 
     def _smart_table(cols, rows, total_w):
@@ -604,8 +655,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         from reportlab.lib.enums import TA_CENTER, TA_LEFT
         from reportlab.pdfbase.pdfmetrics import stringWidth
 
-        _fs = 9          # 셀 폰트(헤더·본문 동일)
-        _pad = 26        # 좌우 패딩(셀 14) + 넉넉한 여유 — 짧은 숫자열 줄바꿈 확실히 방지
+        _fs = 9  # 셀 폰트(헤더·본문 동일)
+        _pad = 26  # 좌우 패딩(셀 14) + 넉넉한 여유 — 짧은 숫자열 줄바꿈 확실히 방지
         _minw = 0.85 * cm
         n = max(len(cols), 1)
         rows = [list(r) + [""] * (n - len(r)) for r in rows]  # 행 길이 정규화(데이터 안전)
@@ -624,16 +675,16 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         _fixed = [j for j in range(n) if j not in _flex]
         widths = [0.0] * n
         for j in _fixed:
-            widths[j] = max(nat[j], _minw)          # 고정열: 자연폭 보존(가독 최소폭 보장)
+            widths[j] = max(nat[j], _minw)  # 고정열: 자연폭 보존(가독 최소폭 보장)
         _avail = total_w - sum(widths[j] for j in _fixed)
         _fnat = sum(nat[j] for j in _flex) or 1.0
         if _avail < _minw * len(_flex):
-            _s = sum(nat) or 1.0                     # 고정열 과대(드문 edge) → 전체 비례 축소 폴백
+            _s = sum(nat) or 1.0  # 고정열 과대(드문 edge) → 전체 비례 축소 폴백
             widths = [max(0.6 * _minw, w * total_w / _s) for w in nat]
         else:
             for j in _flex:
                 widths[j] = max(_minw, _avail * nat[j] / _fnat)  # 가변열: 남는 폭 비례
-        _drift = total_w - sum(widths)               # 부동소수 보정 차액은 최대 가변열만(고정열 폭 불변)
+        _drift = total_w - sum(widths)  # 부동소수 보정 차액은 최대 가변열만(고정열 폭 불변)
         widths[max(_flex, key=lambda j: widths[j])] += _drift
 
         def _is_short(j):
@@ -649,23 +700,36 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             return str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         _hdr = PS("TblH", fontName=_KG, fontSize=_fs, leading=_fs + 3, textColor=colors.white, alignment=TA_CENTER)
-        _cl = PS("TblL", fontName=_KS, fontSize=_fs, leading=_fs + 4, textColor=colors.HexColor("#1F2937"), alignment=TA_LEFT)
-        _cc = PS("TblC", fontName=_KS, fontSize=_fs, leading=_fs + 4, textColor=colors.HexColor("#1F2937"), alignment=TA_CENTER)
+        _cl = PS(
+            "TblL", fontName=_KS, fontSize=_fs, leading=_fs + 4, textColor=colors.HexColor("#1F2937"), alignment=TA_LEFT
+        )
+        _cc = PS(
+            "TblC",
+            fontName=_KS,
+            fontSize=_fs,
+            leading=_fs + 4,
+            textColor=colors.HexColor("#1F2937"),
+            alignment=TA_CENTER,
+        )
         _al = [_cc if _is_short(j) else _cl for j in range(n)]
         _data = [[Paragraph(_esc(c), _hdr) for c in cols]]
         _data += [[Paragraph(_esc(r[j]), _al[j]) for j in range(n)] for r in rows]
         _t = Table(_data, colWidths=widths, hAlign="LEFT", repeatRows=1)
-        _t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), primary),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.8, primary),
-            ("LINEBELOW", (0, 1), (-1, -2), 0.5, colors.HexColor("#E8ECF4")),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F7F9FC")]),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LEFTPADDING", (0, 0), (-1, -1), 7),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ]))
+        _t.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), primary),
+                    ("LINEBELOW", (0, 0), (-1, 0), 0.8, primary),
+                    ("LINEBELOW", (0, 1), (-1, -2), 0.5, colors.HexColor("#E8ECF4")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F7F9FC")]),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                ]
+            )
+        )
         return _t
 
     def _build_story(toc_render):
@@ -721,20 +785,36 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
 
         def _exec_hero(kpis=None, take="", unit="", src=""):  # hero — 비즈니스 KPI 우선, 없으면 모델지표 폴백
             if kpis:
-                flow.append(_exhibit("1 · 핵심 비즈니스 KPI", take or "핵심 임팩트", kpis, unit or "단위: 추정치", src or "출처: ADA 분석", 17 * cm))
+                flow.append(
+                    _exhibit(
+                        "1 · 핵심 비즈니스 KPI",
+                        take or "핵심 임팩트",
+                        kpis,
+                        unit or "단위: 추정치",
+                        src or "출처: ADA 분석",
+                        17 * cm,
+                    )
+                )
                 return
             if not ctx.evaluation.metrics:
                 return
             _pm = ctx.evaluation.primary_metric or {}
             _kc = ["#3A6FE0", "#243B5C", "#8478C8"]
-            _kp = [(_fv(_m.get("value")), _ko_metric(_k), _kc[_j % 3])
-                   for _j, (_k, _m) in enumerate(list(ctx.evaluation.metrics.items())[:3])]
+            _kp = [
+                (_fv(_m.get("value")), _ko_metric(_k), _kc[_j % 3])
+                for _j, (_k, _m) in enumerate(list(ctx.evaluation.metrics.items())[:3])
+            ]
             _pmk = _ko_metric(_pm.get("name")) if _pm.get("name") else "주지표"
-            _tk = (f"{_pmk} {_fv(_pm.get('value'))}, 단순 추측을 결정적으로 상회해 도입 기준을 충족한다."
-                   if _pm.get("value") is not None else "핵심 지표가 도입 판단의 기준이 된다.")
+            _tk = (
+                f"{_pmk} {_fv(_pm.get('value'))}, 단순 추측을 결정적으로 상회해 도입 기준을 충족한다."
+                if _pm.get("value") is not None
+                else "핵심 지표가 도입 판단의 기준이 된다."
+            )
             _n = (ctx.dataset.shape or {}).get("rows", 0)
             _sr = f"출처: ADA 분석 · n = {_n:,} · 주: 검증셋 기준" if _n else "출처: ADA 분석 · 주: 검증셋 기준"
-            flow.append(_exhibit("1 · 모델 성능 지표", _tk, _kp, "단위: 지표값(0~1 또는 %) · 기간: 전체 표본", _sr, 17 * cm))
+            flow.append(
+                _exhibit("1 · 모델 성능 지표", _tk, _kp, "단위: 지표값(0~1 또는 %) · 기간: 전체 표본", _sr, 17 * cm)
+            )
 
         _pkg = _chairman_exec(ctx, plan)  # 회장 패키지(내용=skeleton). None 이면 기존 Exec 폴백.
         if _pkg and (getattr(nt, "headline", "") or nt.resolution or nt.conflict):
@@ -743,25 +823,40 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             flow.append(Spacer(1, 0.15 * cm))
             flow.append(Paragraph(f"<b>{_nodash(_pkg['bluf'])}</b>", body))  # BLUF(결정 한 줄)
             flow.append(Spacer(1, 0.2 * cm))
-            flow.append(Paragraph(  # 관통 질문 + 답
-                f"<font color='#64748B'>관통 질문: {_nodash(_pkg['question'])}</font>  "
-                f"<b><font color='#3A6FE0'>답: {_pkg['verdict']}</font></b>", cap))
+            flow.append(
+                Paragraph(  # 관통 질문 + 답
+                    f"<font color='#64748B'>관통 질문: {_nodash(_pkg['question'])}</font>  "
+                    f"<b><font color='#3A6FE0'>답: {_pkg['verdict']}</font></b>",
+                    cap,
+                )
+            )
             flow.append(Spacer(1, 0.32 * cm))
             for _i, (_pt, _pd) in enumerate(_pkg["pillars"], 1):  # 3기둥(왜)
                 flow.append(Paragraph(f"<b><font color='#3A6FE0'>{_i}.</font> {_pt}</b>  {_nodash(_pd)}", body))
                 flow.append(Spacer(1, 0.12 * cm))
             flow.append(Spacer(1, 0.6 * cm))  # 3기둥과 exhibit 사이 한 줄 호흡(붙지 않게)
-            _exec_hero(_pkg.get("kpis"), _pkg.get("hero_take"), _pkg.get("hero_unit"), _pkg.get("hero_src"))  # hero = 비즈니스 KPI
+            _exec_hero(
+                _pkg.get("kpis"), _pkg.get("hero_take"), _pkg.get("hero_unit"), _pkg.get("hero_src")
+            )  # hero = 비즈니스 KPI
             flow.append(Spacer(1, 0.3 * cm))
             _ask_w = PS("AskW", fontName=_KG, fontSize=13.5, textColor=colors.white, leading=19)
             _ask_l = PS("AskL", fontName=_KG, fontSize=8, textColor=colors.HexColor("#9DB2E8"), leading=11)
-            _ask_t = Table([[[Paragraph("권 고", _ask_l), Spacer(1, 0.06 * cm), Paragraph(_nodash(_pkg['ask']), _ask_w)]]], colWidths=[17 * cm])
-            _ask_t.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), _BR_NAVY),  # [세련화] 권고=네이비 CTA + 화이트 텍스트
-                ("ROUNDEDCORNERS", [8, 8, 8, 8]),
-                ("LEFTPADDING", (0, 0), (-1, -1), 16), ("RIGHTPADDING", (0, 0), (-1, -1), 16),
-                ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
-            ]))
+            _ask_t = Table(
+                [[[Paragraph("권 고", _ask_l), Spacer(1, 0.06 * cm), Paragraph(_nodash(_pkg["ask"]), _ask_w)]]],
+                colWidths=[17 * cm],
+            )
+            _ask_t.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, -1), _BR_NAVY),  # [세련화] 권고=네이비 CTA + 화이트 텍스트
+                        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+                        ("TOPPADDING", (0, 0), (-1, -1), 12),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                    ]
+                )
+            )
             flow.append(_ask_t)  # 권고(now-what)
             flow.append(Spacer(1, 0.15 * cm))
             flow.append(Paragraph(f"<font color='#94A3B8'>{_nodash(_pkg['caveat'])}</font>", cap))  # 단서
@@ -783,7 +878,11 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
             if sec.id == "backup" or sec.kind == "cover":
                 continue
             # [고아 헤딩 방지] 섹션 제목을 첫 렌더 슬라이드와 한 덩어리로 묶어, 제목만 남고 내용이 다음 장으로 밀리는 현상 차단
-            _sec_head = [Paragraph(sec.title, h1_toc), _HRule(17 * cm), Spacer(1, 0.2 * cm)]  # [세련화] 풀폭 룰(좌 블루 악센트 + 우 끝까지 헤어라인)
+            _sec_head = [
+                Paragraph(sec.title, h1_toc),
+                _HRule(17 * cm),
+                Spacer(1, 0.2 * cm),
+            ]  # [세련화] 풀폭 룰(좌 블루 악센트 + 우 끝까지 헤어라인)
             _img_in_sec = 0  # 페이지당 차트 최대 2개 강제용
             _just_broke = False
             for sl in sec.slides:
@@ -793,7 +892,12 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                 #   다중 슬라이드 섹션(§4)에서 제목만 페이지 끝에 남는 현상 차단. 이미지 슬라이드(EDA 차트)는
                 #   '차트 2개/페이지' 로직 보존 위해 기존 평면 배치 유지(회귀 방지).
                 _vs0 = sl.visual_spec
-                _vis_img = bool(_vs0 and _vs0.type and _vs0.type not in ("gate_check", "exhibit_kpi", "issue_tree", "text_only") and not _vs0.type.startswith("table_"))
+                _vis_img = bool(
+                    _vs0
+                    and _vs0.type
+                    and _vs0.type not in ("gate_check", "exhibit_kpi", "issue_tree", "text_only")
+                    and not _vs0.type.startswith("table_")
+                )
                 _head: list = []
                 if sl.title_ko:  # 제목 없으면 h2 생략(§4 등: 가짜 소제목 방지, 섹션 제목만)
                     _head.append(Paragraph(sl.title_ko, h2))
@@ -802,7 +906,8 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     _head.append(Paragraph(_nodash(f"핵심 — {sl.so_what}"), sw))
                     _head.append(Spacer(1, 0.2 * cm))
                 _pblocks = [
-                    _b for _b in (getattr(sl, "prose_blocks", None) or [])
+                    _b
+                    for _b in (getattr(sl, "prose_blocks", None) or [])
                     if isinstance(_b, (list, tuple)) and len(_b) >= 2 and _b[1]
                 ]
                 if _vis_img:
@@ -833,27 +938,94 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     # [B-Exhibit] 관통 질문 issue-tree — 거버닝 질문(네이비 바) + N갈래 카드. _exhibit과 같은 박스로 통일. try/except 안전.
                     try:
                         from reportlab.lib.enums import TA_CENTER as _TAC
+
                         _isp = vs.spec or {}
                         _gov = _isp.get("governing", "")
                         _subs = _isp.get("subs") or []
                         if _gov and _subs:
-                            _itn = PS("ITn", fontName=_KG, fontSize=9.5, textColor=colors.HexColor("#3A6FE0"), leading=13)
-                            _itg = PS("ITg", fontName=_KG, fontSize=12, textColor=colors.white, leading=16, alignment=_TAC)
-                            _its = PS("ITs", fontName=_KS, fontSize=9.5, textColor=colors.HexColor("#334155"), leading=13, alignment=_TAC)
-                            _itd = PS("ITd", fontName=_KS, fontSize=8, textColor=colors.HexColor("#94A3B8"), leading=11, alignment=_TAC)
-                            _itsrc = PS("ITsrc", fontName=_KS, fontSize=9, textColor=colors.HexColor("#64748B"), leading=13)
+                            _itn = PS(
+                                "ITn", fontName=_KG, fontSize=9.5, textColor=colors.HexColor("#3A6FE0"), leading=13
+                            )
+                            _itg = PS(
+                                "ITg", fontName=_KG, fontSize=12, textColor=colors.white, leading=16, alignment=_TAC
+                            )
+                            _its = PS(
+                                "ITs",
+                                fontName=_KS,
+                                fontSize=9.5,
+                                textColor=colors.HexColor("#334155"),
+                                leading=13,
+                                alignment=_TAC,
+                            )
+                            _itd = PS(
+                                "ITd",
+                                fontName=_KS,
+                                fontSize=8,
+                                textColor=colors.HexColor("#94A3B8"),
+                                leading=11,
+                                alignment=_TAC,
+                            )
+                            _itsrc = PS(
+                                "ITsrc", fontName=_KS, fontSize=9, textColor=colors.HexColor("#64748B"), leading=13
+                            )
                             _gov_t = Table([[Paragraph(_nodash(_gov), _itg)]], colWidths=[15.6 * cm])
-                            _gov_t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#243B5C")), ("ROUNDEDCORNERS", [6, 6, 6, 6]), ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9), ("LEFTPADDING", (0, 0), (-1, -1), 14), ("RIGHTPADDING", (0, 0), (-1, -1), 14)]))
+                            _gov_t.setStyle(
+                                TableStyle(
+                                    [
+                                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#243B5C")),
+                                        ("ROUNDEDCORNERS", [6, 6, 6, 6]),
+                                        ("TOPPADDING", (0, 0), (-1, -1), 9),
+                                        ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                                        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                                        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                                    ]
+                                )
+                            )
                             _nq = len(_subs) or 1
-                            _cards = [Paragraph(f'<font color="#3A6FE0"><b>{_i + 1}.</b></font> {_s}', _its) for _i, _s in enumerate(_subs)]
+                            _cards = [
+                                Paragraph(f'<font color="#3A6FE0"><b>{_i + 1}.</b></font> {_s}', _its)
+                                for _i, _s in enumerate(_subs)
+                            ]
                             _sub_t = Table([_cards], colWidths=[(15.6 / _nq) * cm] * _nq)
-                            _sub_t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FC")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 11), ("BOTTOMPADDING", (0, 0), (-1, -1), 11), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.HexColor("#E3E8F2"))]))
-                            _inner = [Paragraph(f"E X H I B I T &nbsp;&nbsp; {_isp.get('num', '')}", _itn), Spacer(1, 0.18 * cm), _gov_t, Spacer(1, 0.05 * cm), Paragraph("▼ 세 갈래로 분해", _itd), Spacer(1, 0.05 * cm), _sub_t]
+                            _sub_t.setStyle(
+                                TableStyle(
+                                    [
+                                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FC")),
+                                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                        ("TOPPADDING", (0, 0), (-1, -1), 11),
+                                        ("BOTTOMPADDING", (0, 0), (-1, -1), 11),
+                                        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                                        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                                        ("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.HexColor("#E3E8F2")),
+                                    ]
+                                )
+                            )
+                            _inner = [
+                                Paragraph(f"E X H I B I T &nbsp;&nbsp; {_isp.get('num', '')}", _itn),
+                                Spacer(1, 0.18 * cm),
+                                _gov_t,
+                                Spacer(1, 0.05 * cm),
+                                Paragraph("▼ 세 갈래로 분해", _itd),
+                                Spacer(1, 0.05 * cm),
+                                _sub_t,
+                            ]
                             if _isp.get("source"):
                                 _inner.append(Spacer(1, 0.15 * cm))
                                 _inner.append(Paragraph(_nodash(_isp["source"]), _itsrc))
                             _box = Table([[_inner]], colWidths=[17 * cm])
-                            _box.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")), ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")), ("ROUNDEDCORNERS", [8, 8, 8, 8]), ("LEFTPADDING", (0, 0), (-1, -1), 20), ("RIGHTPADDING", (0, 0), (-1, -1), 20), ("TOPPADDING", (0, 0), (-1, -1), 16), ("BOTTOMPADDING", (0, 0), (-1, -1), 16)]))
+                            _box.setStyle(
+                                TableStyle(
+                                    [
+                                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")),
+                                        ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")),
+                                        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+                                        ("LEFTPADDING", (0, 0), (-1, -1), 20),
+                                        ("RIGHTPADDING", (0, 0), (-1, -1), 20),
+                                        ("TOPPADDING", (0, 0), (-1, -1), 16),
+                                        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+                                    ]
+                                )
+                            )
                             sl_flow.append(Spacer(1, 0.8 * cm))
                             sl_flow.append(KeepTogether([_box]))
                     except Exception:
@@ -863,20 +1035,54 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     _esp = vs.spec or {}
                     if _esp.get("kpis"):
                         sl_flow.append(Spacer(1, 0.3 * cm))
-                        sl_flow.append(_exhibit(_esp.get("num", ""), _esp.get("takeaway", ""), _esp["kpis"], _esp.get("unit", ""), _esp.get("source", ""), 17 * cm))
+                        sl_flow.append(
+                            _exhibit(
+                                _esp.get("num", ""),
+                                _esp.get("takeaway", ""),
+                                _esp["kpis"],
+                                _esp.get("unit", ""),
+                                _esp.get("source", ""),
+                                17 * cm,
+                            )
+                        )
                 elif vs and (vs.type or "") == "gate_check":
                     # [B-Exhibit] 데이터 적합성 게이트 — 상태 체크리스트(✓/⚠) 박스. _exhibit과 같은 박스로 통일. try/except 안전.
                     try:
                         _gsp = vs.spec or {}
                         _gates_v = _gsp.get("gates") or []
                         if _gates_v:
-                            _gcn = PS("GCn", fontName=_KG, fontSize=9.5, textColor=colors.HexColor("#3A6FE0"), leading=13)
-                            _gct = PS("GCt", fontName=_KG, fontSize=13, textColor=colors.HexColor("#243B5C"), leading=18, spaceAfter=2)
-                            _gcr = PS("GCr", fontName=_KS, fontSize=10.5, textColor=colors.HexColor("#334155"), leading=17)
+                            _gcn = PS(
+                                "GCn", fontName=_KG, fontSize=9.5, textColor=colors.HexColor("#3A6FE0"), leading=13
+                            )
+                            _gct = PS(
+                                "GCt",
+                                fontName=_KG,
+                                fontSize=13,
+                                textColor=colors.HexColor("#243B5C"),
+                                leading=18,
+                                spaceAfter=2,
+                            )
+                            _gcr = PS(
+                                "GCr", fontName=_KS, fontSize=10.5, textColor=colors.HexColor("#334155"), leading=17
+                            )
                             _gcs = PS("GCs", fontName=_KS, fontSize=9, textColor=colors.HexColor("#64748B"), leading=13)
-                            _grows = [[Paragraph(f'<font color="{_co}"><b>{_st}</b></font>&nbsp;&nbsp;{_lb}', _gcr)] for _st, _lb, _co in _gates_v]
+                            _grows = [
+                                [Paragraph(f'<font color="{_co}"><b>{_st}</b></font>&nbsp;&nbsp;{_lb}', _gcr)]
+                                for _st, _lb, _co in _gates_v
+                            ]
                             _gtbl = Table(_grows, colWidths=[15.6 * cm])
-                            _gtbl.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12), ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor("#E3E8F2"))]))
+                            _gtbl.setStyle(
+                                TableStyle(
+                                    [
+                                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+                                        ("TOPPADDING", (0, 0), (-1, -1), 6),
+                                        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                                        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                                        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                                        ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor("#E3E8F2")),
+                                    ]
+                                )
+                            )
                             _ginner = [Paragraph(f"E X H I B I T &nbsp;&nbsp; {_gsp.get('num', '')}", _gcn)]
                             if _gsp.get("takeaway"):
                                 _ginner += [Spacer(1, 0.1 * cm), Paragraph(_nodash(_gsp["takeaway"]), _gct)]
@@ -884,7 +1090,19 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                             if _gsp.get("source"):
                                 _ginner += [Spacer(1, 0.12 * cm), Paragraph(_nodash(_gsp["source"]), _gcs)]
                             _gbox = Table([[_ginner]], colWidths=[17 * cm])
-                            _gbox.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")), ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")), ("ROUNDEDCORNERS", [8, 8, 8, 8]), ("LEFTPADDING", (0, 0), (-1, -1), 20), ("RIGHTPADDING", (0, 0), (-1, -1), 20), ("TOPPADDING", (0, 0), (-1, -1), 16), ("BOTTOMPADDING", (0, 0), (-1, -1), 16)]))
+                            _gbox.setStyle(
+                                TableStyle(
+                                    [
+                                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FBFCFE")),
+                                        ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#E3E8F2")),
+                                        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+                                        ("LEFTPADDING", (0, 0), (-1, -1), 20),
+                                        ("RIGHTPADDING", (0, 0), (-1, -1), 20),
+                                        ("TOPPADDING", (0, 0), (-1, -1), 16),
+                                        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+                                    ]
+                                )
+                            )
                             sl_flow.append(Spacer(1, 0.8 * cm))
                             sl_flow.append(KeepTogether([_gbox]))
                     except Exception:
@@ -895,7 +1113,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                     _rows = list((vs.spec or {}).get("rows") or [])
                     if _cols and _rows:
                         _t = _smart_table(_cols, _rows, 17.0 * cm)
-                        _grp: list = [Spacer(1, (0.35 if getattr(sec, "kind", "") == "appendix" else 0.9) * cm)]  # 표 앞 간격(부록은 고밀도)
+                        _grp: list = [
+                            Spacer(1, (0.35 if getattr(sec, "kind", "") == "appendix" else 0.9) * cm)
+                        ]  # 표 앞 간격(부록은 고밀도)
                         if vs.title:
                             _grp.append(Paragraph(f"<b>{vs.title}</b>", sw))
                         _grp.append(_t)
@@ -932,14 +1152,18 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                             if h_cm > _cap_h:
                                 h_cm = _cap_h
                                 w_cm = h_cm * ar
-                            sl_flow.append(Spacer(1, (0.9 if getattr(sec, "kind", "") == "appendix" else 0.45) * cm))  # [B25] 그래프 앞 — 부록은 프로즈↔제목 2줄 띄움
+                            sl_flow.append(
+                                Spacer(1, (0.9 if getattr(sec, "kind", "") == "appendix" else 0.45) * cm)
+                            )  # [B25] 그래프 앞 — 부록은 프로즈↔제목 2줄 띄움
                             if locals().get("_ch_title"):
                                 sl_flow.append(Paragraph(f"<b>{_ch_title}</b>", sw))
                                 sl_flow.append(Spacer(1, 0.12 * cm))
                             sl_flow.append(Image(png, width=w_cm * cm, height=h_cm * cm, hAlign="CENTER"))
                             if vs.caption:
                                 sl_flow.append(Paragraph(_nodash(vs.caption), cap))
-                            sl_flow.append(Spacer(1, (0.2 if getattr(sec, "kind", "") == "appendix" else 0.4) * cm))  # [B25] 그래프 뒤(부록 고밀도)
+                            sl_flow.append(
+                                Spacer(1, (0.2 if getattr(sec, "kind", "") == "appendix" else 0.4) * cm)
+                            )  # [B25] 그래프 뒤(부록 고밀도)
                             has_img = True
                     except Exception:
                         pass
@@ -961,7 +1185,9 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
                         flow.append(PageBreak())
                         _just_broke = True
                 elif _had_head and getattr(sec, "kind", "") == "appendix":
-                    flow.append(KeepTogether(sl_flow))  # [부록 고아방지] 9.x 제목 + 첫 exhibit 묶음 → 제목만 외톨이 금지
+                    flow.append(
+                        KeepTogether(sl_flow)
+                    )  # [부록 고아방지] 9.x 제목 + 첫 exhibit 묶음 → 제목만 외톨이 금지
                     _just_broke = False
                 else:
                     flow.extend(sl_flow)

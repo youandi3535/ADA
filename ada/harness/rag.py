@@ -60,7 +60,7 @@ class KBRAG:
         return vec.astype(float).tolist()
 
     # ------------------------------------------------------------------
-    async def search_lessons(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    async def search_lessons(self, query: str, top_k: int = 5, *, cite: bool = True) -> list[dict[str, Any]]:
         """failure_lesson 검색."""
         emb = self.embed(query)
         sql = text(
@@ -77,12 +77,23 @@ class KBRAG:
         )
         try:
             rows = await self.session.execute(sql, {"emb": str(emb), "k": top_k})
-            return [dict(r._mapping) for r in rows]
+            results = [dict(r._mapping) for r in rows]
         except Exception as e:
             log.warning("rag_search_failed", error=str(e))
             return []
+        # Day11/KP9 — 관련 매칭(유사도>=0.7)을 KB 인용으로 카운트 (RAG 공통 단일 집계점)
+        if cite and results:
+            try:
+                from ada.observability.metrics import record_kb_citation
 
-    async def search_recipes(self, category: str, top_k: int = 5) -> list[dict[str, Any]]:
+                for _r in results:
+                    if float(_r.get("similarity") or 0.0) >= 0.7:
+                        record_kb_citation(source="lessons_kb")
+            except Exception:
+                pass
+        return results
+
+    async def search_recipes(self, category: str, top_k: int = 5, *, cite: bool = True) -> list[dict[str, Any]]:
         """category 기반 recipe 검색 (pgvector 없이 단순 정렬)."""
         rows = await self.session.scalars(
             select(SelfLearningKB)
@@ -93,14 +104,104 @@ class KBRAG:
             .order_by(SelfLearningKB.success_count.desc())
             .limit(top_k)
         )
-        return [
+        results = [
             {"hash": r.hash, "payload": r.payload, "confidence": r.confidence, "success_count": r.success_count}
             for r in rows
             # R-504 — retracted KB 제외 (폐기된 레시피는 인용 금지)
             if not (isinstance(r.payload, dict) and r.payload.get("retracted"))
         ]
+        # Day11/KP9 — 반환 레시피를 KB 인용으로 카운트
+        if cite and results:
+            try:
+                from ada.observability.metrics import record_kb_citation
+
+                for _ in results:
+                    record_kb_citation(source="recipes_kb")
+            except Exception:
+                pass
+        return results
 
     # ------------------------------------------------------------------
+    async def fetch_warm_start_map(self, category: str) -> dict[str, dict[str, Any]]:
+        """hpo_warm_start KB → {model_name: best_params}. 인용은 실제 적용 시 호출측에서."""
+        try:
+            rows = await self.session.scalars(
+                select(SelfLearningKB)
+                .where(
+                    SelfLearningKB.kb_type == "hpo_warm_start",
+                    SelfLearningKB.category == category,
+                    SelfLearningKB.confidence >= 0.20,
+                )
+                .order_by(SelfLearningKB.success_count.desc())
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("warm_start_fetch_failed", error=str(e))
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            pl = r.payload if isinstance(r.payload, dict) else {}
+            if pl.get("retracted"):
+                continue
+            model = pl.get("model")
+            params = pl.get("best_params")
+            if model and isinstance(params, dict) and params and model not in out:
+                out[model] = params  # 동일 모델은 success_count 최상위 1건
+        return out
+
+    async def fetch_eda_template(self, category: str, *, cite: bool = True) -> dict[str, Any] | None:
+        """eda_template KB(카테고리) 최상위 1건 payload. cite=True 면 인용 카운트."""
+        try:
+            row = await self.session.scalar(
+                select(SelfLearningKB)
+                .where(
+                    SelfLearningKB.kb_type == "eda_template",
+                    SelfLearningKB.category == category,
+                    SelfLearningKB.confidence >= 0.20,
+                )
+                .order_by(SelfLearningKB.success_count.desc())
+                .limit(1)
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("eda_template_fetch_failed", error=str(e))
+            return None
+        if row is None or not isinstance(row.payload, dict) or row.payload.get("retracted"):
+            return None
+        if cite:
+            try:
+                from ada.observability.metrics import record_kb_citation
+
+                record_kb_citation(source="eda_template_kb")
+            except Exception:
+                pass
+        return row.payload
+
+    async def fetch_success_patterns(self, category: str, top_k: int = 3, *, cite: bool = True) -> list[dict[str, Any]]:
+        """success_pattern KB(카테고리) 상위 N건 payload. cite=True 면 사용분만큼 인용."""
+        try:
+            rows = await self.session.scalars(
+                select(SelfLearningKB)
+                .where(
+                    SelfLearningKB.kb_type == "success_pattern",
+                    SelfLearningKB.category == category,
+                    SelfLearningKB.confidence >= 0.20,
+                )
+                .order_by(SelfLearningKB.success_count.desc())
+                .limit(top_k)
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("success_pattern_fetch_failed", error=str(e))
+            return []
+        out = [r.payload for r in rows if isinstance(r.payload, dict) and not r.payload.get("retracted")]
+        if cite and out:
+            try:
+                from ada.observability.metrics import record_kb_citation
+
+                for _ in out:
+                    record_kb_citation(source="success_pattern_kb")
+            except Exception:
+                pass
+        return out
+
     async def index_lesson(self, kb_id: Any, summary: str) -> None:
         emb = self.embed(summary)
         # ON CONFLICT (kb_id) DO UPDATE — 같은 kb_id 재색인 시 덮어쓰기 (중복 방지)

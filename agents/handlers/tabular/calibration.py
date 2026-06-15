@@ -98,9 +98,7 @@ def compute_ece(y_true: Any, y_proba: Any, n_bins: int = _N_BINS) -> float:
     return float(ece)
 
 
-def reliability_diagram_data(
-    y_true: Any, y_proba: Any, n_bins: int = _N_BINS
-) -> dict[str, list[float]]:
+def reliability_diagram_data(y_true: Any, y_proba: Any, n_bins: int = _N_BINS) -> dict[str, list[float]]:
     """reliability diagram 시각화용 데이터.
 
     Returns:
@@ -280,9 +278,7 @@ def _skipped_result(reason: str) -> dict[str, Any]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _serialize_calibrator(
-    calibrator: Any, method: str, state: Any
-) -> str | None:
+def _serialize_calibrator(calibrator: Any, method: str, state: Any) -> str | None:
     """학습된 calibrator 를 joblib 로 직렬화 → MinIO 업로드 → 경로 반환.
 
     실패 시 None (graceful — calibrate() 가 skipped_reason 안 채움. 산출물 표
@@ -330,11 +326,7 @@ def apply_calibration(state: Any, raw_proba: Any) -> Any:
 
     raw = np.asarray(raw_proba).astype(float)
 
-    cal_info = (
-        (getattr(state, "category_extras", None) or {})
-        .get("tabular", {})
-        .get("calibration") or {}
-    )
+    cal_info = (getattr(state, "category_extras", None) or {}).get("tabular", {}).get("calibration") or {}
     method = cal_info.get("method")
     if not method:
         return raw
@@ -350,7 +342,7 @@ def apply_calibration(state: Any, raw_proba: Any) -> Any:
             from tools.minio_tool import get_minio_client
 
             mc = get_minio_client()
-            key = path.replace(f"s3://{mc.bucket}/", "") if path.startswith("s3://") else path
+            key = mc.object_key(path)
             blob = mc.download_bytes(key)
             payload = joblib.load(io.BytesIO(blob))
             calibrator = payload.get("calibrator")
@@ -471,9 +463,7 @@ def calibrate(state: Any) -> dict[str, Any]:
         improvement_ratio = ece_after / ece_before if ece_before > 0 else 0.0
 
         # reliability diagram 차트
-        chart_path = _build_reliability_chart(
-            y_true, y_proba, methods_tried, best_method, ece_before, state
-        )
+        chart_path = _build_reliability_chart(y_true, y_proba, methods_tried, best_method, ece_before, state)
 
         # honest gap closure — best method 로 전체 val 에 fit 한 calibrator 직렬화
         # → MinIO 업로드. apply_calibration() 이 이걸 읽어 serving 시점에 적용.
@@ -484,8 +474,7 @@ def calibrate(state: Any) -> dict[str, Any]:
         else:
             best_calibrator = None
         calibrator_path = (
-            _serialize_calibrator(best_calibrator, best_method, state)
-            if best_calibrator is not None else None
+            _serialize_calibrator(best_calibrator, best_method, state) if best_calibrator is not None else None
         )
 
         return {
@@ -556,7 +545,14 @@ def _build_reliability_chart(
         # calibrated
         cal_x = [x for x, c in zip(cal_data["bin_centers"], cal_data["bin_count"]) if c > 0]
         cal_y = [y for y, c in zip(cal_data["bin_actual"], cal_data["bin_count"]) if c > 0]
-        ax.plot(cal_x, cal_y, "s-", color="#2563eb", lw=2, label=f"보정 후 — {best_method} (ECE={methods_tried[best_method]:.3f})")
+        ax.plot(
+            cal_x,
+            cal_y,
+            "s-",
+            color="#2563eb",
+            lw=2,
+            label=f"보정 후 — {best_method} (ECE={methods_tried[best_method]:.3f})",
+        )
 
         ax.set_xlabel("평균 예측 확률")
         ax.set_ylabel("실제 양성 비율")
@@ -578,9 +574,7 @@ def _build_reliability_chart(
 
         fig.tight_layout()
 
-        return save_chart_to_minio(
-            fig, kind="tabular/reliability_diagram", job_id=getattr(state, "job_id", "")
-        )
+        return save_chart_to_minio(fig, kind="tabular/reliability_diagram", job_id=getattr(state, "job_id", ""))
     except Exception as exc:
         logger.warning("reliability_chart_failed: %s", exc)
         return None
@@ -596,11 +590,7 @@ def reliability_diagram_chart(state: Any) -> str | None:
 
     category_extras 캐시 우선. 없으면 calibrate() 한 번 실행.
     """
-    cached = (
-        (getattr(state, "category_extras", None) or {})
-        .get("tabular", {})
-        .get("calibration")
-    )
+    cached = (getattr(state, "category_extras", None) or {}).get("tabular", {}).get("calibration")
     if isinstance(cached, dict) and cached.get("reliability_chart_path"):
         return cached["reliability_chart_path"]
     result = calibrate(state)

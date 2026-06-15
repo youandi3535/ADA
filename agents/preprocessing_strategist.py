@@ -267,7 +267,12 @@ class PreprocessingStrategistAgent(BaseAgent):
             #   화면) 대기 중 worker 가 plan+윤색을 선계산(_g3_pre_prefetch_async)해 Redis 에 저장.
             #   캐시 히트면 LLM·윤색(최대 165s)을 모두 스킵하고 완성된 윤색을 즉시 동기 publish →
             #   윤색이 항상 표시(품질 보장)되고 feature_engineer 가 0 블록으로 전진.
-            cached = _g3_pre_cache_get(state.job_id, state.category, state.target_column)
+            # HJ 2026-06-14 — 재시도(rollback) 시에는 G3 선계산 캐시를 무시하고 반드시 재계산한다.
+            #   캐시는 '첫 표시 속도' 최적화용인데, 4·5단계 자동 롤백(전처리 재검토)에서 캐시를
+            #   히트하면 직전 회차와 동일 plan 이 그대로 재사용돼 재시도가 무의미해진다(수치 불변).
+            #   회차 0(첫 실행)에서는 기존대로 캐시 사용 → 동작·속도 불변(하위호환).
+            _is_reloop = (state.re_loop_count > 0) or (state.baseline_re_loop_count > 0)
+            cached = None if _is_reloop else _g3_pre_cache_get(state.job_id, state.category, state.target_column)
             if cached:
                 plan = cached.get("plan") or []
                 rationale = str(cached.get("rationale") or "")

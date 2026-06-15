@@ -13,7 +13,7 @@ import asyncio
 from typing import Any, Optional
 
 from ada.core.state import PipelineState
-from agents.base import BaseAgent
+from agents.base import BaseAgent, reloop_seed
 
 
 # HJ 2026-06-11 — G4 모달 라이브 피드용. eda_agent.py 패턴 동일.
@@ -102,12 +102,33 @@ class HyperparameterTunerAgent(BaseAgent):
             _g4_hpo_insights: list[str] = []
 
             # HJ 2026-06-13 — 모델별 튜닝 병렬 + 실시간 publish.
-            #   각 Optuna study 는 독립(study_name 에 model_name 포함, TPESampler(seed=42))이라
-            #   병렬 실행해도 결과가 직렬과 비트 동일 — 분석 품질 무손실.
+            #   각 Optuna study 는 독립(study_name 에 model_name 포함, TPESampler(seed=회차별))이라
+            #   병렬 실행해도 결과가 직렬과 비트 동일 — 분석 품질 무손실(회차 내부는 결정적).
             #   _run_optuna 는 loop.run_in_executor 기반이라 gather 시 스레드로 동시 실행된다.
             #   한 모델 study 가 끝나는 즉시 그 best_params 인사이트를 누적 publish → 사용자가
             #   "모아서 한 번에"가 아니라 완료되는 순서대로 실시간 확인.
+            # hpo_warm_start KB — 동일 카테고리 과거 best_params 를 모델별로 미리 조회(best-effort).
+            _warm_map: dict[str, dict] = {}
+            try:
+                from ada.harness.rag import KBRAG
+
+                if self.session is not None:
+                    _warm_map = await KBRAG(self.session).fetch_warm_start_map(state.category)
+            except Exception:
+                _warm_map = {}
+            # warm-start 인용은 부모 컨텍스트에서 카운트(gather 태스크는 ContextVar 격리됨).
+            if _warm_map:
+                try:
+                    from ada.observability.metrics import record_kb_citation
+
+                    for _m in state.model_candidates:
+                        if _warm_map.get(_m):
+                            record_kb_citation(source="hpo_warm_start_kb")
+                except Exception:
+                    pass
+
             async def _tune_one(model_name: str) -> None:
+                _ws = _warm_map.get(model_name)
                 best = await self._run_optuna(
                     state,
                     model_name,
@@ -117,6 +138,7 @@ class HyperparameterTunerAgent(BaseAgent):
                     ss_module,
                     n_trials=_eff_n_trials,
                     timeout_sec=_eff_timeout,
+                    warm_start=_ws,
                 )
                 # asyncio 단일 스레드 — await 종료 후 아래 동기 구간은 원자적(race 없음).
                 best_params[model_name] = best
@@ -163,6 +185,10 @@ class HyperparameterTunerAgent(BaseAgent):
                 },
             )
 
+            try:
+                self._run_payload_extra["best_params"] = {m: p for m, p in best_params.items() if p}
+            except Exception:
+                pass
             return state.with_update(best_params=best_params, next_agent="training_executor")
 
     async def _load_xy(self, state: PipelineState):
@@ -219,6 +245,7 @@ class HyperparameterTunerAgent(BaseAgent):
         *,
         n_trials: int | None = None,
         timeout_sec: int | None = None,
+        warm_start: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         _n_trials = int(n_trials) if n_trials is not None else self.n_trials
         _timeout_sec = int(timeout_sec) if timeout_sec is not None else self.timeout_per_model_sec
@@ -231,11 +258,20 @@ class HyperparameterTunerAgent(BaseAgent):
                 self.logger.warning("optuna_missing", model=model_name)
                 return {}
 
+            # HJ 2026-06-14 — 재시도 회차별 시드. seed=42 고정이면 재시도해도 TPE 가
+            #   동일 경로를 탐색해 best_params·metric 이 안 변한다(사용자 보고). 회차마다
+            #   다른 seed → 실제로 다른 하이퍼파라미터 영역 탐색 → 수치값 변동. 첫 실행은 42.
             study = optuna.create_study(
                 direction="maximize",
                 study_name=f"{state.job_id}-{model_name}",
-                sampler=optuna.samplers.TPESampler(seed=42),
+                sampler=optuna.samplers.TPESampler(seed=reloop_seed(state)),
             )
+            # hpo_warm_start — 과거 best_params 를 첫 trial 로 enqueue (미일치 키는 Optuna 가 무시).
+            if warm_start:
+                try:
+                    study.enqueue_trial(dict(warm_start))
+                except Exception as _we:  # noqa: BLE001
+                    self.logger.warning("warm_start_enqueue_failed", model=model_name, error=str(_we))
 
             from pipelines.factory import PipelineFactory
 

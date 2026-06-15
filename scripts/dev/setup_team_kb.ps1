@@ -5,7 +5,7 @@
 #   1) .env 에 KB 수집 3줄 설정 (KB_SERVER_URL / KB_COLLECT_SECRET / KB_SYNC_DATABASE_URL)
 #      - KB_SYNC_DATABASE_URL 은 본인 .env 의 POSTGRES_USER/PASSWORD/포트/DB 를 읽어 자동 생성
 #        → 팀원마다 비번이 달라도 불일치 없음 (복붙의 함정 제거)
-#   2) ADA-IngestHistory 작업 등록 (5분 주기, Cowork+과거이력 수집)
+#   2) ADA-IngestHistory 작업 등록 (30분 주기, Cowork+과거이력 수집)
 #   3) ADA-KB-Sync 작업 등록 (크로스팀 KB 동기화) — register_kb_sync_task.ps1 재사용
 #   4) 결과 검증 출력
 #
@@ -93,14 +93,14 @@ Write-Host "     KB_SERVER_URL        = $ServerUrl"
 Write-Host "     KB_COLLECT_SECRET    = ****(설정됨)"
 Write-Host "     KB_SYNC_DATABASE_URL = postgresql://${pgUser}:****@localhost:${pgPort}/${pgDb}"
 
-# --- ADA-IngestHistory 등록 (5분 주기) ---------------------------------------
+# --- ADA-IngestHistory 등록 (30분 주기) --------------------------------------
 $IngestScript = Join-Path $ProjectRoot "scripts\ingest_history.py"
 $action  = New-ScheduledTaskAction -Execute $PythonExe -Argument "-X utf8 `"$IngestScript`"" -WorkingDirectory $ProjectRoot
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration (New-TimeSpan -Days 3650)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName "ADA-IngestHistory" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "ADA Cowork/Claude Code 대화이력 5분 주기 수집" -Force | Out-Null
-Write-Host "[OK] ADA-IngestHistory 등록 (5분 주기)" -ForegroundColor Green
+Register-ScheduledTask -TaskName "ADA-IngestHistory" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "ADA Cowork/Claude Code 대화이력 30분 주기 수집" -Force | Out-Null
+Write-Host "[OK] ADA-IngestHistory 등록 (30분 주기)" -ForegroundColor Green
 
 # --- ADA-KB-Sync 등록 (크로스팀 동기화) — 기존 스크립트 재사용 ---------------
 if (-not $SkipSync) {

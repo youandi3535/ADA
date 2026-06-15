@@ -250,6 +250,13 @@ class DataProfilerAgent(BaseAgent):
             # target dtype·nunique 가 확정된 현 시점이 룰 분류 정확도 100%.
             final_task = _resolve_task_from_profile(state.task, category, target_column, df)
 
+            try:
+                self._run_payload_extra["data_profile"] = {
+                    "rows": (profile or {}).get("rows") or (profile or {}).get("n_rows"),
+                    "cols": (profile or {}).get("cols") or (profile or {}).get("n_cols"),
+                }
+            except Exception:
+                pass
             new_state = state.with_update(
                 category=category,
                 target_column=target_column,

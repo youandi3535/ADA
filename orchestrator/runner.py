@@ -913,6 +913,24 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         load_checkpoint(checkpointer, job_id)
         graph = build_graph(checkpointer=checkpointer)
         config = {"configurable": {"thread_id": job_id}}
+        # HJ 2026-06-15 — 재개 즉시(상태 'running' 전환 전) 이전 실행의 stale 라이브 피드를 비운다.
+        #   publish_stage_partial 은 ada:stage_partial:{job_id} 에 '누적 머지'만 하고 절대 지우지 않으므로,
+        #   이전 단계(또는 되감기 전 상위 단계)의 eda_insights·methodology_candidates·차트수 등이 남아
+        #   다음 단계 모달에 그대로 떠 '재진행했는데 이미 분석이 끝난 내용이 채워진 채 95% 부터 시작'하던
+        #   버그를 유발했다. 다음 단계 agent 가 곧 자기 키를 fresh 로 republish 하므로 여기서 비우는 것이 안전.
+        #   (상태 'running' 전에 지워야 프론트의 stale 가드 해제 시점에 이미 깨끗하다.)
+        #   HJ 2026-06-15 — 함께 ada:progress 도 비운다. 이 키엔 직전 실행이 남긴 글로벌 진행률이 있는데,
+        #   '아무 단계나' 이전으로 돌아가 재진행하면 그 값이 (되돌아온 단계 기준) 정확히 그 단계 범위
+        #   '꼭대기'(예: G3 게이트=33=G2 범위 상단)라 프론트에서 stageProgress≈1.0 → 95% 로 클램프돼
+        #   _barFlowPct(단조 증가)에 래치 → 모달 진행바가 0% 아닌 95% 부터 시작하던 버그. status='running'
+        #   전에 비우면, 프론트가 running 을 보고 stale 가드를 풀 때 이미 진행률이 없어(=시간기반 0부터)
+        #   래치되지 않는다. 아래 publish_progress 가 곧 현재 단계의 신선한 값으로 다시 채운다.
+        try:
+            _r0 = _get_redis()
+            _r0.delete(f"ada:stage_partial:{job_id}")
+            _r0.delete(f"ada:progress:{job_id}")
+        except Exception:  # noqa: BLE001
+            pass
         await _set_job_terminal(job_id, "running")
 
         gate_code = gate_response.get("gate", "G?")
@@ -1046,7 +1064,18 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                 "next_agent": None,
             }
             try:
-                _get_redis().delete(f"ada:gate_data:{job_id}")
+                _rc = _get_redis()
+                _rc.delete(f"ada:gate_data:{job_id}")
+                # HJ 2026-06-15 — 재진행 시 제출 게이트 이후 단계가 쓰는 prefetch 캐시도 무효화한다.
+                #   캐시 키가 job_id 만이라(ada:g2_eda_ins / ada:g3_pre) 사용자 선택(방향·방법론) 변경을
+                #   구분하지 못한다. 무효화하지 않으면 eda_agent/preprocessing_strategist 가 캐시 히트로
+                #   _generate_plan 등 실제 재분석을 스킵 → "다른 옵션을 골라 재진행했는데 재분석 없이
+                #   10초 내 다음 단계로 점프"하던 버그. 다운스트림 상태(preprocessing_plan=None 등)는 위에서
+                #   비웠지만 Redis 캐시는 별도라 여기서 함께 지운다. (_gnum = 제출 게이트 번호)
+                if _gnum <= 2:  # G1/G2 재진행 → EDA(eda_agent) 재실행 대상
+                    _rc.delete(f"ada:g2_eda_ins:{job_id}")
+                if _gnum <= 3:  # G1/G2/G3 재진행 → 전처리(preprocessing_strategist) 재실행 대상
+                    _rc.delete(f"ada:g3_pre:{job_id}")
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1109,14 +1138,38 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         #   loop 가 G5 인터럽트 직후 종료되어 eval_agent → explainability → insight →
         #   gate_outputs(G6) 까지 못 가고 is_terminal=True 로 잘못 완료 처리된다.
         #   "정말 완료" 신호는 output_paths (report_composer 가 채움) 만으로 충분.
-        _passes = len(_GN) + 2
+        #
+        # HJ 2026-06-14 — 재시도(re-loop) 시 5단계→7단계 점프 버그 수정.
+        #   interrupt_after 는 이미 user_choice 가 있어 패스스루되는 게이트에도 매번 발화한다.
+        #   G5 응답 후 fresh invocation 은 G2→G3→G4→G5 를 패스스루로 되밟은 뒤 eval_agent 를
+        #   도는데, eval 의 3-tier 자동 재시도(1차 HP재튜닝·2차 피처재구성·3차 전처리재검토)가
+        #   돌면 매 재시도가 G5(gate_best_model)를, 2·3차는 G4(gate_model_strategy)까지 다시
+        #   거치며 패스스루 인터럽트가 누적된다(최악 ~13회). 기존 예산 len(_GN)+2=7 로는 이를
+        #   못 흡수 → G6(산출물 선택) 도달 전에 루프가 끊겨 current_gate=None 으로 종료 →
+        #   is_terminal 오판 → 6단계를 건너뛰고 7단계로 점프했다(사용자 보고).
+        #   재시도 한도(max_re_loop + max_baseline_re_loop) 기반으로 예산을 산정한다
+        #   (리루프 1회당 G4·G5 최대 2 게이트 재방문 + 여유 4). 그래프 자체 카운터가 재시도
+        #   종료를 보장하므로 이 예산은 안전한 상한이다.
+        _max_rl = int(getattr(_fresh, "max_re_loop", 3) or 3)
+        _max_brl = int(getattr(_fresh, "max_baseline_re_loop", 3) or 3)
+        _passes = len(_GN) + 2 * (_max_rl + _max_brl) + 4
+        _budget_exhausted = False
         while (
-            _passes > 0
-            and final_dict is not None
+            final_dict is not None
             and not final_dict.get("current_gate")
             and not final_dict.get("error")
             and not final_dict.get("output_paths")
         ):
+            if _passes <= 0:
+                # 예산 소진 — 완료로 오판하면 6단계 스킵 → 7단계 점프이므로 stall 로 분기.
+                _budget_exhausted = True
+                log.warning(
+                    "resume_passes_exhausted",
+                    job_id=job_id,
+                    gate=gate_code,
+                    note="패스스루 게이트 스텝 예산 소진 — 완료 오판 방지",
+                )
+                break
             final = await fresh_graph.ainvoke(None, config=config)
             final_dict = _final_to_dict(final)
             _passes -= 1
@@ -1159,7 +1212,10 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
             await _set_job_terminal(job_id, "failed", error=_leftover_err)
             return {"status": "failed", "error": _leftover_err}
 
-        is_terminal = bool(final_dict) and not final_dict.get("current_gate")
+        # HJ 2026-06-14 — 패스 예산 소진(_budget_exhausted)은 완료로 오판하지 않는다.
+        #   current_gate·output_paths·error 없이 빠져나온 stall 을 completed 로 발행하면
+        #   6단계(G6 산출물 선택)를 건너뛰고 7단계로 점프하므로, 이 경우는 awaiting 으로 둔다.
+        is_terminal = bool(final_dict) and not final_dict.get("current_gate") and not _budget_exhausted
         if is_terminal:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
             await _set_job_terminal(job_id, "completed")

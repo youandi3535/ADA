@@ -117,7 +117,7 @@ def _try_reload_model_and_data(state: Any):
             return None
 
         mc = get_minio_client()
-        key = minio_path.replace(f"s3://{mc.bucket}/", "") if minio_path.startswith("s3://") else minio_path
+        key = mc.object_key(minio_path)  # 버킷명 무관 s3:// 접두 제거 (단일 진입점)
         import tempfile
 
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".joblib")
@@ -618,10 +618,7 @@ def _build_deployment_checklist(state: Any) -> dict[str, Any] | None:
     cat_extras_local = _tab_extras(state)
     cal = cat_extras_local.get("calibration") or {}
     if cal.get("method") and cal.get("ece_before") is not None and cal.get("ece_after") is not None:
-        cal_str = (
-            f"{cal['method']} 적용 — ECE {float(cal['ece_before']):.3f} "
-            f"→ {float(cal['ece_after']):.3f}"
-        )
+        cal_str = f"{cal['method']} 적용 — ECE {float(cal['ece_before']):.3f} → {float(cal['ece_after']):.3f}"
     elif cal.get("skipped_reason"):
         cal_str = f"보정 skip ({cal['skipped_reason']}) — 기본 확률 사용"
     else:
@@ -641,10 +638,12 @@ def _build_deployment_checklist(state: Any) -> dict[str, Any] | None:
     if archetype and archetype != "clean_balanced" and archetype_conf >= 0.5:
         signal_summary = _format_archetype_signals(archetype, archetype_signals)
         conf_str = f"{archetype_conf:.0%}"
-        rows.append([
-            "데이터 archetype",
-            f"{archetype} (신뢰도 {conf_str}) — {signal_summary}",
-        ])
+        rows.append(
+            [
+                "데이터 archetype",
+                f"{archetype} (신뢰도 {conf_str}) — {signal_summary}",
+            ]
+        )
 
     return {
         "title": "배포 체크리스트",
@@ -700,9 +699,7 @@ def _build_monitoring_kpi_table(state: Any) -> dict[str, Any] | None:
     bm = getattr(state, "best_model", None) or {}
     metrics = bm.get("metrics") or {}
     primary_metric_name = "F1" if _is_classification(state) else "R²"
-    primary_value = (
-        metrics.get("val_f1") if _is_classification(state) else metrics.get("val_r2")
-    )
+    primary_value = metrics.get("val_f1") if _is_classification(state) else metrics.get("val_r2")
     primary_str = f"{float(primary_value):.3f}" if primary_value is not None else "—"
 
     # archetype 별로 점검 주기 조정
@@ -765,16 +762,14 @@ def _build_threshold_strategy_table(state: Any) -> dict[str, Any] | None:
             "columns": ["전략", "임계치", "비고"],
             "rows": [
                 ["기본 0.5", "0.50", "확률 보정 완료된 경우"],
-                ["F1-max", f"{float(opt_thr):.2f}",
-                 f"F1={float(f1_at_opt):.2f}" if f1_at_opt else "F1 최대"],
+                ["F1-max", f"{float(opt_thr):.2f}", f"F1={float(f1_at_opt):.2f}" if f1_at_opt else "F1 최대"],
                 ["cost-min / Youden J / recall-min", "—", "threshold_optimizer 미실행"],
             ],
         }
 
     cost_matrix = ts.get("cost_matrix") or {}
     cost_str_suffix = (
-        f" (FP={cost_matrix.get('fp')}, FN={cost_matrix.get('fn')})"
-        if cost_matrix else " — cost_matrix 입력 시 활성화"
+        f" (FP={cost_matrix.get('fp')}, FN={cost_matrix.get('fn')})" if cost_matrix else " — cost_matrix 입력 시 활성화"
     )
     recommended = ts.get("recommended") or "f1_max"
 
@@ -799,8 +794,7 @@ def _build_threshold_strategy_table(state: Any) -> dict[str, Any] | None:
     rows = [
         ["기본 0.5", "0.50", "확률 보정 완료된 경우만 권장"],
         _fmt_strategy("F1-max", strategies.get("f1_max"), ["f1", "precision", "recall", "expected_cost"]),
-        _fmt_strategy("Cost-min", strategies.get("cost_min"),
-                      ["expected_cost", "f1", "precision", "recall"]),
+        _fmt_strategy("Cost-min", strategies.get("cost_min"), ["expected_cost", "f1", "precision", "recall"]),
         _fmt_strategy("Youden J", strategies.get("youden_j"), ["j_statistic", "tpr", "fpr"]),
         _fmt_strategy(
             f"Recall-min (≥{ts.get('target_recall', 0.9):.1f})",
@@ -1049,9 +1043,7 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
                 if (
                     len(_df0) == len(df_raw)
                     and tgt in _df0.columns
-                    and np.array_equal(
-                        np.asarray(_df0[tgt].values).ravel(), np.asarray(y_full).ravel()
-                    )
+                    and np.array_equal(np.asarray(_df0[tgt].values).ravel(), np.asarray(y_full).ravel())
                 ):
                     df_label = _df0
             except Exception as _exc:  # noqa: BLE001
@@ -1071,15 +1063,9 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
             )
             cand_val = df_label.drop(columns=[tgt]).iloc[idx_val].reset_index(drop=True)
             # 안전망: 복원한 행의 타깃이 reload 한 y_val 과 일치할 때만 사용
-            if np.array_equal(
-                np.asarray(y_full[idx_val]).ravel(), np.asarray(y_val).ravel()
-            ):
+            if np.array_equal(np.asarray(y_full[idx_val]).ravel(), np.asarray(y_val).ravel()):
                 raw_val = cand_val
-                feat_cols = list(
-                    df_raw.drop(columns=[tgt])
-                    .select_dtypes(include=[np.number, "bool"])
-                    .columns
-                )
+                feat_cols = list(df_raw.drop(columns=[tgt]).select_dtypes(include=[np.number, "bool"]).columns)
             else:
                 logger.warning("analysis_raw_val_mismatch: split 불일치 — 세그먼트 스킵")
     except Exception as exc:
@@ -1100,8 +1086,10 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
         cm = confusion_matrix(yv, yp, labels=uniq)
         if len(uniq) == 2:
             out["confusion_matrix"] = {
-                "tn": int(cm[0, 0]), "fp": int(cm[0, 1]),
-                "fn": int(cm[1, 0]), "tp": int(cm[1, 1]),
+                "tn": int(cm[0, 0]),
+                "fp": int(cm[0, 1]),
+                "fn": int(cm[1, 0]),
+                "tp": int(cm[1, 1]),
                 "labels": [str(u) for u in uniq],
             }
     except Exception:
@@ -1148,12 +1136,14 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
                     mask = (seg_df[col] == v).to_numpy()
                     n = int(mask.sum())
                     if n >= 10:
-                        segs.append({
-                            "segment": _seg_label(col, v),
-                            "metric": "accuracy",
-                            "value": round(float(correct[mask].mean()), 3),
-                            "n": n,
-                        })
+                        segs.append(
+                            {
+                                "segment": _seg_label(col, v),
+                                "metric": "accuracy",
+                                "value": round(float(correct[mask].mean()), 3),
+                                "n": n,
+                            }
+                        )
             if segs:
                 segs.sort(key=lambda s: s["value"])
                 out["per_segment"] = segs[:8]
@@ -1225,18 +1215,16 @@ def _analysis_payload(state: Any) -> dict[str, Any]:
                 if len(imp) == len(feat_names):
                     order = np.argsort(-imp)[:10]
                     out["global_importance"] = [
-                        {"name": feat_names[k], "importance": round(float(imp[k]), 4)}
-                        for k in order
+                        {"name": feat_names[k], "importance": round(float(imp[k]), 4)} for k in order
                     ]
                     logger.info("analysis_global_shap_ok: %d features", len(out["global_importance"]))
                 else:
-                    logger.warning(
-                        "analysis_global_shap_len_mismatch: imp=%d feat=%d", len(imp), len(feat_names)
-                    )
+                    logger.warning("analysis_global_shap_len_mismatch: imp=%d feat=%d", len(imp), len(feat_names))
             else:
                 logger.warning(
                     "analysis_global_shap_skipped: explainer=%s feat_names=%d",
-                    _explainer is not None, len(feat_names),
+                    _explainer is not None,
+                    len(feat_names),
                 )
         except Exception as _exc:  # noqa: BLE001
             logger.warning("analysis_global_shap_failed: %s", _exc)

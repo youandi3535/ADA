@@ -113,14 +113,23 @@ async def status(job_id: str, db: AsyncSession = Depends(get_db)) -> PipelineSta
         import redis as _redis
 
         _r = _redis.from_url(settings.redis_url, decode_responses=True)
-        _raw = _r.get(f"ada:gate_data:{job_id}")
-        if _raw:
-            _gd = _json.loads(_raw)
-            _active_gate = _gd.get("gate")
-            if _active_gate and _gd.get("proposals"):
-                effective_current_gate = _active_gate
-                if effective_status in ("completed", "pending"):
-                    effective_status = "running"
+        # HJ 2026-06-15 — resume(재실행) 진행 중에는 직전 실행의 leftover 게이트를 노출하지 않고
+        #   '분석 중'으로 보고한다. 재제출 직후 남아있는 상위 게이트(예: G3 재제출 시 G4)를 그대로
+        #   노출하면 프론트가 '분석 중(게이트 빔)'을 못 봐 lastSubmittedGate 를 못 비우고 로딩에
+        #   영구 고착되던 버그 방지. 재실행 동안만 존재하는 ada:resume_lock 사용(Redis라 DB
+        #   event-loop 이슈와 무관). 초기 run 태스크는 락이 없어 정방향 G1 흐름은 영향 없음.
+        if _r.get(f"ada:resume_lock:{job_id}"):
+            effective_status = "running"
+            effective_current_gate = None
+        else:
+            _raw = _r.get(f"ada:gate_data:{job_id}")
+            if _raw:
+                _gd = _json.loads(_raw)
+                _active_gate = _gd.get("gate")
+                if _active_gate and _gd.get("proposals"):
+                    effective_current_gate = _active_gate
+                    if effective_status in ("completed", "pending"):
+                        effective_status = "running"
     except Exception:
         pass
 
@@ -418,6 +427,22 @@ async def gate_detail(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
         if job.status == "failed" and job.error_message:
             data["pipeline_error"] = job.error_message
 
+    # HJ 2026-06-15 — resume(재실행) 진행 중에는 leftover 게이트/제안을 숨겨 프론트가 '분석 중'을 보게 한다.
+    #   (status 엔드포인트와 동일 가드 — 재제출 직후 stale 상위 게이트가 노출돼 프론트가 analyzing 을
+    #    못 보고 lastSubmittedGate 를 못 비워 로딩에 고착되던 버그 방지. 재실행 종료 시 락 해제 → 신규
+    #    게이트가 그때 노출됨. 초기 run 태스크는 락이 없어 정방향 흐름 무영향.)
+    try:
+        import redis as _rlk
+
+        from ada.core.config import settings as _slk
+
+        if _rlk.Redis.from_url(_slk.redis_url, decode_responses=True).get(f"ada:resume_lock:{job_id}"):
+            data["gate"] = None
+            data["proposals"] = []
+            data["pipeline_status"] = "running"
+    except Exception:  # noqa: BLE001
+        pass
+
     # HJ 2026-06-13 — G3(방법론) 화면 진입 감지 → 전처리 윤색 선계산 1회 디스패치.
     #   사용자가 방법론을 고르는 동안 worker(-c 2)가 plan+윤색을 미리 만들어 Redis 캐시에 저장 →
     #   resume 후 preprocessing_strategist 가 캐시 히트로 즉시 표시(품질 보장·0 블록). G2 eda_prefetch 동형.
@@ -483,7 +508,7 @@ async def download_output(job_id: str, output_code: str) -> None:
 
     try:
         mc = get_minio_client()
-        key = minio_path.replace(f"s3://{mc.bucket}/", "") if minio_path.startswith("s3://") else minio_path
+        key = mc.object_key(minio_path)
         body = mc.download_bytes(key)
     except Exception as e:
         raise HTTPException(500, f"파일 다운로드 실패: {e}")

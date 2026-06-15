@@ -258,6 +258,19 @@ class EDAAgent(BaseAgent):
 
             # HJ 2026-06-10 — EDA 데이터 인사이트 추출 (1단계 도메인 분석처럼 사용자에게 의미 설명).
             # 결측·상관·클래스 분포·분포 비대칭 4개 축으로 quick analysis → 자연어 문장 N개 생성.
+            # eda_template KB — 동일 카테고리 과거 EDA 템플릿 재사용(best-effort, 인용 카운트).
+            _eda_ctx = f"G2 EDA·{state.category}"
+            try:
+                from ada.harness.rag import KBRAG
+
+                if self.session is not None:
+                    _tmpl = await KBRAG(self.session).fetch_eda_template(state.category)
+                    if _tmpl and _tmpl.get("recommended_eda"):
+                        _steps = ", ".join(str(x) for x in (_tmpl.get("recommended_eda") or [])[:6])
+                        _eda_ctx = f"G2 EDA·{state.category} (과거 템플릿: {_steps})"
+                        _safe_publish_stage_partial(state.job_id, {"eda_status": f"과거 EDA 템플릿 재사용 — {_steps}"})
+            except Exception:
+                pass
             insights = compute_eda_rule_insights(df, state.target_column)
             if insights:
                 # HJ 2026-06-12 — C′-1: prefetch 가 주제 선택 중 미리 만든 EDA 윤색 인사이트가 있으면 LLM 스킵.
@@ -271,7 +284,7 @@ class EDAAgent(BaseAgent):
                     insights = await self._dynamic_insights(
                         insights,
                         backend="ollama",
-                        context=f"G2 EDA·{state.category}",
+                        context=_eda_ctx,
                         job_id=state.job_id,
                         key="eda_insights",
                     )

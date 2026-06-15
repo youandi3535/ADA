@@ -706,13 +706,78 @@ class AnalysisProposerAgent(BaseGate):
     # api/routes/pipeline.py 의 신규 endpoint 에서 호출됨.
     # _propose 와 prompt 동일 (SYSTEM_PROMPT). user_payload prefix 만 다름.
     # ------------------------------------------------------------------
+    async def _persist_kb_citation_count(self, sess: Any, state: PipelineState, n: int) -> bool:
+        """엔드포인트(log_agent_run ContextVar 밖)에서 발생한 KB 인용을 KP9 가 집계하도록
+        이 job 의 최신 AnalysisProposerAgent agent_run.payload['kb_citations'] 에 n 적산."""
+        if n <= 0:
+            return False
+        job_id = getattr(state, "job_id", None)
+        if not job_id:
+            return False
+        import uuid as _uuid
+
+        from sqlalchemy import select
+
+        from ada.db.models import AgentRun
+
+        jid = _uuid.UUID(str(job_id))
+        row = await sess.scalar(
+            select(AgentRun)
+            .where(AgentRun.job_id == jid, AgentRun.agent_name == self.__class__.__name__)
+            .order_by(AgentRun.created_at.desc())
+            .limit(1)
+        )
+        if row is None:
+            return False
+        existing = row.payload if isinstance(row.payload, dict) else {}
+        existing["kb_citations"] = int(existing.get("kb_citations") or 0) + n
+        row.payload = existing
+        return True
+
     async def propose_directions_with_topic(self, state: PipelineState, topic: str) -> list[dict[str, Any]]:
         """G2 분석 방향 LLM 호출 — selected_topic + 도메인 지식 입력."""
         dp = state.data_profile or {}
         domain = dp.get("domain_analysis") or {}
         missing = dp.get("missing") or {}
         missing_hi = {k: round(float(v), 3) for k, v in missing.items() if isinstance(v, (int, float)) and v > 0.05}
+        # success_pattern KB — 동일 카테고리 과거 성공 사례를 방향 제안 컨텍스트로 인용(best-effort).
+        # 엔드포인트(api/routes/pipeline.py)는 세션 없이 호출하므로, self.session 이 없으면
+        # 임시 세션을 열어 KB 활용 + KP9 인용 영속화를 보장한다.
+        _past = []
+        try:
+            from ada.harness.rag import KBRAG
+
+            _own_sess = None
+            sess = self.session
+            if sess is None:
+                from ada.db.session import AsyncSessionLocal
+
+                _own_sess = AsyncSessionLocal()
+                sess = await _own_sess.__aenter__()
+            try:
+                _sp = await KBRAG(sess).fetch_success_patterns(state.category, top_k=3)
+                _past = [
+                    {
+                        "intent": (pp.get("user_intent") or "")[:120],
+                        "target": pp.get("target"),
+                        "outputs": pp.get("requested_outputs") or [],
+                    }
+                    for pp in _sp
+                ]
+                if _sp:
+                    _changed = await self._persist_kb_citation_count(sess, state, len(_sp))
+                    if _changed:
+                        if _own_sess is not None:
+                            await sess.commit()
+                        else:
+                            await sess.flush()
+            finally:
+                if _own_sess is not None:
+                    await _own_sess.__aexit__(None, None, None)
+        except Exception:
+            _past = []
         payload: dict[str, Any] = {
+            "past_success_patterns": _past,
             "selected_topic": topic,
             "user_intent": (state.user_intent or state.user_question or "")[:500],
             "category": state.category,

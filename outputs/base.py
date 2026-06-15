@@ -166,7 +166,7 @@ class OutputGenerator(abc.ABC):
             from tools.minio_tool import get_minio_client
 
             mc = get_minio_client()
-            key = chart_path.replace(f"s3://{mc.bucket}/", "") if chart_path.startswith("s3://") else chart_path
+            key = mc.object_key(chart_path)
             body = mc.download_bytes(key)
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png").name
             with open(tmp, "wb") as f:
@@ -214,7 +214,7 @@ class OutputGenerator(abc.ABC):
             from tools.minio_tool import get_minio_client
 
             mc = get_minio_client()
-            key = chart_path.replace(f"s3://{mc.bucket}/", "") if chart_path.startswith("s3://") else chart_path
+            key = mc.object_key(chart_path)
             return mc.download_bytes(key)
         except Exception:
             return None

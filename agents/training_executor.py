@@ -22,7 +22,7 @@ import numpy as np
 
 from ada.core.config import settings
 from ada.core.state import PipelineState
-from agents.base import BaseAgent
+from agents.base import BaseAgent, reloop_seed
 
 
 # HJ 2026-06-11 — G4 모달 라이브 피드용 (모델별 학습 진행 상황 publish).
@@ -151,11 +151,14 @@ class TrainingExecutorAgent(BaseAgent):
             else:
                 from sklearn.model_selection import train_test_split
 
+                # HJ 2026-06-14 — 재시도 회차별 분할 시드. 고정 42 면 재시도해도 train/val 이
+                #   동일해 metric 이 안 변한다 → 회차마다 다른 holdout 분할로 수치 변동(첫 실행 42).
+                #   (누수-safe bounds·시계열 시간분할 경로는 위에서 별도 처리 — 여기 미해당.)
                 X_tr, X_val, y_tr, y_val = train_test_split(
                     X,
                     y,
                     test_size=0.2,
-                    random_state=42,
+                    random_state=reloop_seed(state),
                     stratify=y
                     if state.category in ("tabular_ml", "tabular_dl") and len(set(y.tolist())) <= 20
                     else None,
