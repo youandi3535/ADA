@@ -4,6 +4,7 @@ GET  /kb/recipes/{category}
 GET  /kb/lessons/search?q=...
 DELETE /kb/{kb_id}      — 삭제 권리(GDPR)
 """
+
 from __future__ import annotations
 
 import uuid
@@ -21,27 +22,27 @@ router = APIRouter()
 
 
 @router.get("/recipes/{category}")
-async def list_recipes(category: str, db: AsyncSession = Depends(get_db),
-                       user: dict = Depends(require_perm("pipeline.read"))) -> list[dict]:
+async def list_recipes(
+    category: str, db: AsyncSession = Depends(get_db), user: dict = Depends(require_perm("pipeline.read"))
+) -> list[dict]:
     rag = KBRAG(db)
-    return await rag.search_recipes(category, top_k=10)
+    return await rag.search_recipes(category, top_k=10, cite=False)
 
 
 @router.get("/lessons/search")
-async def search_lessons(q: str = Query(min_length=2),
-                          db: AsyncSession = Depends(get_db),
-                          user: dict = Depends(require_perm("pipeline.read"))) -> list[dict]:
+async def search_lessons(
+    q: str = Query(min_length=2),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_perm("pipeline.read")),
+) -> list[dict]:
     rag = KBRAG(db)
-    return await rag.search_lessons(q, top_k=5)
+    return await rag.search_lessons(q, top_k=5, cite=False)
 
 
 @router.delete("/{kb_id}")
-async def delete_kb(kb_id: str, db: AsyncSession = Depends(get_db),
-                    user: dict = Depends(require_perm("*"))) -> dict:
+async def delete_kb(kb_id: str, db: AsyncSession = Depends(get_db), user: dict = Depends(require_perm("*"))) -> dict:
     """삭제 권리 — Day19. admin 만 호출."""
-    kb = await db.scalar(select(SelfLearningKB).where(
-        SelfLearningKB.id == uuid.UUID(kb_id)
-    ))
+    kb = await db.scalar(select(SelfLearningKB).where(SelfLearningKB.id == uuid.UUID(kb_id)))
     if kb is None:
         raise HTTPException(404, detail="not found")
     await db.delete(kb)

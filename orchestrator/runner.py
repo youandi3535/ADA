@@ -919,8 +919,16 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
         #   다음 단계 모달에 그대로 떠 '재진행했는데 이미 분석이 끝난 내용이 채워진 채 95% 부터 시작'하던
         #   버그를 유발했다. 다음 단계 agent 가 곧 자기 키를 fresh 로 republish 하므로 여기서 비우는 것이 안전.
         #   (상태 'running' 전에 지워야 프론트의 stale 가드 해제 시점에 이미 깨끗하다.)
+        #   HJ 2026-06-15 — 함께 ada:progress 도 비운다. 이 키엔 직전 실행이 남긴 글로벌 진행률이 있는데,
+        #   '아무 단계나' 이전으로 돌아가 재진행하면 그 값이 (되돌아온 단계 기준) 정확히 그 단계 범위
+        #   '꼭대기'(예: G3 게이트=33=G2 범위 상단)라 프론트에서 stageProgress≈1.0 → 95% 로 클램프돼
+        #   _barFlowPct(단조 증가)에 래치 → 모달 진행바가 0% 아닌 95% 부터 시작하던 버그. status='running'
+        #   전에 비우면, 프론트가 running 을 보고 stale 가드를 풀 때 이미 진행률이 없어(=시간기반 0부터)
+        #   래치되지 않는다. 아래 publish_progress 가 곧 현재 단계의 신선한 값으로 다시 채운다.
         try:
-            _get_redis().delete(f"ada:stage_partial:{job_id}")
+            _r0 = _get_redis()
+            _r0.delete(f"ada:stage_partial:{job_id}")
+            _r0.delete(f"ada:progress:{job_id}")
         except Exception:  # noqa: BLE001
             pass
         await _set_job_terminal(job_id, "running")

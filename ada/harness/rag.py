@@ -60,7 +60,7 @@ class KBRAG:
         return vec.astype(float).tolist()
 
     # ------------------------------------------------------------------
-    async def search_lessons(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    async def search_lessons(self, query: str, top_k: int = 5, *, cite: bool = True) -> list[dict[str, Any]]:
         """failure_lesson 검색."""
         emb = self.embed(query)
         sql = text(
@@ -77,12 +77,23 @@ class KBRAG:
         )
         try:
             rows = await self.session.execute(sql, {"emb": str(emb), "k": top_k})
-            return [dict(r._mapping) for r in rows]
+            results = [dict(r._mapping) for r in rows]
         except Exception as e:
             log.warning("rag_search_failed", error=str(e))
             return []
+        # Day11/KP9 — 관련 매칭(유사도>=0.7)을 KB 인용으로 카운트 (RAG 공통 단일 집계점)
+        if cite and results:
+            try:
+                from ada.observability.metrics import record_kb_citation
 
-    async def search_recipes(self, category: str, top_k: int = 5) -> list[dict[str, Any]]:
+                for _r in results:
+                    if float(_r.get("similarity") or 0.0) >= 0.7:
+                        record_kb_citation(source="lessons_kb")
+            except Exception:
+                pass
+        return results
+
+    async def search_recipes(self, category: str, top_k: int = 5, *, cite: bool = True) -> list[dict[str, Any]]:
         """category 기반 recipe 검색 (pgvector 없이 단순 정렬)."""
         rows = await self.session.scalars(
             select(SelfLearningKB)
@@ -93,12 +104,22 @@ class KBRAG:
             .order_by(SelfLearningKB.success_count.desc())
             .limit(top_k)
         )
-        return [
+        results = [
             {"hash": r.hash, "payload": r.payload, "confidence": r.confidence, "success_count": r.success_count}
             for r in rows
             # R-504 — retracted KB 제외 (폐기된 레시피는 인용 금지)
             if not (isinstance(r.payload, dict) and r.payload.get("retracted"))
         ]
+        # Day11/KP9 — 반환 레시피를 KB 인용으로 카운트
+        if cite and results:
+            try:
+                from ada.observability.metrics import record_kb_citation
+
+                for _ in results:
+                    record_kb_citation(source="recipes_kb")
+            except Exception:
+                pass
+        return results
 
     # ------------------------------------------------------------------
     async def index_lesson(self, kb_id: Any, summary: str) -> None:

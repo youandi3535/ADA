@@ -1478,8 +1478,15 @@ function _stageProgress(){
     const rng=STAGE_RANGE[cur];
     if(rng){
       const stageProgress=(Number(rawP)-rng[0])/(rng[1]-rng[0]);
+      // HJ 2026-06-15 — 여기 도달 = _completing 아직 false(다음 게이트 proposals 미도착, 분석 진행 중).
+      //   이때 rawP 가 시간기반 추정(target)보다 15%p 넘게 앞서지 못하게 캡한다. 재진행 시 EDA 가
+      //   캐시히트로 8초만에 끝나 rawP 가 단계 범위 꼭대기(=95%)로 즉시 치솟은 뒤, 뒤이은 방법론 생성
+      //   (~55초) 동안 모달 진행바가 95% 에 고정되던 버그 방지. → rawP 는 시간기반 +15%p 이내에서만
+      //   보정에 쓰여 바가 0%부터 점진적으로 오르고, 실제 95% 핀은 proposals 도착 시 위 _completing
+      //   블록이 담당한다. 정상 전진(EDA 실제 계산)에선 rawP≈시간기반이라 캡이 거의 안 걸려 무영향.
+      //   모든 게이트 공통(STAGE_RANGE[cur]·시간기반 기반).
       if(stageProgress>0){
-        target=Math.max(target, Math.min(95, stageProgress*100));
+        target=Math.max(target, Math.min(Math.min(95, stageProgress*100), target+15));
       }
     }
   }
