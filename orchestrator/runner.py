@@ -1064,7 +1064,18 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                 "next_agent": None,
             }
             try:
-                _get_redis().delete(f"ada:gate_data:{job_id}")
+                _rc = _get_redis()
+                _rc.delete(f"ada:gate_data:{job_id}")
+                # HJ 2026-06-15 — 재진행 시 제출 게이트 이후 단계가 쓰는 prefetch 캐시도 무효화한다.
+                #   캐시 키가 job_id 만이라(ada:g2_eda_ins / ada:g3_pre) 사용자 선택(방향·방법론) 변경을
+                #   구분하지 못한다. 무효화하지 않으면 eda_agent/preprocessing_strategist 가 캐시 히트로
+                #   _generate_plan 등 실제 재분석을 스킵 → "다른 옵션을 골라 재진행했는데 재분석 없이
+                #   10초 내 다음 단계로 점프"하던 버그. 다운스트림 상태(preprocessing_plan=None 등)는 위에서
+                #   비웠지만 Redis 캐시는 별도라 여기서 함께 지운다. (_gnum = 제출 게이트 번호)
+                if _gnum <= 2:  # G1/G2 재진행 → EDA(eda_agent) 재실행 대상
+                    _rc.delete(f"ada:g2_eda_ins:{job_id}")
+                if _gnum <= 3:  # G1/G2/G3 재진행 → 전처리(preprocessing_strategist) 재실행 대상
+                    _rc.delete(f"ada:g3_pre:{job_id}")
             except Exception:  # noqa: BLE001
                 pass
 
