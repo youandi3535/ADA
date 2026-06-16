@@ -111,10 +111,13 @@ _FLOW_HTML = """
   .databar b{color:#176a45;}
   .loadwrap{text-align:center;margin-top:24px;}
   .loadtxt{font-size:22px;color:#52647d;}
-  .progbox{margin:28px auto 0;max-width:760px;text-align:center;}
+  /* HJ 2026-06-16 — 진행바를 로딩 박스(.loadwrap)와 같은 카드 전체 너비로 확장(760px 제한 해제).
+     각 칸(.ms-seg)이 넓어져 라벨이 3줄→2줄로 떨어진다. */
+  .progbox{margin:28px auto 0;max-width:none;text-align:center;}
   .lbar{height:20px;border-radius:10px;background:#e6edf6;overflow:hidden;max-width:760px;margin:22px auto 0;position:relative;}
   .lfill{height:100%;border-radius:10px;background:linear-gradient(90deg,#3f5d7e,#1f3e5c);transition:width .6s ease;}
-  .lmeta{font-size:20px;color:#7e98ba;margin-top:16px;}
+  /* HJ 2026-06-16 — 진행/경과 메타 글씨 30px·진하게(700). */
+  .lmeta{font-size:30px;font-weight:700;color:#7e98ba;margin-top:16px;}
   .lmeta b{color:#3f5168;}
   .lagent{font-size:19px;color:#1f7a52;margin-top:8px;}
   @keyframes adapop{0%{transform:scale(.06);opacity:0;}60%{opacity:1;}100%{transform:scale(1);opacity:1;}}
@@ -276,16 +279,21 @@ _FLOW_HTML = """
   .tw-caret{display:inline-block;width:2px;height:1em;background:#1f3e5c;margin-left:2px;vertical-align:-2px;animation:twBlink 0.85s steps(2,start) infinite;opacity:.85;}
   @keyframes twBlink{to{visibility:hidden;}}
   /* HJ 2026-06-10 — 마일스톤 세그먼트 바. 각 segment = 단계의 한 agent. 완료/현재/대기 색상 구분. */
-  .ms-bar{display:flex;width:100%;min-height:48px;background:#eef2f8;border-radius:12px;overflow:hidden;border:1px solid #d8e3f2;max-width:760px;margin:0 auto;}
-  .ms-seg{flex:1;display:flex;align-items:center;justify-content:center;padding:6px 8px;font-size:13px;font-weight:600;color:#7e98ba;border-right:1px solid rgba(255,255,255,.6);transition:background .35s,color .35s;min-width:0;line-height:1.35;text-align:center;word-break:keep-all;overflow-wrap:break-word;}
+  /* HJ 2026-06-16 — 진행바 글씨 2배(13→26px)·긴 단어 2줄 자동 줄바꿈·2줄 들어가도록 바 높이 확대(48→96px).
+     min-height 는 floor 일 뿐 flex 가 내용에 맞춰 더 늘어나므로 3줄 이상 라벨도 잘리지 않음. */
+  .ms-bar{display:flex;width:100%;min-height:96px;background:#eef2f8;border-radius:12px;overflow:hidden;border:1px solid #d8e3f2;max-width:none;margin:0 auto;}
+  .ms-seg{flex:1;display:flex;align-items:center;justify-content:center;padding:8px 10px;font-size:26px;font-weight:600;color:#7e98ba;border-right:1px solid rgba(255,255,255,.6);transition:background .35s,color .35s;min-width:0;line-height:1.3;text-align:center;word-break:keep-all;overflow-wrap:break-word;}
   .ms-seg:last-child{border-right:none;}
   .ms-seg-icon{margin-right:4px;font-weight:800;}
   .ms-seg.done{background:#1f7a52;color:#fff;}
   .ms-seg.active{background:linear-gradient(90deg,#1f3e5c,#2c5783);color:#fff;animation:msPulse 1.6s ease-in-out infinite;}
   .ms-seg.pending{background:#f7faff;color:#8aa0bd;}
   @keyframes msPulse{0%,100%{box-shadow:inset 0 0 0 0 rgba(255,255,255,0);}50%{box-shadow:inset 0 0 0 100px rgba(255,255,255,.10);}}
-  .modal-card .ms-bar{min-height:64px;border-radius:14px;max-width:none;}
-  .modal-card .ms-seg{font-size:15px;padding:10px 14px;}
+  /* HJ 2026-06-16 — 팝업창 진행바: progbox 760px 제한 해제로 모달도 전체 너비로 확장됨.
+     모달은 zoom:.6 로 축소 렌더돼 칸당 실효 폭이 분석창보다 좁다(내용폭 약 1148px÷6칸).
+     따라서 최장 라벨('하이퍼파라미터')도 2줄에 들어가도록 글씨 24px·패딩 축소로 맞춘다(3줄 방지). */
+  .modal-card .ms-bar{min-height:96px;border-radius:14px;max-width:none;}
+  .modal-card .ms-seg{font-size:24px;padding:12px 8px;}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
   <!-- 랜딩 오버레이 — G1 이전 단계 클릭 시 표시. 원본 Python 랜딩과 동일한 스타일 -->

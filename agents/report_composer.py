@@ -103,6 +103,16 @@ class ReportComposerAgent(BaseAgent):
                     return code, None
 
             done = await asyncio.gather(*[_gen(c) for c in requested])
+
+            # HJ 2026-06-16 — 재진행(이전 단계 복귀 후 다른 산출물 선택) 버그 수정.
+            #   Output 테이블엔 (job_id, output_code) 유니크 제약이 없어 _save_output_row 가
+            #   행을 '추가만' 했다. 그래서 PPT 로 1회 생성 후 G6 로 되돌아가 PDF 를 골라 재진행하면
+            #   옛 PPT 행이 그대로 남아 /result·/gate(output_paths=DB 전체 행)가 PPT+PDF 를 함께
+            #   반환 → 7단계에서 이전 PPT 가 계속 노출됐다. 새 산출물 저장 직전 이 job 의 기존
+            #   Output 행을 모두 삭제해 '재진행 = 산출물 교체' 의미를 보장한다(연결 재정합).
+            if self.session is not None:
+                await self._clear_existing_outputs(state.job_id)
+
             for code, path in done:
                 if path:
                     results[code] = path
@@ -151,6 +161,18 @@ class ReportComposerAgent(BaseAgent):
             return state.with_update(
                 output_paths=results, category_extras=cat_extras, next_agent="self_learning_dispatch"
             )
+
+    async def _clear_existing_outputs(self, job_id: str) -> None:
+        """재진행 시 이 job 의 기존 Output 행을 모두 삭제(교체 의미 보장)."""
+        try:
+            from sqlalchemy import delete as _sa_delete
+
+            from ada.db.models import Output
+
+            await self.session.execute(_sa_delete(Output).where(Output.job_id == _uuid.UUID(job_id)))
+            await self.session.flush()
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("output_clear_failed", error=str(e))
 
     async def _save_output_row(self, job_id: str, code: str, minio_path: str) -> None:
         try:
