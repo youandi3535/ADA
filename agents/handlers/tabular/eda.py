@@ -48,9 +48,7 @@ def charts(df: Any, state: Any) -> tuple[list[str], list[dict]]:
                         "x": x_col,
                         "title_ko": "결측률 상위 피처",
                         "finding": finding,
-                        "numbers": [
-                            {"name": str(c), "value": round(float(v), 4)} for c, v in top.items()
-                        ],
+                        "numbers": [{"name": str(c), "value": round(float(v), 4)} for c, v in top.items()],
                     }
                 )
     except Exception:
@@ -103,6 +101,15 @@ def charts(df: Any, state: Any) -> tuple[list[str], list[dict]]:
         except Exception:
             pass
 
+    # 5) P2-1 (2026-06-16) — 이상치 진단 (IQR 1.5 기준 피처별 이상치 비율)
+    try:
+        p = _build_outlier_chart(df, state)
+        if p:
+            paths.append(p)
+            meta.append(_outlier_meta(df, p))
+    except Exception:
+        pass
+
     paths = [p for p in paths if p]
     meta = [m for m in meta if m.get("path") in set(paths)]
     return paths, meta
@@ -123,10 +130,7 @@ def _hist_meta(df: Any, num_cols: Any, path: str) -> dict:
         top = skews.index[0]
         x_col = str(top)
         s = df[top]
-        finding = (
-            f"{top} 분포 비대칭 (왜도 {df[top].skew():.1f}) — "
-            f"중앙값 {s.median():.3g} vs 평균 {s.mean():.3g}"
-        )
+        finding = f"{top} 분포 비대칭 (왜도 {df[top].skew():.1f}) — 중앙값 {s.median():.3g} vs 평균 {s.mean():.3g}"
         numbers = [
             {"name": f"{top} median", "value": round(float(s.median()), 3)},
             {"name": f"{top} mean", "value": round(float(s.mean()), 3)},
@@ -162,9 +166,7 @@ def _corr_meta(corr: Any, path: str) -> dict:
             _, r, a, b = pairs[0]
             x_col = str(a)
             finding = f"{a} ↔ {b} 상관 최대 (r={r:.2f})"
-            numbers = [
-                {"name": f"{a}↔{b}", "value": round(rr, 2)} for _, rr, a, b in pairs[:3]
-            ]
+            numbers = [{"name": f"{a}↔{b}", "value": round(rr, 2)} for _, rr, a, b in pairs[:3]]
     except Exception:
         pass
     return {
@@ -191,7 +193,8 @@ def _target_meta(df: Any, target: str, num_cols: Any, path: str) -> dict:
             pos = sorted(df[target].dropna().unique())[-1]
             best = None
             cat_cols = [
-                c for c in df.columns
+                c
+                for c in df.columns
                 if c != target and df[c].nunique(dropna=True) <= 10 and not str(df[c].dtype).startswith("float")
             ]
             for c in cat_cols:
@@ -209,13 +212,8 @@ def _target_meta(df: Any, target: str, num_cols: Any, path: str) -> dict:
                 gap, c, rates = best
                 hi, lo = rates.idxmax(), rates.idxmin()
                 x_col = str(c)
-                finding = (
-                    f"{c} 가 최대 격차 — {hi} {rates.max():.0%} vs {lo} {rates.min():.0%} "
-                    f"({gap * 100:.0f}%p)"
-                )
-                numbers = [
-                    {"name": f"{c}={k}", "value": round(float(v), 3)} for k, v in rates.items()
-                ][:4]
+                finding = f"{c} 가 최대 격차 — {hi} {rates.max():.0%} vs {lo} {rates.min():.0%} ({gap * 100:.0f}%p)"
+                numbers = [{"name": f"{c}={k}", "value": round(float(v), 3)} for k, v in rates.items()][:4]
         elif not is_classification:
             # 회귀 — target 과 상관 최대 수치 피처
             feats = [c for c in num_cols if c != target]
@@ -282,9 +280,13 @@ def _build_target_feature_chart(df: Any, target: str, num_cols: Any, state: Any)
                         groups.append(vals)
                         labels.append(str(cls))
                 if groups:
-                    ax.boxplot(groups, labels=labels, patch_artist=True,
-                               boxprops=dict(facecolor="#dbeafe", edgecolor="#2563eb"),
-                               medianprops=dict(color="#dc2626"))
+                    ax.boxplot(
+                        groups,
+                        labels=labels,
+                        patch_artist=True,
+                        boxprops=dict(facecolor="#dbeafe", edgecolor="#2563eb"),
+                        medianprops=dict(color="#dc2626"),
+                    )
                 ax.set_title(f"{col} by {target}")
                 ax.tick_params(axis="x", rotation=30)
             else:
@@ -311,3 +313,78 @@ def _build_target_feature_chart(df: Any, target: str, num_cols: Any, state: Any)
     fig.suptitle(f"Target ↔ Feature 관계 ({'분류' if is_classification else '회귀'})", fontsize=12)
     fig.tight_layout()
     return save_chart_to_minio(fig, kind="tabular/target_feature", job_id=state.job_id)
+
+
+# ==============================================================
+# P2-1 (2026-06-16) — 이상치 진단 (IQR 1.5)
+# ==============================================================
+
+
+def _outlier_ratios(df: Any) -> dict[str, float]:
+    """수치 피처별 IQR(1.5) 밖 비율. iqr=0(상수성)은 0.0, 표본<4는 제외."""
+    ratios: dict[str, float] = {}
+    for c in df.select_dtypes(include="number").columns:
+        s = df[c].dropna()
+        if len(s) < 4:
+            continue
+        q1 = float(s.quantile(0.25))
+        q3 = float(s.quantile(0.75))
+        iqr = q3 - q1
+        if iqr <= 0:
+            ratios[str(c)] = 0.0
+            continue
+        lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        ratios[str(c)] = float(((s < lo) | (s > hi)).mean())
+    return ratios
+
+
+def _build_outlier_chart(df: Any, state: Any) -> str | None:
+    import matplotlib  # noqa: WPS433
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # noqa: WPS433
+    import pandas as pd  # noqa: WPS433
+
+    from agents.handlers.common.shared import save_chart_to_minio
+
+    ratios = _outlier_ratios(df)
+    if not ratios:
+        return None
+    sr = pd.Series(ratios).sort_values(ascending=False).head(15)
+    if float(sr.sum()) == 0.0:
+        return None  # 이상치 0 → 차트 생략(노이즈 방지)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    sr.iloc[::-1].plot(kind="barh", ax=ax, color="#f59e0b")
+    ax.set_title("Outlier rate by feature (IQR 1.5) — tabular")
+    ax.set_xlabel("outlier ratio")
+    fig.tight_layout()
+    return save_chart_to_minio(fig, kind="tabular/outlier", job_id=state.job_id)
+
+
+def _outlier_meta(df: Any, path: str) -> dict:
+    finding = "IQR(1.5) 기반 이상치 진단"
+    x_col = None
+    numbers: list[dict] = []
+    try:
+        import pandas as pd  # noqa: WPS433
+
+        ratios = _outlier_ratios(df)
+        if ratios:
+            sr = pd.Series(ratios).sort_values(ascending=False)
+            top = str(sr.index[0])
+            x_col = top
+            if float(sr.iloc[0]) > 0:
+                finding = f"{top} 이상치 {sr.iloc[0]:.1%} (IQR 1.5) — 상위 피처 점검·윈저라이즈 권고"
+            else:
+                finding = "IQR 1.5 기준 이상치 거의 없음 — 분포 안정"
+            numbers = [{"name": k, "value": round(float(v), 4)} for k, v in sr.head(3).items()]
+    except Exception:
+        pass
+    return {
+        "path": path,
+        "chart_type": "bar",
+        "x": x_col,
+        "title_ko": "이상치 진단(IQR)",
+        "finding": finding,
+        "numbers": numbers,
+    }

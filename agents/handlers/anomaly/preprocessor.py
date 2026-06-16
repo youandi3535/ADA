@@ -76,6 +76,8 @@ def _empty_result(
         "inf_rows_dropped": 0,
         "has_time": False,
         "preprocessor_warnings": [reason],
+        "input_encoding": {},
+        "impute_medians": {},
     }
     extras = dict(state.category_extras or {})
     cat_block = dict(extras.get("anomaly_detection") or {})
@@ -100,14 +102,115 @@ def _detect_nearly_constant(num_df: Any, threshold: float = NEARLY_CONSTANT_RATI
 
 # ── 헬퍼: inf 행 제거 (B-3) ──────────────────────────────────────
 def _validate_finite(num_df: Any) -> tuple[Any, int]:
-    """inf/-inf 포함 행 제거. 제거된 행 수 반환."""
+    """inf/-inf 포함 행만 제거. NaN 은 보존(결측 처리 단계의 median 대체 대상).
+
+    (G-2, 2026-06-16) 이전엔 np.isfinite 로 inf+NaN 행을 함께 제거해, 뒤따르는 결측
+    대체가 무력화됐다. isinf 로 바꿔 결측 행을 median 단계까지 살린다. inf 가 없으면
+    기존과 동일(무회귀).
+    """
     import numpy as np
 
     if num_df.empty:
         return num_df, 0
-    finite_mask = np.isfinite(num_df.values).all(axis=1)
-    n_inf = int((~finite_mask).sum())
-    return num_df[finite_mask], n_inf
+    inf_mask = np.isinf(num_df.values).any(axis=1)  # NaN 은 inf 가 아니라 보존됨
+    n_inf = int(inf_mask.sum())
+    return num_df[~inf_mask], n_inf
+
+
+# ── 헬퍼: 입력 견고화 (G-1, NY 2026-06-16) ───────────────────────
+# "수치 컬럼만 취하고 나머지 폐기" → "문자로 들어온 숫자 복원 + 범주형 자동 인코딩"
+# 으로 확장. 어떤 데이터(글자·기호·깨진값)가 와도 정보를 버리지 않는다.
+# 설계 결정(에이전트 자동 판단, 사용자 개입 없음):
+#   · object 컬럼만 추가 처리 — 수치/bool/datetime 경로는 손대지 않아 무회귀.
+#   · 1순위 숫자 복원: '$1,234'·'1.2K'·'12%'·'1,234'·'(123)' 등 → 셀 80%+ 파싱되면 수치 편입.
+#   · 2순위 범주형 → **빈도 인코딩**(컬럼명 보존). 이상탐지에서 희귀 범주가 자연히 큰
+#     이상 신호가 되고, 원핫과 달리 차원이 안 터져 후단 PCA 와도 안전 → "정답에 가까운" 선택.
+#   · 고카디널리티(>50, ID성)·상수 컬럼은 노이즈라 drop.
+COERCE_SUCCESS_RATIO = 0.8
+HIGH_CARDINALITY_DROP = 50
+
+
+def _coerce_numeric_like(s: Any) -> Any:
+    """문자로 들어온 숫자를 수치로 복원. 파싱 불가 셀은 NaN."""
+    import pandas as pd
+
+    txt = s.astype(str).str.strip()
+    txt = txt.str.replace(r"^\((.*)\)$", r"-\1", regex=True)  # 회계식 음수 (123)→-123
+    up = txt.str.upper()
+    mult = pd.Series(1.0, index=s.index)
+    mult[up.str.endswith("K")] = 1e3
+    mult[up.str.endswith("M")] = 1e6
+    mult[up.str.endswith("B")] = 1e9
+    base = up.str.replace(r"[,$€£¥%\s]", "", regex=True).str.replace(r"(?<=[0-9])[KMB]$", "", regex=True)
+    return pd.to_numeric(base, errors="coerce") * mult
+
+
+def _robustify_input(df: Any, profile: dict | None = None) -> tuple[Any, dict[str, Any]]:
+    """수치 + 복원숫자 + 빈도인코딩 범주형을 합친 견고한 수치 DataFrame 반환.
+
+    반환: (num_df, input_encoding_meta). 수치만 있던 데이터면 결과는 기존과 동일(추가 0).
+    """
+    import pandas as pd
+
+    out = df.copy()
+    coerced_cols: list[str] = []
+    freq_maps: dict[str, dict] = {}
+    encoded_cols: list[str] = []
+    dropped_high_card: list[str] = []
+
+    for col in list(out.columns):
+        s = out[col]
+        # 수치/bool/datetime 은 기존 동작 그대로 (select_dtypes 가 처리) — 무회귀 핵심.
+        if pd.api.types.is_numeric_dtype(s) or pd.api.types.is_bool_dtype(s) or pd.api.types.is_datetime64_any_dtype(s):
+            continue
+        # 1순위: 문자로 들어온 숫자 복원
+        coerced = _coerce_numeric_like(s)
+        nonnull = int(s.notna().sum())
+        if nonnull > 0 and (int(coerced.notna().sum()) / nonnull) >= COERCE_SUCCESS_RATIO:
+            out[col] = coerced
+            coerced_cols.append(str(col))
+            continue
+        # 2순위: 범주형 → 카디널리티 판단
+        card = int(s.astype(str).nunique(dropna=True))
+        if card <= 1:
+            out = out.drop(columns=[col])
+            continue
+        if card > HIGH_CARDINALITY_DROP:
+            out = out.drop(columns=[col])
+            dropped_high_card.append(str(col))
+            continue
+        # 빈도 인코딩 (컬럼명 보존 → 후단 PCA·추론 일관성 안전)
+        fmap = s.astype(str).value_counts(normalize=True).to_dict()
+        out[col] = s.astype(str).map(fmap).fillna(0.0)
+        freq_maps[str(col)] = fmap
+        encoded_cols.append(str(col))
+
+    import numpy as np
+
+    num_df = out.select_dtypes(include=[np.number])
+    meta = {
+        "coerced_cols": coerced_cols,
+        "freq_maps": freq_maps,
+        "encoded_cols": encoded_cols,
+        "dropped_high_card": dropped_high_card,
+    }
+    return num_df, meta
+
+
+def _robustify_input_transform(df: Any, input_encoding: dict | None) -> Any:
+    """추론 시 — 학습에서 결정된 복원/인코딩을 동일 적용 후 수치 DataFrame 반환."""
+    import numpy as np
+
+    if not input_encoding:
+        return df.select_dtypes(include=[np.number])
+    out = df.copy()
+    for col in input_encoding.get("coerced_cols", []):
+        if col in out.columns:
+            out[col] = _coerce_numeric_like(out[col])
+    for col, fmap in input_encoding.get("freq_maps", {}).items():
+        if col in out.columns:
+            out[col] = out[col].astype(str).map(fmap).fillna(0.0)  # unseen 범주 → 0
+    return out.select_dtypes(include=[np.number])
 
 
 # ── 헬퍼: RobustScaler ────────────────────────────────────────────
@@ -149,15 +252,14 @@ def _pca_reduce(X, variance_ratio=DEFAULT_PCA_VARIANCE):
 # ── 공개 진입점 2: apply (학습 시) ────────────────────────────────
 def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> tuple[Any, Any]:  # noqa: ARG001
     """3 단계 전처리. (df, state) 튜플 반환 (HJ PR2 contract). 학습 시점에 사용."""
-    import numpy as np
     import pandas as pd
 
     profile = getattr(state, "data_profile", {}) or {}
 
-    # 1. 수치 컬럼
-    num_df = df.select_dtypes(include=[np.number])
+    # 1. 입력 견고화 (G-1) — 수치 + 문자숫자 복원 + 범주형 빈도인코딩. 수치만 있으면 기존과 동일.
+    num_df, input_encoding = _robustify_input(df, profile)
     if num_df.empty:
-        return _empty_result(state, len(df), "수치 컬럼 0개")
+        return _empty_result(state, len(df), "수치/복원/인코딩 후에도 사용 가능한 컬럼 0개")
 
     # 2. B-2: Day 1 missing_ratio — 30% 초과 컬럼 drop
     missing_ratio = profile.get("missing_ratio_per_col", {})
@@ -180,11 +282,22 @@ def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> tuple[Any, Any]
     # 5. B-3: inf 행 제거
     num_df, n_inf = _validate_finite(num_df)
 
-    # 6. 결측 처리 — 시계열(C3/C4)은 순서 보존 보간, 점(C1/C2)은 dropna (D2-1)
+    # 6. 결측 처리 — 시계열(C3/C4)은 순서 보존 보간.
+    #    (G-2, 2026-06-16) 점(C1/C2)은 dropna 로 행을 통째 삭제하던 것 → 과반(>50%) 결측
+    #    행만 신뢰 불가로 제거하고, 나머지는 컬럼 median 으로 대체해 표본을 보존한다.
+    #    median 은 (apply_split 경유 시) train 구간에서만 fit → artifacts 에 박혀 val/추론에
+    #    동일 적용되므로 평가 누수가 없다. 결측이 없으면 이 블록은 기존과 동일(무회귀).
     has_time = bool(profile.get("has_time_column", False))
     if has_time:
         num_df = num_df.interpolate(method="linear", limit_direction="both").ffill().bfill()
-    num_df = num_df.dropna()
+    impute_medians: dict[str, float] = {}
+    if bool(num_df.isna().any().any()):
+        row_keep = num_df.isna().mean(axis=1) <= 0.5
+        num_df = num_df[row_keep]
+        med = num_df.median(numeric_only=True)
+        impute_medians = {str(k): float(v) for k, v in med.items() if pd.notna(v)}
+        num_df = num_df.fillna(med)
+    num_df = num_df.dropna()  # median 이 NaN 인 전결측 컬럼 잔여 안전망
     if num_df.shape[0] == 0:
         return _empty_result(
             state, len(df), "모든 행 결측/inf", constant_cols_dropped=const_cols, high_missing_cols_dropped=high_miss
@@ -239,6 +352,8 @@ def apply(df: Any, plan_steps: list[dict] | None, state: Any) -> tuple[Any, Any]
         "inf_rows_dropped": n_inf,
         "has_time": has_time,
         "preprocessor_warnings": warnings_list,
+        "input_encoding": input_encoding,  # G-1: 추론 시 동일 복원/인코딩 재현
+        "impute_medians": impute_medians,  # G-2: 추론/val 결측 대체용 train median
     }
     extras = dict(state.category_extras or {})
     cat_block = dict(extras.get("anomaly_detection") or {})
@@ -256,19 +371,23 @@ def apply_transform(df: Any, fitted_state: dict[str, Any]) -> Any:
     학습/추론 일관성 보장. 컬럼 순서·NaN·inf·PCA None 모두 자동 가드.
     """
     import numpy as np
+    import pandas as pd
 
     # 1. 학습 시 drop 컬럼 제거
     df = df.drop(columns=fitted_state["constant_cols_dropped"], errors="ignore")
     df = df.drop(columns=fitted_state["high_missing_cols_dropped"], errors="ignore")
 
-    # 2. 수치만 + inf 제거
-    df = df.select_dtypes(include=[np.number])
-    finite_mask = np.isfinite(df.values).all(axis=1)
-    df = df[finite_mask]
+    # 2. 입력 견고화 재현(학습과 동일: 문자숫자 복원 + 빈도인코딩) + inf 만 제거(NaN 보존)
+    df = _robustify_input_transform(df, fitted_state.get("input_encoding"))
+    inf_mask = np.isinf(df.values).any(axis=1)  # NaN 은 아래 median 대체로 보존
+    df = df[~inf_mask]
 
-    # 3. 결측 처리 — 시계열 보간(순서 보존) / 점 dropna (D2-1)
+    # 3. 결측 처리 — 시계열 보간(순서 보존) / 점은 train median 대체(G-2) 후 잔여 dropna
     if fitted_state.get("has_time", False):
         df = df.interpolate(method="linear", limit_direction="both").ffill().bfill()
+    medians = fitted_state.get("impute_medians") or {}
+    if medians:
+        df = df.fillna(pd.Series(medians))
     df = df.dropna()
 
     # 4. 학습 시점 컬럼 순서 강제

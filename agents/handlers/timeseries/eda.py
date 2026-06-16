@@ -236,6 +236,27 @@ def _chart_ccf(plt: Any, df: Any, target: str, exog_cols: list[str], job_id: str
 # ════════════════════════════════════════════════════════════════
 # §A. 입력 검증 + 차트 진입점
 # ════════════════════════════════════════════════════════════════
+def _chart_distribution(plt: Any, y: Any, target: str, job_id: str, save: Any) -> str | None:
+    """타깃 분포 히스토그램 + 정규성(왜도/첨도) 진단 — 변환 필요성 판단 신호 (P2-2)."""
+    try:
+        s = y.dropna().astype(float)
+        if len(s) < 8:
+            return None
+        skew = float(s.skew())
+        kurt = float(s.kurtosis())
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.hist(s.values, bins=min(40, max(10, len(s) // 5)), color="#3b82f6", alpha=0.85)
+        ax.axvline(float(s.mean()), color="#dc2626", lw=1.5, label=f"mean {s.mean():.3g}")
+        ax.axvline(float(s.median()), color="#16a34a", lw=1.5, ls="--", label=f"median {s.median():.3g}")
+        verdict = "near-normal" if abs(skew) < 0.5 else ("right-skewed (log?)" if skew > 0 else "left-skewed")
+        ax.set_title(f"{target} distribution — skew {skew:.2f}, kurt {kurt:.2f} ({verdict})")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        return save(fig, kind="timeseries/distribution", job_id=job_id)
+    except Exception:
+        return None
+
+
 def charts(df: Any, state: Any) -> list[str]:
     """4+ chart 생성 + MinIO 업로드 + 경로 list 반환.
 
@@ -415,6 +436,14 @@ def charts(df: Any, state: Any) -> list[str]:
             ccf_path = _chart_ccf(plt, df, target, exog_cols, job_id, save_chart_to_minio)
             if ccf_path:
                 paths.append(ccf_path)
+    except Exception:
+        pass
+
+    # ── §F5 : Chart 8 — 타깃 분포/정규성 진단 (P2-2, 2026-06-16) ──
+    try:
+        d_path = _chart_distribution(plt, df[target], target, job_id, save_chart_to_minio)
+        if d_path:
+            paths.append(d_path)
     except Exception:
         pass
 
