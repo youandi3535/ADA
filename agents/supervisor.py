@@ -35,6 +35,9 @@ JSON 만 응답하세요.
 class SupervisorAgent(BaseAgent):
     uses_llm = True
     model_name = "claude-sonnet-4-6"
+    # HJ 2026-06-16 — ErrorKB 조회로 과거 오류 패턴 인지. rag_reader → env ADA_RAG_ENRICH=on 일 때만 활성.
+    uses_db_session = True
+    rag_reader = True
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):

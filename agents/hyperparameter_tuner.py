@@ -52,6 +52,9 @@ class HyperparameterTunerAgent(BaseAgent):
     """trial 별 실제 학습 + CV — Day 6 본구현."""
 
     uses_llm = False
+    # HJ 2026-06-16 — KB warm-start map 을 HPO 초기값에 반영. rag_reader → env ADA_RAG_ENRICH=on 일 때만 활성.
+    uses_db_session = True
+    rag_reader = True
 
     def __init__(
         self,

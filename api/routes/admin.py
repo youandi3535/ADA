@@ -362,3 +362,37 @@ async def get_budget_snapshot(
         "is_exceeded": exceeded,
         "date_utc": datetime.utcnow().date().isoformat(),
     }
+
+
+@router.get("/admin/metrics/dashboard", tags=["Admin"])
+async def get_metrics_dashboard(
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_admin_only),
+) -> dict[str, Any]:
+    """데이터 저장·활용 현황 집계 — admin 전용 (관리자 대시보드용)."""
+    from ada.db.models import ConversationLog, FailureLog, SelfLearningKB
+
+    failures_total = await db.scalar(select(func.count()).select_from(FailureLog)) or 0
+    failures_auto = (
+        await db.scalar(select(func.count()).select_from(FailureLog).where(FailureLog.auto_handled_by_kb.is_(True)))
+        or 0
+    )
+    kb_total = await db.scalar(select(func.count()).select_from(SelfLearningKB)) or 0
+    qa_total = await db.scalar(select(func.count()).select_from(ConversationLog)) or 0
+    qa_processed = (
+        await db.scalar(select(func.count()).select_from(ConversationLog).where(ConversationLog.processed.is_(True)))
+        or 0
+    )
+    kb_by_type: dict[str, int] = {}
+    for _row in (await db.execute(select(SelfLearningKB.kb_type, func.count()).group_by(SelfLearningKB.kb_type))).all():
+        kb_by_type[str(_row[0])] = int(_row[1])
+
+    return {
+        "failures_total": int(failures_total),
+        "failures_auto_handled": int(failures_auto),
+        "auto_handle_rate": (round(int(failures_auto) / int(failures_total) * 100, 1) if failures_total else 0.0),
+        "kb_total": int(kb_total),
+        "kb_by_type": kb_by_type,
+        "qa_total": int(qa_total),
+        "qa_processed": int(qa_processed),
+    }

@@ -81,6 +81,16 @@ async def drain_background_insights(timeout: float = 25.0) -> None:
         pass
 
 
+# HJ 2026-06-16 — agent_runs 감사 로그(세션 미주입 경로) 전용 회로차단기.
+#   _persist_agent_run_isolated 는 그래프 노드(self.session=None)마다 전용 단명 세션으로 DB 에 연결한다.
+#   DB 가 닿지 않는 환경(로컬 테스트·오프라인·일시 장애)에서 매 에이전트가 느린 연결을 반복하면 파이프라인이
+#   체감상 멈춘다. → 1회 시도에 타임아웃을 두고, 실패하면 일정 시간(쿨다운) 동안 시도를 건너뛴다.
+#   운영 워커는 DB 가 가까워 항상 ms 내 성공하므로 차단되지 않는다. audit 전용이라 실패해도 분석엔 무영향.
+_AGENT_RUN_AUDIT_TIMEOUT_S: float = 5.0  # 1회 기록 시도 상한(초)
+_AGENT_RUN_AUDIT_COOLDOWN_S: float = 60.0  # 실패 후 재시도까지 건너뛸 시간(초)
+_agent_run_audit_skip_until: float = 0.0  # time.monotonic() 기준 — 이 시각 전엔 audit 시도 생략
+
+
 class BaseAgent(abc.ABC):
     """모든 에이전트의 공통 베이스."""
 
@@ -89,6 +99,13 @@ class BaseAgent(abc.ABC):
     # True 로 설정한 에이전트는 use_ollama_for_analysis 설정과 무관하게
     # Anthropic API 를 우선 사용한다 (G4 모델 전략 이후 단계).
     use_anthropic_api: bool = False
+    # HJ 2026-06-16 — self.session 주입 대상 표시(safe_node 가 보고 세션을 꽂아줌).
+    #   uses_db_session=True: 그래프 실행 시 전용 DB 세션을 주입받아 self.session 으로 DB 읽기/쓰기 가능.
+    #     (data_profiler=Job 영속, self_learning=distillation/KB 성장 — 분석 동작 무변경·additive)
+    #   rag_reader=True: self.session 으로 KB/RAG 를 읽어 '분석 결과 자체'를 바꾸는 에이전트.
+    #     안전을 위해 env ADA_RAG_ENRICH=on 일 때만 세션이 주입된다(기본 off → 분석 무변경, A/B 검증 후 활성).
+    uses_db_session: bool = False
+    rag_reader: bool = False
 
     def __init__(self, session: Optional[AsyncSession] = None) -> None:
         self.session = session
@@ -232,17 +249,22 @@ class BaseAgent(abc.ABC):
         start = time.perf_counter()
         run_id = uuid.uuid4()
         if self.session is not None:
-            self.session.add(
-                AgentRun(
-                    id=run_id,
-                    job_id=uuid.UUID(state.job_id) if isinstance(state.job_id, str) else state.job_id,
-                    agent_name=self.__class__.__name__,
-                    status="running",
-                    gate=state.current_gate,
-                    was_re_loop=state.re_loop_count > 0,
+            # HJ 2026-06-16 — 주입 세션의 audit INSERT 는 best-effort. DB 일시 장애로 분석이
+            #   실패 처리되지 않도록 try/except 로 감싼다(감사 로그 < 분석 성공).
+            try:
+                self.session.add(
+                    AgentRun(
+                        id=run_id,
+                        job_id=uuid.UUID(state.job_id) if isinstance(state.job_id, str) else state.job_id,
+                        agent_name=self.__class__.__name__,
+                        status="running",
+                        gate=state.current_gate,
+                        was_re_loop=state.re_loop_count > 0,
+                    )
                 )
-            )
-            await self.session.flush()
+                await self.session.flush()
+            except Exception as e:  # noqa: BLE001
+                self.logger.debug("agent_run_start_insert_failed", error=str(e))
 
         status = "completed"
         error: Optional[str] = None
@@ -297,22 +319,122 @@ class BaseAgent(abc.ABC):
             # Day 11 — per-agent KB 인용 횟수 (KP9 정확도)
             kb_count = get_kb_citation_count()
             if self.session is not None:
-                row = await self.session.get(AgentRun, run_id)
-                if row is not None:
-                    row.status = status
-                    row.duration_ms = duration_ms
-                    row.input_tokens = self._last_input_tokens
-                    row.output_tokens = self._last_output_tokens
-                    row.error = error
-                    _extra = getattr(self, "_run_payload_extra", None) or {}
-                    if kb_count > 0 or _extra:
-                        existing = row.payload if isinstance(row.payload, dict) else {}
-                        if kb_count > 0:
-                            existing["kb_citations"] = kb_count
-                        if _extra:
-                            existing.update(_extra)
-                        row.payload = existing
-                    await self.session.flush()
+                # HJ 2026-06-16 — 주입 세션의 audit UPDATE 도 best-effort(분석 성공 우선).
+                try:
+                    row = await self.session.get(AgentRun, run_id)
+                    if row is not None:
+                        row.status = status
+                        row.duration_ms = duration_ms
+                        row.input_tokens = self._last_input_tokens
+                        row.output_tokens = self._last_output_tokens
+                        row.error = error
+                        _extra = getattr(self, "_run_payload_extra", None) or {}
+                        if kb_count > 0 or _extra:
+                            existing = row.payload if isinstance(row.payload, dict) else {}
+                            if kb_count > 0:
+                                existing["kb_citations"] = kb_count
+                            if _extra:
+                                existing.update(_extra)
+                            row.payload = existing
+                        await self.session.flush()
+                except Exception as e:  # noqa: BLE001
+                    self.logger.debug("agent_run_end_update_failed", error=str(e))
+            else:
+                # HJ 2026-06-16 — 세션 미주입(그래프 노드는 self.session=None)이어도 agent_runs
+                #   감사 로그는 남긴다. 분석용 self.session(주입 시 RAG/KB·다른 DB 쓰기까지 활성화됨)과
+                #   완전히 분리된 전용 단명 세션으로 '완료 1행'만 commit → RAG/KB/models/outputs 등
+                #   다른 self.session 게이트 코드에는 일절 영향 없음(누수 0, audit 전용).
+                await self._persist_agent_run_isolated(
+                    run_id=run_id,
+                    state=state,
+                    status=status,
+                    duration_ms=duration_ms,
+                    kb_count=kb_count,
+                    error=error,
+                )
+
+    async def _persist_agent_run_isolated(
+        self,
+        *,
+        run_id: uuid.UUID,
+        state: PipelineState,
+        status: str,
+        duration_ms: int,
+        kb_count: int,
+        error: Optional[str],
+    ) -> None:
+        """세션 미주입 시 agent_runs 감사 로그를 전용 단명 세션으로 기록(best-effort).
+
+        그래프 노드는 self.session=None 으로 생성돼 기존 audit INSERT 가 통째로 스킵됐다.
+        여기서는 분석용 self.session 과 **분리된** AsyncSessionLocal 로 '완료 1행'만 INSERT·commit
+        한다. self.session 게이트 코드(RAG/KB 읽기, models/outputs/self_learning 쓰기)는 self.session
+        이 여전히 None 이라 일절 깨우지 않는다 → 분석 동작 무변경. 실패해도 파이프라인 영향 없음.
+
+        DB 미연결 환경(테스트·오프라인·일시 장애)에서 매 에이전트가 느린 연결을 반복하지 않도록
+        1회 타임아웃 + 실패 시 쿨다운 회로차단기를 둔다(운영 워커는 항상 ms 내 성공 → 차단 안 됨).
+        """
+        global _agent_run_audit_skip_until
+        if time.monotonic() < _agent_run_audit_skip_until:
+            return  # 쿨다운 중 — 연결 불가 환경에서 반복 지연 방지
+        try:
+            await asyncio.wait_for(
+                self._write_agent_run_row(
+                    run_id=run_id,
+                    state=state,
+                    status=status,
+                    duration_ms=duration_ms,
+                    kb_count=kb_count,
+                    error=error,
+                ),
+                timeout=_AGENT_RUN_AUDIT_TIMEOUT_S,
+            )
+        except Exception as e:  # noqa: BLE001
+            # 연결/쓰기 실패·타임아웃 → 쿨다운 동안 audit 시도 생략(파이프라인은 절대 안 깨짐).
+            _agent_run_audit_skip_until = time.monotonic() + _AGENT_RUN_AUDIT_COOLDOWN_S
+            try:
+                self.logger.debug("agent_run_isolated_failed", error=str(e), cooldown_s=_AGENT_RUN_AUDIT_COOLDOWN_S)
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _write_agent_run_row(
+        self,
+        *,
+        run_id: uuid.UUID,
+        state: PipelineState,
+        status: str,
+        duration_ms: int,
+        kb_count: int,
+        error: Optional[str],
+    ) -> None:
+        """agent_runs '완료 1행' 실제 INSERT·commit (전용 단명 세션). 회로차단기 안에서만 호출."""
+        from ada.db.models import AgentRun
+        from ada.db.session import AsyncSessionLocal
+
+        payload: dict[str, Any] = {}
+        if kb_count and kb_count > 0:
+            payload["kb_citations"] = kb_count
+        _extra = getattr(self, "_run_payload_extra", None) or {}
+        if _extra:
+            payload.update(_extra)
+
+        jid = uuid.UUID(state.job_id) if isinstance(state.job_id, str) else state.job_id
+        async with AsyncSessionLocal() as session:
+            session.add(
+                AgentRun(
+                    id=run_id,
+                    job_id=jid,
+                    agent_name=self.__class__.__name__,
+                    status=status,
+                    gate=state.current_gate,
+                    was_re_loop=state.re_loop_count > 0,
+                    duration_ms=duration_ms,
+                    input_tokens=self._last_input_tokens,
+                    output_tokens=self._last_output_tokens,
+                    error=error,
+                    payload=payload or None,
+                )
+            )
+            await session.commit()
 
     async def _call_llm(
         self,

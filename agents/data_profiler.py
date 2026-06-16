@@ -57,6 +57,7 @@ class DataProfilerAgent(BaseAgent):
 
     uses_llm = True
     model_name = "claude-sonnet-4-6"
+    uses_db_session = True  # HJ 2026-06-16 — Job 카테고리/타깃 DB 영속(_persist_detection). additive·분석 무변경.
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):

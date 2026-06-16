@@ -32,6 +32,9 @@ _log = get_logger("self_learning")
 
 class SelfLearningAgent(BaseAgent):
     uses_llm = False
+    uses_db_session = (
+        True  # HJ 2026-06-16 — distillation·KB 성장 활성(end-of-pipeline, distill/index 모두 try/except 보호).
+    )
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):

@@ -7,6 +7,7 @@ HJ 2026-06-08: report_architect 노드 추가 (insight → report_architect → 
 
 from __future__ import annotations
 
+import os
 import traceback
 from functools import lru_cache, wraps
 from typing import Any, Callable
@@ -79,12 +80,43 @@ def _coerce_to_pipeline_state(state) -> PipelineState:
         return state  # type: ignore[return-value]
 
 
+def _agent_session_cm(agent: Any):
+    """HJ 2026-06-16 — 세션 주입 대상이면 AsyncSessionLocal() CM 반환, 아니면 None.
+
+    제어 스위치(2단):
+      - 마스터 킬스위치 env ``ADA_AGENT_DB_SESSION=off`` → 전면 비활성(즉시 복귀, 워커 재시작).
+      - ``agent.uses_db_session=True`` 노드만 세션을 받는다(data_profiler·self_learning 등 — additive).
+      - ``agent.rag_reader=True``(KB 를 읽어 분석 결과를 바꾸는 노드)는 추가로 env ``ADA_RAG_ENRICH=on``
+        일 때만 세션을 받는다(기본 off → 분석 동작 무변경, 사용자 A/B 검증 후 활성).
+    """
+    if os.environ.get("ADA_AGENT_DB_SESSION", "on").strip().lower() == "off":
+        return None
+    if not getattr(agent, "uses_db_session", False):
+        return None
+    if getattr(agent, "rag_reader", False) and os.environ.get("ADA_RAG_ENRICH", "off").strip().lower() not in (
+        "on",
+        "1",
+        "true",
+    ):
+        return None
+    try:
+        from ada.db.session import AsyncSessionLocal  # noqa: WPS433
+
+        return AsyncSessionLocal()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def safe_node(agent_callable: Callable) -> Callable:
     """모든 일반 노드를 감싸는 어댑터.
 
     노드가 raise 한 예외에서 ``_ada_state`` 를 꺼내 state 로 반환 → 그래프는
     정상 transition 으로 진행하고, route_after_* 가 ``state.error`` 보고
     auto_error_handler 로 라우팅.
+
+    HJ 2026-06-16 — uses_db_session 노드에는 전용 DB 세션을 주입한다(성공 시 commit, 예외 시
+    rollback, 항상 self.session 복원). 세션 컨텍스트 자체 실패(연결 등)는 무세션으로 폴백해
+    분석이 끊기지 않게 한다. commit 실패도 best-effort(분석 성공 > DB 기록).
 
     auto_error_handler 자체는 wrap 하지 않음 (자기 호출 방지).
     """
@@ -94,9 +126,8 @@ def safe_node(agent_callable: Callable) -> Callable:
         state = _coerce_to_pipeline_state(state)
         if getattr(state, "error", None):
             return state
-        try:
-            return await agent_callable(state)
-        except Exception as e:
+
+        def _handle_exc(e):
             attached = getattr(e, "_ada_state", None)
             if attached is not None:
                 return attached
@@ -106,6 +137,43 @@ def safe_node(agent_callable: Callable) -> Callable:
                 auto_fix_attempts=state.auto_fix_attempts + 1,
                 next_agent="auto_error_handler",
             )
+
+        session_cm = _agent_session_cm(agent_callable)
+        if session_cm is None:
+            try:
+                return await agent_callable(state)
+            except Exception as e:
+                return _handle_exc(e)
+
+        # 세션 주입 경로
+        try:
+            async with session_cm as session:
+                agent_callable.session = session
+                try:
+                    result = await agent_callable(state)
+                    try:
+                        await session.commit()
+                    except Exception:  # noqa: BLE001 — 커밋 실패는 분석을 깨지 않는다(기록만 유실)
+                        try:
+                            await session.rollback()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    return result
+                except Exception as e:
+                    try:
+                        await session.rollback()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return _handle_exc(e)
+                finally:
+                    agent_callable.session = None
+        except Exception:
+            # 세션 컨텍스트 자체 실패(연결 등) → 무세션으로 1회 실행해 분석을 이어간다.
+            agent_callable.session = None
+            try:
+                return await agent_callable(state)
+            except Exception as e2:
+                return _handle_exc(e2)
 
     return wrapped
 

@@ -186,6 +186,9 @@ def _eda_insights_cache_set(job_id, category, target_column, insights) -> None:
 
 class EDAAgent(BaseAgent):
     uses_llm = False
+    # HJ 2026-06-16 — KB eda_template 재사용(분석 윤색 컨텍스트). rag_reader → env ADA_RAG_ENRICH=on 일 때만 활성.
+    uses_db_session = True
+    rag_reader = True
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):
