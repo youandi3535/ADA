@@ -705,10 +705,10 @@ const STAGE_AGENT_FLOW={
     '도메인 분석'
   ],
   G2:[
-    'EDA — 통계 산출',
-    'EDA — 분포 분석',
-    'EDA — 상관관계 분석',
-    'EDA — 도메인 인사이트',
+    '통계 산출',
+    '분포 분석',
+    '상관관계 분석',
+    '도메인 인사이트',
     '방법론 후보 평가'
   ],
   G3:[
@@ -856,7 +856,7 @@ function twSpan(text, key){
 }
 var _twState={};        // key -> {shown:N, target:'...'}
 var _twTimer=null;
-var _TW_STEP_MS=95;     // 글자당 ms. 약 10자/초 = 사람 타이핑 속도. 사용자 요구로 의도적으로 느리게.
+var _TW_STEP_MS=79;     // 글자당 ms. 약 12.7자/초. HJ 2026-06-16 — 사용자 요구로 기존 95ms 대비 20% 빠르게(95÷1.2≈79).
 var _twDotsShownAt=0;   // 점 3개(⋮) 등장 시각 — 등장 후 ~800ms 정지하여 사용자가 점을 인지하게 함.
 var _TW_DOTS_PAUSE_MS=800;
 // HJ 2026-06-10 — 순차(sequential) 진행. DOM 순서대로 한 요소가 끝나야 다음 요소가 시작.
@@ -1024,7 +1024,20 @@ function fmtNum(v){
   return n.toFixed(3);
 }
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
-function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[2-6]$/.test(g))?g:null; }
+function curGate(){
+  const g=(gateData.gate)||(status.current_gate);
+  if(!(g && /^G[2-6]$/.test(g))) return null;
+  // HJ 2026-06-16 — '1단계 분석중 → 2단계 분석중' 조기 전환 버그 수정.
+  //   schema_validator(G1 마지막 에이전트)가 gate_direction(분석 방향 카드 생성, ~55초) 진입 직전
+  //   gate_data 에 gate:"G2" + g2_pending=True + proposals:[] 를 미리 써둔다. 이 구간은 '실제론
+  //   1단계 마무리(분석 방향 생성) 중'인데, curGate()가 'G2'를 반환하면 analyzing()=false·frontier=1
+  //   이 되어 보여줄 카드도 없이 step 2('2단계 분석중')로 조기 전환된다. proposals·topic 이 하나도
+  //   없으면 G2 로 보고하지 않아 step 1('1단계 분석중')을 유지하고, 실제 카드가 도착하면 정상 전환한다.
+  if(g==='G2' && gateData.g2_pending
+     && !(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length
+     && !(gateData.topic_proposals||[]).length) return null;
+  return g;
+}
 function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
 function isFailed(){ return (gateData.pipeline_status==='failed') || (status.status==='failed'); }
 function isCompleted(){
