@@ -41,11 +41,17 @@ a{color:inherit;}
 .svc .st{position:absolute;top:13px;right:13px;font-size:.66rem;font-weight:800;padding:2px 8px;border-radius:999px;}
 .svc.ok .st{background:var(--okbg);color:var(--ok);} .svc.warn .st{background:var(--warnbg);color:var(--warn);} .svc.down .st{background:var(--downbg);color:var(--down);}
 
-/* KPI */
-.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;}
-.kpi{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:13px 15px;}
-.kpi .n{font-size:1.5rem;font-weight:800;} .kpi .n.b{color:var(--blue);} .kpi .n.g{color:var(--ok);} .kpi .n.v{color:var(--vio);}
-.kpi .l{font-size:.74rem;color:var(--mut);margin-top:3px;}
+/* 누적 총 데이터 헤드라인 */
+.grandtotal{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;background:linear-gradient(110deg,rgba(79,138,236,.16),rgba(154,123,232,.10));border:1px solid var(--line2);border-radius:16px;padding:17px 22px;margin-bottom:13px;}
+.grandtotal .gt-cap{font-size:.74rem;color:var(--mut);font-weight:700;letter-spacing:.02em;}
+.grandtotal .gt-n{font-size:2.15rem;font-weight:800;letter-spacing:-.02em;margin-top:1px;background:linear-gradient(90deg,#86b3ff,#b79cff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+.grandtotal .gt-sub{font-size:.74rem;color:var(--mut2);margin-top:4px;}
+.grandtotal .gt-r{display:flex;gap:10px;flex-wrap:wrap;}
+.grandtotal .chip{background:rgba(11,17,32,.55);border:1px solid var(--line);border-radius:12px;padding:10px 15px;min-width:108px;}
+.grandtotal .chip .cv{font-size:1.12rem;font-weight:800;}
+.grandtotal .chip .cl{font-size:.67rem;color:var(--mut2);margin-top:2px;}
+
+/* (구 KPI 카드 CSS 제거 — 핵심 지표 섹션을 스토리지 헤드라인으로 통합) */
 
 /* 토폴로지 */
 .topo{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;}
@@ -108,7 +114,7 @@ a{color:inherit;}
 .src{font-size:.68rem;color:var(--mut2);margin-top:7px;}
 .err{color:#ffb4b4;background:var(--downbg);border:1px solid rgba(255,107,107,.3);border-radius:11px;padding:16px 18px;font-size:.86rem;}
 .muted{color:var(--mut2);}
-@media(max-width:1100px){.svc-row,.kpi-row{grid-template-columns:repeat(2,1fr);}.cat-grid,.tr-grid{grid-template-columns:1fr;}}
+@media(max-width:1100px){.svc-row{grid-template-columns:repeat(2,1fr);}.cat-grid,.tr-grid{grid-template-columns:1fr;}.grandtotal{flex-direction:column;align-items:flex-start;}}
 </style></head><body>
 
 <div class="head">
@@ -197,7 +203,20 @@ function render(d){
   var h='';
 
   /* ── 1. 스토리지 연결 신호등 ── */
-  h+='<div class="sect-t">스토리지 연결 상태</div><div class="svc-row">';
+  var k0=d.kpis||{};
+  // 누적 총 데이터 = 영구 저장소(PostgreSQL + MinIO) 합계. 7일/1달 시간창이 아닌 '지금까지 전부'.
+  var ptot=(k0.persistent_total_bytes!=null)?k0.persistent_total_bytes:((k0.db_total_bytes||0)+(k0.minio_bytes||0));
+  h+='<div class="sect-t">스토리지 연결 상태</div>';
+  h+='<div class="grandtotal"><div class="gt-l">'
+    +'<div class="gt-cap">📊 지금까지 저장된 모든 데이터 · 누적 총량</div>'
+    +'<div class="gt-n">'+fb(ptot)+'</div>'
+    +'<div class="gt-sub">PostgreSQL '+fb(k0.db_total_bytes)+' + MinIO '+fb(k0.minio_bytes)+' · 영구 저장소 합계 (Redis 캐시 제외)</div>'
+    +'</div><div class="gt-r">'
+    +'<div class="chip"><div class="cv">'+nf(k0.total_rows)+'</div><div class="cl">DB 전체 레코드 · 30테이블</div></div>'
+    +'<div class="chip"><div class="cv">'+fb(k0.uploads_bytes)+'</div><div class="cl">업로드 원본 누적</div></div>'
+    +'<div class="chip"><div class="cv">'+fb(k0.outputs_bytes)+'</div><div class="cl">산출물 누적</div></div>'
+    +'</div></div>';
+  h+='<div class="svc-row">';
   (d.services||[]).forEach(function(s){
     h+='<div class="svc '+s.status+'"><span class="st">'+stWord(s.status)+'</span>'
       +'<div class="nm">'+dot(s.status)+esc(s.name)+'</div>'
@@ -207,15 +226,7 @@ function render(d){
   });
   h+='</div>';
 
-  /* ── 2. KPI ── */
-  var k=d.kpis||{};
-  h+='<div class="sect-t">핵심 지표</div><div class="kpi-row">'
-    +'<div class="kpi"><div class="n b">'+fb(k.db_total_bytes)+'</div><div class="l">PostgreSQL 총 용량</div></div>'
-    +'<div class="kpi"><div class="n">'+fb(k.minio_bytes)+'</div><div class="l">MinIO 객체 용량 ('+nf(k.minio_objects)+'개)</div></div>'
-    +'<div class="kpi"><div class="n v">'+nf(k.total_rows)+'</div><div class="l">DB 전체 레코드 (30개 테이블)</div></div>'
-    +'<div class="kpi"><div class="n g">'+fb(k.uploads_bytes)+'</div><div class="l">업로드 원본 누적</div></div>'
-    +'<div class="kpi"><div class="n">'+(k.backup_age_h!=null?esc(k.backup_age_h)+'h 전':'기록없음')+'</div><div class="l">최근 백업</div></div>'
-    +'</div>';
+  /* ── 2. (구 '핵심 지표' 섹션은 스토리지 연결 상태 헤드라인으로 통합 — 중복 제거) ── */
 
   /* ── 3. 토폴로지 ── */
   var nodes=d.storage_nodes||[];
