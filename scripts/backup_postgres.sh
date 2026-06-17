@@ -53,6 +53,24 @@ ssh -p "${VPS_SSH_PORT}" \
 SIZE=$(du -h "${LOCAL_PATH}" | cut -f1)
 echo "[$(date -Is)] saved: ${LOCAL_PATH} (${SIZE})"
 
+# 1-b) backup_catalog 기록 — 운영 콘솔(관리자 대시보드)이 백업 신선도를 🟢 정상으로
+#      표시할 수 있게 VPS DB(ada-postgres)에 한 행 INSERT 한다.
+#      SQL 은 stdin 으로 흘려보내 SSH/docker/psql 따옴표 중첩을 피한다(pg_dump 파이프의 역방향).
+#      DB 기록 실패해도 백업 파일 자체는 이미 정상 저장됐으므로, if 가드로 비치명 처리한다
+#      (set -e 가 if 조건절에서는 종료를 유발하지 않음).
+SIZE_BYTES=$(stat -c%s "${LOCAL_PATH}" 2>/dev/null || echo 0)
+SHA=$(sha256sum "${LOCAL_PATH}" | cut -d' ' -f1)
+CAT_SQL="INSERT INTO backup_catalog (id, backup_type, minio_path, sha256, size_bytes, status, note, created_at) VALUES (gen_random_uuid(), 'db', '${LOCAL_PATH}', '${SHA}', ${SIZE_BYTES}, 'ok', 'pull pg_dump.gz · 보존 ${BACKUP_RETENTION_DAYS}일', now());"
+if printf '%s' "${CAT_SQL}" | ssh -p "${VPS_SSH_PORT}" \
+       -o StrictHostKeyChecking=accept-new \
+       -o ConnectTimeout=30 \
+       "${VPS_USER}@${VPS_HOST}" \
+       "docker exec -i ${CONTAINER} psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -v ON_ERROR_STOP=1 -q"; then
+    echo "[$(date -Is)] backup_catalog 기록 완료 (size=${SIZE_BYTES}B)"
+else
+    echo "[$(date -Is)] WARN: backup_catalog 기록 실패 — 백업 파일은 정상 저장됨"
+fi
+
 # 2) 오래된 백업 로컬에서 직접 정리
 find "${BACKUP_DIR_DB}" -type f -name "ada_*.sql.gz" \
      -mtime "+${BACKUP_RETENTION_DAYS}" -delete

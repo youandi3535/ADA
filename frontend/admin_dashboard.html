@@ -1,42 +1,320 @@
-<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><style>
-body{margin:0;font-family:'Pretendard','Inter',sans-serif;background:#0e1525;color:#e8edf7;padding:24px 30px;}
-.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
-.top h1{font-size:1.28rem;margin:0;font-weight:700;}
-.close{background:rgba(150,170,235,.16);color:#dbe3ff;border:1px solid rgba(150,170,235,.32);padding:8px 16px;border-radius:999px;text-decoration:none;font-weight:700;font-size:.82rem;}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:16px;}
-.card{background:#172033;border:1px solid #243049;border-radius:14px;padding:15px 17px;}
-.card .n{font-size:1.65rem;font-weight:800;}
-.card .l{font-size:.78rem;color:#9fb0cc;margin-top:3px;}
-.sec{background:#172033;border:1px solid #243049;border-radius:14px;padding:15px 18px;margin-bottom:13px;}
-.sec h2{font-size:.92rem;margin:0 0 11px;color:#cdd9ee;font-weight:600;}
-.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px;font-size:.8rem;}
-.bar-row .lab{width:150px;color:#bcc8de;}
-.bar-bg{flex:1;background:#0e1525;border-radius:4px;height:14px;}
-.bar-fg{height:14px;background:#3f7bf0;border-radius:4px;}
-.green{color:#46d39a;}
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{
+  --bg:#0b1120; --panel:#151d30; --panel2:#1b2540; --line:#26314e; --line2:#324063;
+  --txt:#e8edf7; --mut:#9fb0cc; --mut2:#6f7f9e;
+  --ok:#2fcf8f; --okbg:rgba(47,207,143,.13); --warn:#f4b740; --warnbg:rgba(244,183,64,.13);
+  --down:#ff6b6b; --downbg:rgba(255,107,107,.13); --blue:#4f8aec; --blue2:#3f6fe0; --vio:#9a7be8;
+}
+*{box-sizing:border-box;}
+body{margin:0;font-family:'Pretendard','Inter',-apple-system,sans-serif;background:
+  radial-gradient(1200px 500px at 80% -10%,rgba(79,138,236,.10),transparent),var(--bg);
+  color:var(--txt);padding:20px 26px 60px;}
+html{background:var(--bg);}
+a{color:inherit;}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px;flex-wrap:wrap;}
+.head h1{font-size:1.3rem;margin:0;font-weight:800;letter-spacing:-.01em;}
+.head .sub{color:var(--mut);font-size:.82rem;margin-top:5px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
+.live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-weight:700;}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(47,207,143,.6);animation:pulse 1.6s infinite;}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(47,207,143,.55)}70%{box-shadow:0 0 0 7px rgba(47,207,143,0)}100%{box-shadow:0 0 0 0 rgba(47,207,143,0)}}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.btn{background:rgba(150,170,235,.13);color:#dbe3ff;border:1px solid rgba(150,170,235,.3);padding:8px 15px;border-radius:999px;text-decoration:none;font-weight:700;font-size:.8rem;cursor:pointer;}
+.btn:hover{background:rgba(150,170,235,.22);}
+.legend{display:flex;gap:13px;font-size:.76rem;color:var(--mut);align-items:center;}
+.legend span{display:inline-flex;align-items:center;gap:5px;}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:0 0 auto;}
+.dot.ok{background:var(--ok);box-shadow:0 0 7px rgba(47,207,143,.7);}
+.dot.warn{background:var(--warn);box-shadow:0 0 7px rgba(244,183,64,.7);}
+.dot.down{background:var(--down);box-shadow:0 0 7px rgba(255,107,107,.75);}
+.sect-t{font-size:.82rem;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin:22px 2px 11px;display:flex;align-items:center;gap:8px;}
+.sect-t::before{content:"";width:3px;height:13px;background:var(--blue);border-radius:2px;}
+
+/* 서비스 신호등 */
+.svc-row{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;}
+.svc{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:14px 15px;position:relative;overflow:hidden;}
+.svc::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;}
+.svc.ok::before{background:var(--ok);} .svc.warn::before{background:var(--warn);} .svc.down::before{background:var(--down);}
+.svc .nm{font-size:.82rem;font-weight:700;display:flex;align-items:center;gap:7px;}
+.svc .wh{font-size:.7rem;color:var(--mut2);margin-top:2px;}
+.svc .mt{font-size:1.32rem;font-weight:800;margin-top:9px;}
+.svc .dt{font-size:.72rem;color:var(--mut);margin-top:3px;line-height:1.35;}
+.svc .st{position:absolute;top:13px;right:13px;font-size:.66rem;font-weight:800;padding:2px 8px;border-radius:999px;}
+.svc.ok .st{background:var(--okbg);color:var(--ok);} .svc.warn .st{background:var(--warnbg);color:var(--warn);} .svc.down .st{background:var(--downbg);color:var(--down);}
+
+/* KPI */
+.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:13px 15px;}
+.kpi .n{font-size:1.5rem;font-weight:800;} .kpi .n.b{color:var(--blue);} .kpi .n.g{color:var(--ok);} .kpi .n.v{color:var(--vio);}
+.kpi .l{font-size:.74rem;color:var(--mut);margin-top:3px;}
+
+/* 토폴로지 */
+.topo{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;}
+.node{flex:1;min-width:240px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 17px;position:relative;}
+.node .role{font-size:.68rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--mut2);}
+.node .nm{font-size:1rem;font-weight:800;margin-top:5px;display:flex;align-items:center;gap:8px;}
+.node .pa{font-size:.74rem;color:var(--blue);margin-top:6px;font-family:'JetBrains Mono',monospace;word-break:break-all;}
+.node .dt{font-size:.74rem;color:var(--mut);margin-top:7px;line-height:1.4;}
+.arrow{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 16px;color:var(--mut2);}
+.arrow .x{font-size:1.5rem;} .arrow .y{font-size:.68rem;margin-top:2px;white-space:nowrap;}
+
+/* 카테고리 */
+.cat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+.cat{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:15px 17px;}
+.cat .ch{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+.cat .ti{font-size:.98rem;font-weight:800;display:flex;align-items:center;gap:9px;}
+.cat .ic{font-size:1.15rem;}
+.cat .de{font-size:.74rem;color:var(--mut);margin-top:4px;line-height:1.4;}
+.cat .stx{font-size:.66rem;font-weight:800;padding:3px 9px;border-radius:999px;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;}
+.cat .summ{display:flex;gap:18px;margin:11px 0 9px;}
+.cat .summ b{font-size:1.18rem;font-weight:800;display:block;}
+.cat .summ small{font-size:.68rem;color:var(--mut2);}
+.cat .rec{font-size:.68rem;color:var(--ok);font-weight:700;}
+.stores{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px;}
+.stores .sb{font-size:.66rem;color:var(--mut);background:var(--panel2);border:1px solid var(--line2);padding:2px 8px;border-radius:6px;}
+.tbl-mini{font-size:.73rem;}
+.tbl-mini .r{display:flex;align-items:center;gap:9px;padding:3px 0;}
+.tbl-mini .nm{width:165px;color:var(--mut);font-family:'JetBrains Mono',monospace;font-size:.71rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tbl-mini .bg{flex:1;height:7px;background:var(--bg);border-radius:4px;overflow:hidden;}
+.tbl-mini .fg{height:7px;background:linear-gradient(90deg,var(--blue2),var(--blue));border-radius:4px;}
+.tbl-mini .vv{width:62px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;}
+.tbl-mini .sz{width:64px;text-align:right;color:var(--mut2);font-size:.68rem;}
+.tbl-mini .nw{width:38px;text-align:right;color:var(--ok);font-size:.66rem;font-weight:700;}
+
+/* DB 인벤토리 표 */
+.inv{width:100%;border-collapse:collapse;font-size:.76rem;}
+.inv th{text-align:left;color:var(--mut2);font-weight:700;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;padding:7px 10px;border-bottom:1px solid var(--line2);}
+.inv td{padding:7px 10px;border-bottom:1px solid var(--line);}
+.inv tr:hover td{background:rgba(79,138,236,.05);}
+.inv .tn{font-family:'JetBrains Mono',monospace;font-size:.74rem;}
+.inv .num{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;}
+.inv .pill{font-size:.64rem;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--panel2);border:1px solid var(--line2);color:var(--mut);}
+.inv .bbg{width:120px;height:6px;background:var(--bg);border-radius:4px;display:inline-block;vertical-align:middle;overflow:hidden;}
+.inv .bfg{height:6px;background:var(--vio);border-radius:4px;display:block;}
+
+/* 트렌드 */
+.tr-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+.tr{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:13px 15px;}
+.tr .h{font-size:.78rem;font-weight:700;color:var(--mut);margin-bottom:4px;}
+.tr .tot{font-size:1.25rem;font-weight:800;margin-bottom:8px;}
+.bars{display:flex;align-items:flex-end;gap:5px;height:64px;}
+.bars .b{flex:1;background:linear-gradient(180deg,var(--blue),var(--blue2));border-radius:4px 4px 0 0;min-height:3px;position:relative;}
+.bars .b.zero{background:var(--line2);}
+.tr .ax{display:flex;justify-content:space-between;font-size:.64rem;color:var(--mut2);margin-top:5px;}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;}
+.bk-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:12px;}
+.bk-grid .it .l{font-size:.7rem;color:var(--mut2);} .bk-grid .it .v{font-size:.92rem;font-weight:700;margin-top:3px;}
+.note{font-size:.74rem;color:var(--mut);background:var(--panel2);border:1px solid var(--line2);border-radius:9px;padding:9px 12px;line-height:1.45;}
+.src{font-size:.68rem;color:var(--mut2);margin-top:7px;}
+.err{color:#ffb4b4;background:var(--downbg);border:1px solid rgba(255,107,107,.3);border-radius:11px;padding:16px 18px;font-size:.86rem;}
+.muted{color:var(--mut2);}
+@media(max-width:1100px){.svc-row,.kpi-row{grid-template-columns:repeat(2,1fr);}.cat-grid,.tr-grid{grid-template-columns:1fr;}}
 </style></head><body>
-<div class="top"><h1>ADA 데이터 저장 운영 현황</h1><a class="close" href="?admin=0" target="_top">닫기</a></div>
-<div id="root">불러오는 중…</div>
+
+<div class="head">
+  <div>
+    <h1>🛰️ ADA 운영 콘솔 · 데이터 저장 실시간 현황</h1>
+    <div class="sub">
+      <span class="live"><i></i>실시간 감시</span>
+      <span id="clock" class="muted">—</span>
+      <span id="refstat" class="muted">갱신 대기…</span>
+    </div>
+  </div>
+  <div style="text-align:right;">
+    <div class="tools">
+      <button type="button" class="btn" id="refbtn">↻ 즉시 갱신</button>
+      <button type="button" class="btn" id="exitbtn">✕ 나가기</button>
+    </div>
+    <div class="legend" style="margin-top:9px;justify-content:flex-end;">
+      <span><i class="dot ok"></i>정상</span><span><i class="dot warn"></i>경고</span><span><i class="dot down"></i>위험</span>
+    </div>
+  </div>
+</div>
+
+<div id="root"><p class="muted">불러오는 중…</p></div>
+
 <script>
 var TOKEN="__TOKEN__";
-var API=(function(){var p=location.protocol,h=location.hostname;if(p!=='http:'&&p!=='https:')p='http:';if(h==='localhost'||h==='127.0.0.1')return p+'//'+h+':8000';return p+'//'+h+'/api';})();
-fetch(API+'/admin/metrics/dashboard',{headers:{'Authorization':'Bearer '+TOKEN}})
- .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
- .then(function(d){render(d);})
- .catch(function(e){document.getElementById('root').innerHTML='<p style="color:#ff9b9b">불러오기 실패: '+e+' (권한 또는 연결 확인)</p>';});
-function esc(x){return (''+x).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
-function render(d){
- var kb=d.kb_by_type||{};var mx=1;for(var k in kb){if(kb[k]>mx)mx=kb[k];}
- var bars='';for(var k2 in kb){bars+='<div class="bar-row"><span class="lab">'+esc(k2)+'</span><div class="bar-bg"><div class="bar-fg" style="width:'+Math.round(kb[k2]/mx*100)+'%"></div></div><span>'+kb[k2]+'</span></div>';}
- var h='<div class="grid">'
- +'<div class="card"><div class="n green">'+d.failures_auto_handled+'</div><div class="l">자동 복구된 오류</div></div>'
- +'<div class="card"><div class="n green">'+d.auto_handle_rate+'%</div><div class="l">오류 자동 복구율</div></div>'
- +'<div class="card"><div class="n">'+d.kb_total+'</div><div class="l">학습 KB 누적</div></div>'
- +'<div class="card"><div class="n">'+d.qa_total+'</div><div class="l">Q&amp;A 누적</div></div>'
- +'</div>'
- +'<div class="sec"><h2>학습 KB 종류별 (self_learning_kb)</h2>'+(bars||'<span style="color:#9fb0cc">데이터 없음</span>')+'</div>'
- +'<div class="sec"><h2>오류 자동 수정 (failure_logs)</h2><div style="font-size:.85rem;color:#cdd9ee">전체 '+d.failures_total+'건 중 <b class="green">'+d.failures_auto_handled+'건</b> 자동 복구 · 복구율 '+d.auto_handle_rate+'%</div></div>'
- +'<div class="sec"><h2>Q&amp;A 수집 활용 (conversation_logs)</h2><div style="font-size:.85rem;color:#cdd9ee">누적 '+d.qa_total+'건 · KB 변환 처리 '+d.qa_processed+'건</div></div>';
- document.getElementById('root').innerHTML=h;
+// srcdoc iframe 에선 location.hostname 이 비어 http:///api 가 되어 fetch 가 실패한다.
+// flow HTML 과 동일하게 부모(Streamlit 페이지) location 으로 호스트를 잡는다(same-origin 허용).
+var API=(function(){var p='http:',h='localhost';try{p=window.parent.location.protocol;h=window.parent.location.hostname;}catch(e){}if(p!=='http:'&&p!=='https:')p='http:';if(!h)h='localhost';if(h==='localhost'||h==='127.0.0.1')return p+'//'+h+':8000';return p+'//'+h+'/api';})();
+var REFRESH_MS=15000, timer=null, countdown=REFRESH_MS/1000;
+
+function esc(x){return (''+x).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function fb(n){if(n===null||n===undefined)return '—';if(n<1024)return Math.round(n)+' B';var u=['KB','MB','GB','TB'],i=-1,v=n;do{v/=1024;i++;}while(v>=1024&&i<u.length-1);return v.toFixed(1)+' '+u[i];}
+function nf(n){if(n===null||n===undefined)return '—';return (''+n).replace(/\B(?=(\d{3})+(?!\d))/g,',');}
+function dot(s){return '<i class="dot '+(s||'down')+'"></i>';}
+function stWord(s){return s==='ok'?'정상':(s==='warn'?'경고':'위험');}
+function ago(iso){if(!iso)return '기록 없음';try{var d=new Date(iso.replace('Z','')+'Z');var m=Math.floor((Date.now()-d.getTime())/60000);if(m<1)return '방금';if(m<60)return m+'분 전';var h=Math.floor(m/60);if(h<48)return h+'시간 전';return Math.floor(h/24)+'일 전';}catch(e){return '—';}}
+
+function clock(){var d=new Date();document.getElementById('clock').textContent=d.toLocaleString('ko-KR',{hour12:false});}
+setInterval(clock,1000);clock();
+
+function tick(){countdown--;if(countdown<=0){load();return;}document.getElementById('refstat').textContent='다음 갱신 '+countdown+'초';}
+function schedule(){countdown=REFRESH_MS/1000;}
+
+document.getElementById('refbtn').onclick=function(){load();};
+
+// 나가기 — 샌드박스 iframe 은 <a target="_top"> 가 막히므로 부모 location 으로 직접 이동.
+// 토큰·역할을 쿼리로 실어 보내 라우팅이 세션 재주입(로그인 유지) → admin 없는 랜딩(시작화면) 표시.
+document.getElementById('exitbtn').onclick=function(){
+  // 샌드박스 iframe 은 window.parent.location.replace(새URL) 가 차단된다(allow-top-navigation 없음).
+  // → flow HTML 과 동일하게 replaceState(주소만 변경, 허용) + reload(허용) 로 토큰 실어 랜딩 복귀.
+  //   절대 iframe 자기 location 으로 이동하지 않는다(그게 빈 흰 화면의 원인이었음).
+  try{
+    var base=window.parent.location.pathname;
+    window.parent.history.replaceState({}, '', base+'?token='+encodeURIComponent(TOKEN)+'&role=admin');
+    window.parent.location.reload();
+    return;
+  }catch(e){}
+  try{ window.parent.location.reload(); }catch(e){}
+};
+
+// 운영 콘솔 iframe 을 콘텐츠 높이에 맞춰 늘려 내부 스크롤바를 제거(브라우저 페이지 스크롤로 대체).
+// frameElement 접근 실패 시 아무것도 안 하므로 scrolling=True 폴백 — 콘텐츠는 항상 보임(깨지지 않음).
+function fitHeight(){
+  try{
+    var fe=window.frameElement, hh=document.body.scrollHeight;
+    if(fe && hh>200){ fe.style.height=(hh+24)+'px'; fe.setAttribute('scrolling','no'); }
+  }catch(e){}
 }
+window.addEventListener('resize',fitHeight);
+
+function load(){
+  document.getElementById('refstat').textContent='갱신 중…';
+  fetch(API+'/admin/storage/overview',{headers:{'Authorization':'Bearer '+TOKEN}})
+   .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+   .then(function(d){render(d);schedule();
+     document.getElementById('refstat').textContent='갱신됨 '+new Date().toLocaleTimeString('ko-KR',{hour12:false});})
+   .catch(function(e){
+     document.getElementById('refstat').textContent='갱신 실패';
+     document.getElementById('root').innerHTML='<div class="err">⚠️ 불러오기 실패: '+esc(e.message||e)+
+       '<br><span style="font-size:.8rem">관리자 권한 또는 백엔드(API) 연결을 확인하세요. 다음 자동 갱신에서 재시도합니다.</span></div>';
+     schedule(); fitHeight();});
+}
+
+function render(d){
+  var h='';
+
+  /* ── 1. 스토리지 연결 신호등 ── */
+  h+='<div class="sect-t">스토리지 연결 상태</div><div class="svc-row">';
+  (d.services||[]).forEach(function(s){
+    h+='<div class="svc '+s.status+'"><span class="st">'+stWord(s.status)+'</span>'
+      +'<div class="nm">'+dot(s.status)+esc(s.name)+'</div>'
+      +'<div class="wh">'+esc(s.where||'')+'</div>'
+      +'<div class="mt">'+esc(s.metric)+'</div>'
+      +'<div class="dt">'+esc(s.detail||'')+'</div></div>';
+  });
+  h+='</div>';
+
+  /* ── 2. KPI ── */
+  var k=d.kpis||{};
+  h+='<div class="sect-t">핵심 지표</div><div class="kpi-row">'
+    +'<div class="kpi"><div class="n b">'+fb(k.db_total_bytes)+'</div><div class="l">PostgreSQL 총 용량</div></div>'
+    +'<div class="kpi"><div class="n">'+fb(k.minio_bytes)+'</div><div class="l">MinIO 객체 용량 ('+nf(k.minio_objects)+'개)</div></div>'
+    +'<div class="kpi"><div class="n v">'+nf(k.total_rows)+'</div><div class="l">DB 전체 레코드 (30개 테이블)</div></div>'
+    +'<div class="kpi"><div class="n g">'+fb(k.uploads_bytes)+'</div><div class="l">업로드 원본 누적</div></div>'
+    +'<div class="kpi"><div class="n">'+(k.backup_age_h!=null?esc(k.backup_age_h)+'h 전':'기록없음')+'</div><div class="l">최근 백업</div></div>'
+    +'</div>';
+
+  /* ── 3. 토폴로지 ── */
+  var nodes=d.storage_nodes||[];
+  h+='<div class="sect-t">저장 토폴로지 (원본 → 백업)</div><div class="topo">';
+  if(nodes[0]){h+=topoNode(nodes[0]);}
+  h+='<div class="arrow"><div class="x">⇒</div><div class="y">1일 3회 Pull<br>03·12·18시</div></div>';
+  if(nodes[1]){h+=topoNode(nodes[1]);}
+  h+='</div>';
+
+  /* ── 4. 카테고리별 분류 ── */
+  h+='<div class="sect-t">데이터 카테고리별 저장 현황</div><div class="cat-grid">';
+  (d.categories||[]).forEach(function(c){
+    var mx=1;(c.tables||[]).forEach(function(t){if(t.rows>mx)mx=t.rows;});
+    var rows='';
+    (c.tables||[]).forEach(function(t){
+      rows+='<div class="r"><span class="nm" title="'+esc(t.name)+'">'+esc(t.name)+'</span>'
+        +'<span class="bg"><span class="fg" style="width:'+Math.max(2,Math.round(t.rows/mx*100))+'%"></span></span>'
+        +'<span class="vv">'+nf(t.rows)+'</span>'
+        +'<span class="sz">'+fb(t.bytes)+'</span>'
+        +'<span class="nw">'+(t.recent_24h>0?'+'+t.recent_24h:'')+'</span></div>';
+    });
+    var stcls=c.status, stbg=stcls==='ok'?'var(--okbg)':(stcls==='warn'?'var(--warnbg)':'var(--downbg)');
+    var stco=stcls==='ok'?'var(--ok)':(stcls==='warn'?'var(--warn)':'var(--down)');
+    h+='<div class="cat"><div class="ch"><div>'
+      +'<div class="ti"><span class="ic">'+c.icon+'</span>'+esc(c.title)+'</div>'
+      +'<div class="de">'+esc(c.desc)+'</div></div>'
+      +'<span class="stx" style="background:'+stbg+';color:'+stco+'">'+dot(stcls)+stWord(stcls)+'</span></div>'
+      +'<div class="summ"><div><b>'+nf(c.total_rows)+'</b><small>레코드</small></div>'
+      +'<div><b>'+fb(c.total_bytes)+'</b><small>용량</small></div>'
+      +'<div><b class="rec">'+(c.recent_24h>0?'+'+nf(c.recent_24h):'0')+'</b><small>24h 신규</small></div></div>'
+      +'<div class="stores">'+(c.stores||[]).map(function(s){return '<span class="sb">'+esc(s)+'</span>';}).join('')+'</div>'
+      +'<div class="tbl-mini">'+rows+'</div></div>';
+  });
+  h+='</div>';
+
+  /* ── 5. DB 전수 인벤토리 ── */
+  var allt=[];
+  (d.categories||[]).forEach(function(c){(c.tables||[]).forEach(function(t){allt.push({n:t.name,r:t.rows,b:t.bytes,w:t.recent_24h,cat:c.title,ic:c.icon});});});
+  var bmx=1;allt.forEach(function(t){if(t.b>bmx)bmx=t.b;});
+  allt.sort(function(a,b){return b.b-a.b;});
+  h+='<div class="sect-t">DB 테이블 전수 인벤토리 ('+allt.length+'개 · 용량순)</div><div class="panel" style="overflow-x:auto;">'
+    +'<table class="inv"><thead><tr><th>테이블</th><th>카테고리</th><th class="num">레코드</th><th class="num">용량</th><th>용량비중</th><th class="num">24h</th></tr></thead><tbody>';
+  allt.forEach(function(t){
+    h+='<tr><td class="tn">'+esc(t.n)+'</td><td><span class="pill">'+t.ic+' '+esc(t.cat)+'</span></td>'
+      +'<td class="num">'+nf(t.r)+'</td><td class="num">'+fb(t.b)+'</td>'
+      +'<td><span class="bbg"><span class="bfg" style="width:'+Math.max(2,Math.round(t.b/bmx*100))+'%"></span></span></td>'
+      +'<td class="num" style="color:'+(t.w>0?'var(--ok)':'var(--mut2)')+'">'+(t.w>0?'+'+t.w:'·')+'</td></tr>';
+  });
+  h+='</tbody></table></div>';
+
+  /* ── 6. 7일 적재 트렌드 ── */
+  var tr=d.trends||{};
+  h+='<div class="sect-t">최근 7일 적재 트렌드</div><div class="tr-grid">'
+    +trend('🧪 분석 작업','jobs',tr.jobs)
+    +trend('🛠️ 오류 로그','failures',tr.failures)
+    +trend('💬 Q&A 수집','qa',tr.qa)
+    +trend('📦 산출물','outputs',tr.outputs)
+    +'</div>';
+
+  /* ── 7. 백업 패널 ── */
+  var bk=d.backup||{};
+  h+='<div class="sect-t">백업 운영 현황</div><div class="panel">'
+    +'<div class="bk-grid">'
+    +'<div class="it"><div class="l">스케줄</div><div class="v">'+esc(bk.schedule||'—')+'</div></div>'
+    +'<div class="it"><div class="l">방식</div><div class="v">'+esc(bk.method||'—')+'</div></div>'
+    +'<div class="it"><div class="l">보존 기간</div><div class="v">'+esc(bk.retention_days||'—')+'일</div></div>'
+    +'<div class="it"><div class="l">상태</div><div class="v">'+dot(bk.status)+' '+stWord(bk.status)+'</div></div>'
+    +'</div>';
+  h+='<div class="stores" style="margin-bottom:10px;">'+(bk.paths||[]).map(function(p){return '<span class="sb">'+esc(p)+'</span>';}).join('')+'</div>';
+  if((bk.last||[]).length){
+    h+='<table class="inv"><thead><tr><th>유형</th><th>시각</th><th class="num">크기</th><th>상태</th></tr></thead><tbody>';
+    bk.last.forEach(function(b){h+='<tr><td class="tn">'+esc(b.type)+'</td><td>'+esc(ago(b.at))+'</td><td class="num">'+fb(b.size_bytes)+'</td><td>'+dot(b.status==='ok'?'ok':'warn')+' '+esc(b.status)+'</td></tr>';});
+    h+='</tbody></table>';
+  }
+  h+='<div class="note" style="margin-top:10px;">ℹ️ '+esc(bk.note||'')+'</div></div>';
+
+  h+='<div class="src">출처: PostgreSQL pg_stat · MinIO list_objects · Redis INFO · MLflow /health · backup_catalog · 생성 '+esc(d.generated_at||'')+'</div>';
+
+  document.getElementById('root').innerHTML=h;
+  fitHeight(); setTimeout(fitHeight,80);
+}
+
+function topoNode(n){
+  return '<div class="node"><div class="role">'+(n.role==='primary'?'원본 · 실시간':'백업')+'</div>'
+    +'<div class="nm">'+dot(n.status)+esc(n.name)+'</div>'
+    +'<div class="pa">'+esc(n.path)+'</div>'
+    +'<div class="dt">'+esc(n.detail||'')+'</div></div>';
+}
+function trend(title,key,arr){
+  arr=arr||[];var mx=1;arr.forEach(function(p){if(p.n>mx)mx=p.n;});
+  var tot=arr.reduce(function(a,p){return a+p.n;},0);
+  var bars='';
+  if(!arr.length){bars='<span class="muted" style="font-size:.74rem">데이터 없음</span>';}
+  else{arr.forEach(function(p){var hh=Math.max(3,Math.round(p.n/mx*100));bars+='<div class="b'+(p.n===0?' zero':'')+'" style="height:'+hh+'%" title="'+esc(p.d)+': '+p.n+'"></div>';});}
+  var ax=arr.length?('<div class="ax"><span>'+esc(arr[0].d)+'</span><span>'+esc(arr[arr.length-1].d)+'</span></div>'):'';
+  return '<div class="tr"><div class="h">'+title+'</div><div class="tot">'+nf(tot)+'<span style="font-size:.7rem;color:var(--mut2);font-weight:400"> 건/7일</span></div>'
+    +'<div class="bars">'+bars+'</div>'+ax+'</div>';
+}
+
+load();
+setInterval(tick,1000);
 </script></body></html>
