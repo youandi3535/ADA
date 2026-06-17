@@ -259,6 +259,8 @@ services:
     environment:
       CUDA_VISIBLE_DEVICES: ""
       PYTHONPATH: /app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 호환 — worker 안 에이전트의 Ollama(host:11434) 호출용
     depends_on:
       postgres:
         condition: service_healthy
@@ -294,6 +296,8 @@ services:
     environment:
       CUDA_VISIBLE_DEVICES: ""
       PYTHONPATH: /app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 호환 — auto_error_handler 의 3순위 Ollama 호출용
     depends_on:
       postgres:
         condition: service_healthy
@@ -334,6 +338,8 @@ services:
     environment:
       CUDA_VISIBLE_DEVICES: ""
       PYTHONPATH: /app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 호환 — 워커들과 동일 설정 유지
     depends_on:
       redis:
         condition: service_healthy
@@ -389,6 +395,8 @@ services:
       PYTHONPATH: /app
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ADA_FAILURELOG_ENC_KEY: ${ADA_FAILURELOG_ENC_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 호환 — training_executor/explainability 윤색 Ollama 호출용
     depends_on:
       postgres:
         condition: service_healthy
@@ -426,6 +434,8 @@ services:
     environment:
       CUDA_VISIBLE_DEVICES: ""
       PYTHONPATH: /app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 호환 — insight/report 윤색 Ollama 호출용
     depends_on:
       postgres:
         condition: service_healthy
