@@ -11,7 +11,7 @@
 
 [project]
 name = "ada-v2"
-version = "2.4.0"
+version = "2.5.0"
 description = "Automated Data Analysis platform — 4 카테고리 (tabular_ml/tabular_dl/timeseries/anomaly_detection)"
 requires-python = ">=3.10,<3.11"
 readme = "README.md"

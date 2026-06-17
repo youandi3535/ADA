@@ -1,10 +1,10 @@
 # ADA — Adaptive AutoAI Pipeline Agent v2
 
-> **Conversational AutoAI Studio** — 사용자가 정형 데이터를 던지면, **다섯 번의 가벼운 선택만으로** 의도에 맞게 자동 분석·튜닝·해석을 수행하고, **원하는 형태(5종)** 로 산출물을 뽑아주는 대화형 AutoAI 스튜디오.
+> **Conversational AutoAI Studio** — 사용자가 정형 데이터를 던지면, **몇 번의 가벼운 선택만으로** 의도에 맞게 자동 분석·튜닝·해석을 수행하고, **원하는 형태(5종)** 로 산출물을 뽑아주는 대화형 AutoAI 스튜디오.
 > 시간이 지날수록 똑똑해지고, 스스로 오류를 고치며, 외부 위협으로부터 안전하다.
 >
 > **스코프**: 정형 ML / 정형 DL / 시계열 / 이상탐지 4개 카테고리 (이미지·NLP 제외)
-> **버전**: v2.4.0 · Python 3.10 (`>=3.10,<3.11`)
+> **버전**: v2.5.0 · Python 3.10 (`>=3.10,<3.11`)
 
 ---
 
@@ -12,12 +12,12 @@
 
 | 역할 | 담당자 | 영역 |
 |---|---|---|
-| 시스템·메타·인프라 (HJ) | youandi3535 | core / API / orchestrator / outputs / 보안 / KB / 인프라 |
+| 시스템·메타·인프라 (HJ) | youandi3535 | core / API / orchestrator / outputs / 보안 / KB / 인프라 / 운영 콘솔 |
 | 에이전트 로직 — timeseries (CS) | chang-seon | `agents/handlers/timeseries/` · `pipelines/timeseries/` |
 | 에이전트 로직 — anomaly (NY) | NY | `agents/handlers/anomaly/` · `pipelines/anomaly/` |
 | 에이전트 로직 — tabular (jh) | jh | `agents/handlers/tabular/` · `pipelines/tabular_ml,tabular_dl/` |
 
-> 영역 경계는 [.github/CODEOWNERS](.github/CODEOWNERS) · [CLAUDE.md](CLAUDE.md) · [docs/PARALLEL_WORK_GUARDS.md](docs/PARALLEL_WORK_GUARDS.md) 로 강제됩니다.
+> 영역 경계는 [.github/CODEOWNERS](.github/CODEOWNERS) · [CLAUDE.md](CLAUDE.md) · [docs/PARALLEL_WORK_GUARDS.md](docs/PARALLEL_WORK_GUARDS.md) 로 강제됩니다 (pre-commit 훅 → CODEOWNERS → CI 3중 방어).
 
 ---
 
@@ -25,14 +25,52 @@
 
 | # | 특징 | 설명 |
 |---|---|---|
-| 1 | **28 에이전트** | 슈퍼바이저·입력·게이트·전처리·모델링·평가·산출물·메타·회복 9개 카테고리 ([agents/personas.py](agents/personas.py) 단일 권위) |
+| 1 | **28 에이전트** | 슈퍼바이저·입력·게이트·전처리·모델링·평가·산출물·메타·회복 9개 카테고리 ([agents/personas.py](agents/personas.py) 단일 권위, `assert len(PERSONAS) == 28`) |
 | 2 | **5 HITL 게이트 + G0_PII** | LangGraph interrupt + PostgresSaver 기반, 24h 무응답 시 기본값 자동 처리 |
-| 3 | **3-Stack 자체학습** | PostgreSQL KB + MinIO 아티팩트 + pgvector RAG (768d) |
+| 3 | **3-Stack 자가학습** | PostgreSQL KB + MinIO 아티팩트 + pgvector RAG (768d). 신규 작업이 과거 학습(KB)을 인용해 시작 |
 | 4 | **5종 산출물** | PPT / PDF / 발표대본 / 정적 웹 대시보드 / 인사이트 정리 (carrier + architect 파이프라인) |
-| 5 | **Guardian v2 자동 오류 처리** | 5-Tier 체계 (Static → ErrorKB → 검증 패치 재사용 → Ollama → Claude CLI) |
+| 5 | **Guardian v2 자동 오류 처리** | 5-Tier 체계 (Static → ErrorKB → 검증 패치 재사용 → Ollama → Claude CLI), AES-GCM 암호화 원본 보관 |
 | 6 | **팀 집단지성 KB** | 모든 Claude Code·Cowork Q&A 자동 수집 → 벡터 KB → UserPromptSubmit 훅으로 Claude API 비용 절감 |
-| 7 | **보안 풀스택** | JWT(RS256) · OAuth 로그인 · RBAC · RLS · PII · 프롬프트 인젝션 방어 · Vault · 감사로그 |
-| 8 | **실시간 대시보드** | 28 에이전트 매트릭스 · 게이트 UI · WebSocket 진행률 스트리밍 |
+| 7 | **보안 풀스택** | JWT · Google OAuth 로그인 · RBAC · RLS · PII · 프롬프트 인젝션 방어 · Vault · 감사로그 |
+| 8 | **대화형 분석 스튜디오** | ada studio 랜딩 → OAuth 로그인 → 5단계 게이트 진행바 → 산출물. WebSocket 실시간 진행률 |
+| 9 | **운영 콘솔 (관리자)** | 실시간 데이터 저장 현황 감시 — 스토리지 신호등 · 30테이블 카테고리 분류 · 백업 현황 ([아래](#운영-콘솔--관리자-전용-실시간-데이터-저장-감시)) |
+
+---
+
+## 사용자 경험 흐름
+
+```
+ada studio 랜딩 (정적 히어로 + 분석 예시 카드)
+   │  ├─ ✦ 에이전트 소개  → 28 에이전트 협력 현황판 (?board=1)
+   │  └─ 운영 콘솔(관리자만) → 데이터 저장 실시간 현황 (?admin=1)
+   ▼  분석 시작하기
+Google OAuth 로그인 / 회원가입  (처음이면 자동 가입, 비밀번호 없음)
+   ▼
+분석 스튜디오 (단계 진행바 · 타이핑 애니메이션 · 정지/재진행)
+   G1 의도 → G2 전략 → G3 방법론 → G4 모델전략 → G5 모델선택 → G6 산출물
+   ▼
+산출물 다운로드 (PPT·PDF·대본·HTML·Markdown 중 선택)
+```
+
+> 로그인은 `st.session_state` + 쿼리 토큰 재주입(`?token=`)으로 유지됩니다. 모든 화면 전환(운영 콘솔 열기/닫기·처음으로·에이전트 소개)은 토큰을 실어 보내 reload 후에도 세션을 복원합니다. 프론트는 라이브 마운트 + Streamlit 폴링이라 `frontend/app.py` 수정은 새로고침(F5) 한 번으로 반영됩니다.
+
+---
+
+## 운영 콘솔 — 관리자 전용 실시간 데이터 저장 감시
+
+관리자(`admin` 역할)만 진입하는 탭으로, **어떤 데이터가 얼마나 어디에 저장되는지** 한눈에 실시간 감시합니다. 백엔드 `GET /admin/storage/overview` 한 번의 호출로 전부 집계하며, 대시보드는 **15초마다 자동 갱신**됩니다.
+
+| 패널 | 내용 |
+|---|---|
+| **스토리지 연결 신호등** | PostgreSQL · MinIO · Redis · MLflow · 로컬 백업 서버의 연결 상태를 🟢정상 / 🟡경고 / 🔴위험 동그라미로 표시 (용량·객체수·키수·응답시간 포함) |
+| **데이터 카테고리 분류** | 30개 DB 테이블을 **8개 카테고리**로 자동 분류 — 📥원본·업로드 / ⚙️분석작업 / 📦산출물·모델 / 🛠️오류 자동수정 / 🧠자기학습 KB / 💬Q&A 수집 / 🔐보안·감사 / 💾백업. 카테고리별 레코드수·용량·24h 신규·저장 위치 |
+| **저장 토폴로지** | VPS 원본(`/opt/ada` · `autoai-artifacts`) ⇒ 로컬 백업 서버(`/srv/backup/ada`, 1일 3회) 흐름 |
+| **DB 전수 인벤토리** | 30개 테이블을 용량순으로 — 카테고리 배지 · 레코드수 · 용량 · 용량비중 막대 · 24h 신규 |
+| **7일 적재 트렌드** | 분석작업 / 오류 / Q&A / 산출물 일별 적재량 막대 차트 |
+| **백업 운영 현황** | 스케줄(03·12·18시) · Pull 방식 · 보존 14일 · 최근 백업 신선도(≤20h🟢 / ≤30h🟡 / 초과🔴) |
+
+> 각 스토리지 점검은 `try/except` + 타임아웃으로 격리돼, 하나가 죽어도 나머지는 정상 표시됩니다.
+> 구현: [api/routes/admin.py](api/routes/admin.py) (`/admin/storage/overview`) · [frontend/admin_dashboard.html](frontend/admin_dashboard.html) · 진입 [frontend/app.py](frontend/app.py) `_admin_screen()`.
 
 ---
 
@@ -46,37 +84,29 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  개발자 PC                                              │
-│                                                         │
 │  VS Code Claude Code                                    │
 │   ├─ UserPromptSubmit 훅 → KB 히트 시 exit 2           │
 │   │   (Claude API 비용 0, 응답 즉시 반환)               │
 │   └─ Stop 훅 → collect_qa.py → Q&A 실시간 전송         │
 │      + collect_tool_use.py (PostToolUse, 코드 변경)     │
-│                                                         │
 │  Cowork (Claude Desktop App)                            │
 │   └─ 훅 없음 → ingest_history.py 30분 폴링             │
-│      %APPDATA%\Claude\local-agent-mode-sessions\        │
 └──────────────────┬──────────────────────────────────────┘
                    │ HTTPS
                    ▼
 ┌─────────────────────────────────────────────────────────┐
 │  VPS (웹 서버, Docker)                                  │
-│                                                         │
 │  FastAPI  --workers 1  (임베딩 일관성 보장)             │
 │   /kb/search       → 3-gate KB 검색                    │
 │   /kb/conversation → Q&A 수신 + 품질 게이트 저장        │
-│                                                         │
 │  PostgreSQL + pgvector                                  │
-│   self_learning_kb  (벡터 + success_count)              │
-│   conversation_logs (source: claude_code / cowork)      │
-│   pending_patches   (자동 수정 패치 큐)                 │
+│   self_learning_kb · conversation_logs · pending_patches│
 └──────────────────┬──────────────────────────────────────┘
-                   │ 동기화 (Windows 작업 스케줄러, 하루 3회)
+                   │ 동기화 (작업 스케줄러, 하루 3회)
                    ▼
 ┌─────────────────────────────────────────────────────────┐
 │  로컬/리눅스 서버                                        │
-│  linux_kb_sync.py  (Q&A + failure_lesson 크로스팀 풀)   │
-│  Ollama  qwen2.5:7b · qwen2.5-coder:7b                  │
+│  linux_kb_sync.py (크로스팀 풀) · Ollama qwen2.5:7b      │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -88,7 +118,7 @@
 | **2 — Ollama** | KB 미스 (qwen2.5:7b 로컬) | 2~5s | 0원 |
 | **3 — Claude** | Ollama 실패 시 폴백 | 3~10s | 과금 |
 
-> KB 저장 전 품질 게이트(0.0~1.0)로 거절·오답·빈 답변을 차단(점수 < 0.45 저장 거부). 코드 블록·구체적 설명은 가산점.
+> KB 저장 전 품질 게이트(0.0~1.0)로 거절·오답·빈 답변을 차단(점수 < 0.45 저장 거부).
 
 ### Guardian v2 5-Tier 자동 오류 수정
 
@@ -100,7 +130,7 @@
 | **2 — Ollama** | qwen2.5-coder:7b 로컬 LLM | ✅ Local | 5~15s |
 | **3 — Claude CLI** | 최후 폴백 (사이드카) | ✅ Cloud | 10~30s |
 
-> 주기 작업은 Celery Beat(`orchestrator/runner.py`)가 트리거: 에러 스캔(30초) · KB decay/retract/fixer-promote(각 24시간).
+> 주기 작업은 Celery Beat(`orchestrator/runner.py`)가 트리거: 에러 스캔(30초) · KB decay/retract/fixer-promote(각 24시간). 오류 원본은 AES-GCM 암호화(`failure_logs.raw_error_encrypted`)로 보관하고, 평문 컬럼엔 redactor 통과분만 저장합니다.
 
 ### KB 관련 스크립트
 
@@ -139,28 +169,28 @@ CPU 친화적이고 GTX 1060 3GB VRAM 환경에서도 안정 동작하는 정형
 
 ```
 ada-net (bridge)
-├── postgres         (pgvector/pgvector:pg16 :5432)
+├── postgres         (pgvector/pgvector:pg16 :5433→5432)
 ├── redis            (:6379 — broker + cache + pubsub + rate limit)
-├── minio            (:9000 / :9001)
-├── mlflow           (:5000)
-├── api              (FastAPI :8000, --workers 1)
-├── frontend         (Streamlit :8501)
+├── minio            (:9100/:9101 — 버킷 autoai-artifacts)
+├── mlflow           (:5000 — 아티팩트 s3://autoai-artifacts/mlflow)
+├── api              (FastAPI :8000, --workers 1, alembic upgrade head 부팅 시)
+├── frontend         (Streamlit :8501, 라이브 마운트)
 ├── worker-pipeline  (Celery, pipeline 큐)
-├── worker-harness   (Celery, harness 큐 — 자체학습 + 에러 KB)
+├── worker-harness   (Celery, harness 큐 — 자가학습 + 에러 KB)
 ├── beat             (Celery Beat — 주기 작업 트리거 전용)
-└── nginx            (리버스 프록시 :80)
+└── nginx            (리버스 프록시 :80/:443)
 
 ml 프로파일 추가:
 ├── worker-training  (Celery, training 큐, GPU 가능)
 ├── worker-output    (Celery, output 큐)
-└── serving          (:8080 — 추론/자동 오류 핸들러)
+└── serving          (:8081→8080 — 모델 추론 + 자동 오류 핸들러)
 
 sec 프로파일 추가:
-├── vault            (HashiCorp Vault dev :8200)
+├── vault            (HashiCorp Vault :8200)
 └── claude-cli-sidecar (read-only 마운트, --cap-drop ALL)
 ```
 
-> `api` 컨테이너는 **반드시 `--workers 1`** — sentence-transformers 싱글톤이 단일 프로세스에서만 일관된 임베딩을 생성함.
+> `api` 컨테이너는 **반드시 `--workers 1`** — sentence-transformers 싱글톤이 단일 프로세스에서만 일관된 임베딩을 생성함. `../api`·`../ada`·`../agents` 등 소스를 라이브 마운트하므로 백엔드 수정은 해당 컨테이너 **재시작**으로 반영(`--reload` 미사용).
 
 ### 5 HITL 게이트 + G0_PII 미니게이트
 
@@ -176,7 +206,7 @@ sec 프로파일 추가:
 
 ### 28 에이전트 카탈로그
 
-> 출처: [agents/personas.py](agents/personas.py) (`assert len(PERSONAS) == 28`). LLM 컬럼은 설계상 티어이며, 비용 절감 모드에서는 분석용 호출이 로컬 Ollama(qwen2.5:7b)로 대체될 수 있습니다.
+> 출처: [agents/personas.py](agents/personas.py) (`assert len(PERSONAS) == 28`). LLM 컬럼은 설계상 티어이며, 비용 절감 모드에서는 분석용 호출이 로컬 Ollama(qwen2.5:7b)로 대체됩니다.
 
 | # | 카테고리 | 에이전트 | LLM | 역할 |
 |---|---|---|---|---|
@@ -209,7 +239,7 @@ sec 프로파일 추가:
 | 27 | | SecurityGuardAgent | none | 보안 가드 (PII + 프롬프트 인젝션) |
 | 28 | 회복 | ErrorRecoveryAgent | Opus | 회복 코디네이터 (최후 폴백) |
 
-> 게이트 5종은 [agents/gates/](agents/gates/), 카테고리 핸들러는 [agents/handlers/](agents/handlers/) 에 위치. 모든 에이전트는 `BaseAgent`(페르소나 자동 주입)를 상속합니다.
+> 게이트 5종은 [agents/gates/](agents/gates/), 카테고리 핸들러는 [agents/handlers/](agents/handlers/) 에 위치. 모든 에이전트는 `BaseAgent`(페르소나 자동 주입, `_call_llm` 단일 진입점)를 상속합니다. 실행 기록은 `agent_runs`·`models`·`outputs` 테이블에 감사 저장됩니다.
 
 ### 5종 산출물 패밀리
 
@@ -221,7 +251,7 @@ sec 프로파일 추가:
 | **OUT-04** | 정적 웹 대시보드 (단일 HTML) | .html | [outputs/carriers/html_carrier.py](outputs/carriers/html_carrier.py) | Chart.js + 인라인 자산 |
 | **OUT-07** | 인사이트 정리 (Markdown) | .md | [outputs/carriers/md_carrier.py](outputs/carriers/md_carrier.py) | SHAP top10 · 차트 · 한계점 |
 
-> `ReportArchitectAgent`가 카테고리·청중·의도에 맞는 Skeleton(`outputs/architect/skeletons/`)으로 동적 목차를 설계하고, `ReportComposerAgent`가 `ThreadPoolExecutor`로 병렬 fan-out 생성합니다. 산출물 파이프라인은 architect(설계) → content(본문) → visuals(차트/표) → qa(수치 일관성 검증) 단계로 구성됩니다.
+> `ReportArchitectAgent`가 카테고리·청중·의도에 맞는 Skeleton(`outputs/architect/skeletons/`)으로 동적 목차를 설계하고, `ReportComposerAgent`가 `ThreadPoolExecutor`로 병렬 fan-out 생성합니다. 산출물 파이프라인은 architect(설계) → content(본문) → visuals(차트/표) → qa(수치 일관성 검증) 단계로 구성됩니다. 재진행 시 기존 `Output` 행을 삭제해 산출물 교체를 보장합니다.
 
 ---
 
@@ -249,6 +279,32 @@ sec 프로파일 추가:
 
 ---
 
+## 데이터 저장·백업 인프라
+
+### 저장소 (VPS 원본)
+
+| 저장소 | 용도 | 위치 |
+|---|---|---|
+| **PostgreSQL 16 + pgvector** | 30개 테이블 (원본 메타·작업·KB·오류·감사·임베딩 768d) | `ada-postgres` (127.0.0.1:5433) |
+| **MinIO** | 업로드 원본·산출물·모델 아티팩트 | 버킷 `autoai-artifacts` |
+| **MLflow** | 실험·모델 추적 (아티팩트는 MinIO) | `s3://autoai-artifacts/mlflow` |
+| **Redis** | 브로커·캐시·진행률 pubsub·rate limit | `ada-redis` |
+| **데이터셋 디렉터리** | VPS 원본 데이터 | `/opt/ada/data` |
+
+### 백업 (Pull 방식, 1일 3회)
+
+```
+[학원 Linux 서버] --SSH--> [VPS ada-postgres] --pg_dump|gzip--> [로컬 /srv/backup/ada/postgres]
+```
+
+- **스케줄**: `cron 0 3,12,18` (03·12·18시, 1일 3회) · **보존**: 14일
+- **방식**: 로컬 백업 서버가 VPS에서 끌어오는 Pull (VPS엔 push 백업 없음)
+- **경로**: `/srv/backup/ada/{postgres,datasets}` ← VPS `/opt/ada/data`
+- 백업 성공 시 `backup_postgres.sh`가 VPS DB의 `backup_catalog` 에 기록 → **운영 콘솔 백업 카드가 🟢 정상**으로 표시
+- 스크립트: [scripts/backup_postgres.sh](scripts/backup_postgres.sh) · 설정 예시 [scripts/backup.conf.example](scripts/backup.conf.example) · 문서 [docs/server/backup.md](docs/server/backup.md)
+
+---
+
 ## 기술 스택
 
 | 레이어 | 기술 |
@@ -256,21 +312,23 @@ sec 프로파일 추가:
 | 언어 | **Python 3.10** (`>=3.10,<3.11`) |
 | 컨테이너 | Docker / Docker Compose (profile: core / ml / sec) |
 | 오케스트레이션 | LangGraph (interrupt 기반 그래프) + Celery (큐 4종: pipeline/harness/training/output) + Celery Beat |
-| API | FastAPI (라우트 11종), uvicorn **--workers 1** |
-| 프론트엔드 | Streamlit |
-| DB | PostgreSQL 16 + pgvector (IVFFlat, 768d) |
+| API | FastAPI (라우터 11종), uvicorn **--workers 1** |
+| 프론트엔드 | Streamlit (랜딩·OAuth·분석 스튜디오·운영 콘솔) |
+| DB | PostgreSQL 16 + pgvector (IVFFlat, 768d), 30 테이블 |
 | 캐시/브로커 | Redis 7 |
-| 아티팩트 스토어 | MinIO |
+| 아티팩트 스토어 | MinIO (버킷 autoai-artifacts) |
 | 실험 추적 | MLflow |
 | 시크릿 관리 | HashiCorp Vault (KV v2) |
-| 리버스 프록시 | nginx |
-| 인증 | JWT(RS256) + OAuth 로그인/회원가입 |
+| 리버스 프록시 | nginx (TLS) |
+| 인증 | JWT + Google OAuth 로그인/회원가입 · RBAC · RLS |
 | LLM (Cloud) | Claude (Opus / Sonnet) · Claude CLI 사이드카 |
-| LLM (Local) | Ollama — qwen2.5:7b (Q&A·분석 폴백) · qwen2.5-coder:7b (에러 수정) |
+| LLM (Local) | Ollama — qwen2.5:7b (분석 1~3단계·Q&A 폴백) · qwen2.5-coder:7b (에러 수정) |
 | 임베딩 | sentence-transformers/**paraphrase-multilingual-mpnet-base-v2** (768d, 한국어 포함 다국어) |
 | 팀 KB | pgvector + UserPromptSubmit/Stop/PostToolUse 훅 + Cowork 폴링 + MCP 서버 |
-| 관측성 | Langfuse · 자체 KPI 측정(`ada/observability/kpi.py`) |
+| 관측성 | Langfuse · 자체 KPI 측정(`ada/observability/kpi.py`) · 운영 콘솔 |
 | OS (개발) | Windows 11 + WSL2 / Ubuntu 22.04 LTS Server |
+
+> LLM 백엔드 분담: **분석 1~3단계 = Ollama / 4~6단계 + 산출물 = Claude** 고정.
 
 ---
 
@@ -278,7 +336,7 @@ sec 프로파일 추가:
 
 | 형식 | 확장자 | 활용 |
 |---|---|---|
-| CSV | .csv | 전체 카테고리 |
+| CSV | .csv | 전체 카테고리 (한국어 cp949/euc-kr 강건 로딩) |
 | Excel | .xlsx, .xls | 전체 카테고리 |
 | Parquet | .parquet | 전체 카테고리 |
 | JSON | .json | 전체 카테고리 |
@@ -287,7 +345,7 @@ sec 프로파일 추가:
 | Text | .txt | 시계열 로그 |
 | HTML | .html | 표 추출 |
 
-> ❌ 이미지(jpg/png) · 오디오(wav) 는 본 스코프에서 제외
+> ❌ 이미지(jpg/png) · 오디오(wav) 는 본 스코프에서 제외 · 업로드 상한 30MB (`MAX_UPLOAD_SIZE_MB`)
 
 ---
 
@@ -312,27 +370,29 @@ ADA/
 │       └── common/            # 공유 게이트/shared 유틸
 ├── ada/
 │   ├── core/                  # config · state(PipelineState) · logger · lang_guard · breaker · langfuse
-│   ├── db/                    # models · session · seeds (agent_registry 시드)
+│   ├── db/                    # models(30 테이블) · session · seeds (agent_registry 시드)
 │   ├── error_handler/         # auto_handler · static_fixers · classifier · patcher · daemon · circuit_breaker
-│   ├── security/              # jwt · rbac · vault · pii · audit · backup · guardrails
+│   ├── security/              # jwt · rbac · vault · pii · audit · backup · guardrails · raw_error_crypto
 │   ├── observability/         # kpi · metrics
-│   └── harness/               # distiller · rag (자체학습 하니스)
-├── api/                       # FastAPI 앱
+│   └── harness/               # distiller · rag (자가학습 하니스)
+├── api/                       # FastAPI 앱 (라우터 11종)
 │   └── routes/                # auth · upload · pipeline · stream · kb · kb_search · conversation_kb
-│                              #  · metrics · observability · admin · error_dashboard
-├── pipelines/                 # 4 카테고리 파이프라인 + factory
-│   ├── tabular_ml/ · tabular_dl/ · timeseries/ · anomaly/
-│   └── factory.py             # PIPELINE_REGISTRY
+│                              #  · metrics · observability · admin(운영콘솔) · error_dashboard
+├── pipelines/                 # 4 카테고리 파이프라인 + factory(PIPELINE_REGISTRY)
+│   └── tabular_ml/ · tabular_dl/ · timeseries/ · anomaly/
 ├── outputs/                   # 5종 산출물 생성 (carrier + architect 파이프라인)
 │   ├── carriers/              # pptx · pdf · html · md · script carrier
 │   ├── architect/             # skeleton 기반 동적 목차 설계
-│   ├── content/ · visuals/ · context/ · qa/ · governance/ · layouts/ · localization/ · style/
+│   └── content/ · visuals/ · context/ · qa/ · governance/ · layouts/ · localization/ · style/
 ├── orchestrator/              # graph(LangGraph) · runner(Celery+Beat) · checkpoint · harness_tasks · training_tasks
-├── scripts/                   # KB 훅·수집·동기화·데모·dev 유틸
+├── serving/                   # 모델 추론 + 자동 오류 핸들러 (ml 프로파일)
+├── frontend/                  # app.py(랜딩·OAuth·스튜디오) · admin_dashboard.html(운영 콘솔) · agent_*.html
+├── scripts/                   # KB 훅·수집·동기화·백업·데모·dev 유틸
+│   ├── backup_postgres.sh     # Pull 백업 + backup_catalog 기록
 │   ├── demo/                  # timeseries_demo · anomaly_demo · tabular_demo (E2E)
-│   └── dev/                   # setup_team_kb.ps1 · end_of_day.sh · check_scope.sh
+│   └── dev/                   # setup_team_kb.ps1 · end_of_day.sh · check_scope.sh · verify_frontend.sh
 ├── migrations/versions/       # Alembic (001 초기 → 005 oauth_login)
-├── docker/                    # Dockerfile 5종 + docker-compose.yml
+├── docker/                    # Dockerfile + docker-compose.yml (+ gpu override)
 ├── tests/                     # 통합·핸들러·침투·인수 테스트
 ├── .claude/settings.json      # UserPromptSubmit + Stop + PostToolUse 훅 + MCP 서버
 ├── .github/                   # CI/CD 워크플로우 + CODEOWNERS
@@ -347,46 +407,43 @@ ADA/
 
 ```bash
 # 1. 저장소 클론
-git clone <repo-url>
-cd ADA
+git clone <repo-url> && cd ADA
 
 # 2. 환경 변수 (.env 는 gitignore — HJ에게 값 공유 요청)
 cp .env.example .env
-# KB_SERVER_URL, KB_COLLECT_SECRET, DATABASE_URL 등 입력
+# DATABASE_URL · MINIO_* · GOOGLE_CLIENT_ID/SECRET · KB_COLLECT_SECRET 등 입력
 
 # 3. 컨테이너 기동
 cd docker
 docker compose --profile core up -d                # 평소 작업
-docker compose --profile core --profile ml up -d   # 학습 단계
+docker compose --profile core --profile ml up -d   # 학습 + serving
 
-# 4. DB 마이그레이션
+# 4. DB 마이그레이션 (api 부팅 시 alembic upgrade head 자동 실행)
 docker compose exec api alembic upgrade head
 ```
 
 ### 팀 KB + Cowork 폴링 등록 (Windows, 1회)
 
 ```powershell
-# 한 번에 .env 설정 + 작업 스케줄러 2종 등록 (권장)
 .\scripts\dev\setup_team_kb.ps1 -Secret "팀에서_받은_KB_COLLECT_SECRET"
 #  → ADA-IngestHistory (Cowork 30분 폴링) + ADA-KB-Sync (하루 3회 크로스팀 동기화)
 ```
 
-> Cowork 폴링 주기만 바꾸려면 작업 스케줄러 트리거를 교체하면 됩니다(리빌드 불필요):
-> ```powershell
-> $t = New-ScheduledTaskTrigger -Once -At (Get-Date) `
->      -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration (New-TimeSpan -Days 3650)
-> Set-ScheduledTask -TaskName "ADA-IngestHistory" -Trigger $t
-> ```
+### 수정 반영 규칙
+
+| 수정 대상 | 반영 방법 |
+|---|---|
+| `frontend/app.py` · `frontend/*.html` | 라이브 마운트 + Streamlit 폴링 → **F5 한 번** |
+| `api/` · `ada/` · `agents/` · `orchestrator/` (백엔드) | 해당 컨테이너 **재시작** (`docker compose restart api`) |
+| 프론트 전수 점검 | `bash scripts/dev/verify_frontend.sh "<영문 마커>"` (py_compile·SHA·health 자동) |
 
 ### 일일 작업 흐름
 
 ```bash
-# 매일 아침
 git checkout main && git pull origin main
 git checkout -b feat/{본인이니셜}
-
-# 매일 저녁 (영역검증 → pytest → rebase → push 자동화)
-bash scripts/dev/end_of_day.sh
+# ... 작업 ...
+bash scripts/dev/end_of_day.sh   # 영역검증 → pytest → rebase → push 자동화
 ```
 
 > 본인 영역만 검사: `ruff check agents/handlers/{카테고리}/` · `pytest tests/handlers/{카테고리}/ -q`
@@ -404,13 +461,13 @@ bash scripts/dev/end_of_day.sh
 | KP4 | 분석 카테고리 커버 **4/4** |
 | KP5 | API p95 < 400ms |
 | KP6 | AGENTS.md 자동 룰 ≥ 15 |
-| KP7 | 자체학습 효과: 2회차 메트릭 +5%p, Optuna trial -30% |
+| KP7 | 자가학습 효과: 2회차 메트릭 +5%p, Optuna trial -30% |
 | KP8 | 자동 오류 해결률 ≥ 60% (Guardian v2 5-Tier) |
 | KP9 | 트랜스포머 채택률 ≥ 25% (G5) |
 | KP10 | 보안 침투 0건 통과 |
 | KP11 | 사용자 1순위 채택률 ≥ 60% (G2) |
 
-> 측정: `python scripts/kpi_measure.py --since 24 --json` (`ada/observability/kpi.py` 위임) · 가이드 [docs/KPI_MEASUREMENT.md](docs/KPI_MEASUREMENT.md) · [docs/ADR-010-kpi-measurement.md](docs/ADR-010-kpi-measurement.md)
+> 측정: `python scripts/kpi_measure.py --since 24 --json` (`ada/observability/kpi.py` 위임) · 가이드 [docs/KPI_MEASUREMENT.md](docs/KPI_MEASUREMENT.md)
 
 ---
 
@@ -419,12 +476,12 @@ bash scripts/dev/end_of_day.sh
 | 브랜치 | 용도 |
 |---|---|
 | `main` | 안정 버전 (직접 push 금지, PR 머지만) |
-| `feat/hj` | HJ (시스템·인프라) |
+| `feat/hj` | HJ (시스템·인프라·운영 콘솔) |
 | `feat/cs` | CS (timeseries) |
 | `feat/NY` | NY (anomaly) |
 | `feat/jh` | jh (tabular) |
 
-> PR은 [.github/CODEOWNERS](.github/CODEOWNERS) 가 영역 소유자를 자동 지정하며, CI(ruff·pytest·docker build) 통과 후 머지됩니다.
+> PR은 [.github/CODEOWNERS](.github/CODEOWNERS) 가 영역 소유자를 자동 지정하며, CI(ruff·pytest·docker build) 통과 후 머지됩니다. 커밋 첫 줄은 역할 접두사(`hj :`/`CS :`/`NY :`/`jh :`).
 
 ---
 
@@ -436,21 +493,22 @@ bash scripts/dev/end_of_day.sh
 | 역할 & 작업 규칙 (Claude 세션 자동 로드) | [CLAUDE.md](CLAUDE.md) |
 | 병렬 작업 가드 구조 | [docs/PARALLEL_WORK_GUARDS.md](docs/PARALLEL_WORK_GUARDS.md) |
 | 10일 병렬 일정 + 단독 수정 파일 매트릭스 | [TEAM_10DAY_SCHEDULE.md](TEAM_10DAY_SCHEDULE.md) |
-| KPI 측정 가이드 / ADR | [docs/KPI_MEASUREMENT.md](docs/KPI_MEASUREMENT.md) · [docs/ADR-010-kpi-measurement.md](docs/ADR-010-kpi-measurement.md) |
+| KPI 측정 가이드 / ADR | [docs/KPI_MEASUREMENT.md](docs/KPI_MEASUREMENT.md) |
 | 산출물 carrier 인벤토리 | [docs/carrier_inventory.md](docs/carrier_inventory.md) |
 | 로그인 / DB 연동 가이드 | [LOGIN_DB_GUIDE.md](LOGIN_DB_GUIDE.md) |
-| 서버 운영 매뉴얼 | [docs/server/_서버관리메뉴얼.md](docs/server/_서버관리메뉴얼.md) |
+| 서버 운영 매뉴얼 / 백업 | [docs/server/_서버관리메뉴얼.md](docs/server/_서버관리메뉴얼.md) · [docs/server/backup.md](docs/server/backup.md) |
 | 구현 현황 리포트 | [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md) · [AUDIT_REPORT.md](AUDIT_REPORT.md) |
 | tabular 핸들러 가이드 | [agents/handlers/tabular/README.md](agents/handlers/tabular/README.md) |
 
 ---
 
-> **현재 상태**: v2.0 골격(28 에이전트 · 5게이트 · 4 카테고리 · 5 산출물 · Guardian v2 · 보안 풀스택) 완성 후, 4 카테고리 핸들러 고도화 · OAuth 로그인 · 산출물 품질 개선을 진행하는 운영·고도화 단계 (2026-06).
+> **현재 상태**: v2.0 골격(28 에이전트 · 5게이트 · 4 카테고리 · 5 산출물 · Guardian v2 · 보안 풀스택) 완성 후, 4 카테고리 분석 깊이 고도화 · OAuth 스튜디오 흐름 · 운영 콘솔 · 산출물 품질 개선을 진행하는 운영·고도화 단계 (2026-06).
 >
 > **변경 이력**
 > - v1.0 — 기초 파이프라인
-> - v2.0 — 5게이트 · 3-Stack 자체학습 · AutoError · 보안 풀스택 · 27 에이전트
+> - v2.0 — 5게이트 · 3-Stack 자가학습 · AutoError · 보안 풀스택 · 27 에이전트
 > - v2.1 (2026-05-18) — 정형 데이터 중심 스코프 축소 (카테고리 6→4, 산출물 13→5)
 > - v2.2 (2026-05-25) — Guardian v2 · 팀 집단지성 KB · 3-Tier Q&A · Cowork 지원 · 5-Tier 자동 오류 수정
-> - v2.3 (2026-06-01) — KPI 자동 측정 · Streamlit 대시보드 · hook 3-tier 배지 · E2E 데모 3종(timeseries/tabular/anomaly)
-> - v2.4 (2026-06) — **ReportArchitectAgent 추가(28 에이전트)** · OAuth 로그인/회원가입(migration 005) · 시계열 모델 확장(통계+신경망+TFT) · 이상탐지 COPOD/ECOD/HBOS 추가 · 산출물 carrier/architect 파이프라인 고도화 · 다국어 임베딩(paraphrase-multilingual-mpnet) · Celery Beat 주기작업 · Cowork 폴링 30분 전환
+> - v2.3 (2026-06-01) — KPI 자동 측정 · Streamlit 대시보드 · hook 3-tier 배지 · E2E 데모 3종
+> - v2.4 (2026-06) — ReportArchitectAgent 추가(28 에이전트) · OAuth 로그인(migration 005) · 시계열 모델 확장(통계+신경망+TFT) · 이상탐지 COPOD/ECOD/HBOS · 다국어 임베딩 · Celery Beat 주기작업 · Cowork 폴링 30분 전환
+> - **v2.5 (2026-06-17)** — **운영 콘솔(관리자 실시간 데이터 저장 감시) 신규**: 스토리지 신호등(PostgreSQL/MinIO/Redis/MLflow/백업) · 30테이블 8카테고리 분류 · DB 전수 인벤토리 · 7일 트렌드 · `/admin/storage/overview` · **백업 카탈로그 기록**(Pull 1일 3회 → 콘솔 🟢) · **serving 부활**(모델 추론+자동 오류) · **DB 감사기록 활성화**(agent_runs/models/outputs) · 자가학습 레이어 활성화 · 산출물 재진행 교체 보장 · 진행바 UI·타이핑 속도 개선 · 전 카테고리 분석 깊이 보완(입력 견고화·튜닝·자동 피처선택·EDA) · 로그인 유지(토큰 재주입·replaceState) 다수 수정
