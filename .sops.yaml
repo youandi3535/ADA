@@ -1,0 +1,12 @@
+# SOPS config for ADA env encryption.
+#
+# Encrypts dotenv files (.env / .env.sops) with the age PUBLIC key below.
+# - PUBLIC key (here): safe to commit, used to ENCRYPT (lock).
+# - PRIVATE key: NEVER commit. Lives at VPS ~/.config/sops/age/keys.txt
+#   and is backed up in a password manager. Used to DECRYPT (unlock).
+#
+# Encrypt:  sops -e --input-type dotenv --output-type dotenv .env > .env.sops
+# Decrypt:  sops -d --input-type dotenv --output-type dotenv .env.sops > .env
+creation_rules:
+  - path_regex: (^|/)\.env(\.sops)?$
+    age: age1xvnp7fzdcrc8efrqra4lmtlt32dqaf2gl3plvt7ztt00n2swrq2sx8r8ce

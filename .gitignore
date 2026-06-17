@@ -78,3 +78,7 @@ _probe_*
 
 # env backups (do not commit secrets)
 .env.bak*
+
+# SOPS: the encrypted env IS allowed in git (values are ciphertext, safe).
+# Plaintext .env, *.key, *.pem stay blocked above. Never commit the age private key.
+!.env.sops
