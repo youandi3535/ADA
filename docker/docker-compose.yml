@@ -259,6 +259,11 @@ services:
     environment:
       CUDA_VISIBLE_DEVICES: ""
       PYTHONPATH: /app
+      # HJ 2026-06-17 — G1~G3 분석 LLM 을 이 워커에서 Ollama 로 호출(실시간 글=domain_partial 스트리밍).
+      #   .env 의 OLLAMA_BASE_URL 중복/불일치에 영향받지 않도록 api 와 동일하게 명시한다.
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "qwen2.5:7b"
+      OLLAMA_CODER_MODEL: "qwen2.5-coder:7b"
     extra_hosts:
       - "host.docker.internal:host-gateway"   # Linux 호환 — worker 안 에이전트의 Ollama(host:11434) 호출용
     depends_on:
@@ -296,6 +301,10 @@ services:
     environment:
       CUDA_VISIBLE_DEVICES: ""
       PYTHONPATH: /app
+      # HJ 2026-06-17 — harness 워커(오류 자동수정)도 Ollama coder 호출 → .env 의존 대신 api 와 동일 명시.
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "qwen2.5:7b"
+      OLLAMA_CODER_MODEL: "qwen2.5-coder:7b"
     extra_hosts:
       - "host.docker.internal:host-gateway"   # Linux 호환 — auto_error_handler 의 3순위 Ollama 호출용
     depends_on:
@@ -395,6 +404,10 @@ services:
       PYTHONPATH: /app
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ADA_FAILURELOG_ENC_KEY: ${ADA_FAILURELOG_ENC_KEY:-}
+      # HJ 2026-06-17 — Ollama 폴백/insight 호출용 명시 (docker-compose.gpu.yml 의 학원 워커와 동일).
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "qwen2.5:7b"
+      OLLAMA_CODER_MODEL: "qwen2.5-coder:7b"
     extra_hosts:
       - "host.docker.internal:host-gateway"   # Linux 호환 — training_executor/explainability 윤색 Ollama 호출용
     depends_on:
@@ -434,6 +447,10 @@ services:
     environment:
       CUDA_VISIBLE_DEVICES: ""
       PYTHONPATH: /app
+      # HJ 2026-06-17 — output 워커(insight/report 윤색)도 Ollama 호출 → .env 의존 대신 api 와 동일 명시.
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "qwen2.5:7b"
+      OLLAMA_CODER_MODEL: "qwen2.5-coder:7b"
     extra_hosts:
       - "host.docker.internal:host-gateway"   # Linux 호환 — insight/report 윤색 Ollama 호출용
     depends_on:
