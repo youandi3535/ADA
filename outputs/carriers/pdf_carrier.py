@@ -17,17 +17,18 @@ _KS = "HYSMyeongJo-Medium"  # 본문 (CID 폴백)
 _KG = "HYGothic-Medium"  # 제목/굵게 (CID 폴백)
 
 # 번들/시스템에서 찾을 한글 TTF 후보 (OFL/시스템). reportlab 은 OTF(CFF) 못 읽으므로 .ttf 만.
+# Pretendard(모던 프리미엄·9웨이트·라틴 일관) 우선 → 없으면 NanumGothic → Noto → 시스템 폴백.
 _KO_TTF_REGULAR = (
+    "Pretendard-Regular.ttf",
     "NanumGothic.ttf",
     "NanumGothic-Regular.ttf",
-    "Pretendard-Regular.ttf",
     "NotoSansKR-Regular.ttf",
     "malgun.ttf",
 )
 _KO_TTF_BOLD = (
+    "Pretendard-Bold.ttf",
     "NanumGothicBold.ttf",
     "NanumGothic-Bold.ttf",
-    "Pretendard-Bold.ttf",
     "NotoSansKR-Bold.ttf",
     "malgunbd.ttf",
 )
@@ -392,7 +393,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
     PS("TOCSE", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), leftIndent=16)  # 부록 하위
     PS("TOCSP", fontName=_KS, fontSize=11, leading=16, textColor=colors.HexColor("#64748B"), alignment=TA_RIGHT)
     toc_label = PS(
-        "TOCLbl", fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#94A3B8")
+        "TOCLbl", fontName=_KS, fontSize=9, leading=12, textColor=colors.HexColor("#94A3B8")
     )  # TABLE OF CONTENTS
 
     # 카테고리 한글 매핑 (표지·사이트 톤 통일) — _draw_cover 에서 사용
@@ -1211,7 +1212,7 @@ def generate_pdf(plan: ReportPlan, ctx: ReportContext, output_path) -> str:
         canvas.setFillColor(colors.HexColor("#94A3B8"))
         canvas.drawString(2 * cm, 1 * cm, title_text[:40])
         # 우측 페이지 번호 — 12pt 더 옅은 회색
-        canvas.setFont("Helvetica", 12)
+        canvas.setFont(_KS, 12)
         canvas.setFillColor(colors.HexColor("#94A3B8"))
         canvas.drawRightString(A4[0] - 2 * cm, 1 * cm, f"p.{dc.page}")
         # [공통 로고] 본문 우상단 — 연한 'ada studio' 워드마크 러닝 마크(우측 정렬, 표지=락업/본문=연한 워드마크)
