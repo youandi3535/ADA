@@ -450,6 +450,116 @@ async def _set_job_terminal(job_id: str, status: str, error: str | None = None) 
         log.warning("set_job_terminal_failed", job_id=job_id, error=str(e))
 
 
+async def _persist_outputs_to_db(
+    job_id: str,
+    requested_outputs: list | None,
+    output_paths: dict | None,
+) -> None:
+    """완료 시 산출물 감사 기록을 DB 에 영속화.
+
+    그래프 노드(report_composer 등)는 세션 주입 없이 생성돼 self.session=None 이라
+    에이전트 레벨 DB 기록(outputs / jobs.requested_outputs)이 비어 있었다. 기능은 Redis
+    gate_data 로 동작하지만, 감사/이력용 DB 기록을 완료 시점에 runner 가 중앙에서 남긴다.
+
+    '재진행 = 산출물 교체' 의미를 보장하기 위해 기존 Output 행은 모두 지우고 이번 실행
+    결과만 다시 넣는다(누적 방지). Job.requested_outputs 도 이번 선택으로 갱신한다.
+    best-effort — 실패해도 파이프라인 완료 처리에는 영향 없음.
+    """
+    try:
+        import uuid as _uuid
+
+        from sqlalchemy import (
+            delete as _sa_delete,  # noqa: WPS433
+            select as _sa_select,  # noqa: WPS433
+        )
+
+        from ada.db.models import Job, Output  # noqa: WPS433
+        from ada.db.session import AsyncSessionLocal  # noqa: WPS433
+
+        jid = _uuid.UUID(job_id)
+        paths = output_paths or {}
+        # requested_outputs 가 비어 있으면(자동 전체 생성) 실제 만들어진 산출물 코드로 대체.
+        ros = list(requested_outputs) if requested_outputs else list(paths.keys())
+
+        async with AsyncSessionLocal() as session:
+            job = await session.scalar(_sa_select(Job).where(Job.id == jid))
+            if job is not None:
+                job.requested_outputs = ros
+            # 기존 Output 행 제거 후 이번 결과만 삽입 (재진행=교체, 누적 방지)
+            await session.execute(_sa_delete(Output).where(Output.job_id == jid))
+            for code, path in paths.items():
+                if not path:
+                    continue
+                session.add(Output(job_id=jid, output_code=str(code), minio_path=str(path)))
+            await session.commit()
+        log.info("persist_outputs_to_db", job_id=job_id, requested=ros, n_outputs=len([p for p in paths.values() if p]))
+    except Exception as e:  # noqa: BLE001
+        log.warning("persist_outputs_to_db_failed", job_id=job_id, error=str(e))
+
+
+async def _persist_models_to_db(
+    job_id: str,
+    trained_models: list | None,
+    best_model: dict | None,
+) -> None:
+    """완료 시 학습된 모델을 DB `models` 등록부에 영속화(serving·distiller 가 읽는 소스).
+
+    그래프 노드는 self.session=None 이라 모델 기록 코드가 아예 없었다(테이블 영구 공백 →
+    serving 503·distiller 지표 누락). 여기서 runner 가 분석용 세션과 분리된 전용 세션으로
+    state.trained_models(+best_model)를 기록한다. 분석 동작에는 영향 없음(순수 사후 기록).
+
+    '재진행 = 교체' 의미로 기존 Model 행은 지우고 이번 실행분만 다시 넣는다(누적 방지).
+    best_model 과 model_name 이 일치하는 행에 is_best=True. minio_path/sha256/mlflow_run_id 는
+    있으면 그대로 저장 → serving 이 MLflow(run_id) 또는 MinIO(joblib+sha) 로 로드 가능.
+    best-effort — 실패해도 파이프라인 완료엔 영향 없음.
+    """
+    try:
+        import uuid as _uuid
+
+        from sqlalchemy import delete as _sa_delete  # noqa: WPS433
+
+        from ada.db.models import Model  # noqa: WPS433
+        from ada.db.session import AsyncSessionLocal  # noqa: WPS433
+
+        rows_in = list(trained_models or [])
+        if not rows_in and isinstance(best_model, dict) and best_model:
+            rows_in = [best_model]
+        if not rows_in:
+            return  # 기록할 모델 없음(학습 미수행 카테고리/단계) — no-op
+
+        best_name = (best_model or {}).get("model_name") if isinstance(best_model, dict) else None
+        jid = _uuid.UUID(job_id)
+
+        async with AsyncSessionLocal() as session:
+            # 재진행 교체 — 이전 실행분 제거 후 이번 실행분만 삽입
+            await session.execute(_sa_delete(Model).where(Model.job_id == jid))
+            n = 0
+            for m in rows_in:
+                if not isinstance(m, dict):
+                    continue
+                mname = m.get("model_name")
+                if not mname:
+                    continue
+                is_best = bool(m.get("is_best")) or (best_name is not None and mname == best_name)
+                session.add(
+                    Model(
+                        job_id=jid,
+                        model_name=str(mname)[:128],
+                        framework=str(m.get("framework") or m.get("executed_on") or "unknown")[:64],
+                        metrics=m.get("metrics") if isinstance(m.get("metrics"), dict) else None,
+                        minio_path=(str(m["minio_path"])[:1024] if m.get("minio_path") else None),
+                        mlflow_run_id=(str(m["mlflow_run_id"])[:64] if m.get("mlflow_run_id") else None),
+                        is_best=is_best,
+                        model_sha256=(str(m["model_sha256"])[:64] if m.get("model_sha256") else None),
+                    )
+                )
+                n += 1
+            await session.commit()
+        log.info("persist_models_to_db", job_id=job_id, n_models=n, best=best_name)
+    except Exception as e:  # noqa: BLE001
+        log.warning("persist_models_to_db_failed", job_id=job_id, error=str(e))
+
+
 # ---------------------------------------------------------------------------
 # 메인 태스크
 # ---------------------------------------------------------------------------
@@ -849,6 +959,9 @@ async def _invoke(*, job_id: str, state: PipelineState, resume: bool) -> dict:
         if is_terminal:
             publish_progress(job_id, "END", "complete", pipeline_status="completed")
             await _set_job_terminal(job_id, "completed")
+            # HJ 2026-06-16 — 산출물/요청목록 + 모델 등록부 DB 영속화. 기능은 Redis/MLflow 로 동작하나 DB 기록 보완.
+            await _persist_outputs_to_db(job_id, final_dict.get("requested_outputs"), final_dict.get("output_paths"))
+            await _persist_models_to_db(job_id, final_dict.get("trained_models"), final_dict.get("best_model"))
         else:
             gate = final_dict.get("current_gate") or "gate_wait"
             publish_progress(
@@ -1240,6 +1353,9 @@ async def _resume(*, job_id: str, gate_response: dict) -> dict:
                 _r.set(f"ada:gate_data:{job_id}", json.dumps(_gd, ensure_ascii=False, default=str), ex=86400)
             except Exception:  # noqa: BLE001
                 pass
+            # HJ 2026-06-16 — 재진행 완료 시에도 산출물/요청목록 + 모델 등록부 DB 영속화(교체 의미).
+            await _persist_outputs_to_db(job_id, final_dict.get("requested_outputs"), final_dict.get("output_paths"))
+            await _persist_models_to_db(job_id, final_dict.get("trained_models"), final_dict.get("best_model"))
         else:
             gate = final_dict.get("current_gate") or "gate_wait"
             publish_progress(

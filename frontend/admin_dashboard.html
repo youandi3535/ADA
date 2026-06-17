@@ -1,0 +1,42 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><style>
+body{margin:0;font-family:'Pretendard','Inter',sans-serif;background:#0e1525;color:#e8edf7;padding:24px 30px;}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
+.top h1{font-size:1.28rem;margin:0;font-weight:700;}
+.close{background:rgba(150,170,235,.16);color:#dbe3ff;border:1px solid rgba(150,170,235,.32);padding:8px 16px;border-radius:999px;text-decoration:none;font-weight:700;font-size:.82rem;}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:16px;}
+.card{background:#172033;border:1px solid #243049;border-radius:14px;padding:15px 17px;}
+.card .n{font-size:1.65rem;font-weight:800;}
+.card .l{font-size:.78rem;color:#9fb0cc;margin-top:3px;}
+.sec{background:#172033;border:1px solid #243049;border-radius:14px;padding:15px 18px;margin-bottom:13px;}
+.sec h2{font-size:.92rem;margin:0 0 11px;color:#cdd9ee;font-weight:600;}
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px;font-size:.8rem;}
+.bar-row .lab{width:150px;color:#bcc8de;}
+.bar-bg{flex:1;background:#0e1525;border-radius:4px;height:14px;}
+.bar-fg{height:14px;background:#3f7bf0;border-radius:4px;}
+.green{color:#46d39a;}
+</style></head><body>
+<div class="top"><h1>ADA 데이터 저장 운영 현황</h1><a class="close" href="?admin=0" target="_top">닫기</a></div>
+<div id="root">불러오는 중…</div>
+<script>
+var TOKEN="__TOKEN__";
+var API=(function(){var p=location.protocol,h=location.hostname;if(p!=='http:'&&p!=='https:')p='http:';if(h==='localhost'||h==='127.0.0.1')return p+'//'+h+':8000';return p+'//'+h+'/api';})();
+fetch(API+'/admin/metrics/dashboard',{headers:{'Authorization':'Bearer '+TOKEN}})
+ .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+ .then(function(d){render(d);})
+ .catch(function(e){document.getElementById('root').innerHTML='<p style="color:#ff9b9b">불러오기 실패: '+e+' (권한 또는 연결 확인)</p>';});
+function esc(x){return (''+x).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+function render(d){
+ var kb=d.kb_by_type||{};var mx=1;for(var k in kb){if(kb[k]>mx)mx=kb[k];}
+ var bars='';for(var k2 in kb){bars+='<div class="bar-row"><span class="lab">'+esc(k2)+'</span><div class="bar-bg"><div class="bar-fg" style="width:'+Math.round(kb[k2]/mx*100)+'%"></div></div><span>'+kb[k2]+'</span></div>';}
+ var h='<div class="grid">'
+ +'<div class="card"><div class="n green">'+d.failures_auto_handled+'</div><div class="l">자동 복구된 오류</div></div>'
+ +'<div class="card"><div class="n green">'+d.auto_handle_rate+'%</div><div class="l">오류 자동 복구율</div></div>'
+ +'<div class="card"><div class="n">'+d.kb_total+'</div><div class="l">학습 KB 누적</div></div>'
+ +'<div class="card"><div class="n">'+d.qa_total+'</div><div class="l">Q&amp;A 누적</div></div>'
+ +'</div>'
+ +'<div class="sec"><h2>학습 KB 종류별 (self_learning_kb)</h2>'+(bars||'<span style="color:#9fb0cc">데이터 없음</span>')+'</div>'
+ +'<div class="sec"><h2>오류 자동 수정 (failure_logs)</h2><div style="font-size:.85rem;color:#cdd9ee">전체 '+d.failures_total+'건 중 <b class="green">'+d.failures_auto_handled+'건</b> 자동 복구 · 복구율 '+d.auto_handle_rate+'%</div></div>'
+ +'<div class="sec"><h2>Q&amp;A 수집 활용 (conversation_logs)</h2><div style="font-size:.85rem;color:#cdd9ee">누적 '+d.qa_total+'건 · KB 변환 처리 '+d.qa_processed+'건</div></div>';
+ document.getElementById('root').innerHTML=h;
+}
+</script></body></html>

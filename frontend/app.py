@@ -111,10 +111,13 @@ _FLOW_HTML = """
   .databar b{color:#176a45;}
   .loadwrap{text-align:center;margin-top:24px;}
   .loadtxt{font-size:22px;color:#52647d;}
-  .progbox{margin:28px auto 0;max-width:760px;text-align:center;}
+  /* HJ 2026-06-16 — 진행바를 로딩 박스(.loadwrap)와 같은 카드 전체 너비로 확장(760px 제한 해제).
+     각 칸(.ms-seg)이 넓어져 라벨이 3줄→2줄로 떨어진다. */
+  .progbox{margin:28px auto 0;max-width:none;text-align:center;}
   .lbar{height:20px;border-radius:10px;background:#e6edf6;overflow:hidden;max-width:760px;margin:22px auto 0;position:relative;}
   .lfill{height:100%;border-radius:10px;background:linear-gradient(90deg,#3f5d7e,#1f3e5c);transition:width .6s ease;}
-  .lmeta{font-size:20px;color:#7e98ba;margin-top:16px;}
+  /* HJ 2026-06-16 — 진행/경과 메타 글씨 30px·진하게(700). */
+  .lmeta{font-size:30px;font-weight:700;color:#7e98ba;margin-top:16px;}
   .lmeta b{color:#3f5168;}
   .lagent{font-size:19px;color:#1f7a52;margin-top:8px;}
   @keyframes adapop{0%{transform:scale(.06);opacity:0;}60%{opacity:1;}100%{transform:scale(1);opacity:1;}}
@@ -276,16 +279,21 @@ _FLOW_HTML = """
   .tw-caret{display:inline-block;width:2px;height:1em;background:#1f3e5c;margin-left:2px;vertical-align:-2px;animation:twBlink 0.85s steps(2,start) infinite;opacity:.85;}
   @keyframes twBlink{to{visibility:hidden;}}
   /* HJ 2026-06-10 — 마일스톤 세그먼트 바. 각 segment = 단계의 한 agent. 완료/현재/대기 색상 구분. */
-  .ms-bar{display:flex;width:100%;min-height:48px;background:#eef2f8;border-radius:12px;overflow:hidden;border:1px solid #d8e3f2;max-width:760px;margin:0 auto;}
-  .ms-seg{flex:1;display:flex;align-items:center;justify-content:center;padding:6px 8px;font-size:13px;font-weight:600;color:#7e98ba;border-right:1px solid rgba(255,255,255,.6);transition:background .35s,color .35s;min-width:0;line-height:1.35;text-align:center;word-break:keep-all;overflow-wrap:break-word;}
+  /* HJ 2026-06-16 — 진행바 글씨 2배(13→26px)·긴 단어 2줄 자동 줄바꿈·2줄 들어가도록 바 높이 확대(48→96px).
+     min-height 는 floor 일 뿐 flex 가 내용에 맞춰 더 늘어나므로 3줄 이상 라벨도 잘리지 않음. */
+  .ms-bar{display:flex;width:100%;min-height:96px;background:#eef2f8;border-radius:12px;overflow:hidden;border:1px solid #d8e3f2;max-width:none;margin:0 auto;}
+  .ms-seg{flex:1;display:flex;align-items:center;justify-content:center;padding:8px 10px;font-size:26px;font-weight:600;color:#7e98ba;border-right:1px solid rgba(255,255,255,.6);transition:background .35s,color .35s;min-width:0;line-height:1.3;text-align:center;word-break:keep-all;overflow-wrap:break-word;}
   .ms-seg:last-child{border-right:none;}
   .ms-seg-icon{margin-right:4px;font-weight:800;}
   .ms-seg.done{background:#1f7a52;color:#fff;}
   .ms-seg.active{background:linear-gradient(90deg,#1f3e5c,#2c5783);color:#fff;animation:msPulse 1.6s ease-in-out infinite;}
   .ms-seg.pending{background:#f7faff;color:#8aa0bd;}
   @keyframes msPulse{0%,100%{box-shadow:inset 0 0 0 0 rgba(255,255,255,0);}50%{box-shadow:inset 0 0 0 100px rgba(255,255,255,.10);}}
-  .modal-card .ms-bar{min-height:64px;border-radius:14px;max-width:none;}
-  .modal-card .ms-seg{font-size:15px;padding:10px 14px;}
+  /* HJ 2026-06-16 — 팝업창 진행바: progbox 760px 제한 해제로 모달도 전체 너비로 확장됨.
+     모달은 zoom:.6 로 축소 렌더돼 칸당 실효 폭이 분석창보다 좁다(내용폭 약 1148px÷6칸).
+     따라서 최장 라벨('하이퍼파라미터')도 2줄에 들어가도록 글씨 24px·패딩 축소로 맞춘다(3줄 방지). */
+  .modal-card .ms-bar{min-height:96px;border-radius:14px;max-width:none;}
+  .modal-card .ms-seg{font-size:24px;padding:12px 8px;}
   @media(max-width:1100px){ .opts,.res .grid2{grid-template-columns:1fr;} }
 </style></head><body>
   <!-- 랜딩 오버레이 — G1 이전 단계 클릭 시 표시. 원본 Python 랜딩과 동일한 스타일 -->
@@ -697,10 +705,10 @@ const STAGE_AGENT_FLOW={
     '도메인 분석'
   ],
   G2:[
-    'EDA — 통계 산출',
-    'EDA — 분포 분석',
-    'EDA — 상관관계 분석',
-    'EDA — 도메인 인사이트',
+    '통계 산출',
+    '분포 분석',
+    '상관관계 분석',
+    '도메인 인사이트',
     '방법론 후보 평가'
   ],
   G3:[
@@ -848,7 +856,7 @@ function twSpan(text, key){
 }
 var _twState={};        // key -> {shown:N, target:'...'}
 var _twTimer=null;
-var _TW_STEP_MS=95;     // 글자당 ms. 약 10자/초 = 사람 타이핑 속도. 사용자 요구로 의도적으로 느리게.
+var _TW_STEP_MS=79;     // 글자당 ms. 약 12.7자/초. HJ 2026-06-16 — 사용자 요구로 기존 95ms 대비 20% 빠르게(95÷1.2≈79).
 var _twDotsShownAt=0;   // 점 3개(⋮) 등장 시각 — 등장 후 ~800ms 정지하여 사용자가 점을 인지하게 함.
 var _TW_DOTS_PAUSE_MS=800;
 // HJ 2026-06-10 — 순차(sequential) 진행. DOM 순서대로 한 요소가 끝나야 다음 요소가 시작.
@@ -1016,7 +1024,20 @@ function fmtNum(v){
   return n.toFixed(3);
 }
 function fmtTime(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
-function curGate(){ const g=(gateData.gate)||(status.current_gate); return (g && /^G[2-6]$/.test(g))?g:null; }
+function curGate(){
+  const g=(gateData.gate)||(status.current_gate);
+  if(!(g && /^G[2-6]$/.test(g))) return null;
+  // HJ 2026-06-16 — '1단계 분석중 → 2단계 분석중' 조기 전환 버그 수정.
+  //   schema_validator(G1 마지막 에이전트)가 gate_direction(분석 방향 카드 생성, ~55초) 진입 직전
+  //   gate_data 에 gate:"G2" + g2_pending=True + proposals:[] 를 미리 써둔다. 이 구간은 '실제론
+  //   1단계 마무리(분석 방향 생성) 중'인데, curGate()가 'G2'를 반환하면 analyzing()=false·frontier=1
+  //   이 되어 보여줄 카드도 없이 step 2('2단계 분석중')로 조기 전환된다. proposals·topic 이 하나도
+  //   없으면 G2 로 보고하지 않아 step 1('1단계 분석중')을 유지하고, 실제 카드가 도착하면 정상 전환한다.
+  if(g==='G2' && gateData.g2_pending
+     && !(gateData.proposals||[]).filter(function(p){return !p.is_custom;}).length
+     && !(gateData.topic_proposals||[]).length) return null;
+  return g;
+}
 function hasResults(){ return !!((gateData.output_paths && Object.keys(gateData.output_paths).length) || gateData.insights || gateData.eval_result || gateData.best_model); }
 function isFailed(){ return (gateData.pipeline_status==='failed') || (status.status==='failed'); }
 function isCompleted(){
@@ -2731,7 +2752,7 @@ function render(){
     html+='<div class="step '+cls+'" data-i="'+i+'"><div class="dot">'+inner+'</div><div class="lab"><div class="nm">'+s.label+'</div><div class="sub">'+s.sub+'</div></div></div>';
   });
   sc.innerHTML=html;
-  sc.querySelectorAll('.step.reachable').forEach(function(el){ el.onclick=function(){ cur=+el.dataset.i; if(cur<frontier) follow=false; paused=false; render(); }; });
+  sc.querySelectorAll('.step.reachable').forEach(function(el){ el.onclick=function(){ var _ni=+el.dataset.i; if(_ni===5 && cur!==5) g5Checked={}; cur=_ni; if(cur<frontier) follow=false; paused=false; render(); }; });
 
   // 1~7 모든 단계 공통: 본문은 변화 있을 때만 innerHTML 교체 (SVG 애니메이션 리셋 방지).
   // 진행바는 500ms 마다 변하므로 별도 pb-area div 에 독립 갱신.
@@ -2772,7 +2793,12 @@ function render(){
     }
   }
   if(cur>=1 && cur<=5){
-    const isG5=curGate()==='G6';
+    // HJ 2026-06-16 — 산출물 재진행 버그 핵심 수정.
+    //   기존 isG5=curGate()==='G6' 는 '7단계 완료 후 6단계로 되돌아온' 경우 curGate()=null
+    //   (완료 시 gate 제거)이라 false 가 되어, 산출물 카드 클릭이 g5Checked 에 반영되지 않고
+    //   selId 만 바뀌었다. 그 결과 doResume 이 stale 한 '첫 선택' g5Checked 를 그대로 보내
+    //   재진행해도 처음 고른 산출물이 계속 생성됐다. 6단계(cur===5)에선 항상 멀티선택 토글로 동작.
+    const isG5=(cur===5)||(curGate()==='G6');
     document.querySelectorAll('.opt').forEach(function(el){ el.onclick=function(){
       const pid=el.dataset.pid;
       if(isG5){ g5Checked[+pid]=!g5Checked[+pid]; render(); }
@@ -2993,6 +3019,10 @@ document.getElementById('prevBtn').onclick=function(){
     const goTo=cur-1;
     if(goTo===0) _suppressG1Advance=true;  // G1 화면에서 자동 G2 전환 억제
     if(goTo===1) g2SubStage='direction';   // G3→G2 복귀 시 분석 방향 카드부터 노출
+    // HJ 2026-06-16 — 7단계(완료)→6단계 복귀 시 산출물 멀티선택 상태 초기화.
+    //   stale 한 '첫 선택'이 남아 있으면 새로 고른 산출물과 섞이거나(둘 다 생성),
+    //   isG5 미동작 시 첫 선택만 재전송되던 버그의 잔존 경로를 차단(새 선택만 깨끗이 전송).
+    if(goTo===5) g5Checked={};
     // HJ 2026-06-11 — 이전 단계로 가도 앞 단계 진행 결과(캐시·frontier·maxReached) 보존.
     //   다시 next 로 돌아와 이어서 진행할 수 있게. 하위 단계 폐기는 '재진행(doResume)' 누르는 순간에만 수행.
     // HJ 2026-06-14 — paused 해제: 지난 단계 옵션 카드를 볼 땐 일시정지 상태가 아니라 선택 가능 상태.
@@ -3128,6 +3158,22 @@ def _render_agent_board() -> None:
     components.html(_rdf("agent_engines_flow.html"), height=715, scrolling=False)
 
 
+def _admin_screen() -> None:
+    """관리자 전용 데이터 현황 — admin 역할만 진입(라우팅에서 재확인)."""
+    from pathlib import Path
+
+    _token = st.session_state.get("auth_token", "")
+    st.markdown(
+        "<style>[data-testid='stAppViewContainer']{background:#0e1525;}[data-testid='stHeader']{display:none;}[data-testid='stMain'] .block-container{max-width:100% !important;padding:0 !important;}[data-testid='stIFrame'] iframe{width:100% !important;}</style>",
+        unsafe_allow_html=True,
+    )
+    try:
+        _h = (Path(__file__).parent / "admin_dashboard.html").read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        _h = "<p style='color:#fff'>admin_dashboard.html 누락</p>"
+    components.html(_h.replace("__TOKEN__", _token), height=950, scrolling=True)
+
+
 # ===========================================================================
 # 인증 — 구글 OAuth 로그인 팝업 (STEP 6)
 # ===========================================================================
@@ -3193,8 +3239,7 @@ if st.query_params.get("token"):
     st.session_state["auth_token"] = st.query_params.get("token")
     st.session_state["auth_role"] = st.query_params.get("role", "analyst")
     st.session_state["auth_email"] = st.query_params.get("email", "")
-    st.session_state["studio_started"] = True
-    st.session_state["_fresh_start"] = True
+    # HJ — 로그인 직후 1단계 직행 대신 랜딩 유지. '분석 시작하기' 버튼으로 진입.
     st.session_state.pop("_show_login", None)
     st.session_state.pop("_auth_error", None)
     for _k in ("token", "role", "email"):
@@ -3218,6 +3263,9 @@ if not st.session_state.get("studio_started"):
     # HJ 2026-06-15 — '에이전트 소개'(우측 상단 아이콘) 클릭 → ?board=1 시 현황판 모달
     if st.query_params.get("board") == "1":
         _render_agent_board()
+        st.stop()
+    if st.query_params.get("admin") == "1" and st.session_state.get("auth_role") == "admin":
+        _admin_screen()
         st.stop()
     # ── 스플래시(랜딩) ── (화면 세로 중앙 정렬, 히어로 이미지·폴백 공통)
     # F5 복원은 saveState() 가 URL 해시(#ada=…)에 상태를 기록하고,
@@ -3264,9 +3312,12 @@ if not st.session_state.get("studio_started"):
             """,
             unsafe_allow_html=True,
         )
-        if st.button("지금 시작하기", type="primary", use_container_width=True):
-            # STEP 6 — 로그인 안 했으면 먼저 로그인 팝업, 했으면 바로 스튜디오로.
-            if st.session_state.get("auth_token"):
+        _logged_in = bool(st.session_state.get("auth_token"))
+        if st.button(
+            "분석 시작하기" if _logged_in else "지금 시작하기 / 로그인", type="primary", use_container_width=True
+        ):
+            # STEP 6 — 로그인 안 했으면 먼저 로그인 팝업, 했으면 분석 스튜디오로.
+            if _logged_in:
                 st.session_state["studio_started"] = True
                 st.session_state["_fresh_start"] = True
                 st.query_params["flow"] = "1"
@@ -3274,6 +3325,11 @@ if not st.session_state.get("studio_started"):
             else:
                 st.session_state["_show_login"] = True
                 st.rerun()
+        _hint = "지금 바로 분석을 시작해 보세요" if _logged_in else "로그인을 하셔야 분석을 할 수 있습니다"
+        st.markdown(
+            f"<div style='text-align:center;color:#9aa6b5;font-size:.82rem;margin-top:-6px;'>({_hint})</div>",
+            unsafe_allow_html=True,
+        )
     with _R:
         st.markdown(
             """
@@ -3304,6 +3360,11 @@ if not st.session_state.get("studio_started"):
             """,
             unsafe_allow_html=True,
         )
+        if st.session_state.get("auth_token") and st.session_state.get("auth_role") == "admin":
+            st.markdown(
+                '<div style="text-align:right;margin-top:18px;"><a href="?admin=1" target="_self" style="display:inline-flex;align-items:center;gap:7px;background:#1f3e5c;color:#fff;padding:10px 18px;border-radius:999px;font-weight:700;font-size:.84rem;text-decoration:none;box-shadow:0 8px 20px rgba(31,62,92,.3);">관리자</a></div>',
+                unsafe_allow_html=True,
+            )
 
     # ── 로그인 실패 알림 + 팝업 트리거 (STEP 6) ──
     if st.session_state.get("_auth_error"):

@@ -84,6 +84,9 @@ class ModelSelectionAgent(BaseAgent):
     uses_llm = True
     model_name = "claude-sonnet-4-6"
     use_anthropic_api = True
+    # HJ 2026-06-16 — KB recipes 를 LLM 모델추천에 반영. rag_reader → env ADA_RAG_ENRICH=on 일 때만 활성.
+    uses_db_session = True
+    rag_reader = True
 
     async def __call__(self, state: PipelineState) -> PipelineState:
         async with self.log_agent_run(state):

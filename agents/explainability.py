@@ -81,9 +81,22 @@ class ExplainabilityAgent(BaseAgent):
                     )
                     if _rec.get("root_cause"):
                         _g5_shap_insights.append(f"근본원인 진단: {_rec.get('root_cause')}")
-                elif artifacts.get("decomposition_path") or artifacts.get("seasonality_period"):
-                    period = artifacts.get("seasonality_period")
+                # HJ 2026-06-16 — 키 정합 버그 수정: _timeseries_decompose 는 실제로
+                #   timeseries_decompose_path/period 를 반환하는데, 여기서 부재 키
+                #   (decomposition_path/seasonality_period)를 읽어 분해 메시지가 한 번도
+                #   안 뜨던 문제. 실제 키를 읽되 기존 별칭도 하위호환으로 함께 인정한다.
+                elif (
+                    artifacts.get("timeseries_decompose_path")
+                    or artifacts.get("period") is not None
+                    or artifacts.get("decomposition_path")
+                    or artifacts.get("seasonality_period") is not None
+                ):
+                    period = artifacts.get("period")
+                    if period is None:
+                        period = artifacts.get("seasonality_period")
                     _g5_shap_insights.append(f"시계열 분해: 계절성 주기 {period} (추세·계절·잔차 분해 완료)")
+                elif artifacts.get("timeseries_decompose_error"):
+                    _g5_shap_insights.append(f"시계열 분해 실패: {str(artifacts['timeseries_decompose_error'])[:150]}")
                 # HJ 2026-06-13 — 윤색은 단순 작업이라 Ollama+백그라운드로 (토큰 절약 + critical path 제거).
                 #   SHAP 계산 자체는 코드(_shap)가 수행, 윤색은 상위 피처에 해석 한 문장 붙이는 보조라 품질 무영향.
                 self._spawn_insight_polish(
@@ -119,50 +132,237 @@ class ExplainabilityAgent(BaseAgent):
 
     # ------------------------------------------------------------------
     def _shap(self, state: PipelineState) -> dict[str, Any]:
+        """SHAP 산출 — '어떤 데이터가 와도 실패가 안 뜨도록' 다중 방어.
+
+        HJ 2026-06-16 — 근본 원인 수정:
+          (1) tabular_ml/tabular_dl 은 jh 의 검증된 본구현(handlers.tabular.explain)에
+              위임. 전처리 피처공간 일치·explainer 라우팅·멀티클래스·graceful skip 포함.
+          (2) 그 외(anomaly) 또는 위임 빈손 시 자체 견고화 경로(_shap_robust):
+              · 학습과 동일한 전처리 데이터 로드(file_id raw → preprocessed_data_id)
+              · 모델 feature_names_in_/n_features_in_ 로 X 피처공간 정렬(불일치 차단)
+              · explainer 모델명 라우팅 + KernelExplainer 최종 폴백
+              · SHAP 전부 실패해도 feature_importances_/coef_/permutation 으로 산출
+        """
+        best = state.best_model or {}
+        if "minio_path" not in best:
+            return {"shap_skipped": "no model path"}
+
+        # 회귀 안전 — 내부 예외는 절대 에이전트 흐름으로 전파하지 않고 dict 로 귀결.
+        try:
+            # (1) tabular → jh 본구현 위임 (전처리 피처공간 일치가 보장된 경로)
+            if str(getattr(state, "category", "")).startswith("tabular"):
+                adapted = self._shap_via_tabular_handler(state)
+                if adapted and adapted.get("shap_top_features"):
+                    return adapted
+                # 위임이 빈손(skip/실패)이면 아래 자체 견고화 경로로 폴백
+
+            # (2) 비-tabular 또는 위임 폴백 — 자체 견고화 경로
+            return self._shap_robust(state, best)
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("shap_unexpected_error", error=str(e))
+            return {"shap_error": f"SHAP 예기치 못한 오류: {e}"}
+
+    # ------------------------------------------------------------------
+    def _shap_via_tabular_handler(self, state: PipelineState) -> dict[str, Any] | None:
+        """jh 의 tabular SHAP 본구현 결과를 G5/insight 가 읽는 키로 매핑.
+
+        반환 키 정합: 팝업은 shap_top_features[].importance, insight 는 top_features(이름)를
+        읽으므로 둘 다 채운다. 빈손이면 None → 자체 경로로 폴백.
+        """
+        try:
+            from agents.handlers.tabular.explainability import explain as _tab_explain
+
+            res = _tab_explain(state)
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("tabular_shap_delegate_failed", error=str(e))
+            return None
+        if not isinstance(res, dict):
+            return None
+        top = res.get("shap_top_features") or []
+        ranking: list[dict[str, Any]] = []
+        for ent in top:
+            if not isinstance(ent, dict):
+                continue
+            imp = ent.get("mean_abs_shap", ent.get("importance", 0))
+            try:
+                imp = float(imp)
+            except (TypeError, ValueError):
+                imp = 0.0
+            ranking.append(
+                {"feature": str(ent.get("feature", "?")), "importance": imp, "direction": ent.get("direction")}
+            )
+        if not ranking:
+            return None
+        out: dict[str, Any] = {
+            "shap_top_features": ranking,
+            "top_features": [r["feature"] for r in ranking],  # insight._top_features 호환
+            "explain_method": "tabular_handler",
+        }
+        for k in ("shap_summary_path", "shap_dependence_paths", "explainer_type"):
+            if res.get(k):
+                out[k] = res[k]
+        return out
+
+    # ------------------------------------------------------------------
+    def _shap_robust(self, state: PipelineState, best: dict) -> dict[str, Any]:
+        """자체 SHAP 경로 — 전처리 데이터·피처 정렬·explainer 라우팅·중요도 폴백."""
         import shap  # type: ignore
 
         from tools.minio_tool import get_minio_client
 
         mc = get_minio_client()
-        best = state.best_model or {}
-        if "minio_path" not in best:
-            return {"shap_skipped": "no model path"}
 
         # ── 1) 모델 로드 (self-healing: 1차 실패 시 자동 진단·복구·재시도) ──────────
         model, recovery = self._load_model_self_heal(state, mc, best)
 
-        # ── 2) 데이터 로드 (SHAP·surrogate 재학습 공용) ─────────────────────────────
+        # ── 2) 데이터 로드 — 학습과 동일한 전처리 데이터 우선(피처공간 일치의 핵심) ──
+        df = None
         try:
-            df = mc.load_dataframe(state.file_id, fmt=state.file_id.rsplit(".", 1)[-1].lower())
-        except Exception as e:
-            return {"shap_error": f"설명용 데이터 로드 실패: {e}", "shap_recovery": recovery}
+            from agents.handlers.common.shared import load_dataframe_from_state
+
+            df = load_dataframe_from_state(state)
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("preprocessed_load_failed_raw_fallback", error=str(e))
+            try:
+                df = mc.load_dataframe(state.file_id, fmt=state.file_id.rsplit(".", 1)[-1].lower())
+            except Exception as e2:
+                return {"shap_error": f"설명용 데이터 로드 실패: {e2}", "shap_recovery": recovery}
 
         X = df.select_dtypes(include=[np.number, "bool"]).fillna(0)
-        if state.target_column in X.columns:
+        if state.target_column and state.target_column in X.columns:
             X = X.drop(columns=[state.target_column])
-        if len(X) > self.SAMPLE_SIZE:
-            X = X.sample(self.SAMPLE_SIZE, random_state=42)
 
         # ── 3) 복구 최종 실패 → tabular_ml 은 동일 설정 surrogate 재학습으로 SHAP 산출 ──
         if model is None and state.category in ("tabular_ml",):
             model, recovery = self._refit_surrogate(state, df, X, best, recovery)
-
         if model is None:
-            return {
-                "shap_error": recovery.get("error") or "모델 로드 실패",
-                "shap_recovery": recovery,
-            }
+            return {"shap_error": recovery.get("error") or "모델 로드 실패", "shap_recovery": recovery}
 
+        # ── 4) 피처공간 정렬 — 모델이 학습한 컬럼/순서에 X 를 맞춤(불일치=실패 원천 차단) ──
+        X = self._align_features(X, model)
+        if X.shape[1] == 0 or len(X) == 0:
+            return self._importance_fallback(model, X, None, recovery, "유효 수치 피처 없음")
+
+        # permutation 폴백용 y (있으면)
+        y = None
+        if state.target_column and state.target_column in df.columns:
+            try:
+                y = df[state.target_column].loc[X.index]
+            except Exception:  # noqa: BLE001
+                y = None
+
+        if len(X) > self.SAMPLE_SIZE:
+            X = X.sample(self.SAMPLE_SIZE, random_state=42)
+            if y is not None:
+                try:
+                    y = y.loc[X.index]
+                except Exception:  # noqa: BLE001
+                    y = None
+
+        # ── 5) SHAP 계산 (실패 시 중요도 폴백) ──────────────────────────────────────
         try:
-            explainer = shap.Explainer(model, X[:100])
-            sv = explainer(X[:200])
-            top_features = (
-                np.abs(sv.values).mean(axis=0) if sv.values.ndim == 2 else np.abs(sv.values).mean(axis=(0, 2))
-            )
-            order = np.argsort(-top_features)
-            ranking = [{"feature": str(X.columns[i]), "importance": float(top_features[i])} for i in order[:20]]
+            result = self._compute_shap(shap, model, X, state, mc)
+            if recovery.get("recovered") or recovery.get("surrogate"):
+                result["shap_recovery"] = recovery  # 복구 흔적 → 리포트 정직 표기용
+            return result
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("shap_compute_failed_importance_fallback", error=str(e))
+            return self._importance_fallback(model, X, y, recovery, str(e))
 
-            # SHAP summary plot 저장
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _align_features(X: Any, model: Any) -> Any:
+        """모델이 학습한 피처공간에 X 를 정렬 — 누락=0채움, 여분=drop, 순서=일치."""
+        names = getattr(model, "feature_names_in_", None)
+        if names is not None:
+            names = [str(n) for n in names]
+            for n in names:
+                if n not in X.columns:
+                    X[n] = 0
+            try:
+                return X[names]
+            except Exception:  # noqa: BLE001
+                return X
+        n_expected = getattr(model, "n_features_in_", None)
+        if isinstance(n_expected, int) and n_expected > 0 and X.shape[1] != n_expected:
+            if X.shape[1] > n_expected:
+                return X.iloc[:, :n_expected]
+            for i in range(n_expected - X.shape[1]):
+                X[f"_pad_{i}"] = 0
+        return X
+
+    # ------------------------------------------------------------------
+    def _compute_shap(self, shap: Any, model: Any, X: Any, state: PipelineState, mc: Any) -> dict[str, Any]:
+        """explainer 라우팅 → top features + summary plot."""
+        model_name = str((state.best_model or {}).get("model_name", ""))
+        values, sv_obj = self._build_explainer(shap, model, X, model_name)
+        mean_abs = self._mean_abs(values)
+        n = min(len(mean_abs), X.shape[1])
+        cols = list(X.columns[:n])
+        mean_abs = np.asarray(mean_abs[:n], dtype=float)
+        order = np.argsort(-mean_abs)
+        ranking = [{"feature": str(cols[i]), "importance": float(mean_abs[i])} for i in order[:20]]
+        summary_path = self._save_summary_plot(shap, sv_obj, values, X, state, mc)
+        out: dict[str, Any] = {
+            "shap_top_features": ranking,
+            "top_features": [r["feature"] for r in ranking],
+            "explain_method": "shap",
+        }
+        if summary_path:
+            out["shap_summary_path"] = summary_path
+        return out
+
+    @staticmethod
+    def _build_explainer(shap: Any, model: Any, X: Any, model_name: str) -> tuple[Any, Any]:
+        """모델명 라우팅 + 범용 + KernelExplainer 폴백. 반환: (values, sv_obj_or_None)."""
+        tree_models = {
+            "RandomForest",
+            "XGBoost",
+            "LightGBM",
+            "CatBoost",
+            "GradientBoosting",
+            "ExtraTrees",
+            "DecisionTree",
+            "IsolationForest",
+            "HistGradientBoosting",
+        }
+        linear_models = {"LogisticRegression", "Ridge", "Lasso", "LinearRegression", "ElasticNet"}
+        bg = X[:100]
+        makers: list[Any] = []
+        if model_name in tree_models:
+            makers.append(lambda: shap.TreeExplainer(model))
+        elif model_name in linear_models:
+            makers.append(lambda: shap.LinearExplainer(model, bg))
+        makers.append(lambda: shap.Explainer(model, bg))  # 범용 자동
+        for make in makers:
+            try:
+                ex = make()
+                sv = ex(X[:200])
+                return (sv.values if hasattr(sv, "values") else sv), sv
+            except Exception:  # noqa: BLE001
+                continue
+        # 최종 폴백 — KernelExplainer (어떤 모델이든 산출)
+        predict_fn = getattr(model, "predict_proba", None) or model.predict
+        ex = shap.KernelExplainer(predict_fn, X[:50])
+        raw = ex.shap_values(X[:100], nsamples=50)
+        return raw, None
+
+    @staticmethod
+    def _mean_abs(values: Any) -> Any:
+        """shap values(list/2D/3D) → 피처별 평균 |SHAP|."""
+        if isinstance(values, list):  # multi-class: class 별 (n, f)
+            return np.mean([np.abs(np.asarray(v)).mean(axis=0) for v in values], axis=0)
+        arr = np.asarray(values)
+        if arr.ndim == 3:  # (n, f, classes)
+            return np.abs(arr).mean(axis=(0, 2))
+        if arr.ndim == 2:
+            return np.abs(arr).mean(axis=0)
+        return np.abs(arr).reshape(arr.shape[0], -1).mean(axis=0)
+
+    def _save_summary_plot(
+        self, shap: Any, sv_obj: Any, values: Any, X: Any, state: PipelineState, mc: Any
+    ) -> str | None:
+        try:
             import matplotlib  # noqa: WPS433
 
             matplotlib.use("Agg")
@@ -170,20 +370,63 @@ class ExplainabilityAgent(BaseAgent):
 
             plt.figure(figsize=(8, 6))
             try:
-                shap.plots.beeswarm(sv, show=False, max_display=15)
-            except Exception:
-                shap.summary_plot(sv.values, X[:200], show=False)
+                if sv_obj is None:
+                    raise RuntimeError("no explanation obj")
+                shap.plots.beeswarm(sv_obj, show=False, max_display=15)
+            except Exception:  # noqa: BLE001
+                sv2 = values[0] if isinstance(values, list) else np.asarray(values)
+                sv2 = np.asarray(sv2)
+                if sv2.ndim == 3:
+                    sv2 = sv2[..., 0]
+                shap.summary_plot(sv2, X[: len(sv2)], show=False, max_display=15)
             tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
             tmpf.close()
             plt.savefig(tmpf.name, dpi=120, bbox_inches="tight")
             plt.close()
-            shap_path = mc.save_artifact(tmpf.name, "explanations/shap", state.job_id)
-            result: dict[str, Any] = {"shap_top_features": ranking, "shap_summary_path": shap_path}
+            return mc.save_artifact(tmpf.name, "explanations/shap", state.job_id)
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("shap_summary_plot_failed", error=str(e))
+            return None
+
+    def _importance_fallback(self, model: Any, X: Any, y: Any, recovery: dict[str, Any], reason: str) -> dict[str, Any]:
+        """SHAP 최종 실패 시 — 모델 내장 중요도/계수/permutation 으로 산출(실패 대신 대체)."""
+        imp = None
+        try:
+            fi = getattr(model, "feature_importances_", None)
+            if fi is not None:
+                imp = np.abs(np.asarray(fi, dtype=float))
+            else:
+                coef = getattr(model, "coef_", None)
+                if coef is not None:
+                    coef = np.asarray(coef, dtype=float)
+                    imp = np.abs(coef).mean(axis=0) if coef.ndim > 1 else np.abs(coef)
+            if imp is None and y is not None and len(X) > 0:
+                from sklearn.inspection import permutation_importance
+
+                r = permutation_importance(model, X, y, n_repeats=5, random_state=42, n_jobs=1)
+                imp = np.abs(np.asarray(r.importances_mean, dtype=float))
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("importance_fallback_failed", error=str(e))
+            imp = None
+
+        if imp is not None and len(imp) > 0:
+            n = min(len(imp), X.shape[1])
+            cols = list(X.columns[:n])
+            imp = np.asarray(imp[:n], dtype=float)
+            order = np.argsort(-imp)
+            ranking = [{"feature": str(cols[i]), "importance": float(imp[i])} for i in order[:20]]
+            out: dict[str, Any] = {
+                "shap_top_features": ranking,
+                "top_features": [r["feature"] for r in ranking],
+                "explain_method": "importance_fallback",
+                "shap_fallback_reason": str(reason)[:200],
+            }
             if recovery.get("recovered") or recovery.get("surrogate"):
-                result["shap_recovery"] = recovery  # 복구 흔적 → 리포트 정직 표기용
-            return result
-        except Exception as e:
-            return {"shap_error": str(e), "shap_recovery": recovery}
+                out["shap_recovery"] = recovery
+            return out
+
+        # 모든 수단 소진 — 정직 에러(근본원인 동봉)
+        return {"shap_error": str(reason), "shap_recovery": recovery}
 
     # ------------------------------------------------------------------
     # self-healing 보조 — 모델 아티팩트 로드 실패의 근본원인 진단·복구·재학습

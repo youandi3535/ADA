@@ -297,6 +297,49 @@ def _generate_scores(state: Any):
     return scores, predicted, threshold, y_true, info
 
 
+def _stability_metrics(scores: Any, threshold: float, n_boot: int = 20, seed: int = 42) -> dict[str, Any]:
+    """P2-3 (2026-06-16) — 부트스트랩 임계 안정성.
+
+    scores 를 복원추출 리샘플하여 매번 Otsu 임계를 재계산, 임계의 변동계수(CV)를 본다.
+    CV 가 낮을수록 임계 결정이 표본 흔들림에 강건(=이상/정상 경계가 안정적). 추가로
+    경계(threshold±std) 근처 샘플 비율(판정이 쉽게 뒤집히는 회색지대)도 보고한다.
+    재학습 없이 scores 만 리샘플하므로 가볍고, 소표본/실패 시 {} (graceful, additive).
+    """
+    import numpy as np  # noqa: WPS433
+
+    try:
+        s = np.asarray(scores, dtype=float)
+        n = len(s)
+        if n < 30:
+            return {}
+        from pipelines.anomaly.pipeline import AnomalyPipeline  # noqa: WPS433
+
+        rng = np.random.default_rng(seed)
+        thrs: list[float] = []
+        for _ in range(n_boot):
+            samp = s[rng.integers(0, n, size=n)]
+            try:
+                thrs.append(float(AnomalyPipeline.otsu_threshold(samp)))
+            except Exception:  # noqa: BLE001
+                continue
+        if len(thrs) < 3:
+            return {}
+        arr = np.asarray(thrs, dtype=float)
+        mean_t = float(arr.mean())
+        std_t = float(arr.std())
+        cv = float(std_t / abs(mean_t)) if mean_t != 0 else 0.0
+        boundary = float(((s > threshold - std_t) & (s < threshold + std_t)).mean()) if std_t > 0 else 0.0
+        return {
+            "threshold_bootstrap_mean": round(mean_t, 6),
+            "threshold_bootstrap_std": round(std_t, 6),
+            "threshold_stability_cv": round(cv, 4),
+            "threshold_stable": bool(cv < 0.2),
+            "boundary_sample_ratio": round(boundary, 4),
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def evaluate(state: Any) -> dict[str, Any]:
     """anomaly 평가 (dispatcher) — ★ X-3/X-6 ①: per-row score 생성 + metrics.
 
@@ -415,4 +458,6 @@ def evaluate(state: Any) -> dict[str, Any]:
         # ★ 누수 차단 메타 (additive) — 레이블 메트릭이 held-out 행으로만 산출됐는지.
         "leakage_safe_eval": bool(info.get("leakage_safe_eval", False)),
         "n_eval_holdout": info.get("n_eval_holdout"),
+        # ★ P2-3 (2026-06-16) — 부트스트랩 임계 안정성 (additive, graceful; 소표본 시 빈 dict)
+        **_stability_metrics(scores, float(threshold)),
     }

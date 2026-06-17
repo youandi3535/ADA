@@ -144,6 +144,66 @@ def _leakage_safe_fallback(df, plan, state):
         return None
 
 
+# ── 자동 피처선택 (P1-2, HJ 2026-06-16) ──────────────────────────
+# 고차원·중복 피처를 에이전트가 스스로 정리(사용자 개입 0). 회귀 위험을 최소화하기 위해
+# 무감독·누수0·보수적으로만 한다:
+#   · 타깃과 무관한 상수(분산 0)·완전중복(|corr|≥0.99)만 제거 → 타깃 기반 선택의 누수 없음.
+#   · tabular 만 적용(timeseries 는 lag 자기상관, anomaly 는 PCA 로 이미 차원관리).
+#   · 수치 피처 20개 미만이면 skip(선택 의미 없음), 50% 초과 제거는 위험으로 보고 skip.
+#   · 어떤 예외든 원본 df 반환(graceful) → "오늘보다 나쁠 수 없음".
+_FS_MIN_FEATURES = 20
+_FS_CORR_DUP = 0.99
+_FS_MAX_DROP_RATIO = 0.5
+
+
+def _auto_feature_select(df: "Any", target_col: "str | None") -> "tuple[Any, dict]":  # noqa: F821
+    import numpy as np  # noqa: WPS433
+
+    try:
+        num = df.select_dtypes(include=[np.number])
+        feat_cols = [c for c in num.columns if c != target_col]
+        if len(feat_cols) < _FS_MIN_FEATURES:
+            return df, {"applied": False, "reason": "few_features", "n_features": len(feat_cols)}
+
+        # 1) 상수(분산 0 또는 비유한)
+        stds = num[feat_cols].std(numeric_only=True)
+        const = [c for c in feat_cols if (not np.isfinite(stds.get(c, 0.0))) or float(stds.get(c, 0.0)) == 0.0]
+
+        # 2) 완전중복(|corr|≥0.99) — 상삼각 스캔, 먼저 나온 컬럼 유지
+        remain = [c for c in feat_cols if c not in const]
+        dup: list[str] = []
+        if len(remain) >= 2:
+            corr = num[remain].corr().abs()
+            cols = list(corr.columns)
+            seen: set[str] = set()
+            for i in range(len(cols)):
+                if cols[i] in seen:
+                    continue
+                for j in range(i + 1, len(cols)):
+                    if cols[j] in seen:
+                        continue
+                    if float(corr.iloc[i, j]) >= _FS_CORR_DUP:
+                        seen.add(cols[j])
+                        dup.append(cols[j])
+
+        dropped = list(dict.fromkeys(const + dup))
+        if not dropped:
+            return df, {"applied": True, "dropped": [], "n_dropped": 0}
+        if len(dropped) > _FS_MAX_DROP_RATIO * len(feat_cols):
+            return df, {"applied": False, "reason": "too_aggressive", "would_drop": len(dropped)}
+
+        df2 = df.drop(columns=[c for c in dropped if c in df.columns])
+        return df2, {
+            "applied": True,
+            "dropped": dropped,
+            "n_dropped": len(dropped),
+            "n_const": len(const),
+            "n_dup": len(dup),
+        }
+    except Exception as e:  # noqa: BLE001 — 어떤 실패든 원본 유지(무회귀)
+        return df, {"applied": False, "reason": f"error:{e}"}
+
+
 class FeatureEngineerAgent(BaseAgent):
     uses_llm = False
 
@@ -258,6 +318,18 @@ class FeatureEngineerAgent(BaseAgent):
                         df = result
                 except Exception as e:
                     self.logger.warning("feature_engineer_handler_failed", category=state.category, error=str(e))
+
+            # 자동 피처선택 (P1-2) — tabular 무감독 안전 제거(상수·완전중복). 누수 0, graceful.
+            if str(state.category).startswith("tabular"):
+                _df_fs, _fs_meta = _auto_feature_select(df, state.target_column)
+                if _fs_meta.get("applied") and _fs_meta.get("n_dropped"):
+                    df = _df_fs
+                    self.logger.info(
+                        "auto_feature_select",
+                        n_dropped=_fs_meta.get("n_dropped"),
+                        n_const=_fs_meta.get("n_const"),
+                        n_dup=_fs_meta.get("n_dup"),
+                    )
 
             # HJ 2026-06-11 — handler 적용 후 신규 컬럼 추출 + plan step 명 한국어 매핑 → publish.
             # 사용자가 G3 모달에서 어떤 파생 피처가 어떻게 생성됐는지 라이브로 확인.

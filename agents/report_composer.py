@@ -103,6 +103,10 @@ class ReportComposerAgent(BaseAgent):
                     return code, None
 
             done = await asyncio.gather(*[_gen(c) for c in requested])
+
+            # NOTE: 그래프 노드는 세션 주입 없이 생성돼 self.session=None 이므로 아래 _save_output_row
+            #   는 워커에서 실제로 실행되지 않는다. Output 행/Job.requested_outputs 의 DB 영속화는
+            #   orchestrator.runner._persist_outputs_to_db 가 완료 시점에 중앙에서 수행한다(재진행=교체).
             for code, path in done:
                 if path:
                     results[code] = path

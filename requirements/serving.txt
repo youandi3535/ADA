@@ -18,3 +18,10 @@ lightgbm==4.3.0
 # (라벨 없는 torch==2.3.0 은 PyPI 기본=CUDA 빌드라 nvidia-* 수 GB 가 딸려와 이미지 비대)
 numpy==1.26.4
 pandas==2.2.2
+
+# HJ 2026-06-16 — serving 이 models 테이블을 조회(AsyncSessionLocal, postgresql+asyncpg://)하려면
+#   async DB 드라이버가 필요하다. 기존엔 누락돼 _get_model_meta 가 항상 ModuleNotFoundError(asyncpg) 를
+#   삼키고 {} 반환 → "사용 가능한 모델이 없습니다" 503 으로 serving 이 사실상 죽어 있었다.
+#   api/worker 와 동일 버전으로 핀. sqlalchemy 는 mlflow 가 전이로 끌어오지만 버전 고정 위해 명시.
+sqlalchemy==2.0.30
+asyncpg==0.29.0

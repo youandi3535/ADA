@@ -52,6 +52,9 @@ class HyperparameterTunerAgent(BaseAgent):
     """trial 별 실제 학습 + CV — Day 6 본구현."""
 
     uses_llm = False
+    # HJ 2026-06-16 — KB warm-start map 을 HPO 초기값에 반영. rag_reader → env ADA_RAG_ENRICH=on 일 때만 활성.
+    uses_db_session = True
+    rag_reader = True
 
     def __init__(
         self,
@@ -309,6 +312,13 @@ class HyperparameterTunerAgent(BaseAgent):
                         return float(metrics.get("val_f1", 0.0))
                     if task == "regression":
                         return float(metrics.get("val_r2", 0.0))
+                    if task == "anomaly_detection":
+                        # HJ 2026-06-16 — 버그 수정: 기존 next(iter(metrics.values()))는
+                        #   metrics 첫 키인 'threshold'를 maximize 해 무의미했다. AUC(점수 순위
+                        #   기반)로 튜닝하되, 레이블이 없으면(순수 비지도) val_auc=None →
+                        #   objective 정의 불가이므로 0(기본 파라미터로 귀결, 무해).
+                        _auc = metrics.get("val_auc")
+                        return float(_auc) if _auc is not None else 0.0
                     return float(next(iter(metrics.values())) if metrics else 0.0)
                 except Exception as e:
                     self.logger.warning("fit_failed", model=model_name, error=str(e))

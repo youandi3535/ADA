@@ -436,6 +436,65 @@ def plan(state: Any) -> list[dict[str, Any]]:
 # ════════════════════════════════════════════════════════
 
 
+# ── 입력 견고화 (G-1, CS 2026-06-16) ────────────────────────────
+# 타깃·exog 가 "문자로 들어온 숫자"('$1,234'·'1.2K'·'12%')면 복원, 범주형 exog 는
+# 오디널 인코딩. 시간 컬럼·기존 수치 경로는 손대지 않아 무회귀.
+# 누수 0 설계: 복원은 단순 타입변환(통계 미사용), 범주형은 빈도통계 대신 factorize(등장
+# 순서 코드)라 train/val 분할 전에 적용해도 평가 누수가 없다.
+_TS_COERCE_SUCCESS_RATIO = 0.8
+
+
+def _coerce_numeric_like(s: Any) -> Any:
+    """문자로 들어온 숫자를 수치로 복원. 파싱 불가 셀은 NaN."""
+    import pandas as pd
+
+    txt = s.astype(str).str.strip()
+    txt = txt.str.replace(r"^\((.*)\)$", r"-\1", regex=True)  # 회계식 음수 (123)→-123
+    up = txt.str.upper()
+    mult = pd.Series(1.0, index=s.index)
+    mult[up.str.endswith("K")] = 1e3
+    mult[up.str.endswith("M")] = 1e6
+    mult[up.str.endswith("B")] = 1e9
+    base = up.str.replace(r"[,$€£¥%\s]", "", regex=True).str.replace(r"(?<=[0-9])[KMB]$", "", regex=True)
+    return pd.to_numeric(base, errors="coerce") * mult
+
+
+def _coerce_ratio_ok(orig: Any, coerced: Any) -> bool:
+    nn = int(orig.notna().sum())
+    return nn > 0 and (int(coerced.notna().sum()) / nn) >= _TS_COERCE_SUCCESS_RATIO
+
+
+def _robustify_ts_input(out: Any, target: str, exog_cols: list[str]) -> Any:
+    """타깃·exog 입력 견고화. out 은 이미 copy 된 DataFrame (in-place 수정)."""
+    import pandas as pd
+
+    # 타깃: 문자로 들어온 숫자면 복원 (수치/bool 이면 불변)
+    if (
+        target in out.columns
+        and not pd.api.types.is_numeric_dtype(out[target])
+        and not pd.api.types.is_bool_dtype(out[target])
+    ):
+        coerced = _coerce_numeric_like(out[target])
+        if _coerce_ratio_ok(out[target], coerced):
+            out[target] = coerced
+
+    # exog: 복원 → 실패 시 오디널 인코딩 (수치/bool/datetime 은 불변)
+    for col in exog_cols or []:
+        if col not in out.columns or col == target:
+            continue
+        s = out[col]
+        if pd.api.types.is_numeric_dtype(s) or pd.api.types.is_bool_dtype(s) or pd.api.types.is_datetime64_any_dtype(s):
+            continue
+        coerced = _coerce_numeric_like(s)
+        if _coerce_ratio_ok(s, coerced):
+            out[col] = coerced
+            continue
+        if int(s.astype(str).nunique(dropna=True)) >= 2:
+            codes, _ = pd.factorize(s)  # NaN → -1, 누수 0 (등장순 코드)
+            out[col] = codes.astype(float)
+    return out
+
+
 def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
     """Phase 0~8 순서대로 step 실행.
 
@@ -449,6 +508,9 @@ def apply(df: Any, plan_steps: list[dict[str, Any]], state: Any) -> Any:
     if not target or target not in out.columns:
         logger.warning("target_column=%r 이 df 에 없음 — 전처리 건너뜀", target)
         return out
+
+    # G-1 입력 견고화 — 타깃·exog 문자숫자 복원 + 범주형 exog 오디널 인코딩 (누수 0, 무회귀).
+    out = _robustify_ts_input(out, target, _exog_columns(state))
 
     # ★ 누수 1-3 차단: boxcox λ 를 "학습 구간만으로" 추정하기 위한 train_ratio 도출.
     #   분할 비율은 plan 의 time_order_split.test_ratio(없으면 0.2)에서 가져와
