@@ -659,7 +659,8 @@ async def storage_overview(
     # 백업 상태 판정: 기록 있으면 신선도(>20h 경고/>30h 위험), 없으면 경고(앱 DB 미기록)
     backup_status = "warn"
     backup_note = (
-        "백업은 로컬 서버 cron(03·12·18시)에서 수행됩니다. 앱 DB(backup_catalog) 기록이 없으면 여기서 확인 불가."
+        "백업 파일은 로컬 서버에 적재되지만 backup_catalog 기록이 아직 없습니다. "
+        "백업 스크립트(backup_postgres.sh)를 1회 실행하면 카탈로그에 등록되어 🟢 정상으로 표시됩니다."
     )
     backup_age_h: Optional[float] = None
     if last_backup_at:
@@ -822,6 +823,9 @@ async def storage_overview(
                 "db_total_bytes": db_total,
                 "minio_bytes": (minio_res["bytes"] if minio_ok else None),
                 "minio_objects": (minio_res["objects"] if minio_ok else None),
+                # 영구 저장소(PostgreSQL + MinIO) 누적 총량 — '지금까지 저장된 모든 데이터'.
+                # Redis(used_memory)는 휘발성 캐시이므로 누적 총량에서 제외한다.
+                "persistent_total_bytes": db_total + (minio_res["bytes"] if minio_ok else 0),
                 "total_rows": total_rows_all,
                 "uploads_bytes": uploads_bytes,
                 "outputs_bytes": outputs_bytes,
