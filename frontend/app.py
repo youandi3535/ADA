@@ -469,6 +469,29 @@ const GATE_HEADER_BY_CATEGORY={
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; if(h==='localhost'||h==='127.0.0.1') return p+'//'+h+':8000'; return p+'//'+h+'/api'; })();
 // 로그인 유지용 — 서버에서 현재 세션 토큰·역할 주입(_flow_screen). '처음으로' reload 시 재인증에 사용.
 var AUTH_TOKEN="__AUTH_TOKEN__", AUTH_ROLE="__AUTH_ROLE__";
+// HJ 2026-06-17 — 로그인 유지(localStorage). bare F5 는 새 세션이라 AUTH_TOKEN 이 빈값("")으로 주입된다:
+//   ① 토큰 살아있으면 localStorage 에 보관(다음 F5 복원용)  ② 토큰 없고 보관분 있으면 flow·해시 유지한 채
+//   ?token= 로 재주입 reload → 라우팅이 세션 복원(분석 진행상태 그대로). 로그아웃은 localStorage 도 비운다.
+(function(){
+  try{
+    var K='ada_auth_v1', ls=window.parent.localStorage, loc=window.parent.location;
+    var _live=(AUTH_TOKEN && AUTH_TOKEN.indexOf('__')!==0);
+    if(_live){
+      var _r=(AUTH_ROLE && AUTH_ROLE.indexOf('__')!==0)?AUTH_ROLE:'analyst';
+      ls.setItem(K, JSON.stringify({t:AUTH_TOKEN, r:_r}));
+    }else if(loc.search.indexOf('token=')===-1){
+      var raw=ls.getItem(K);
+      if(raw){ var a=JSON.parse(raw);
+        if(a && a.t){
+          var p=new URLSearchParams(loc.search);
+          p.set('token', a.t); if(a.r) p.set('role', a.r);
+          window.parent.history.replaceState({}, '', loc.pathname+'?'+p.toString()+loc.hash);
+          window.parent.location.reload();
+        }
+      }
+    }
+  }catch(e){}
+})();
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 // HJ 2026-06-11 — 정지 토글: 눌림(navUnlocked=true) 상태에서만 이전/다음 단계 활성. 1~6단계(cur=0~5) 적용.
 let navUnlocked=false;
@@ -3292,6 +3315,36 @@ if st.query_params.get("flow") == "1":
     st.session_state["studio_started"] = True
 
 if not st.session_state.get("studio_started"):
+    # ── 로그인 유지(localStorage) — bare F5/강력새로고침에도 세션 복원 (HJ 2026-06-17) ──
+    #   session_state 는 reload 시 사라진다. 내부 화면(콘솔/플로우)은 URL 에 토큰을 실어 복원하지만
+    #   랜딩은 복원 소스가 없어 F5 하면 로그아웃됐다. → JWT 를 localStorage 에 보관해 두고, 토큰 없는
+    #   로그아웃 상태로 로드되면 한 번 ?token= 으로 재주입(reload)해 라우팅이 세션을 복원하게 한다.
+    #   로그아웃 직후엔(_just_logged_out) 복원 대신 localStorage 를 비워 재로그인 루프를 막는다.
+    import json as _json
+
+    if st.session_state.pop("_just_logged_out", False):
+        components.html(
+            "<script>try{window.parent.localStorage.removeItem('ada_auth_v1');}catch(e){}</script>",
+            height=0,
+        )
+    elif not st.session_state.get("_auth_error"):
+        _lt = _json.dumps(st.session_state.get("auth_token", ""))
+        _lr = _json.dumps(st.session_state.get("auth_role", "analyst"))
+        _le = _json.dumps(st.session_state.get("auth_email", ""))
+        components.html(
+            "<script>(function(){try{"
+            "var K='ada_auth_v1',ls=window.parent.localStorage,loc=window.parent.location;"
+            "var TOK=" + _lt + ",ROLE=" + _lr + ",EMAIL=" + _le + ";"
+            "if(TOK){ls.setItem(K,JSON.stringify({t:TOK,r:ROLE,e:EMAIL}));}"
+            "else if(loc.search.indexOf('token=')===-1){"
+            "var raw=ls.getItem(K);if(raw){var a=JSON.parse(raw);"
+            "if(a&&a.t){var p=new URLSearchParams(loc.search);"
+            "p.set('token',a.t);if(a.r)p.set('role',a.r);if(a.e)p.set('email',a.e);"
+            "window.parent.history.replaceState({}, '', loc.pathname+'?'+p.toString()+loc.hash);"
+            "window.parent.location.reload();}}}"
+            "}catch(e){}})();</script>",
+            height=0,
+        )
     # HJ 2026-06-15 — '에이전트 소개'(우측 상단 아이콘) 클릭 → ?board=1 시 현황판 모달
     if st.query_params.get("board") == "1":
         _render_agent_board()
@@ -3445,6 +3498,8 @@ else:
             if st.button("로그아웃", use_container_width=True):
                 for _k in ("auth_token", "auth_role", "auth_email", "studio_started", "_fresh_start"):
                     st.session_state.pop(_k, None)
+                # 로그아웃 직후 랜딩에서 localStorage 보관 토큰을 비워 자동 재로그인 루프 차단
+                st.session_state["_just_logged_out"] = True
                 st.query_params.clear()
                 st.rerun()
     _flow_screen()
