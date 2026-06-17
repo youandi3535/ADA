@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -396,3 +396,466 @@ async def get_metrics_dashboard(
         "qa_total": int(qa_total),
         "qa_processed": int(qa_processed),
     }
+
+
+# =============================================================================
+# 운영 콘솔 — 데이터 저장 실시간 통합 현황
+#   VPS 원본(PostgreSQL/MinIO/MLflow/Redis) + 로컬 백업 서버를 한 화면에서 감시.
+#   30개 테이블을 8개 데이터 카테고리로 분류 + 각 스토리지 연결 헬스(정상/경고/위험).
+# =============================================================================
+
+# 테이블 → 데이터 카테고리 매핑 (운영 콘솔 분류 기준). models.py 의 30개 테이블 전수 포함.
+_CATEGORY_DEFS: list[dict[str, Any]] = [
+    {
+        "key": "raw",
+        "title": "원본 데이터 · 업로드",
+        "icon": "📥",
+        "desc": "사용자가 올린 원본 데이터셋과 의미 임베딩",
+        "stores": ["MinIO autoai-artifacts", "VPS /opt/ada/data", "PostgreSQL"],
+        "tables": ["uploads", "dataset_embeddings"],
+    },
+    {
+        "key": "jobs",
+        "title": "분석 작업 · 실행 기록",
+        "icon": "⚙️",
+        "desc": "파이프라인 작업·에이전트 실행·게이트(HITL) 결정 이력",
+        "stores": ["PostgreSQL"],
+        "tables": [
+            "jobs",
+            "agent_runs",
+            "experiments",
+            "gate_decision_metrics",
+            "decisions",
+            "interactive_sessions",
+            "intent_embeddings",
+        ],
+    },
+    {
+        "key": "outputs",
+        "title": "산출물 · 학습 모델",
+        "icon": "📦",
+        "desc": "PPT·PDF·HTML 등 5종 산출물과 학습된 모델 아티팩트",
+        "stores": ["MinIO autoai-artifacts", "MLflow"],
+        "tables": ["outputs", "artifacts", "output_recipes", "models", "model_artifact_catalog"],
+    },
+    {
+        "key": "errors",
+        "title": "오류 자동 수정 (self-healing)",
+        "icon": "🛠️",
+        "desc": "오류 자동 캐치·진단·패치 이력 (원본은 AES-GCM 암호화 보관)",
+        "stores": ["PostgreSQL (암호화)"],
+        "tables": [
+            "failure_logs",
+            "error_kb",
+            "pending_patches",
+            "patch_applications",
+            "circuit_breaker_events",
+        ],
+    },
+    {
+        "key": "learning",
+        "title": "자기학습 KB",
+        "icon": "🧠",
+        "desc": "성공패턴·레시피·EDA·HPO·교훈 — 신규 작업에 재사용되는 학습 자산",
+        "stores": ["PostgreSQL + pgvector"],
+        "tables": ["self_learning_kb", "success_patterns", "rules", "lesson_embeddings", "job_distillation_log"],
+    },
+    {
+        "key": "qa",
+        "title": "Q&A · 대화 수집",
+        "icon": "💬",
+        "desc": "Cowork·Claude Code 대화 → 임베딩 → KB 학습 원천",
+        "stores": ["PostgreSQL"],
+        "tables": ["conversation_logs"],
+    },
+    {
+        "key": "security",
+        "title": "보안 · 계정 · 감사",
+        "icon": "🔐",
+        "desc": "로그인·감사 로그·계정·에이전트 레지스트리",
+        "stores": ["PostgreSQL"],
+        "tables": ["security_audit_log", "users", "oauth_accounts", "agent_registry"],
+    },
+    {
+        "key": "backup",
+        "title": "백업 카탈로그",
+        "icon": "💾",
+        "desc": "로컬 백업 서버 적재 기록 (Pull 방식, 1일 3회 03·12·18시)",
+        "stores": ["로컬 /srv/backup/ada"],
+        "tables": ["backup_catalog"],
+    },
+]
+
+_ALL_TABLES: list[str] = [t for c in _CATEGORY_DEFS for t in c["tables"]]
+# created_at 이 아닌 타임스탬프 컬럼을 쓰는 테이블 (신규 적재 감지·트렌드용)
+_TS_COL: dict[str, str] = {"patch_applications": "applied_at", "job_distillation_log": "distilled_at"}
+
+
+def _ts_col(table: str) -> str:
+    return _TS_COL.get(table, "created_at")
+
+
+@router.get("/admin/storage/overview", tags=["Admin"])
+async def storage_overview(
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_admin_only),
+) -> dict[str, Any]:
+    """운영 콘솔 — 데이터 저장·DB·백업 실시간 통합 현황 (admin 전용).
+
+    한 번의 호출로 ① 스토리지 연결 헬스(정상/경고/위험) ② 8개 카테고리별 행수·용량
+    ③ 30개 테이블 전수 인벤토리 ④ 7일 적재 트렌드 ⑤ 백업 현황 을 모두 반환한다.
+    각 스토리지는 개별 try/except + 타임아웃으로 격리 — 하나가 죽어도 나머지는 표시된다.
+    """
+    import asyncio
+    import time
+    import urllib.request
+
+    from sqlalchemy import text
+
+    from ada.core.config import settings
+    from tools.minio_tool import get_minio_client
+
+    now = datetime.utcnow()
+    out: dict[str, Any] = {"generated_at": now.isoformat() + "Z"}
+
+    # ── 1) PostgreSQL: 정확한 행수 + 테이블 크기 + DB 총량 ──────────────────
+    counts: dict[str, int] = {}
+    sizes: dict[str, int] = {}
+    recent24: dict[str, int] = {}
+    db_total = 0
+    pg_status = "down"
+    pg_latency: Optional[float] = None
+    pg_detail = "연결 실패"
+    try:
+        t0 = time.time()
+        cnt_sql = " UNION ALL ".join(f"SELECT '{t}' AS tbl, count(*)::bigint AS n FROM {t}" for t in _ALL_TABLES)
+        for r in (await db.execute(text(cnt_sql))).all():
+            counts[r.tbl] = int(r.n)
+        for r in (
+            await db.execute(text("SELECT relname, pg_total_relation_size(relid) AS b FROM pg_stat_user_tables"))
+        ).all():
+            sizes[r.relname] = int(r.b)
+        db_total = int(await db.scalar(text("SELECT pg_database_size(current_database())")) or 0)
+        pg_latency = round((time.time() - t0) * 1000, 1)
+        pg_status = "ok"
+        pg_detail = f"{len(_ALL_TABLES)}개 테이블 · 응답 {pg_latency}ms"
+    except Exception as e:  # noqa: BLE001
+        out["pg_error"] = str(e)[:200]
+
+    # 최근 24시간 신규 적재 (실시간 저장 여부 감지) — 별도 격리
+    try:
+        rec_sql = " UNION ALL ".join(
+            f"SELECT '{t}' AS tbl, count(*)::bigint AS n FROM {t} WHERE {_ts_col(t)} > now() - interval '24 hours'"
+            for t in _ALL_TABLES
+        )
+        for r in (await db.execute(text(rec_sql))).all():
+            recent24[r.tbl] = int(r.n)
+    except Exception:  # noqa: BLE001
+        recent24 = {}
+
+    # 앱 관점 실제 저장 용량 (MinIO 적재 바이트)
+    uploads_bytes = outputs_bytes = 0
+    try:
+        uploads_bytes = int(await db.scalar(text("SELECT coalesce(sum(size_bytes),0) FROM uploads")) or 0)
+        outputs_bytes = int(await db.scalar(text("SELECT coalesce(sum(file_size_bytes),0) FROM outputs")) or 0)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ── 2) 보조 스토리지 헬스 (MinIO / Redis / MLflow) — 스레드 + 타임아웃 격리 ──
+    def _scan_minio() -> dict[str, Any]:
+        cli = get_minio_client()
+        s3, bucket = cli.s3, cli.bucket
+        total_b = total_n = pages = 0
+        pref: dict[str, dict[str, int]] = {}
+        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket):
+            for obj in page.get("Contents", []):
+                sz = int(obj.get("Size", 0))
+                total_b += sz
+                total_n += 1
+                top = obj["Key"].split("/", 1)[0]
+                d = pref.setdefault(top, {"n": 0, "b": 0})
+                d["n"] += 1
+                d["b"] += sz
+            pages += 1
+            if pages >= 60 or total_n >= 60000:
+                break
+        return {
+            "bucket": bucket,
+            "objects": total_n,
+            "bytes": total_b,
+            "truncated": pages >= 60 or total_n >= 60000,
+            "prefixes": sorted(
+                [{"name": k, "objects": v["n"], "bytes": v["b"]} for k, v in pref.items()],
+                key=lambda x: -x["bytes"],
+            )[:12],
+        }
+
+    def _scan_redis() -> dict[str, Any]:
+        import redis as _redis
+
+        r = _redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+        r.ping()
+        info = r.info()
+        return {
+            "keys": int(r.dbsize()),
+            "used_memory": int(info.get("used_memory", 0)),
+            "uptime_sec": int(info.get("uptime_in_seconds", 0)),
+            "version": str(info.get("redis_version", "")),
+        }
+
+    def _check_mlflow() -> bool:
+        uri = settings.mlflow_tracking_uri.rstrip("/")
+        for path in ("/health", ""):
+            try:
+                with urllib.request.urlopen(uri + path, timeout=3) as resp:  # noqa: S310
+                    if 200 <= resp.getcode() < 500:
+                        return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
+    async def _safe(fn: Any, timeout: float = 5.0) -> tuple[bool, Any]:
+        try:
+            return True, await asyncio.wait_for(asyncio.to_thread(fn), timeout=timeout)
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:160]
+
+    (minio_ok, minio_res), (redis_ok, redis_res), (mlflow_ok, mlflow_res) = await asyncio.gather(
+        _safe(_scan_minio),
+        _safe(_scan_redis),
+        _safe(_check_mlflow, timeout=4.0),
+    )
+
+    # ── 3) 백업 현황 (backup_catalog + 고정 스케줄) ─────────────────────────
+    backup_last: list[dict[str, Any]] = []
+    last_backup_at: Optional[str] = None
+    try:
+        from ada.db.models import BackupCatalog
+
+        for bt in ("db", "data", "vault"):
+            row = (
+                await db.scalars(
+                    select(BackupCatalog)
+                    .where(BackupCatalog.backup_type == bt)
+                    .order_by(desc(BackupCatalog.created_at))
+                    .limit(1)
+                )
+            ).first()
+            if row:
+                backup_last.append(
+                    {
+                        "type": bt,
+                        "at": row.created_at.isoformat() if row.created_at else None,
+                        "size_bytes": int(row.size_bytes or 0),
+                        "status": row.status or "ok",
+                        "path": row.minio_path,
+                    }
+                )
+                if row.created_at and (last_backup_at is None or row.created_at.isoformat() > last_backup_at):
+                    last_backup_at = row.created_at.isoformat()
+    except Exception:  # noqa: BLE001
+        backup_last = []
+
+    # 백업 상태 판정: 기록 있으면 신선도(>20h 경고/>30h 위험), 없으면 경고(앱 DB 미기록)
+    backup_status = "warn"
+    backup_note = (
+        "백업은 로컬 서버 cron(03·12·18시)에서 수행됩니다. 앱 DB(backup_catalog) 기록이 없으면 여기서 확인 불가."
+    )
+    backup_age_h: Optional[float] = None
+    if last_backup_at:
+        try:
+            # created_at 은 tz-aware(+00:00)일 수 있어 naive now(utcnow)와 직접 빼면 TypeError →
+            # tz 있으면 UTC 로 정규화 후 tzinfo 제거해 naive-UTC 끼리 비교한다.
+            _p = datetime.fromisoformat(last_backup_at.replace("Z", "+00:00"))
+            if _p.tzinfo is not None:
+                _p = _p.astimezone(timezone.utc).replace(tzinfo=None)
+            age = (now - _p).total_seconds() / 3600.0
+            backup_age_h = round(age, 1)
+            backup_status = "ok" if age <= 20 else ("warn" if age <= 30 else "down")
+            backup_note = f"최근 백업 {backup_age_h}시간 전 · 보존 14일"
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ── 4) 서비스 헬스 묶음 ────────────────────────────────────────────────
+    services = [
+        {
+            "key": "postgres",
+            "name": "PostgreSQL · 원본 DB",
+            "where": "VPS ada-postgres",
+            "status": pg_status,
+            "metric": _fmt_bytes(db_total) if pg_status == "ok" else "—",
+            "detail": pg_detail,
+        },
+        {
+            "key": "minio",
+            "name": "MinIO · 오브젝트 스토리지",
+            "where": "VPS autoai-artifacts",
+            "status": "ok" if minio_ok else "down",
+            "metric": (_fmt_bytes(minio_res["bytes"]) if minio_ok else "—"),
+            "detail": (f"{minio_res['objects']:,}개 객체" if minio_ok else f"연결 실패: {minio_res}"),
+        },
+        {
+            "key": "redis",
+            "name": "Redis · 실시간 큐·캐시",
+            "where": "VPS ada-redis",
+            "status": "ok" if redis_ok else "down",
+            "metric": (_fmt_bytes(redis_res["used_memory"]) if redis_ok else "—"),
+            "detail": (
+                f"{redis_res['keys']:,}개 키 · v{redis_res['version']}" if redis_ok else f"연결 실패: {redis_res}"
+            ),
+        },
+        {
+            "key": "mlflow",
+            "name": "MLflow · 학습 추적",
+            "where": "VPS mlflow:5000",
+            "status": "ok" if mlflow_ok else "down",
+            "metric": ("정상" if mlflow_ok else "—"),
+            "detail": ("추적 서버 응답" if mlflow_ok else "응답 없음"),
+        },
+        {
+            "key": "backup",
+            "name": "로컬 백업 서버 · 학원 Linux",
+            "where": "/srv/backup/ada (Pull)",
+            "status": backup_status,
+            "metric": (f"{backup_age_h}h 전" if backup_age_h is not None else "기록 없음"),
+            "detail": backup_note,
+        },
+    ]
+
+    # ── 5) 카테고리 롤업 ───────────────────────────────────────────────────
+    categories = []
+    total_rows_all = 0
+    for c in _CATEGORY_DEFS:
+        rows = sum(counts.get(t, 0) for t in c["tables"])
+        byts = sum(sizes.get(t, 0) for t in c["tables"])
+        rec = sum(recent24.get(t, 0) for t in c["tables"])
+        total_rows_all += rows
+        cat_status = "ok" if pg_status == "ok" else "down"
+        if c["key"] == "backup":
+            cat_status = backup_status
+        categories.append(
+            {
+                **{k: c[k] for k in ("key", "title", "icon", "desc", "stores")},
+                "total_rows": rows,
+                "total_bytes": byts,
+                "recent_24h": rec,
+                "status": cat_status,
+                "tables": [
+                    {
+                        "name": t,
+                        "rows": counts.get(t, 0),
+                        "bytes": sizes.get(t, 0),
+                        "recent_24h": recent24.get(t, 0),
+                    }
+                    for t in c["tables"]
+                ],
+            }
+        )
+
+    # ── 6) 7일 적재 트렌드 (차트용) ────────────────────────────────────────
+    async def _daily(table: str) -> list[dict[str, Any]]:
+        try:
+            col = _ts_col(table)
+            rows = (
+                await db.execute(
+                    text(
+                        f"SELECT to_char(date_trunc('day', {col}),'MM-DD') AS d, count(*)::bigint AS n "
+                        f"FROM {table} WHERE {col} > now() - interval '7 days' GROUP BY 1 ORDER BY 1"
+                    )
+                )
+            ).all()
+            return [{"d": r.d, "n": int(r.n)} for r in rows]
+        except Exception:  # noqa: BLE001
+            return []
+
+    trends = {
+        "jobs": await _daily("jobs"),
+        "failures": await _daily("failure_logs"),
+        "qa": await _daily("conversation_logs"),
+        "outputs": await _daily("outputs"),
+    }
+
+    # ── 7) 오류 자동수정 · 학습 하이라이트 (요약 카드) ─────────────────────
+    highlight: dict[str, Any] = {}
+    try:
+        fl_total = counts.get("failure_logs", 0)
+        fl_auto = int(await db.scalar(text("SELECT count(*) FROM failure_logs WHERE auto_handled_by_kb = true")) or 0)
+        kb_by_type: dict[str, int] = {}
+        for r in (await db.execute(text("SELECT kb_type, count(*) AS n FROM self_learning_kb GROUP BY kb_type"))).all():
+            kb_by_type[str(r.kb_type)] = int(r.n)
+        qa_processed = int(await db.scalar(text("SELECT count(*) FROM conversation_logs WHERE processed = true")) or 0)
+        highlight = {
+            "failures_total": fl_total,
+            "failures_auto_handled": fl_auto,
+            "auto_handle_rate": (round(fl_auto / fl_total * 100, 1) if fl_total else 0.0),
+            "kb_total": counts.get("self_learning_kb", 0),
+            "kb_by_type": kb_by_type,
+            "qa_total": counts.get("conversation_logs", 0),
+            "qa_processed": qa_processed,
+        }
+    except Exception:  # noqa: BLE001
+        highlight = {}
+
+    # ── 8) 스토리지 토폴로지 (VPS 원본 → 로컬 백업) ────────────────────────
+    storage_nodes = [
+        {
+            "role": "primary",
+            "name": "VPS 웹 서버 (원본 · 실시간)",
+            "path": "/opt/ada · ada-postgres · autoai-artifacts",
+            "status": pg_status if pg_status == "ok" else "warn",
+            "detail": f"DB {_fmt_bytes(db_total)}"
+            + (f" · MinIO {_fmt_bytes(minio_res['bytes'])}" if minio_ok else " · MinIO 점검필요"),
+        },
+        {
+            "role": "backup",
+            "name": "로컬 백업 서버 (학원 Linux)",
+            "path": "/srv/backup/ada/{postgres,datasets}",
+            "status": backup_status,
+            "detail": backup_note,
+        },
+    ]
+
+    out.update(
+        {
+            "services": services,
+            "kpis": {
+                "db_total_bytes": db_total,
+                "minio_bytes": (minio_res["bytes"] if minio_ok else None),
+                "minio_objects": (minio_res["objects"] if minio_ok else None),
+                "total_rows": total_rows_all,
+                "uploads_bytes": uploads_bytes,
+                "outputs_bytes": outputs_bytes,
+                "last_backup_at": last_backup_at,
+                "backup_age_h": backup_age_h,
+            },
+            "categories": categories,
+            "minio": (minio_res if minio_ok else {"error": minio_res}),
+            "redis": (redis_res if redis_ok else {"error": redis_res}),
+            "trends": trends,
+            "highlight": highlight,
+            "backup": {
+                "schedule": "매일 03 · 12 · 18시 (1일 3회)",
+                "method": "Pull (로컬 서버 → VPS pg_dump)",
+                "retention_days": 14,
+                "paths": ["/srv/backup/ada/postgres", "/srv/backup/ada/datasets"],
+                "status": backup_status,
+                "note": backup_note,
+                "last": backup_last,
+            },
+            "storage_nodes": storage_nodes,
+            "db_total_bytes": db_total,
+        }
+    )
+    return out
+
+
+def _fmt_bytes(n: Optional[int]) -> str:
+    """바이트 → 사람이 읽는 단위 (KB/MB/GB)."""
+    if not n:
+        return "0 B"
+    v = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if v < 1024 or unit == "TB":
+            return f"{v:.1f} {unit}" if unit != "B" else f"{int(v)} B"
+        v /= 1024
+    return f"{v:.1f} TB"

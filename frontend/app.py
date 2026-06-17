@@ -467,6 +467,8 @@ const GATE_HEADER_BY_CATEGORY={
   }
 };
 const API=(function(){ let p='http:',h='localhost'; try{ p=window.parent.location.protocol; h=window.parent.location.hostname; }catch(e){} if(p!=='http:'&&p!=='https:')p='http:'; if(!h)h='localhost'; if(h==='localhost'||h==='127.0.0.1') return p+'//'+h+':8000'; return p+'//'+h+'/api'; })();
+// 로그인 유지용 — 서버에서 현재 세션 토큰·역할 주입(_flow_screen). '처음으로' reload 시 재인증에 사용.
+var AUTH_TOKEN="__AUTH_TOKEN__", AUTH_ROLE="__AUTH_ROLE__";
 let cur=0, frontier=0, maxReached=0, paused=false, follow=true, busy=false, polling=false, pollTimer=null;
 // HJ 2026-06-11 — 정지 토글: 눌림(navUnlocked=true) 상태에서만 이전/다음 단계 활성. 1~6단계(cur=0~5) 적용.
 let navUnlocked=false;
@@ -658,9 +660,24 @@ function goToStart(){
   //   부모 reload 만으로 충분 — Streamlit 은 페이지 reload 시 새 세션이라 session_state(studio_started) 가
   //   자동 초기화되고, clearState() 가 URL 을 pathname 으로(flow=1 제거) 바꾸므로 reload 후 랜딩이 뜬다.
   //   ※ 이전의 ?reset=1 + 서버 reset 처리(st.rerun) 는 reload 직후 'SessionInfo before initialized' 에러를 유발 → 제거.
+  // HJ 2026-06-17 — 로그인 유지: bare reload 는 새 세션이라 auth 가 사라져 랜딩이 '로그아웃' 상태로 떴다.
+  //   콘솔 진입과 동일하게 token·role 을 쿼리로 실어 랜딩으로 간다. 라우팅의 `if token` 블록이
+  //   세션에 재주입(st.rerun 없이 — SessionInfo 에러 무관)하고 URL 에서 token/role 을 제거한다.
+  //   flow=1 은 싣지 않으므로 랜딩(시작화면)이 로그인 유지된 채 표시된다.
   try{ if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } }catch(e){}
-  try{ clearState(); }catch(e){}
   try{ window.parent.localStorage.removeItem(_SK); }catch(e){}
+  try{ window.parent.localStorage.removeItem(_SK+'_gc'); }catch(e){}
+  try{
+    if(AUTH_TOKEN && AUTH_TOKEN.indexOf('__')!==0){
+      // 샌드박스에서 location.replace(새URL) 는 막히므로 replaceState(주소변경)+reload 로 토큰 실어 이동.
+      var base=window.parent.location.pathname;
+      window.parent.history.replaceState({}, '', base+'?token='+encodeURIComponent(AUTH_TOKEN)+'&role='+encodeURIComponent(AUTH_ROLE));
+      window.parent.location.reload();
+      return;
+    }
+  }catch(e){}
+  // 미로그인(토큰 없음) 폴백 — 기존처럼 bare reload 로 랜딩 복귀.
+  try{ clearState(); }catch(e){}
   try{ window.parent.history.replaceState({}, '', window.parent.location.pathname); }catch(e){}
   try{ window.parent.location.reload(); return; }catch(e){}
   try{ window.location.reload(); }catch(e){}
@@ -3116,6 +3133,9 @@ def _flow_screen() -> None:
     # 시작 버튼으로 진입 시 _FRESH_START=true 주입 → IIFE가 localStorage 초기화
     fresh = bool(st.session_state.pop("_fresh_start", False))
     flow_html = _FLOW_HTML.replace("__NONCE__", _FLOW_NONCE)
+    # 로그인 유지 — '처음으로' reload 시 재인증에 쓸 토큰·역할 주입 (goToStart 가 쿼리로 실어 보냄).
+    flow_html = flow_html.replace("__AUTH_TOKEN__", st.session_state.get("auth_token", ""))
+    flow_html = flow_html.replace("__AUTH_ROLE__", st.session_state.get("auth_role", "analyst"))
     if fresh:
         flow_html = flow_html.replace(
             "var _FRESH_START=false;// __FRESH_START_INJECT__",
@@ -3128,6 +3148,10 @@ def _render_agent_board() -> None:
     """랜딩 우측 상단 '에이전트 소개' 아이콘(?board=1) → 28개 에이전트 협력 현황판 모달."""
     from pathlib import Path
 
+    # ?board=0 닫기도 전체 reload 라 새 세션이 되어 로그인이 풀린다 → 토큰을 쿼리로 실어
+    # 라우팅(if token)이 세션을 복원하게 한다(콘솔 열기/닫기와 동일). 미로그인이면 빈 문자열.
+    _btok = st.session_state.get("auth_token", "")
+    _bqs = f"&token={_btok}&role={st.session_state.get('auth_role', 'analyst')}" if _btok else ""
     st.markdown(
         """
         <style>
@@ -3140,7 +3164,7 @@ def _render_agent_board() -> None:
         .ada-board-close:hover{background:rgba(150,170,235,.24);}
         </style>
         <a href="?board=0" target="_self" class="ada-board-close">✕ 닫기</a>
-        """,
+        """.replace('href="?board=0"', f'href="?board=0{_bqs}"'),
         unsafe_allow_html=True,
     )
     _base = Path(__file__).parent
@@ -3321,6 +3345,9 @@ if not st.session_state.get("studio_started"):
             unsafe_allow_html=True,
         )
     with _R:
+        # '에이전트 소개'(?board=1) 진입도 전체 reload 라 로그인이 풀린다 → 토큰 실어 유지(닫기와 짝).
+        _btok = st.session_state.get("auth_token", "")
+        _bqs = f"&token={_btok}&role={st.session_state.get('auth_role', 'analyst')}" if _btok else ""
         st.markdown(
             """
             <div style="background:#ffffff;border:1px solid #e6ebf3;border-radius:18px;padding:22px;box-shadow:0 18px 44px rgba(31,55,99,.10);position:relative;">
@@ -3347,7 +3374,7 @@ if not st.session_state.get("studio_started"):
                 </div>
               </div>
             </div>
-            """,
+            """.replace('href="?board=1"', f'href="?board=1{_bqs}"'),
             unsafe_allow_html=True,
         )
     # ── '분석 시작하기' + '운영 콘솔' 을 같은 flex 행에 배치 → 두 버튼 세로 중앙을 일직선 정렬 (align-y) ──
@@ -3378,8 +3405,16 @@ if not st.session_state.get("studio_started"):
             #   좌측 컬럼은 (버튼 + 힌트 1줄), 우측은 콘솔 버튼만이라 중앙선이 어긋난다.
             #   → 좌측 힌트와 동일 높이의 투명 한 줄을 우측에도 깔면, 두 버튼의 세로 중앙이
             #     같은 선에 온다(버튼·콘솔 자체 높이와 무관하게 정렬됨).
+            # ?admin=1 은 전체 페이지 reload 라 Streamlit 이 새 세션을 만들어 auth_token/role 이
+            # 사라진다 → 게이트(auth_role=='admin')가 풀려 랜딩으로 튕긴다(로그인 풀림 버그).
+            # 해결: OAuth 콜백과 동일하게 token·role 을 쿼리로 실어 보낸다. 라우팅의 `if token`
+            # 블록이 즉시 세션에 재주입하고 URL 에서 token/role 을 제거(노출 최소화)하므로,
+            # 로그인이 유지된 채 운영 콘솔이 열린다(닫기 링크도 dashboard 에서 동일 처리).
+            _atok = st.session_state.get("auth_token", "")
+            _arole = st.session_state.get("auth_role", "admin")
             st.markdown(
-                '<div style="display:flex;justify-content:flex-end;align-items:center;min-height:44px;position:relative;top:-8px;"><a href="?admin=1" target="_self" style="display:inline-flex;align-items:center;gap:7px;background:#1f3e5c;color:#fff;padding:10px 18px;border-radius:999px;font-weight:700;font-size:.84rem;text-decoration:none;box-shadow:0 8px 20px rgba(31,62,92,.3);">운영 콘솔</a></div>'
+                f'<div style="display:flex;justify-content:flex-end;align-items:center;min-height:44px;position:relative;top:-8px;">'
+                f'<a href="?admin=1&amp;token={_atok}&amp;role={_arole}" target="_self" style="display:inline-flex;align-items:center;gap:7px;background:#1f3e5c;color:#fff;padding:10px 18px;border-radius:999px;font-weight:700;font-size:.84rem;text-decoration:none;box-shadow:0 8px 20px rgba(31,62,92,.3);">운영 콘솔</a></div>'
                 "<div style='text-align:center;color:transparent;font-size:.82rem;margin-top:-6px;'>&nbsp;</div>",
                 unsafe_allow_html=True,
             )
