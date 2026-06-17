@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ADA 발표 슬라이드 (2장) — 임팩트 버전</title>
+<style>
+  :root{
+    --navy:#0f2342; --blue:#2563eb; --blue2:#1d4ed8;
+    --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb;
+    --red:#e0252b; --green:#16a34a; --gold:#ffce3a; --bg:#eef1f7; --card:#ffffff;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--bg); font-family:'Pretendard','Malgun Gothic',sans-serif; color:var(--ink); padding:28px;}
+  .slide{
+    width:1180px; max-width:100%; min-height:820px; margin:0 auto 40px;
+    background:var(--card); border-radius:16px; padding:52px 60px; position:relative;
+    box-shadow:0 10px 30px rgba(15,35,66,.10); overflow:hidden;
+  }
+  .pageno{position:absolute; top:24px; right:30px; font-size:13px; color:var(--muted); font-weight:700;}
+  .tag{display:inline-block; font-size:13px; font-weight:800; letter-spacing:.08em;
+       color:#fff; background:var(--blue); padding:6px 14px; border-radius:999px;}
+
+  /* ---------- 슬라이드 1 ---------- */
+  .hook{font-size:21px; color:var(--muted); margin:18px 0 4px; font-weight:600;}
+  .hook b{color:var(--red);}
+  h1{font-size:42px; color:var(--navy); line-height:1.22; font-weight:900; margin-bottom:30px; letter-spacing:-.01em;}
+  h1 .u{ text-decoration:underline; text-decoration-color:var(--gold); text-decoration-thickness:8px; text-underline-offset:4px;}
+
+  .big-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:18px; margin-bottom:30px;}
+  .big{position:relative; padding:26px 20px 22px; border-radius:14px; background:#fbfafa; border:1px solid #f0e6e6;}
+  .big .ico{font-size:26px;}
+  .big .n{font-size:58px; font-weight:900; color:var(--red); line-height:1; margin:6px 0 2px; letter-spacing:-.02em;}
+  .big .n small{font-size:26px; font-weight:800; vertical-align:6px;}
+  .big .t{font-size:15px; font-weight:700; color:var(--navy); margin-top:8px; line-height:1.35;}
+  .big .s{font-size:11.5px; color:var(--muted); margin-top:10px;}
+  .big .seq{position:absolute; top:-10px; left:18px; background:var(--navy); color:#fff; font-size:12px; font-weight:800; padding:3px 9px; border-radius:999px;}
+
+  /* 비용 대비 바 */
+  .cost{display:flex; align-items:stretch; gap:0; border-radius:14px; overflow:hidden; border:1px solid var(--line); margin-bottom:18px;}
+  .cost>div{padding:22px 26px;}
+  .cost .c-prob{background:#fcecec; flex:1.1;}
+  .cost .c-arrow{display:flex; align-items:center; justify-content:center; background:#fff; font-size:34px; color:var(--muted); padding:0 18px;}
+  .cost .c-sol{background:#e8f3ff; flex:1;}
+  .cost .lab{font-size:12.5px; font-weight:800; letter-spacing:.04em; color:var(--muted); margin-bottom:6px;}
+  .cost .c-prob .v{font-size:30px; font-weight:900; color:var(--red);}
+  .cost .c-sol .v{font-size:30px; font-weight:900; color:var(--blue);}
+  .cost .sub{font-size:12.5px; color:var(--muted); margin-top:4px;}
+  .src-foot{font-size:10.5px; color:var(--muted); line-height:1.6; border-top:1px dashed var(--line); padding-top:12px;}
+
+  /* ---------- 슬라이드 2 ---------- */
+  h1.sol{margin-bottom:8px;}
+  .define{font-size:18px; color:var(--ink); margin-bottom:24px;}
+  .define b{color:var(--navy);}
+  /* Before/After 히어로 */
+  .ba{display:grid; grid-template-columns:1fr 70px 1fr; align-items:center; gap:0; margin-bottom:26px;}
+  .ba .side{border-radius:16px; padding:26px 24px; text-align:center;}
+  .ba .before{background:#2a2f3a; color:#cfd3da;}
+  .ba .after{background:linear-gradient(135deg,#13294b,#1d4ed8); color:#fff;}
+  .ba .cap{font-size:13px; font-weight:800; letter-spacing:.1em; opacity:.8; margin-bottom:12px;}
+  .ba .line{font-size:21px; font-weight:800; margin:7px 0;}
+  .ba .hl{font-size:40px; font-weight:900;}
+  .ba .after .hl{color:var(--gold);}
+  .ba .arrow{font-size:42px; color:var(--blue); text-align:center; font-weight:900;}
+
+  /* vs 매트릭스 */
+  .vs-title{font-size:15px; font-weight:800; color:var(--navy); margin:4px 0 10px;}
+  table.vs{width:100%; border-collapse:separate; border-spacing:0; font-size:14.5px;}
+  table.vs th, table.vs td{padding:12px 12px; text-align:center; border-bottom:1px solid var(--line);}
+  table.vs th{font-size:13px; color:#fff;}
+  table.vs th.cat{background:transparent;}
+  table.vs th.h1c{background:#9aa3b2;}
+  table.vs th.h2c{background:#7b8494;}
+  table.vs th.h3c{background:var(--blue); border-radius:10px 10px 0 0;}
+  table.vs td.cap{text-align:left; font-weight:700; color:var(--navy); background:#f6f8fc;}
+  table.vs td.ada{background:#eaf2ff; font-weight:800; color:var(--blue2);}
+  table.vs .x{color:var(--red); font-weight:900; font-size:17px;}
+  table.vs .o{color:var(--green); font-weight:900; font-size:17px;}
+  .punch{margin-top:22px; background:var(--navy); color:#fff; border-radius:14px; padding:20px 26px; font-size:18px; font-weight:700; line-height:1.5;}
+  .punch b{color:var(--gold);}
+  @media print{ body{background:#fff; padding:0;} .slide{box-shadow:none; page-break-after:always; margin:0; border-radius:0;} }
+</style>
+</head>
+<body>
+
+<!-- ============ 슬라이드 1 : 문제 (빅넘버 + 비용대비) ============ -->
+<section class="slide">
+  <div class="pageno">1 / 2</div>
+  <span class="tag">WHY · 우리는 왜 만들었나</span>
+  <p class="hook">기업 4곳 중 <b>3곳(76%)</b>이, 데이터를 두고도 '感'으로 결정합니다.</p>
+  <h1>데이터는 쌓이는데,<br>분석은 <span class="u">소수의 비싸고 느린 특권</span>이다.</h1>
+
+  <div class="big-grid">
+    <div class="big">
+      <span class="seq">① 활용</span>
+      <div class="ico">🗄️</div>
+      <div class="n">73<small>%</small></div>
+      <div class="t">기업 데이터가 분석에 못 쓰이고 방치된다</div>
+      <div class="s">Forrester</div>
+    </div>
+    <div class="big">
+      <span class="seq">② 인재</span>
+      <div class="ico">💰</div>
+      <div class="n">$112K<small>+</small></div>
+      <div class="t">전문가 1인 연봉 — 그마저 전 세계 25만 명 부족</div>
+      <div class="s">美 BLS · WEF</div>
+    </div>
+    <div class="big">
+      <span class="seq">③ 속도</span>
+      <div class="ico">⏳</div>
+      <div class="n">1–4<small>주</small></div>
+      <div class="t">분석·리포트 하나 받는 데 걸리는 평균 대기</div>
+      <div class="s">IBM</div>
+    </div>
+    <div class="big">
+      <span class="seq">④ 보고서</span>
+      <div class="ico">📊</div>
+      <div class="n">60–80<small>%</small></div>
+      <div class="t">힘들게 만든 보고서·대시보드가 안 쓰인다</div>
+      <div class="s">BI 업계 분석</div>
+    </div>
+  </div>
+
+  <div class="cost">
+    <div class="c-prob">
+      <div class="lab">지금 — 분석 1건의 값</div>
+      <div class="v">전문가 3명 × 3주 ≈ 2,800만 원</div>
+      <div class="sub">연봉 $112K 환산 · 그마저 사람 구하기도 어렵다</div>
+    </div>
+    <div class="c-arrow">→</div>
+    <div class="c-sol">
+      <div class="lab">ADA — 같은 일을</div>
+      <div class="v">1명 · 30분 · ≈ 0원</div>
+      <div class="sub">시간 절약, 곧 비용 절감</div>
+    </div>
+  </div>
+
+  <div class="src-foot">
+    출처 · 73% 방치: Forrester(Inc.) · 76% 깜깜이 결정: Sisense 2025(500개 기업) · 전문가 $112K·25만 명 부족: 美 BLS·WEF · 분석 대기 1–4주: IBM · 보고서 60–80% 미사용: BI 업계 분석(SR Analytics 등)
+  </div>
+</section>
+
+<!-- ============ 슬라이드 2 : 솔루션 + 차별점 (Before/After + vs) ============ -->
+<section class="slide">
+  <div class="pageno">2 / 2</div>
+  <span class="tag">WHAT · 그래서 우리는</span>
+  <h1 class="sol">ADA — 누구나, 클릭만으로, 30분 만에.</h1>
+  <p class="define"><b>28개 전문 AI 에이전트</b>가 한 팀처럼 협력해, 데이터 업로드부터 전처리·학습·평가·인사이트·보고서까지 <b>전 과정을 자동</b>으로. 사람은 핵심만 결정합니다(휴먼인더루프).</p>
+
+  <div class="ba">
+    <div class="side before">
+      <div class="cap">BEFORE</div>
+      <div class="line">전문가 3명</div>
+      <div class="line">3주</div>
+      <div class="hl">≈ 2,800만 원</div>
+    </div>
+    <div class="arrow">▶</div>
+    <div class="side after">
+      <div class="cap">WITH ADA</div>
+      <div class="line">누구나 1명</div>
+      <div class="line">30분</div>
+      <div class="hl">≈ 0원</div>
+    </div>
+  </div>
+
+  <div class="vs-title">"그럼 기존 AutoML·ChatGPT랑 뭐가 다른가?" — 한눈에</div>
+  <table class="vs">
+    <thead>
+      <tr>
+        <th class="cat"></th>
+        <th class="h1c">기존 AutoML<br><span style="font-weight:400;font-size:11px">(DataRobot 등)</span></th>
+        <th class="h2c">ChatGPT<br><span style="font-weight:400;font-size:11px">데이터분석</span></th>
+        <th class="h3c">ADA</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="cap">문제정의→보고서 전 과정 자동</td><td><span class="x">✕</span> 모델 학습만</td><td><span class="x">✕</span> 코드 한 토막</td><td class="ada"><span class="o">✓</span> 전 과정</td></tr>
+      <tr><td class="cap">비전공자가 직접 사용</td><td><span class="x">✕</span> 전문가용</td><td>△ 계속 프롬프트</td><td class="ada"><span class="o">✓</span> 클릭만</td></tr>
+      <tr><td class="cap">재현성·신뢰(반복·감사 가능)</td><td>△</td><td><span class="x">✕</span> 환각·비재현</td><td class="ada"><span class="o">✓</span> 검증·인용강제</td></tr>
+      <tr><td class="cap">전문가급 보고서 5종 산출</td><td><span class="x">✕</span></td><td><span class="x">✕</span></td><td class="ada"><span class="o">✓</span> PPT·PDF·대시보드</td></tr>
+    </tbody>
+  </table>
+
+  <div class="punch">
+    기존 AutoML은 '모델 만들기'만, ChatGPT는 '코드 한 토막'만 자동화합니다.<br>
+    ADA는 <b>문제 정의부터 보고서까지, 비전공자도, 재현 가능하게</b> — 분석을 전공자의 특권에서 <b>모두의 도구</b>로.
+  </div>
+</section>
+
+</body>
+</html>
