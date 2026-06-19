@@ -4,7 +4,7 @@
 > 시간이 지날수록 똑똑해지고, 스스로 오류를 고치며, 외부 위협으로부터 안전하다.
 >
 > **스코프**: 정형 ML / 정형 DL / 시계열 / 이상탐지 4개 카테고리 (이미지·NLP 제외)
-> **버전**: v2.5.0 · Python 3.10 (`>=3.10,<3.11`)
+> **버전**: v2.6.0 · Python 3.10 (`>=3.10,<3.11`)
 
 ---
 
@@ -29,11 +29,11 @@
 | 2 | **5 HITL 게이트 + G0_PII** | LangGraph interrupt + PostgresSaver 기반, 24h 무응답 시 기본값 자동 처리 |
 | 3 | **3-Stack 자가학습** | PostgreSQL KB + MinIO 아티팩트 + pgvector RAG (768d). 신규 작업이 과거 학습(KB)을 인용해 시작 |
 | 4 | **5종 산출물** | PPT / PDF / 발표대본 / 정적 웹 대시보드 / 인사이트 정리 (carrier + architect 파이프라인) |
-| 5 | **Guardian v2 자동 오류 처리** | 5-Tier 체계 (Static → ErrorKB → 검증 패치 재사용 → Ollama → Claude CLI), AES-GCM 암호화 원본 보관 |
+| 5 | **Guardian v2 자동 오류 처리** | 5-Tier 체계 (Static → ErrorKB → 검증 패치 재사용 → Ollama → Claude CLI), AES-GCM 암호화 원본 보관. **멈춤(hang)·미완료 작업도 watchdog 가 오류로 자동 기록**해 학습 입력 누락 방지 |
 | 6 | **팀 집단지성 KB** | 모든 Claude Code·Cowork Q&A 자동 수집 → 벡터 KB → UserPromptSubmit 훅으로 Claude API 비용 절감 |
 | 7 | **보안 풀스택** | JWT · Google OAuth 로그인 · RBAC · RLS · PII · 프롬프트 인젝션 방어 · Vault · 감사로그 |
 | 8 | **대화형 분석 스튜디오** | ada studio 랜딩 → OAuth 로그인 → 5단계 게이트 진행바 → 산출물. WebSocket 실시간 진행률 |
-| 9 | **운영 콘솔 (관리자)** | 실시간 데이터 저장 현황 감시 — 스토리지 신호등 · 30테이블 카테고리 분류 · 백업 현황 ([아래](#운영-콘솔--관리자-전용-실시간-데이터-저장-감시)) |
+| 9 | **운영 콘솔 (관리자)** | 실시간 데이터 저장 감시 — 스토리지 신호등 · 30테이블 카테고리 · 적재 트렌드(7일·24h) · **자가치유 활용 현황** · 영구 백업 ([아래](#운영-콘솔--관리자-전용-실시간-데이터-저장-감시)) |
 
 ---
 
@@ -52,7 +52,7 @@ Google OAuth 로그인 / 회원가입  (처음이면 자동 가입, 비밀번호
 산출물 다운로드 (PPT·PDF·대본·HTML·Markdown 중 선택)
 ```
 
-> 로그인은 `st.session_state` + 쿼리 토큰 재주입(`?token=`)으로 유지됩니다. 모든 화면 전환(운영 콘솔 열기/닫기·처음으로·에이전트 소개)은 토큰을 실어 보내 reload 후에도 세션을 복원합니다. 프론트는 라이브 마운트 + Streamlit 폴링이라 `frontend/app.py` 수정은 새로고침(F5) 한 번으로 반영됩니다.
+> 로그인은 **JWT를 브라우저 localStorage 에 보관·복원**해 강력 새로고침(F5/Ctrl+Shift+R)에도 유지됩니다(어떤 화면에서 새로고침해도 세션 복원). 모든 화면(랜딩·에이전트 소개·운영 콘솔·분석 단계) 우측 상단에 **공통 프로필 메뉴**(내 계정·로그아웃)가 떠 있고, 로그아웃은 어디서든 시작화면(로그인 전)으로 전환합니다. 프론트는 라이브 마운트라 `frontend/app.py`·HTML 수정은 새로고침으로 반영되고, 백엔드(`agents`·`orchestrator`·`api`) 변경은 워커/컨테이너 재기동이 필요합니다.
 
 ---
 
@@ -66,8 +66,9 @@ Google OAuth 로그인 / 회원가입  (처음이면 자동 가입, 비밀번호
 | **데이터 카테고리 분류** | 30개 DB 테이블을 **8개 카테고리**로 자동 분류 — 📥원본·업로드 / ⚙️분석작업 / 📦산출물·모델 / 🛠️오류 자동수정 / 🧠자기학습 KB / 💬Q&A 수집 / 🔐보안·감사 / 💾백업. 카테고리별 레코드수·용량·24h 신규·저장 위치 |
 | **저장 토폴로지** | VPS 원본(`/opt/ada` · `autoai-artifacts`) ⇒ 로컬 백업 서버(`/srv/backup/ada`, 1일 3회) 흐름 |
 | **DB 전수 인벤토리** | 30개 테이블을 용량순으로 — 카테고리 배지 · 레코드수 · 용량 · 용량비중 막대 · 24h 신규 |
-| **7일 적재 트렌드** | 분석작업 / 오류 / Q&A / 산출물 일별 적재량 막대 차트 |
-| **백업 운영 현황** | 스케줄(03·12·18시) · Pull 방식 · 보존 14일 · 최근 백업 신선도(≤20h🟢 / ≤30h🟡 / 초과🔴) |
+| **적재 트렌드 (7일 + 24h)** | 분석작업 / 오류 / Q&A / 산출물의 **7일 일별** + **최근 24시간 시간별** 적재량 막대 차트 |
+| **자가치유·자기학습 활용 현황** | 저장·학습이 *실제로* 활용·자동수정에 쓰인 수치 — 오류 자동수정(누적·24h) · 자기학습 재사용(누적·24h) + **최근 자동수정 이벤트**(언제·어떤 단계/오류·누가·commit·결과) |
+| **백업 운영 현황** | 스케줄(03·12·18시) · Pull 방식 · **영구 저장(로컬 · 자동 삭제 없음)** · 최근 백업 신선도(≤20h🟢 / ≤30h🟡 / 초과🔴) |
 
 > 각 스토리지 점검은 `try/except` + 타임아웃으로 격리돼, 하나가 죽어도 나머지는 정상 표시됩니다.
 > 구현: [api/routes/admin.py](api/routes/admin.py) (`/admin/storage/overview`) · [frontend/admin_dashboard.html](frontend/admin_dashboard.html) · 진입 [frontend/app.py](frontend/app.py) `_admin_screen()`.
@@ -297,7 +298,7 @@ sec 프로파일 추가:
 [학원 Linux 서버] --SSH--> [VPS ada-postgres] --pg_dump|gzip--> [로컬 /srv/backup/ada/postgres]
 ```
 
-- **스케줄**: `cron 0 3,12,18` (03·12·18시, 1일 3회) · **보존**: 14일
+- **스케줄**: `cron 0 3,12,18` (03·12·18시, 1일 3회) · **보존**: 영구 저장(로컬 백업 · 자동 삭제 없음, 필요시 수동 삭제)
 - **방식**: 로컬 백업 서버가 VPS에서 끌어오는 Pull (VPS엔 push 백업 없음)
 - **경로**: `/srv/backup/ada/{postgres,datasets}` ← VPS `/opt/ada/data`
 - 백업 성공 시 `backup_postgres.sh`가 VPS DB의 `backup_catalog` 에 기록 → **운영 콘솔 백업 카드가 🟢 정상**으로 표시
@@ -512,3 +513,4 @@ bash scripts/dev/end_of_day.sh   # 영역검증 → pytest → rebase → push �
 > - v2.3 (2026-06-01) — KPI 자동 측정 · Streamlit 대시보드 · hook 3-tier 배지 · E2E 데모 3종
 > - v2.4 (2026-06) — ReportArchitectAgent 추가(28 에이전트) · OAuth 로그인(migration 005) · 시계열 모델 확장(통계+신경망+TFT) · 이상탐지 COPOD/ECOD/HBOS · 다국어 임베딩 · Celery Beat 주기작업 · Cowork 폴링 30분 전환
 > - **v2.5 (2026-06-17)** — **운영 콘솔(관리자 실시간 데이터 저장 감시) 신규**: 스토리지 신호등(PostgreSQL/MinIO/Redis/MLflow/백업) · 30테이블 8카테고리 분류 · DB 전수 인벤토리 · 7일 트렌드 · `/admin/storage/overview` · **백업 카탈로그 기록**(Pull 1일 3회 → 콘솔 🟢) · **serving 부활**(모델 추론+자동 오류) · **DB 감사기록 활성화**(agent_runs/models/outputs) · 자가학습 레이어 활성화 · 산출물 재진행 교체 보장 · 진행바 UI·타이핑 속도 개선 · 전 카테고리 분석 깊이 보완(입력 견고화·튜닝·자동 피처선택·EDA) · 로그인 유지(토큰 재주입·replaceState) 다수 수정
+> - **v2.6 (2026-06-19)** — **자가치유 가시화 · 신뢰성 · 무중단 운영**: 운영 콘솔에 **자가치유·자기학습 활용 현황 신설**(저장→학습→자동수정이 실제로 활용·자동수정에 쓰인 누적·24h 수치 + 최근 자동수정 이벤트: 언제·어떤 단계/오류·누가·commit·결과) · **24시간 적재 트렌드** 신설(`trends_24h`) · 헤더(탭 총제목) 분리·강조 · 섹션 설명·항목별 저장경로 · 30테이블 "어떤 데이터" 설명 · **멈춤(hang)·미완료 작업 watchdog + soft-timeout 캐치**(멈춤도 `failure_logs` 자동 기록 → 자가치유 루프 입력 복구) · **로그인 유지(JWT localStorage 보관·복원)** — 강력 새로고침에도 세션 유지 + 우측 상단 **공통 프로필 메뉴·로그아웃** · **무중단 배포**(deploy.yml: nginx 강제재시작 제거→graceful `-s reload` · frontend 무재생성(라이브 마운트 핫리로드) · `--wait` 헬스 게이팅 · beat 재기동) · **로컬 백업 영구 저장**(자동 삭제 제거, 필요시 수동) · **워커 Ollama 접근**(`extra_hosts`/`OLLAMA_BASE_URL`) — 도메인 G1 멈춤 수정 · serving 빌드 내성(`--timeout`/`--retries`) · 분석 3단계(G3) 진행 버튼 수정

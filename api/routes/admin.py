@@ -673,7 +673,7 @@ async def storage_overview(
             age = (now - _p).total_seconds() / 3600.0
             backup_age_h = round(age, 1)
             backup_status = "ok" if age <= 20 else ("warn" if age <= 30 else "down")
-            backup_note = f"최근 백업 {backup_age_h}시간 전 · 보존 14일"
+            backup_note = f"최근 백업 {backup_age_h}시간 전 · 영구 저장"
         except Exception:  # noqa: BLE001
             pass
 
@@ -924,7 +924,7 @@ async def storage_overview(
             "backup": {
                 "schedule": "매일 03 · 12 · 18시 (1일 3회)",
                 "method": "Pull (로컬 서버 → VPS pg_dump)",
-                "retention_days": 14,
+                "retention": "영구 저장",
                 "paths": ["/srv/backup/ada/postgres", "/srv/backup/ada/datasets"],
                 "status": backup_status,
                 "note": backup_note,
