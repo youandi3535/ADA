@@ -2937,7 +2937,17 @@ function render(){
   const atPastGate=(cur<frontier)&&cur>=1&&cur<=5&&_llmCount(_cd)>0;
   // 실패 후 이전 단계로 돌아온 경우: curGate()=null 이어도 캐시 proposals 있으면 진행 허용
   const atFailedRetry=isFailed()&&cur>=1&&cur<=5&&(_llmCount(_cd)>0||_llmCount(gateData)>0);
-  const atGate=atCurrentGate||atPastGate||atFailedRetry;
+  // HJ 2026-06-19 — '카드는 보이는데 진행 버튼이 안 켜짐' fix (도메인 느린 LLM 구간).
+  //   느린 Ollama 로 백엔드가 잠깐 stale·낮은 게이트(또는 null)를 publish 하면 frontier 가 cur 과
+  //   어긋나, contentGate 는 캐시 proposals 로 G3 카드를 그리는데 atCurrentGate(cur===frontier)·
+  //   atPastGate(cur<frontier)는 둘 다 false 가 되어 버튼만 죽었다. → contentGate 와 '동일한
+  //   데이터 선택(_dispD)' 으로 화면에 실제 선택 카드가 떠 있으면(모달 비활성 + 비-custom proposals)
+  //   진행 버튼도 활성화한다. busy·paused·cur=0/LAST·_submitAnalyzing 는 아래에서 먼저 잡으므로
+  //   로딩·제출 중 오활성 위험은 없다(=카드 보임 ⟺ 버튼 활성 불변식).
+  const _staleRunBtn=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+  const _dispD=_staleRunBtn?{}:((curGate()===_tg)?gateData:_gateBack(_tg));
+  const atDisplayedGate=cur>=1&&cur<=5&&!inModalLoading()&&_llmCount(_dispD)>0;
+  const atGate=atCurrentGate||atPastGate||atFailedRetry||atDisplayedGate;
   const g5ok=curGate()!=='G6'||Object.keys(g5Checked).some(function(k){return g5Checked[k];});
   // HJ 2026-06-15 — 진행(resume) 직후 분석이 도는 동안 진행 버튼 잠금.
   //   doResume() 가 resume 성공 후 busy=false 로 풀기 때문에, 분석 중(제출 후~다음 게이트 도착 전)

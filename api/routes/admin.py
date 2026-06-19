@@ -776,6 +776,29 @@ async def storage_overview(
         "outputs": await _daily("outputs"),
     }
 
+    # ── 6-b) 24시간 적재 트렌드 (시간 단위 · 1일 추이) ─────────────────────
+    async def _hourly(table: str) -> list[dict[str, Any]]:
+        try:
+            col = _ts_col(table)
+            rows = (
+                await db.execute(
+                    text(
+                        f"SELECT to_char(date_trunc('hour', {col}),'HH24:00') AS d, count(*)::bigint AS n "
+                        f"FROM {table} WHERE {col} > now() - interval '24 hours' GROUP BY 1 ORDER BY 1"
+                    )
+                )
+            ).all()
+            return [{"d": r.d, "n": int(r.n)} for r in rows]
+        except Exception:  # noqa: BLE001
+            return []
+
+    trends_24h = {
+        "jobs": await _hourly("jobs"),
+        "failures": await _hourly("failure_logs"),
+        "qa": await _hourly("conversation_logs"),
+        "outputs": await _hourly("outputs"),
+    }
+
     # ── 7) 오류 자동수정 · 학습 하이라이트 (요약 카드) ─────────────────────
     highlight: dict[str, Any] = {}
     try:
@@ -836,6 +859,7 @@ async def storage_overview(
             "minio": (minio_res if minio_ok else {"error": minio_res}),
             "redis": (redis_res if redis_ok else {"error": redis_res}),
             "trends": trends,
+            "trends_24h": trends_24h,
             "highlight": highlight,
             "backup": {
                 "schedule": "매일 03 · 12 · 18시 (1일 3회)",
