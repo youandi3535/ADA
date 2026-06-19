@@ -139,7 +139,23 @@ a{color:inherit;}
 .src{font-size:.68rem;color:var(--mut2);margin-top:7px;}
 .err{color:#ffb4b4;background:var(--downbg);border:1px solid rgba(255,107,107,.3);border-radius:11px;padding:16px 18px;font-size:.86rem;}
 .muted{color:var(--mut2);}
-@media(max-width:1100px){.svc-row{grid-template-columns:repeat(2,1fr);}.cat-grid,.tr-grid{grid-template-columns:1fr;}.grandtotal{flex-direction:column;align-items:flex-start;}}
+/* ── 실시간 활동 로그 — 최신 10줄 표시 + 이 파트만 자체 세로 스크롤 ── */
+.livelog{margin-top:10px;border:1px solid var(--line2);border-radius:11px;background:#0a1020;overflow:hidden;}
+.livelog .ll-scroll{max-height:340px;overflow-y:auto;overflow-x:hidden;}
+.livelog .ll-scroll::-webkit-scrollbar{width:9px;}
+.livelog .ll-scroll::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px;}
+.livelog .ll-scroll::-webkit-scrollbar-track{background:transparent;}
+.ll-row{display:flex;align-items:center;gap:9px;padding:7px 13px;border-bottom:1px solid rgba(255,255,255,.045);font-size:.79rem;white-space:nowrap;line-height:1.3;}
+.ll-row:first-child{background:rgba(79,138,236,.07);}
+.ll-row:last-child{border-bottom:none;}
+.ll-ic{flex:0 0 18px;text-align:center;}
+.ll-t{flex:0 0 62px;color:var(--mut2);font-size:.7rem;font-variant-numeric:tabular-nums;}
+.ll-k{flex:0 0 auto;font-size:.66rem;font-weight:700;color:var(--blue);background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:1px 7px;}
+.ll-ti{flex:0 0 auto;max-width:230px;overflow:hidden;text-overflow:ellipsis;font-weight:700;color:var(--txt);}
+.ll-de{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--mut);}
+.ll-w{flex:0 0 auto;color:var(--mut2);font-size:.66rem;opacity:.72;font-family:'JetBrains Mono',monospace;}
+.ll-empty{padding:22px 14px;text-align:center;color:var(--mut2);font-size:.82rem;}
+@media(max-width:1100px){.svc-row{grid-template-columns:repeat(2,1fr);}.cat-grid,.tr-grid{grid-template-columns:1fr;}.grandtotal{flex-direction:column;align-items:flex-start;}.ll-ti{max-width:130px;}.ll-w{display:none;}}
 </style></head><body>
 
 <div class="head">
@@ -202,7 +218,7 @@ var TBL_DESC={
   users:'사용자 계정(이메일·역할·활성 여부)',
   oauth_accounts:'구글 OAuth 연동 계정 매핑',
   agent_registry:'에이전트 28종 등록·페르소나 버전',
-  backup_catalog:'DB 덤프 백업 인벤토리(시각·크기·SHA256)'
+  backup_catalog:'백업 인벤토리 — DB 덤프 + MinIO 미러(시각·크기·SHA256·type)'
 };
 function tdesc(n){return TBL_DESC[n]||'';}
 
@@ -276,7 +292,7 @@ function render(d){
     +igRow('📦 MinIO','업로드 원본 파일 · 산출물(PPT/PDF/HTML 등) · 모델 아티팩트(영구).','파일 업로드 → <b>FastAPI(/upload)</b> → <b>MinIO</b>(autoai-artifacts 버킷, VPS) 객체 저장 · 산출물은 워커가 적재')
     +igRow('⚡ Redis','Celery 작업 큐 · 진행상태 pub/sub · 임시 캐시(휘발성).','API 가 작업 enqueue → <b>Redis</b>(ada-redis) → 워커가 소비 · 진행률 publish (영구 저장 아님)')
     +igRow('📊 MLflow','모델 학습 run · 메트릭 · 파라미터 추적.','워커 학습 → <b>MLflow</b>(mlflow:5000) 기록 · 모델 아티팩트는 MinIO 에 저장')
-    +igRow('💽 로컬 백업 서버','PostgreSQL 덤프의 원격 Pull 백업(영구 저장).','학원 Linux cron(03·12·18시) → SSH <b>pg_dump</b> → <b>/srv/backup/ada</b> 저장 · backup_catalog 기록')
+    +igRow('💽 로컬 백업 서버','PostgreSQL 덤프 + MinIO 오브젝트(데이터셋·산출물·모델)의 원격 Pull 백업(영구 저장).','학원 Linux cron(03·12·18시) → SSH <b>pg_dump</b> + <b>mc mirror</b>(증분) → <b>/srv/backup/ada</b> 저장 · backup_catalog 기록')
     +'</div>';
 
   /* ── 2. (구 '핵심 지표' 섹션은 스토리지 연결 상태 헤드라인으로 통합 — 중복 제거) ── */
@@ -409,7 +425,28 @@ function render(d){
   }
   h+='<div class="note" style="margin-top:10px;">ℹ️ '+esc(bk.note||'')+'</div></div>';
 
-  h+='<div class="src">출처: PostgreSQL pg_stat · MinIO list_objects · Redis INFO · MLflow /health · backup_catalog · 생성 '+esc(d.generated_at||'')+'</div>';
+  // ── 실시간 활동 로그 (맨 마지막 끝자락 · 최신순 · 이 파트만 자체 스크롤) ──
+  var acts=d.recent_activity||[];
+  h+='<div class="sect-t">🟢 실시간 활동 로그</div>';
+  h+='<div class="sect-d">ADA 가 지금 무엇을 어디에 어떤 내용으로 저장·학습·해결하고 있는지 실제 기록입니다. 최신순 · 약 15초마다 갱신 · 아래 칸에서 스크롤하면 이전 기록도 볼 수 있습니다(최신 40건 보관).</div>';
+  h+='<div class="livelog"><div class="ll-scroll">';
+  if(!acts.length){
+    h+='<div class="ll-empty">아직 표시할 기록이 없습니다. 분석·Q&amp;A 저장·자동수정·백업 등이 발생하면 여기에 실시간으로 쌓입니다.</div>';
+  }else{
+    acts.forEach(function(a){
+      h+='<div class="ll-row" title="'+esc((a.kind||'')+' · '+(a.title||'')+' — '+(a.detail||'')+'  ['+(a.where||'')+']')+'">'
+        +'<span class="ll-ic">'+esc(a.icon||'•')+'</span>'
+        +'<span class="ll-t">'+esc(ago(a.ts))+'</span>'
+        +'<span class="ll-k">'+esc(a.kind||'')+'</span>'
+        +'<span class="ll-ti">'+esc(a.title||'')+'</span>'
+        +'<span class="ll-de">'+esc(a.detail||'')+'</span>'
+        +'<span class="ll-w">'+esc(a.where||'')+'</span>'
+        +'</div>';
+    });
+  }
+  h+='</div></div>';
+
+  h+='<div class="src">출처: PostgreSQL pg_stat · MinIO list_objects · Redis INFO · MLflow /health · backup_catalog · conversation_logs · 생성 '+esc(d.generated_at||'')+'</div>';
 
   document.getElementById('root').innerHTML=h;
   fitHeight(); setTimeout(fitHeight,80);

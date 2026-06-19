@@ -632,7 +632,7 @@ async def storage_overview(
     try:
         from ada.db.models import BackupCatalog
 
-        for bt in ("db", "data", "vault"):
+        for bt in ("db", "minio", "data", "vault"):
             row = (
                 await db.scalars(
                     select(BackupCatalog)
@@ -898,9 +898,147 @@ async def storage_overview(
         },
     ]
 
+    # ── 6) 실시간 활동 로그 ────────────────────────────────────────────────
+    # 여러 테이블의 최신 기록을 '실제 내용'으로 통합 — 무엇이 어디에 어떤 내용으로
+    # 저장·학습·해결되는지 운영 콘솔 맨 아래 실시간 로그에 표시한다. 테이블별 try 격리.
+    recent_activity: list[dict[str, Any]] = []
+
+    def _clip(s: Any, n: int) -> str:
+        t = "" if s is None else " ".join(str(s).split())  # 개행·연속공백 정리
+        return (t[: n - 1] + "…") if len(t) > n else t
+
+    def _push(ts: Any, icon: str, kind: str, where: str, title: str, detail: str) -> None:
+        if ts is None:
+            return
+        recent_activity.append(
+            {
+                "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                "icon": icon,
+                "kind": kind,
+                "where": where,
+                "title": _clip(title, 80),
+                "detail": _clip(detail, 160),
+            }
+        )
+
+    _PER = 8  # 테이블당 최신 N
+    _OL = {
+        "OUT-01": "PPT",
+        "OUT-02": "PDF 보고서",
+        "OUT-03": "발표 대본",
+        "OUT-04": "HTML 대시보드",
+        "OUT-07": "인사이트 요약",
+    }
+    try:
+        from ada.db.models import (
+            BackupCatalog as _BC,
+            ConversationLog as _CL,
+            ErrorKB as _EK,
+            FailureLog as _FL,
+            Output as _OUT,
+            PatchApplication as _PA,
+            SecurityAuditLog as _SA,
+            SelfLearningKB as _KB,
+        )
+
+        async def _q(model: Any, order_col: Any) -> list[Any]:
+            try:
+                return list((await db.scalars(select(model).order_by(desc(order_col)).limit(_PER))).all())
+            except Exception:  # noqa: BLE001
+                return []
+
+        # 1) Claude/Ollama Q&A 저장
+        for r in await _q(_CL, _CL.created_at):
+            _push(
+                r.created_at,
+                "💬",
+                "Q&A 저장",
+                "conversation_logs",
+                f"{r.team_member or '?'} · {r.source or 'claude_code'}",
+                f"Q: {_clip(r.question, 70)}  →  A: {_clip(r.answer, 90)}",
+            )
+        # 2) 자동수정 적용
+        for r in await _q(_PA, _PA.applied_at):
+            _push(
+                r.applied_at,
+                "🔧",
+                "자동수정",
+                "patch_applications",
+                f"{r.applied_by or 'auto-fix-bot'} · {r.status or '?'}",
+                f"commit {(r.git_commit_sha or '-')[:8]} · {r.duration_ms or 0}ms",
+            )
+        # 3) 오류 캐치
+        for r in await _q(_FL, _FL.created_at):
+            _push(
+                r.created_at,
+                "⚠️",
+                "오류 캐치",
+                "failure_logs",
+                f"{r.error_category or '미분류'} · {r.classified_as or '대기'}",
+                r.error_message or "",
+            )
+        # 4) KB 학습
+        for r in await _q(_KB, _KB.created_at):
+            _conf = f" · 신뢰도 {r.confidence:.2f}" if r.confidence is not None else ""
+            _push(
+                r.created_at,
+                "🧠",
+                "KB 학습",
+                "self_learning_kb",
+                f"{r.kb_type or '?'} · {r.category or '-'}",
+                f"성공 {r.success_count or 0}회{_conf}",
+            )
+        # 5) 오류 KB 등록
+        for r in await _q(_EK, _EK.created_at):
+            _push(
+                r.created_at,
+                "📚",
+                "오류 KB",
+                "error_kb",
+                r.error_signature or "(서명 없음)",
+                f"해결: {_clip(r.resolution, 110)}",
+            )
+        # 6) 산출물 생성
+        for r in await _q(_OUT, _OUT.created_at):
+            _push(
+                r.created_at,
+                "📦",
+                "산출물 생성",
+                "outputs",
+                f"{_OL.get(r.output_code, r.output_code)} · {r.status or 'completed'}",
+                f"{_fmt_bytes(r.file_size_bytes)} · {r.generation_ms or 0}ms",
+            )
+        # 7) 백업
+        for r in await _q(_BC, _BC.created_at):
+            _push(
+                r.created_at,
+                "💾",
+                "백업",
+                "backup_catalog",
+                f"{r.backup_type or '?'} · {r.status or 'ok'}",
+                f"{_fmt_bytes(r.size_bytes)} · {r.note or ''}",
+            )
+        # 8) 보안 감사
+        for r in await _q(_SA, _SA.created_at):
+            _push(
+                r.created_at,
+                "🔐",
+                "보안 감사",
+                "security_audit_log",
+                f"{r.event_type or '?'} · {r.action or '-'}",
+                f"{r.actor_role or '-'} · {r.result or '-'}",
+            )
+    except Exception:  # noqa: BLE001
+        recent_activity = []
+
+    # 최신순 정렬 후 상위 40개 (프론트는 10줄 표시 + 자체 스크롤로 나머지 열람)
+    recent_activity.sort(key=lambda x: x["ts"], reverse=True)
+    recent_activity = recent_activity[:40]
+
     out.update(
         {
             "services": services,
+            "recent_activity": recent_activity,
             "kpis": {
                 "db_total_bytes": db_total,
                 "minio_bytes": (minio_res["bytes"] if minio_ok else None),
@@ -923,9 +1061,13 @@ async def storage_overview(
             "self_healing": self_healing,
             "backup": {
                 "schedule": "매일 03 · 12 · 18시 (1일 3회)",
-                "method": "Pull (로컬 서버 → VPS pg_dump)",
+                "method": "Pull (로컬 서버 → VPS) · DB pg_dump + MinIO mc mirror(증분)",
                 "retention": "영구 저장",
-                "paths": ["/srv/backup/ada/postgres", "/srv/backup/ada/datasets"],
+                "paths": [
+                    "/srv/backup/ada/postgres",
+                    "/srv/backup/ada/minio",
+                    "/srv/backup/ada/datasets",
+                ],
                 "status": backup_status,
                 "note": backup_note,
                 "last": backup_last,
