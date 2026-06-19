@@ -26,8 +26,17 @@ a{color:inherit;}
 .dot.ok{background:var(--ok);box-shadow:0 0 7px rgba(47,207,143,.7);}
 .dot.warn{background:var(--warn);box-shadow:0 0 7px rgba(244,183,64,.7);}
 .dot.down{background:var(--down);box-shadow:0 0 7px rgba(255,107,107,.75);}
-.sect-t{font-size:.82rem;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin:22px 2px 11px;display:flex;align-items:center;gap:8px;}
-.sect-t::before{content:"";width:3px;height:13px;background:var(--blue);border-radius:2px;}
+.sect-t{font-size:1.22rem;font-weight:800;color:var(--txt);letter-spacing:-.01em;margin:46px 2px 5px;display:flex;align-items:center;gap:11px;}
+.sect-t:first-of-type{margin-top:8px;}
+.sect-t::before{content:"";width:5px;height:24px;background:linear-gradient(180deg,var(--blue),var(--vio));border-radius:3px;flex:0 0 auto;}
+.sect-d{font-size:.84rem;color:var(--mut);line-height:1.5;margin:0 2px 16px 18px;max-width:900px;}
+.item-guide{margin-top:13px;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:2px 18px 6px;}
+.item-guide .ig-hd{font-size:.8rem;font-weight:800;color:var(--mut);padding:14px 0 4px;letter-spacing:.02em;}
+.ig-row{display:grid;grid-template-columns:170px 1fr;gap:5px 16px;padding:12px 0;border-top:1px solid var(--line);}
+.ig-nm{font-weight:800;font-size:.82rem;color:var(--txt);display:flex;align-items:center;gap:7px;line-height:1.3;}
+.ig-de{font-size:.79rem;color:var(--mut);line-height:1.45;}
+.ig-pa{grid-column:2;font-size:.715rem;color:#7fb0ff;font-family:'JetBrains Mono',monospace;line-height:1.55;word-break:break-word;}
+.ig-pa b{color:var(--mut2);font-weight:700;}
 
 /* 서비스 신호등 */
 .svc-row{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;}
@@ -206,7 +215,8 @@ function render(d){
   var k0=d.kpis||{};
   // 누적 총 데이터 = 영구 저장소(PostgreSQL + MinIO) 합계. 7일/1달 시간창이 아닌 '지금까지 전부'.
   var ptot=(k0.persistent_total_bytes!=null)?k0.persistent_total_bytes:((k0.db_total_bytes||0)+(k0.minio_bytes||0));
-  h+='<div class="sect-t">스토리지 연결 상태</div>';
+  h+='<div class="sect-t">💾 총 누적 데이터 · 스토리지 연결 상태</div>';
+  h+='<div class="sect-d">ADA 가 지금까지 저장한 전체 데이터의 누적 총량과, 5개 저장소(원본 DB · 오브젝트 · 캐시 · 학습추적 · 백업)의 실시간 연결 상태입니다.</div>';
   h+='<div class="grandtotal"><div class="gt-l">'
     +'<div class="gt-cap">📊 지금까지 저장된 모든 데이터 · 누적 총량</div>'
     +'<div class="gt-n">'+fb(ptot)+'</div>'
@@ -225,19 +235,31 @@ function render(d){
       +'<div class="dt">'+esc(s.detail||'')+'</div></div>';
   });
   h+='</div>';
+  // 항목별 역할 + 저장 경로 (정적 설명 — 어디에 어떤 방식으로 저장되는지 한눈에)
+  h+='<div class="item-guide"><div class="ig-hd">📂 항목별 역할 · 저장 경로</div>'
+    +igRow('🗄️ PostgreSQL','분석 작업기록 · KB · 카탈로그 · 사용자 등 구조화 데이터(영구).','사용자 요청 → <b>FastAPI(api)</b> → SQLAlchemy → <b>PostgreSQL</b>(VPS ada-postgres) 테이블에 영구 저장')
+    +igRow('📦 MinIO','업로드 원본 파일 · 산출물(PPT/PDF/HTML 등) · 모델 아티팩트(영구).','파일 업로드 → <b>FastAPI(/upload)</b> → <b>MinIO</b>(autoai-artifacts 버킷, VPS) 객체 저장 · 산출물은 워커가 적재')
+    +igRow('⚡ Redis','Celery 작업 큐 · 진행상태 pub/sub · 임시 캐시(휘발성).','API 가 작업 enqueue → <b>Redis</b>(ada-redis) → 워커가 소비 · 진행률 publish (영구 저장 아님)')
+    +igRow('📊 MLflow','모델 학습 run · 메트릭 · 파라미터 추적.','워커 학습 → <b>MLflow</b>(mlflow:5000) 기록 · 모델 아티팩트는 MinIO 에 저장')
+    +igRow('💽 로컬 백업 서버','PostgreSQL 덤프의 원격 Pull 백업(보존 14일).','학원 Linux cron(03·12·18시) → SSH <b>pg_dump</b> → <b>/srv/backup/ada</b> 저장 · backup_catalog 기록')
+    +'</div>';
 
   /* ── 2. (구 '핵심 지표' 섹션은 스토리지 연결 상태 헤드라인으로 통합 — 중복 제거) ── */
 
   /* ── 3. 토폴로지 ── */
   var nodes=d.storage_nodes||[];
-  h+='<div class="sect-t">저장 토폴로지 (원본 → 백업)</div><div class="topo">';
+  h+='<div class="sect-t">🗺️ 저장 토폴로지 (원본 → 백업)</div>'
+    +'<div class="sect-d">원본 데이터(VPS)가 학원 백업 서버로 흘러가는 경로와, 1일 3회 Pull 백업 흐름을 보여줍니다.</div>'
+    +'<div class="topo">';
   if(nodes[0]){h+=topoNode(nodes[0]);}
   h+='<div class="arrow"><div class="x">⇒</div><div class="y">1일 3회 Pull<br>03·12·18시</div></div>';
   if(nodes[1]){h+=topoNode(nodes[1]);}
   h+='</div>';
 
   /* ── 4. 카테고리별 분류 ── */
-  h+='<div class="sect-t">데이터 카테고리별 저장 현황</div><div class="cat-grid">';
+  h+='<div class="sect-t">🗂️ 데이터 카테고리별 저장 현황</div>'
+    +'<div class="sect-d">수집·생성되는 데이터를 카테고리(분석작업 · KB · 모델 · 보안 등)로 묶어, 레코드 수 · 용량 · 최근 24시간 신규를 보여줍니다.</div>'
+    +'<div class="cat-grid">';
   (d.categories||[]).forEach(function(c){
     var mx=1;(c.tables||[]).forEach(function(t){if(t.rows>mx)mx=t.rows;});
     var rows='';
@@ -267,7 +289,9 @@ function render(d){
   (d.categories||[]).forEach(function(c){(c.tables||[]).forEach(function(t){allt.push({n:t.name,r:t.rows,b:t.bytes,w:t.recent_24h,cat:c.title,ic:c.icon});});});
   var bmx=1;allt.forEach(function(t){if(t.b>bmx)bmx=t.b;});
   allt.sort(function(a,b){return b.b-a.b;});
-  h+='<div class="sect-t">DB 테이블 전수 인벤토리 ('+allt.length+'개 · 용량순)</div><div class="panel" style="overflow-x:auto;">'
+  h+='<div class="sect-t">🧾 DB 테이블 전수 인벤토리 ('+allt.length+'개 · 용량순)</div>'
+    +'<div class="sect-d">PostgreSQL 의 모든 테이블을 용량순으로 나열해, 어떤 데이터가 얼마나 쌓였는지 한눈에 봅니다.</div>'
+    +'<div class="panel" style="overflow-x:auto;">'
     +'<table class="inv"><thead><tr><th>테이블</th><th>카테고리</th><th class="num">레코드</th><th class="num">용량</th><th>용량비중</th><th class="num">24h</th></tr></thead><tbody>';
   allt.forEach(function(t){
     h+='<tr><td class="tn">'+esc(t.n)+'</td><td><span class="pill">'+t.ic+' '+esc(t.cat)+'</span></td>'
@@ -279,7 +303,9 @@ function render(d){
 
   /* ── 6. 7일 적재 트렌드 ── */
   var tr=d.trends||{};
-  h+='<div class="sect-t">최근 7일 적재 트렌드</div><div class="tr-grid">'
+  h+='<div class="sect-t">📈 최근 7일 적재 트렌드</div>'
+    +'<div class="sect-d">최근 7일간 분석 작업 · 오류 로그 · Q&amp;A 수집 · 산출물이 얼마나 생성됐는지 일자별 추이입니다.</div>'
+    +'<div class="tr-grid">'
     +trend('🧪 분석 작업','jobs',tr.jobs)
     +trend('🛠️ 오류 로그','failures',tr.failures)
     +trend('💬 Q&A 수집','qa',tr.qa)
@@ -288,7 +314,9 @@ function render(d){
 
   /* ── 7. 백업 패널 ── */
   var bk=d.backup||{};
-  h+='<div class="sect-t">백업 운영 현황</div><div class="panel">'
+  h+='<div class="sect-t">🛟 백업 운영 현황</div>'
+    +'<div class="sect-d">PostgreSQL 덤프 백업의 스케줄 · 방식 · 보존기간과 최근 백업 이력을 보여줍니다.</div>'
+    +'<div class="panel">'
     +'<div class="bk-grid">'
     +'<div class="it"><div class="l">스케줄</div><div class="v">'+esc(bk.schedule||'—')+'</div></div>'
     +'<div class="it"><div class="l">방식</div><div class="v">'+esc(bk.method||'—')+'</div></div>'
@@ -309,6 +337,10 @@ function render(d){
   fitHeight(); setTimeout(fitHeight,80);
 }
 
+function igRow(nm,de,pa){
+  return '<div class="ig-row"><div class="ig-nm">'+nm+'</div><div class="ig-de">'+de+'</div>'
+    +'<div class="ig-pa"><b>↳ 저장경로 &nbsp;</b>'+pa+'</div></div>';
+}
 function topoNode(n){
   return '<div class="node"><div class="role">'+(n.role==='primary'?'원본 · 실시간':'백업')+'</div>'
     +'<div class="nm">'+dot(n.status)+esc(n.name)+'</div>'
