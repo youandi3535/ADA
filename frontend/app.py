@@ -222,7 +222,7 @@ _FLOW_HTML = """
   /* HJ 2026-06-12 — 옆의 status(대기) 배지와 글자 크기(21px)·박스 높이(padding 9px) 통일. */
   .btn-home{font-family:inherit;font-size:21px;font-weight:600;border-radius:999px;cursor:pointer;
     background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#dce7f5;
-    padding:9px 20px;margin-left:14px;white-space:nowrap;}
+    padding:9px 20px;margin-left:14px;margin-right:100px;white-space:nowrap;}
   .btn-home:hover{background:rgba(255,255,255,.20);}
   /* HJ 2026-06-12 — '처음(시작화면)으로' 버튼: 기본 비활성(흐림), 정지(navUnlocked) 누르면 활성+흰색 채움. */
   .btn-home:disabled{opacity:.4;cursor:default;}
@@ -3181,7 +3181,7 @@ def _render_agent_board() -> None:
         [data-testid="stAppViewContainer"]{background:#070a1f;}
         [data-testid="stHeader"]{display:none;}
         [data-testid="stMain"] .block-container{max-width:100% !important;padding:1.1rem 1rem 0 !important;}
-        .ada-board-close{position:fixed;top:16px;right:22px;z-index:99999;display:inline-flex;align-items:center;gap:6px;
+        .ada-board-close{position:fixed;top:18px;right:74px;z-index:99999;display:inline-flex;align-items:center;gap:6px;
           background:rgba(150,170,235,.14);color:#dbe3ff;border:1px solid rgba(150,170,235,.32);
           padding:8px 15px;border-radius:999px;font:700 .82rem 'Pretendard','Inter',sans-serif;text-decoration:none;}
         .ada-board-close:hover{background:rgba(150,170,235,.24);}
@@ -3219,6 +3219,60 @@ def _admin_screen() -> None:
     except Exception:  # noqa: BLE001
         _h = "<p style='color:#fff'>admin_dashboard.html 누락</p>"
     components.html(_h.replace("__TOKEN__", _token), height=950, scrolling=True)
+
+
+def _profile_widget() -> str:
+    """우측 상단 공통 프로필 메뉴 HTML (HJ 2026-06-19).
+
+    부모(Streamlit) 문서 레벨 position:fixed → 랜딩·에이전트 소개·운영 콘솔·분석 단계(전부 풀스크린
+    iframe) 위에 공통 오버레이된다(보드 닫기 버튼이 동일 방식으로 iframe 위에 뜨는 것으로 검증됨).
+    드롭다운은 :focus-within/:hover 순수 CSS — 네비게이션이 없어 열고 닫아도 진행상태가 유지된다.
+    로그아웃만 ?logout=1 로 부모를 이동시켜 어디서든 시작화면(로그인 전)으로 전환한다.
+    """
+    import html as _htmlmod
+
+    email = st.session_state.get("auth_email") or ""
+    role = st.session_state.get("auth_role", "analyst")
+    role_label = {"admin": "관리자", "analyst": "분석가"}.get(role, role)
+    initial = (email[:1] or "👤").upper()
+    em = _htmlmod.escape(email or "로그인됨")
+    ini = _htmlmod.escape(initial)
+    rl = _htmlmod.escape(role_label)
+    return (
+        "<style>"
+        ".ada-prof{position:fixed;top:13px;right:20px;z-index:2147483646;"
+        "font-family:'Pretendard','Inter',-apple-system,sans-serif;}"
+        ".ada-prof-av{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#2f6fed,#1f3e5c);"
+        "color:#fff;font-weight:800;font-size:1.02rem;display:flex;align-items:center;justify-content:center;"
+        "cursor:pointer;box-shadow:0 6px 18px rgba(31,62,92,.34);border:2px solid #fff;outline:none;user-select:none;}"
+        ".ada-prof-av:hover{filter:brightness(1.07);}"
+        ".ada-prof::after{content:'';position:absolute;top:40px;right:0;width:46px;height:14px;}"  # hover 다리(틈 메움)
+        ".ada-prof-menu{display:none;position:absolute;right:0;top:50px;min-width:240px;background:#fff;"
+        "border:1px solid #e3e9f2;border-radius:16px;box-shadow:0 18px 48px rgba(20,35,60,.24);padding:15px;}"
+        ".ada-prof:hover .ada-prof-menu,.ada-prof:focus-within .ada-prof-menu{display:block;}"
+        ".ada-prof-hd{display:flex;align-items:center;gap:11px;padding-bottom:12px;border-bottom:1px solid #eef2f8;}"
+        ".ada-prof-hd .av2{width:40px;height:40px;border-radius:50%;flex:0 0 auto;color:#fff;font-weight:800;"
+        "background:linear-gradient(135deg,#2f6fed,#1f3e5c);display:flex;align-items:center;justify-content:center;}"
+        ".ada-prof-em{font-size:.85rem;font-weight:700;color:#16263c;word-break:break-all;line-height:1.32;}"
+        ".ada-prof-role{display:inline-block;margin-top:4px;font-size:.69rem;font-weight:700;color:#1d5fd6;"
+        "background:#eaf1ff;border-radius:999px;padding:2px 9px;}"
+        ".ada-prof-lo{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:13px;width:100%;"
+        "box-sizing:border-box;background:#fff0f0;color:#d23b3b;border:1px solid #f3c9c9;border-radius:11px;"
+        "padding:10px 0;font-size:.86rem;font-weight:700;text-decoration:none;cursor:pointer;}"
+        ".ada-prof-lo:hover{background:#ffe3e3;}"
+        "</style>"
+        "<div class='ada-prof'>"
+        f"<div class='ada-prof-av' tabindex='0' title='내 계정'>{ini}</div>"
+        "<div class='ada-prof-menu'>"
+        "<div class='ada-prof-hd'>"
+        f"<div class='av2'>{ini}</div>"
+        f"<div><div class='ada-prof-em'>{em}</div>"
+        f"<span class='ada-prof-role'>{rl} 권한</span></div>"
+        "</div>"
+        "<a class='ada-prof-lo' href='?logout=1' target='_self'>⎋ &nbsp;로그아웃</a>"
+        "</div>"
+        "</div>"
+    )
 
 
 # ===========================================================================
@@ -3303,6 +3357,15 @@ if st.query_params.get("token"):
         except Exception:  # noqa: BLE001
             pass
 
+# ── 로그아웃 (프로필 메뉴 → ?logout=1) — 어디서든 시작화면(로그인 전)으로 전환 (HJ 2026-06-19) ──
+#   세션 인증/진행상태를 모두 비우고 _just_logged_out 를 세운다(랜딩에서 localStorage 보관 토큰·
+#   플로우 상태까지 비워 자동 재로그인/복원을 막는다). 쿼리를 비워 깨끗한 랜딩 URL 로 떨어진다.
+if st.query_params.get("logout") == "1":
+    for _k in ("auth_token", "auth_role", "auth_email", "studio_started", "_fresh_start"):
+        st.session_state.pop(_k, None)
+    st.session_state["_just_logged_out"] = True
+    st.query_params.clear()
+
 # 로그인 실패로 돌아온 경우 — 에러 코드만 세션에 보관(랜딩에서 표시)
 if st.query_params.get("auth_error"):
     st.session_state["_auth_error"] = st.query_params.get("auth_error")
@@ -3314,6 +3377,11 @@ if st.query_params.get("auth_error"):
 if st.query_params.get("flow") == "1":
     st.session_state["studio_started"] = True
 
+# ── 우측 상단 공통 프로필 메뉴 — 로그인 상태에서 모든 화면(랜딩/보드/콘솔/플로우)에 오버레이 ──
+#   부모 문서 레벨 render → 아래 분기(랜딩/플로우)보다 먼저 그려져 모든 화면 위에 공통 표시.
+if st.session_state.get("auth_token"):
+    st.markdown(_profile_widget(), unsafe_allow_html=True)
+
 if not st.session_state.get("studio_started"):
     # ── 로그인 유지(localStorage) — bare F5/강력새로고침에도 세션 복원 (HJ 2026-06-17) ──
     #   session_state 는 reload 시 사라진다. 내부 화면(콘솔/플로우)은 URL 에 토큰을 실어 복원하지만
@@ -3324,7 +3392,9 @@ if not st.session_state.get("studio_started"):
 
     if st.session_state.pop("_just_logged_out", False):
         components.html(
-            "<script>try{window.parent.localStorage.removeItem('ada_auth_v1');}catch(e){}</script>",
+            "<script>try{var ls=window.parent.localStorage;"
+            "ls.removeItem('ada_auth_v1');ls.removeItem('ada_flow_v1');ls.removeItem('ada_flow_v1_gc');"
+            "}catch(e){}</script>",
             height=0,
         )
     elif not st.session_state.get("_auth_error"):
