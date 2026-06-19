@@ -958,6 +958,73 @@ async def storage_overview(
         t = "" if s is None else str(s)
         return ("…" + t[-(n - 1) :]) if len(t) > n else t
 
+    # ── KB 학습: kb_type 한글 라벨 + payload 에서 '실제 학습 내용' 한 줄 추출 ──
+    _KB_LABEL = {
+        "qa_pair": "Q&A 학습",
+        "success_pattern": "성공 패턴",
+        "recipe": "재사용 레시피",
+        "hpo_warm_start": "HPO 시드",
+        "eda_template": "EDA 템플릿",
+        "failure_lesson": "실패 교훈",
+    }
+
+    def _kb_detail(kb_type: str, payload: Any) -> str:
+        """self_learning_kb payload 에서 사람이 읽을 '실제 학습 내용' 한 줄."""
+        p = payload if isinstance(payload, dict) else {}
+        t = kb_type or ""
+        if t == "qa_pair":
+            return f"Q: {_clip(p.get('question'), 70)}  →  A: {_clip(p.get('answer'), 95)}"
+        if t == "success_pattern":
+            return (
+                f"{p.get('category') or '?'} / 타깃 {p.get('target') or '-'} / 의도: {_clip(p.get('user_intent'), 80)}"
+            )
+        if t == "recipe":
+            m = p.get("metric") if isinstance(p.get("metric"), dict) else {}
+            mtxt = f"{m.get('name', '')} {m.get('value', '')}".strip()
+            base = f"{p.get('category') or '?'} → {p.get('best_model') or '?'}({p.get('framework') or '-'})"
+            return base + (f" · {mtxt}" if mtxt else "")
+        if t == "hpo_warm_start":
+            bp = p.get("best_params") if isinstance(p.get("best_params"), dict) else {}
+            keys = ", ".join(list(bp)[:6])
+            return f"{p.get('model') or '?'} 하이퍼파라미터" + (f": {keys}" if keys else "")
+        if t == "eda_template":
+            return f"{p.get('category') or '?'} · {p.get('n_rows') or '?'}행 × {p.get('n_cols') or '?'}컬럼 EDA 절차"
+        if t == "failure_lesson":
+            return f"{p.get('category') or '?'} 실패 → {_clip(p.get('error'), 100)}"
+        return _clip(", ".join(f"{k}={v}" for k, v in list(p.items())[:4]), 120) if p else "-"
+
+    def _build_kb(r: Any) -> tuple:
+        label = _KB_LABEL.get(r.kb_type, r.kb_type or "?")
+        cat = f" · {r.category}" if r.category else ""
+        conf = f" · 신뢰도 {r.confidence:.2f}" if r.confidence is not None else ""
+        reuse = f" · 재사용 {r.success_count}회" if (r.success_count or 0) > 1 else ""
+        return (
+            r.created_at,
+            "🧠",
+            "KB 학습",
+            "PostgreSQL · self_learning_kb",
+            f"{label}{cat}{conf}{reuse}",
+            _kb_detail(r.kb_type, r.payload),
+        )
+
+    _BK_WHAT = {
+        "db": "PostgreSQL 전체 DB 덤프(pg_dump · 모든 테이블)",
+        "minio": "MinIO 오브젝트(업로드 데이터셋·산출물·모델)",
+        "data": "데이터셋 파일",
+        "vault": "Vault 시크릿",
+    }
+
+    def _build_bk(r: Any) -> tuple:
+        bt = r.backup_type or "?"
+        return (
+            r.created_at,
+            "💾",
+            "백업",
+            "로컬 · " + _tail(r.minio_path, 48),
+            f"{_BK_WHAT.get(bt, bt)} · {r.status or 'ok'}",
+            f"{_fmt_bytes(r.size_bytes)} · {r.note or ''}",
+        )
+
     async def _src(model: Any, order_col: Any, build: Any) -> None:
         # 소스 1개 — 쿼리/행 변환 실패가 전체 피드를 비우지 않도록 개별 격리.
         if model is None:
@@ -1037,18 +1104,7 @@ async def storage_overview(
             r.error_message or "",
         ),
     )
-    await _src(
-        _KB,
-        _KB.created_at if _KB is not None else None,
-        lambda r: (
-            r.created_at,
-            "🧠",
-            "KB 학습",
-            "PostgreSQL · self_learning_kb",
-            f"{r.kb_type or '?'} · {r.category or '-'}",
-            f"성공 {r.success_count or 0}회" + (f" · 신뢰도 {r.confidence:.2f}" if r.confidence is not None else ""),
-        ),
-    )
+    await _src(_KB, _KB.created_at if _KB is not None else None, _build_kb)
     await _src(
         _EK,
         _EK.created_at if _EK is not None else None,
@@ -1110,18 +1166,7 @@ async def storage_overview(
             f"mlflow_exp {r.mlflow_experiment_id or '-'}",
         ),
     )
-    await _src(
-        _BC,
-        _BC.created_at if _BC is not None else None,
-        lambda r: (
-            r.created_at,
-            "💾",
-            "백업",
-            "MinIO · " + _tail(r.minio_path),
-            f"{r.backup_type or '?'} · {r.status or 'ok'}",
-            f"{_fmt_bytes(r.size_bytes)} · {r.note or ''}",
-        ),
-    )
+    await _src(_BC, _BC.created_at if _BC is not None else None, _build_bk)
     await _src(
         _SA,
         _SA.created_at if _SA is not None else None,
@@ -1139,10 +1184,274 @@ async def storage_overview(
     recent_activity.sort(key=lambda x: x["ts"], reverse=True)
     recent_activity = recent_activity[:60]
 
+    # ── 7) 시간에 따른 학습 효과 (얼마나 좋아지고 있나, %) ─────────────────────
+    #   실제 영속 테이블만 사용: models.metrics(성능) / failure_logs.auto_handled_by_kb(KB 즉시해결=
+    #   외부 LLM·Claude 불필요) / patch_applications.status(자동수정) . 윈도별 값 + 최초 대비 Δ%.
+    learning_trend: dict[str, Any] = {"windows": ["전체", "1년", "6개월", "1개월", "이번주"], "metrics": [], "note": ""}
+    try:
+        _aware = lambda t: t.replace(tzinfo=timezone.utc) if t is not None and t.tzinfo is None else t  # noqa: E731
+        _wn = datetime.now(timezone.utc)
+        _WIN = [("all", None), ("year", 365), ("half", 180), ("month", 30), ("week", 7)]
+
+        def _cutoff(days: Optional[int]) -> Optional[datetime]:
+            return None if days is None else _wn - timedelta(days=days)
+
+        def _avg_by_window(rows: list[tuple]) -> dict[str, Optional[float]]:
+            """rows=[(ts,val)] → 윈도별 평균(비율 metric 은 val 을 0/1 로 넣으면 비율)."""
+            acc: dict[str, list[float]] = {k: [] for k, _ in _WIN}
+            t0 = None
+            for ts, val in rows:
+                ts = _aware(ts)
+                if ts is None or val is None:
+                    continue
+                if t0 is None or ts < t0:
+                    t0 = ts
+                for k, days in _WIN:
+                    c = _cutoff(days)
+                    if c is None or ts >= c:
+                        acc[k].append(float(val))
+            res: dict[str, Optional[float]] = {}
+            for k, _ in _WIN:
+                res[k] = (sum(acc[k]) / len(acc[k])) if acc[k] else None
+            # 최초 30일 평균(first) — Δ% 기준선
+            first_vals = [
+                float(v) for ts, v in rows if v is not None and t0 is not None and _aware(ts) <= t0 + timedelta(days=30)
+            ]
+            res["_first"] = (sum(first_vals) / len(first_vals)) if first_vals else None
+            return res
+
+        def _delta(cur: Optional[float], first: Optional[float]) -> Optional[float]:
+            if cur is None or first is None or first == 0:
+                return None
+            return round((cur - first) / abs(first) * 100, 1)
+
+        def _primary_metric_val(m: Any) -> Optional[float]:
+            if not isinstance(m, dict):
+                return None
+            for k in ("val_f1", "val_accuracy", "val_roc_auc", "val_r2", "f1", "accuracy", "roc_auc", "r2"):
+                if isinstance(m.get(k), (int, float)):
+                    return float(m[k])
+            return None
+
+        # (1) 모델 평균 성능 — best 모델 primary metric
+        try:
+            from ada.db.models import Model as _MM
+
+            mrows = list(
+                (
+                    await db.scalars(
+                        select(_MM).where(_MM.is_best.is_(True)).order_by(desc(_MM.created_at)).limit(3000)
+                    )
+                ).all()
+            )
+            mv = _avg_by_window([(r.created_at, _primary_metric_val(r.metrics)) for r in mrows])
+            learning_trend["metrics"].append(
+                {
+                    "label": "🤖 모델 평균 성능",
+                    "icon": "🤖",
+                    "fmt": "ratio",
+                    "better": "up",
+                    "vals": {k: mv[k] for k, _ in _WIN},
+                    "delta": _delta(mv["week"] or mv["month"], mv["_first"]),
+                }
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # (2) 오류 자동수정 성공률 — patch_applications status='success' 비율
+        try:
+            from ada.db.models import PatchApplication as _PP
+
+            prows = list((await db.scalars(select(_PP).order_by(desc(_PP.applied_at)).limit(10000))).all())
+            pv = _avg_by_window([(r.applied_at, 1.0 if (r.status == "success") else 0.0) for r in prows])
+            learning_trend["metrics"].append(
+                {
+                    "label": "🔧 오류 자동수정 성공률",
+                    "icon": "🔧",
+                    "fmt": "pct",
+                    "better": "up",
+                    "vals": {k: (pv[k] * 100 if pv[k] is not None else None) for k, _ in _WIN},
+                    "delta": _delta(pv["week"] or pv["month"], pv["_first"]),
+                }
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # (3) KB 즉시해결률(학습으로 LLM 없이 해결) & (4) Claude·외부LLM 의존률(=1-그것)
+        try:
+            from ada.db.models import FailureLog as _FF
+
+            frows = list((await db.scalars(select(_FF).order_by(desc(_FF.created_at)).limit(20000))).all())
+            kv = _avg_by_window([(r.created_at, 1.0 if r.auto_handled_by_kb else 0.0) for r in frows])
+            learning_trend["metrics"].append(
+                {
+                    "label": "🧠 KB 즉시해결률 (학습 자동해결)",
+                    "icon": "🧠",
+                    "fmt": "pct",
+                    "better": "up",
+                    "vals": {k: (kv[k] * 100 if kv[k] is not None else None) for k, _ in _WIN},
+                    "delta": _delta(kv["week"] or kv["month"], kv["_first"]),
+                }
+            )
+            # Claude·외부 LLM 의존률 = 100 - KB즉시해결률 (낮아질수록 좋음)
+            dep = {k: (100 - kv[k] * 100 if kv[k] is not None else None) for k, _ in _WIN}
+            dep_first = (100 - kv["_first"] * 100) if kv["_first"] is not None else None
+            dep_cur = dep["week"] if dep["week"] is not None else dep["month"]
+            learning_trend["metrics"].append(
+                {
+                    "label": "☁️ Claude·외부 LLM 의존률",
+                    "icon": "☁️",
+                    "fmt": "pct",
+                    "better": "down",
+                    "vals": dep,
+                    "delta": _delta(dep_cur, dep_first),
+                }
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        learning_trend["note"] = (
+            "모델 성능은 best 모델의 대표 지표 평균, 자동수정률은 패치 성공 비율, KB 즉시해결률은 학습된 지식으로 "
+            "LLM 없이 즉시 해결한 비율입니다. Claude 의존률은 그 보수값(학습이 쌓일수록 낮아지면 좋음). "
+            "Δ% 는 '최초 30일' 대비 현재. 데이터가 짧으면 일부 구간은 '—'(축적 중)으로 표시됩니다."
+        )
+    except Exception:  # noqa: BLE001
+        learning_trend = {"windows": [], "metrics": [], "note": "집계 실패"}
+
+    # ── 8) API 운영 비용 (분석 단계별 LLM 추정비용 + 인프라 고정비) ───────────
+    #   ⚠️ LLM 비용 = agent_runs 토큰 × 단가(추정). Ollama(1~3단계)=로컬·무료. 4~6단계=Claude(유료).
+    #   ⚠️ 인프라 고정비(VPS 등)는 데이터로 알 수 없어 '설정값' — 아래 _INFRA_MONTHLY_USD 에 실제 금액 입력.
+    cost_overview: dict[str, Any] = {}
+    try:
+        from sqlalchemy import text as _sqltext
+
+        # 분석 단계(1~7) ↔ 에이전트 매핑 + 백엔드(1~3 Ollama 무료 / 4~6 Claude 유료)
+        _STAGE = [
+            (1, "데이터 파악", "Ollama", ["data_profiler", "schema_validator", "intent_elicitor"]),
+            (2, "분석 방향", "Ollama", ["eda_agent"]),
+            (3, "전처리·피처", "Ollama", ["preprocessing_strategist", "feature_engineer"]),
+            (
+                4,
+                "모델 학습",
+                "Claude",
+                [
+                    "model_selection",
+                    "hyperparameter_tuner",
+                    "training_executor",
+                    "training_monitor",
+                    "metrics_aggregator",
+                ],
+            ),
+            (5, "평가·인사이트", "Claude", ["fine_tune_executor", "eval_agent", "explainability", "insight"]),
+            (6, "리포트·산출물", "Claude", ["report_composer"]),
+            (7, "학습·저장", "Ollama", ["self_learning", "supervisor", "security_guard"]),
+        ]
+        _agent_stage = {a: (sn, lbl, be) for sn, lbl, be, agents in _STAGE for a in agents}
+        # Claude 분석 단가(설정값) — 4~6단계 추정. 기본 sonnet 급(1K 토큰당 USD). 실제 모델에 맞게 조정 가능.
+        _CLAUDE_RATE = {"input": 0.003, "output": 0.015}
+
+        # 인프라 고정비(월, USD) — ⚠️ 실제 금액으로 수정(기본 0 = 미입력, 허수 표시 안 함)
+        _INFRA_MONTHLY_USD = [
+            {"name": "VPS 서버(호스팅)", "usd": 0.0},
+            {"name": "도메인", "usd": 0.0},
+            {"name": "스토리지·백업·기타", "usd": 0.0},
+        ]
+
+        async def _tokens_since(days: Optional[int]) -> dict[str, tuple]:
+            """agent_name → (sum_in, sum_out), 최근 days 일(None=전체)."""
+            where = "" if days is None else "WHERE created_at >= now() - (:d || ' days')::interval"
+            sql = f"SELECT agent_name, COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0) FROM agent_runs {where} GROUP BY agent_name"
+            params = {} if days is None else {"d": str(days)}
+            try:
+                res = await db.execute(_sqltext(sql), params)
+                return {row[0]: (int(row[1] or 0), int(row[2] or 0)) for row in res}
+            except Exception:  # noqa: BLE001
+                return {}
+
+        def _stage_costs(tok: dict[str, tuple]) -> tuple:
+            """토큰맵 → 단계별 비용/토큰 + LLM 합계 USD."""
+            per = {
+                sn: {"stage": sn, "label": lbl, "backend": be, "in": 0, "out": 0, "usd": 0.0}
+                for sn, lbl, be, _ in _STAGE
+            }
+            total = 0.0
+            for agent, (ti, to) in tok.items():
+                st = _agent_stage.get(agent)
+                if not st:
+                    continue
+                sn, lbl, be = st
+                per[sn]["in"] += ti
+                per[sn]["out"] += to
+                usd = (
+                    ((ti / 1000.0) * _CLAUDE_RATE["input"] + (to / 1000.0) * _CLAUDE_RATE["output"])
+                    if be == "Claude"
+                    else 0.0
+                )
+                per[sn]["usd"] += usd
+                total += usd
+            return list(per.values()), round(total, 4)
+
+        _WINS_COST = {"day": 1, "week": 7, "month": 30, "total": None}
+        llm_by_win: dict[str, float] = {}
+        stages_total: list = []
+        for wk, wd in _WINS_COST.items():
+            tok = await _tokens_since(wd)
+            stages, llm_usd = _stage_costs(tok)
+            llm_by_win[wk] = llm_usd
+            if wk == "total":
+                stages_total = stages
+
+        # 인프라 비용: 월 합 → 일/주 환산, 총액 = 월합 × (서비스 가동개월). 가동개월은 최초 job 기준.
+        infra_month = round(sum(x["usd"] for x in _INFRA_MONTHLY_USD), 2)
+        try:
+            _first_job = await db.scalar(_sqltext("SELECT MIN(created_at) FROM jobs"))
+            _elapsed_days = (
+                max(1.0, (datetime.now(timezone.utc) - _aware(_first_job)).total_seconds() / 86400.0)
+                if _first_job
+                else 30.0
+            )
+        except Exception:  # noqa: BLE001
+            _elapsed_days = 30.0
+        infra_by_win = {
+            "day": round(infra_month / 30.0, 2),
+            "week": round(infra_month / 30.0 * 7, 2),
+            "month": round(infra_month, 2),
+            "total": round(infra_month / 30.0 * _elapsed_days, 2),
+        }
+        # 자동수정 Claude 비용(Redis budget, 최근만) — 오늘 스냅샷
+        autofix_today = None
+        try:
+            import redis as _rd
+
+            _rc = _rd.from_url(settings.redis_url, decode_responses=True)
+            _dk = datetime.utcnow().strftime("%Y-%m-%d")
+            _sp = _rc.get(f"ada:budget:spend:{_dk}")
+            autofix_today = round(float(_sp), 4) if _sp else 0.0
+        except Exception:  # noqa: BLE001
+            autofix_today = None
+
+        cost_overview = {
+            "stages": stages_total,
+            "llm": llm_by_win,
+            "infra_items": _INFRA_MONTHLY_USD,
+            "infra": infra_by_win,
+            "autofix_today_usd": autofix_today,
+            "elapsed_days": round(_elapsed_days, 1),
+            "totals": {wk: round(llm_by_win.get(wk, 0.0) + infra_by_win.get(wk, 0.0), 2) for wk in _WINS_COST},
+            "note": (
+                "LLM 비용은 agent_runs 토큰×단가 추정입니다. 1~3·7단계는 Ollama(로컬·무료), 4~6단계는 Claude(유료). "
+                "인프라 고정비(VPS 등)는 데이터로 알 수 없어 '설정값'이며, 현재 0(미입력)입니다 — 실제 금액 입력 시 합산됩니다."
+            ),
+        }
+    except Exception:  # noqa: BLE001
+        cost_overview = {"stages": [], "llm": {}, "infra": {}, "totals": {}, "note": "집계 실패"}
+
     out.update(
         {
             "services": services,
             "recent_activity": recent_activity,
+            "learning_trend": learning_trend,
+            "cost_overview": cost_overview,
             "kpis": {
                 "db_total_bytes": db_total,
                 "minio_bytes": (minio_res["bytes"] if minio_ok else None),

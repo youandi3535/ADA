@@ -155,7 +155,26 @@ a{color:inherit;}
 .ll-de{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--mut);}
 .ll-w{flex:0 0 auto;color:var(--mut2);font-size:.66rem;opacity:.72;font-family:'JetBrains Mono',monospace;}
 .ll-empty{padding:22px 14px;text-align:center;color:var(--mut2);font-size:.82rem;}
-@media(max-width:1100px){.svc-row{grid-template-columns:repeat(2,1fr);}.cat-grid,.tr-grid{grid-template-columns:1fr;}.grandtotal{flex-direction:column;align-items:flex-start;}.ll-ti{max-width:130px;}.ll-w{display:none;}}
+/* ── 학습 효과 추이 Δ% 배지 ── */
+.dlt{font-weight:800;font-size:.82rem;font-variant-numeric:tabular-nums;}
+.dlt.up{color:var(--ok);} .dlt.down{color:var(--down);}
+/* ── API 운영 비용 ── */
+.cost-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px;}
+.ccard{background:var(--panel);border:1px solid var(--line2);border-radius:11px;padding:14px 16px;}
+.ccard .cc-n{font-size:1.5rem;font-weight:800;color:var(--txt);font-variant-numeric:tabular-nums;}
+.ccard .cc-l{font-size:.72rem;color:var(--mut2);margin-top:4px;}
+.flow{display:flex;align-items:stretch;gap:6px;overflow-x:auto;padding:4px 2px;}
+.fstage{flex:1 1 0;min-width:120px;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:11px 10px;text-align:center;}
+.fstage.paid{border-color:rgba(244,183,64,.5);background:var(--warnbg);}
+.fstage.free{border-color:rgba(47,207,143,.35);}
+.fstage .fs-n{display:inline-block;width:22px;height:22px;line-height:22px;border-radius:50%;background:var(--panel2);color:var(--mut);font-size:.72rem;font-weight:800;margin-bottom:6px;}
+.fstage .fs-l{font-size:.78rem;font-weight:700;color:var(--txt);}
+.fstage .fs-b{font-size:.64rem;color:var(--mut2);margin-top:3px;}
+.fstage .fs-c{font-size:.92rem;font-weight:800;margin-top:6px;font-variant-numeric:tabular-nums;}
+.fstage.paid .fs-c{color:var(--warn);} .fstage.free .fs-c{color:var(--ok);}
+.fstage .fs-t{font-size:.62rem;color:var(--mut2);margin-top:2px;}
+.farrow{display:flex;align-items:center;color:var(--mut2);font-weight:800;flex:0 0 auto;}
+@media(max-width:1100px){.svc-row{grid-template-columns:repeat(2,1fr);}.cat-grid,.tr-grid{grid-template-columns:1fr;}.grandtotal{flex-direction:column;align-items:flex-start;}.ll-ti{max-width:130px;}.ll-w{display:none;}.cost-cards{grid-template-columns:repeat(2,1fr);}}
 </style></head><body>
 
 <div class="head">
@@ -394,6 +413,59 @@ function render(d){
   }
   h+='</div>';
 
+  /* ── 3-c. 시간에 따른 학습 효과 (얼마나 좋아지고 있나) ── */
+  var lt=d.learning_trend||{};
+  h+='<div class="sect-t">📈 시간에 따른 학습 효과 (얼마나 좋아지고 있나)</div>'
+    +'<div class="sect-d">학습된 데이터(모델·오류·KB)가 쌓일수록 시스템이 얼마나 좋아지는지를 <b>최초 대비 현재까지의 변화(%)</b>로 보여줍니다. '
+    +'Claude(외부 유료) 의존률이 낮아질수록 자립도가 올라간 것입니다. 데이터가 짧은 구간은 "—(축적 중)"으로 표시됩니다.</div>';
+  h+='<div class="panel" style="overflow-x:auto"><table class="inv"><thead><tr>'
+    +'<th>지표</th><th class="num">전체</th><th class="num">1년</th><th class="num">6개월</th><th class="num">1개월</th><th class="num">이번주</th><th class="num">최초 대비</th></tr></thead><tbody>';
+  if(!(lt.metrics||[]).length){
+    h+='<tr><td colspan="7" class="muted" style="font-size:.78rem">아직 집계할 학습 데이터가 부족합니다. 분석·자동수정이 쌓이면 추이가 표시됩니다.</td></tr>';
+  }else{
+    (lt.metrics||[]).forEach(function(m){
+      var v=m.vals||{}, d2=m.delta;
+      var good=(m.better==='down')?(d2!=null&&d2<0):(d2!=null&&d2>0);
+      var dtxt=(d2==null)?'<span class="muted">축적 중</span>':((d2>0?'▲ +':'▼ ')+d2+'%');
+      var dcls=(d2==null)?'':(good?'up':'down');
+      h+='<tr><td><b>'+esc(m.label)+'</b></td>'
+        +'<td class="num">'+ltval(v.all,m.fmt)+'</td><td class="num">'+ltval(v.year,m.fmt)+'</td>'
+        +'<td class="num">'+ltval(v.half,m.fmt)+'</td><td class="num">'+ltval(v.month,m.fmt)+'</td>'
+        +'<td class="num">'+ltval(v.week,m.fmt)+'</td>'
+        +'<td class="num"><span class="dlt '+dcls+'">'+dtxt+'</span></td></tr>';
+    });
+  }
+  h+='</tbody></table><div class="note" style="margin-top:10px">ℹ️ '+esc(lt.note||'')+'</div></div>';
+
+  /* ── 3-d. API 운영 비용 (단계별 흐름 + 인프라) ── */
+  var co=d.cost_overview||{}, tt=co.totals||{};
+  h+='<div class="sect-t">💵 API 운영 비용</div>'
+    +'<div class="sect-d">데이터 분석 1~7단계의 LLM <b>추정 비용</b>(토큰×단가)과 인프라 고정비를 합산합니다. '
+    +'1~3·7단계는 <b>Ollama(로컬·무료)</b>, 4~6단계는 <b>Claude(유료)</b>입니다. 총·1달·1주·1일 비용을 함께 표시합니다.</div>';
+  h+='<div class="cost-cards">'+costCard('오늘 (1일)',tt.day)+costCard('최근 7일',tt.week)+costCard('최근 1달',tt.month)+costCard('총 누적',tt.total)+'</div>';
+  h+='<div class="flow">';
+  (co.stages||[]).forEach(function(s,i){
+    var paid=s.backend==='Claude';
+    h+='<div class="fstage '+(paid?'paid':'free')+'">'
+      +'<div class="fs-n">'+esc(s.stage)+'</div><div class="fs-l">'+esc(s.label)+'</div>'
+      +'<div class="fs-b">'+esc(s.backend)+(paid?' · 유료':' · 무료')+'</div>'
+      +'<div class="fs-c">'+(paid?('$'+(s.usd||0).toFixed(4)):'$0')+'</div>'
+      +'<div class="fs-t">'+nf((s.in||0)+(s.out||0))+' tok</div></div>';
+    if(i<(co.stages||[]).length-1) h+='<div class="farrow">→</div>';
+  });
+  h+='</div>';
+  var inf=co.infra||{}, infItems=co.infra_items||[], infMonth=infItems.reduce(function(a,x){return a+(x.usd||0);},0);
+  h+='<div class="panel" style="margin-top:12px"><div style="font-size:.8rem;font-weight:800;color:var(--mut);margin-bottom:8px">🏗️ 인프라 고정비 (설정값 · 월 기준)</div>';
+  if(infMonth<=0){
+    h+='<div class="muted" style="font-size:.78rem">인프라 고정비가 아직 입력되지 않았습니다(0). 실제 VPS·도메인·스토리지 월 금액을 설정하면 합산됩니다.</div>';
+  }
+  h+='<div class="kpi" style="margin-top:8px">';
+  infItems.forEach(function(x){ h+='<div class="it"><div class="v">$'+(x.usd||0).toFixed(2)+'<span style="font-size:.6rem"> /월</span></div><div class="l">'+esc(x.name)+'</div></div>'; });
+  h+='<div class="it"><div class="v">$'+infMonth.toFixed(2)+'<span style="font-size:.6rem"> /월</span></div><div class="l">인프라 월 합계</div></div>'
+    +'<div class="it"><div class="v">'+(co.elapsed_days||0)+'<span style="font-size:.6rem"> 일</span></div><div class="l">서비스 가동 기간</div></div>';
+  h+='</div>';
+  h+='<div class="note" style="margin-top:10px">ℹ️ '+esc(co.note||'')+(co.autofix_today_usd!=null?(' · 오늘 자동수정 Claude 비용 $'+(co.autofix_today_usd||0).toFixed(4)):'')+'</div></div>';
+
   /* ── 4. 카테고리별 분류 ── */
   h+='<div class="sect-t">🗂️ 데이터 카테고리별 저장 현황</div>'
     +'<div class="sect-d">수집·생성되는 데이터를 카테고리(분석작업 · KB · 모델 · 보안 등)로 묶어, 레코드 수 · 용량 · 최근 24시간 신규를 보여줍니다.</div>'
@@ -492,6 +564,10 @@ function shCard(title,color,pairs,sub){
   }).join('');
   return '<div class="sh-card"><div class="sh-t">'+title+'</div><div class="sh-row">'+cells+'</div><div class="sh-sub">'+sub+'</div></div>';
 }
+// 학습 효과 값 포맷: pct→'XX.X%', ratio→소수 3자리, null→'—'
+function ltval(x,fmt){ if(x==null) return '<span class="muted">—</span>'; if(fmt==='pct') return (Math.round(x*10)/10)+'%'; return (Math.round(x*1000)/1000); }
+// 비용 카드
+function costCard(label,usd){ return '<div class="ccard"><div class="cc-n">$'+((usd==null?0:usd).toFixed(2))+'</div><div class="cc-l">'+esc(label)+'</div></div>'; }
 function igRow(nm,de,pa){
   return '<div class="ig-row"><div class="ig-nm">'+nm+'</div><div class="ig-de">'+de+'</div>'
     +'<div class="ig-pa"><b>↳ 저장경로 &nbsp;</b>'+pa+'</div></div>';
