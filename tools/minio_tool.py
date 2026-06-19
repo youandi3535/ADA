@@ -132,7 +132,17 @@ class MinIOClient:
             endpoint_url=endpoint,
             aws_access_key_id=settings.minio_access_key,
             aws_secret_access_key=settings.minio_secret_key,
-            config=Config(signature_version="s3v4"),
+            # HJ 2026-06-19 — 명시적 타임아웃·재시도 한도. 이전엔 미설정이라 MinIO 가 연결은 되는데
+            #   응답이 멈추는 상황(stale 소켓·네트워크 stall)에서 데이터 로드가 사실상 무한 대기 →
+            #   1단계(데이터 파악) 팝업에 글자 0 인 채 워커가 멈추던 원인. read_timeout 은 '바이트 간
+            #   무응답' 기준이라 대용량 정상 전송은 영향 없고, 진짜 stall 만 끊는다. 끊기면 파이프라인이
+            #   실패로 떨어져 워치독·자가치유가 포착(무한 멈춤보다 안전).
+            config=Config(
+                signature_version="s3v4",
+                connect_timeout=15,
+                read_timeout=120,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
             region_name="us-east-1",
         )
         self._ensure_bucket()
