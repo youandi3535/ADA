@@ -47,6 +47,7 @@ def test_daemon_scan_calls_handler(monkeypatch):
             self.stack_trace = ""
             self.auto_handled_by_kb = False
             self.error_kb_id = None
+            self.classified_as = None  # 데몬이 시도 후 'attempted' 로 마킹 (무한 재처리 방지)
 
     class FakeScalarResult:
         def __init__(self, rows):
@@ -95,6 +96,7 @@ def test_daemon_collects_errors(monkeypatch):
             self.stack_trace = ""
             self.auto_handled_by_kb = False
             self.error_kb_id = None
+            self.classified_as = None  # 데몬이 시도 후 'attempted' 로 마킹 (무한 재처리 방지)
 
     class FakeScalarResult:
         def all(self):
