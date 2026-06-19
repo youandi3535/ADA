@@ -11,9 +11,10 @@ body{margin:0;font-family:'Pretendard','Inter',-apple-system,sans-serif;backgrou
   color:var(--txt);padding:20px 26px 60px;}
 html{background:var(--bg);}
 a{color:inherit;}
-.head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px;flex-wrap:wrap;}
-.head h1{font-size:1.3rem;margin:0;font-weight:800;letter-spacing:-.01em;}
-.head .sub{color:var(--mut);font-size:.82rem;margin-top:5px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin:0 0 16px;padding-bottom:20px;border-bottom:2px solid var(--line2);flex-wrap:wrap;}
+.head h1{font-size:1.82rem;margin:0;font-weight:800;letter-spacing:-.02em;line-height:1.15;display:flex;align-items:center;gap:11px;}
+.head .tabdesc{color:var(--mut);font-size:.86rem;margin-top:9px;max-width:760px;line-height:1.45;}
+.head .sub{color:var(--mut2);font-size:.8rem;margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
 .live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-weight:700;}
 .live i{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(47,207,143,.6);animation:pulse 1.6s infinite;}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(47,207,143,.55)}70%{box-shadow:0 0 0 7px rgba(47,207,143,0)}100%{box-shadow:0 0 0 0 rgba(47,207,143,0)}}
@@ -87,8 +88,10 @@ a{color:inherit;}
 .stores{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px;}
 .stores .sb{font-size:.66rem;color:var(--mut);background:var(--panel2);border:1px solid var(--line2);padding:2px 8px;border-radius:6px;}
 .tbl-mini{font-size:.73rem;}
-.tbl-mini .r{display:flex;align-items:center;gap:9px;padding:3px 0;}
-.tbl-mini .nm{width:165px;color:var(--mut);font-family:'JetBrains Mono',monospace;font-size:.71rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tbl-mini .r{display:flex;align-items:flex-start;gap:9px;padding:5px 0;}
+.tbl-mini .nm{width:190px;display:flex;flex-direction:column;gap:1px;overflow:hidden;}
+.tbl-mini .tnm{color:var(--mut);font-family:'JetBrains Mono',monospace;font-size:.71rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tbl-mini .tde{color:var(--mut2);font-size:.62rem;line-height:1.25;}
 .tbl-mini .bg{flex:1;height:7px;background:var(--bg);border-radius:4px;overflow:hidden;}
 .tbl-mini .fg{height:7px;background:linear-gradient(90deg,var(--blue2),var(--blue));border-radius:4px;}
 .tbl-mini .vv{width:62px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;}
@@ -105,6 +108,7 @@ a{color:inherit;}
 .inv .pill{font-size:.64rem;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--panel2);border:1px solid var(--line2);color:var(--mut);}
 .inv .bbg{width:120px;height:6px;background:var(--bg);border-radius:4px;display:inline-block;vertical-align:middle;overflow:hidden;}
 .inv .bfg{height:6px;background:var(--vio);border-radius:4px;display:block;}
+.inv .td-desc{font-family:'Pretendard','Inter',sans-serif;font-weight:400;font-size:.68rem;color:var(--mut2);margin-top:3px;line-height:1.35;white-space:normal;max-width:360px;}
 
 /* 트렌드 */
 .tr-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
@@ -128,7 +132,8 @@ a{color:inherit;}
 
 <div class="head">
   <div>
-    <h1>🛰️ ADA 운영 콘솔 · 데이터 저장 실시간 현황</h1>
+    <h1>🛰️ ADA 운영 콘솔</h1>
+    <div class="tabdesc">데이터 저장 실시간 현황 — 모든 저장소 · 백업 · 적재 트렌드를 한 화면에서 감시하는 관리자 종합 현황판입니다.</div>
     <div class="sub">
       <span class="live"><i></i>실시간 감시</span>
       <span id="clock" class="muted">—</span>
@@ -161,6 +166,41 @@ function nf(n){if(n===null||n===undefined)return '—';return (''+n).replace(/\B
 function dot(s){return '<i class="dot '+(s||'down')+'"></i>';}
 function stWord(s){return s==='ok'?'정상':(s==='warn'?'경고':'위험');}
 function ago(iso){if(!iso)return '기록 없음';try{var d=new Date(iso.replace('Z','')+'Z');var m=Math.floor((Date.now()-d.getTime())/60000);if(m<1)return '방금';if(m<60)return m+'분 전';var h=Math.floor(m/60);if(h<48)return h+'시간 전';return Math.floor(h/24)+'일 전';}catch(e){return '—';}}
+
+// HJ 2026-06-19 — 각 테이블(폴더)에 어떤 데이터가 들어가는지 한 줄 설명. 이름 옆/아래에 표기.
+var TBL_DESC={
+  uploads:'업로드 원본 데이터셋 파일 메타(이름·크기·MinIO 경로)',
+  dataset_embeddings:'데이터셋 의미 임베딩 벡터(유사 데이터 검색)',
+  jobs:'분석 작업 1건의 상태·진행 단계·결과 요약',
+  agent_runs:'에이전트별 1회 실행 기록·소요시간',
+  experiments:'모델 학습 실험 단위(파라미터·지표)',
+  gate_decision_metrics:'게이트(HITL) 단계별 사용자 선택·소요시간',
+  decisions:'파이프라인 분기 결정 로그(무엇을 왜 선택)',
+  interactive_sessions:'대화형 세션 상태(주제·의도 등)',
+  intent_embeddings:'사용자 의도 문장 임베딩(유사 의도 매칭)',
+  outputs:'생성 산출물 메타(PPT/PDF/HTML 종류·MinIO 경로)',
+  artifacts:'산출물·중간 파일 아티팩트 인벤토리',
+  output_recipes:'산출물 생성 레시피(재현용 설정)',
+  models:'학습 완료 모델 메타(알고리즘·지표·버전)',
+  model_artifact_catalog:'모델 바이너리 아티팩트(SHA256·서명·경로)',
+  failure_logs:'발생 오류 원본·스택트레이스(AES-GCM 암호화)',
+  error_kb:'오류 유형별 해결책 지식(재발 시 자동 적용)',
+  pending_patches:'자동 생성된 수정 패치(승인 대기)',
+  patch_applications:'패치 적용 이력·성공/실패 결과',
+  circuit_breaker_events:'외부 호출 회로차단기 작동 이벤트',
+  self_learning_kb:'성공 분석에서 추출한 재사용 지식(전략·설정)',
+  success_patterns:'반복 성공한 작업 패턴(카테고리별)',
+  rules:'가드레일·정책 규칙(R-규칙 카탈로그)',
+  lesson_embeddings:'학습 교훈 임베딩(유사 상황 검색)',
+  job_distillation_log:'완료 작업 → KB 증류(추출) 로그',
+  conversation_logs:'Cowork·Claude Code 대화 원문(KB 학습 원천)',
+  security_audit_log:'로그인·권한·민감행위 감사 로그(시각·IP)',
+  users:'사용자 계정(이메일·역할·활성 여부)',
+  oauth_accounts:'구글 OAuth 연동 계정 매핑',
+  agent_registry:'에이전트 28종 등록·페르소나 버전',
+  backup_catalog:'DB 덤프 백업 인벤토리(시각·크기·SHA256)'
+};
+function tdesc(n){return TBL_DESC[n]||'';}
 
 function clock(){var d=new Date();document.getElementById('clock').textContent=d.toLocaleString('ko-KR',{hour12:false});}
 setInterval(clock,1000);clock();
@@ -256,6 +296,25 @@ function render(d){
   if(nodes[1]){h+=topoNode(nodes[1]);}
   h+='</div>';
 
+  /* ── 적재 트렌드 (토폴로지 다음): 7일 일자별 → 24시간 시간별 ── */
+  var tr=d.trends||{}, tr24=d.trends_24h||{};
+  h+='<div class="sect-t">📈 최근 7일 적재 트렌드</div>'
+    +'<div class="sect-d">최근 7일간 분석 작업 · 오류 로그 · Q&amp;A 수집 · 산출물이 얼마나 생성됐는지 일자별 추이입니다.</div>'
+    +'<div class="tr-grid">'
+    +trend('🧪 분석 작업','jobs',tr.jobs,'7일')
+    +trend('🛠️ 오류 로그','failures',tr.failures,'7일')
+    +trend('💬 Q&A 수집','qa',tr.qa,'7일')
+    +trend('📦 산출물','outputs',tr.outputs,'7일')
+    +'</div>';
+  h+='<div class="sect-t">⏱️ 최근 24시간 적재 트렌드</div>'
+    +'<div class="sect-d">최근 24시간 동안 시간대별로 얼마나 적재됐는지 보여줍니다(시간 단위 · 1일 추이).</div>'
+    +'<div class="tr-grid">'
+    +trend('🧪 분석 작업','jobs',tr24.jobs,'24h')
+    +trend('🛠️ 오류 로그','failures',tr24.failures,'24h')
+    +trend('💬 Q&A 수집','qa',tr24.qa,'24h')
+    +trend('📦 산출물','outputs',tr24.outputs,'24h')
+    +'</div>';
+
   /* ── 4. 카테고리별 분류 ── */
   h+='<div class="sect-t">🗂️ 데이터 카테고리별 저장 현황</div>'
     +'<div class="sect-d">수집·생성되는 데이터를 카테고리(분석작업 · KB · 모델 · 보안 등)로 묶어, 레코드 수 · 용량 · 최근 24시간 신규를 보여줍니다.</div>'
@@ -264,7 +323,7 @@ function render(d){
     var mx=1;(c.tables||[]).forEach(function(t){if(t.rows>mx)mx=t.rows;});
     var rows='';
     (c.tables||[]).forEach(function(t){
-      rows+='<div class="r"><span class="nm" title="'+esc(t.name)+'">'+esc(t.name)+'</span>'
+      rows+='<div class="r"><span class="nm" title="'+esc(t.name)+' — '+esc(tdesc(t.name))+'"><span class="tnm">'+esc(t.name)+'</span><span class="tde">'+esc(tdesc(t.name))+'</span></span>'
         +'<span class="bg"><span class="fg" style="width:'+Math.max(2,Math.round(t.rows/mx*100))+'%"></span></span>'
         +'<span class="vv">'+nf(t.rows)+'</span>'
         +'<span class="sz">'+fb(t.bytes)+'</span>'
@@ -294,25 +353,14 @@ function render(d){
     +'<div class="panel" style="overflow-x:auto;">'
     +'<table class="inv"><thead><tr><th>테이블</th><th>카테고리</th><th class="num">레코드</th><th class="num">용량</th><th>용량비중</th><th class="num">24h</th></tr></thead><tbody>';
   allt.forEach(function(t){
-    h+='<tr><td class="tn">'+esc(t.n)+'</td><td><span class="pill">'+t.ic+' '+esc(t.cat)+'</span></td>'
+    h+='<tr><td class="tn">'+esc(t.n)+'<div class="td-desc">'+esc(tdesc(t.n))+'</div></td><td><span class="pill">'+t.ic+' '+esc(t.cat)+'</span></td>'
       +'<td class="num">'+nf(t.r)+'</td><td class="num">'+fb(t.b)+'</td>'
       +'<td><span class="bbg"><span class="bfg" style="width:'+Math.max(2,Math.round(t.b/bmx*100))+'%"></span></span></td>'
       +'<td class="num" style="color:'+(t.w>0?'var(--ok)':'var(--mut2)')+'">'+(t.w>0?'+'+t.w:'·')+'</td></tr>';
   });
   h+='</tbody></table></div>';
 
-  /* ── 6. 7일 적재 트렌드 ── */
-  var tr=d.trends||{};
-  h+='<div class="sect-t">📈 최근 7일 적재 트렌드</div>'
-    +'<div class="sect-d">최근 7일간 분석 작업 · 오류 로그 · Q&amp;A 수집 · 산출물이 얼마나 생성됐는지 일자별 추이입니다.</div>'
-    +'<div class="tr-grid">'
-    +trend('🧪 분석 작업','jobs',tr.jobs)
-    +trend('🛠️ 오류 로그','failures',tr.failures)
-    +trend('💬 Q&A 수집','qa',tr.qa)
-    +trend('📦 산출물','outputs',tr.outputs)
-    +'</div>';
-
-  /* ── 7. 백업 패널 ── */
+  /* ── 백업 패널 ── */
   var bk=d.backup||{};
   h+='<div class="sect-t">🛟 백업 운영 현황</div>'
     +'<div class="sect-d">PostgreSQL 덤프 백업의 스케줄 · 방식 · 보존기간과 최근 백업 이력을 보여줍니다.</div>'
@@ -347,14 +395,14 @@ function topoNode(n){
     +'<div class="pa">'+esc(n.path)+'</div>'
     +'<div class="dt">'+esc(n.detail||'')+'</div></div>';
 }
-function trend(title,key,arr){
-  arr=arr||[];var mx=1;arr.forEach(function(p){if(p.n>mx)mx=p.n;});
+function trend(title,key,arr,unit){
+  arr=arr||[];unit=unit||'7일';var mx=1;arr.forEach(function(p){if(p.n>mx)mx=p.n;});
   var tot=arr.reduce(function(a,p){return a+p.n;},0);
   var bars='';
   if(!arr.length){bars='<span class="muted" style="font-size:.74rem">데이터 없음</span>';}
   else{arr.forEach(function(p){var hh=Math.max(3,Math.round(p.n/mx*100));bars+='<div class="b'+(p.n===0?' zero':'')+'" style="height:'+hh+'%" title="'+esc(p.d)+': '+p.n+'"></div>';});}
   var ax=arr.length?('<div class="ax"><span>'+esc(arr[0].d)+'</span><span>'+esc(arr[arr.length-1].d)+'</span></div>'):'';
-  return '<div class="tr"><div class="h">'+title+'</div><div class="tot">'+nf(tot)+'<span style="font-size:.7rem;color:var(--mut2);font-weight:400"> 건/7일</span></div>'
+  return '<div class="tr"><div class="h">'+title+'</div><div class="tot">'+nf(tot)+'<span style="font-size:.7rem;color:var(--mut2);font-weight:400"> 건/'+unit+'</span></div>'
     +'<div class="bars">'+bars+'</div>'+ax+'</div>';
 }
 
