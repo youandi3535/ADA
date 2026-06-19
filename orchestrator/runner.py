@@ -16,6 +16,7 @@ import traceback
 from typing import Any
 
 from celery import Celery
+from celery.exceptions import SoftTimeLimitExceeded
 
 from ada.core.config import settings
 from ada.core.logger import get_logger
@@ -80,6 +81,13 @@ celery_app.conf.update(
         "ada-fixer-promote-daily": {
             "task": "ada.error_handler.promote_fixers",
             "schedule": 86400.0,  # 24시간
+            "options": {"queue": "harness"},
+        },
+        # HJ 2026-06-19 — 정체 잡(hang/고아) 감시: running 인데 진행 멈춘 잡을 failed+failure_logs 로
+        #   자동 기록 → 멈춤도 '오류'로 잡아 자가치유 루프에 입력 공급 (5분 주기).
+        "ada-stalled-jobs-scan": {
+            "task": "ada.harness.stalled_jobs_scan",
+            "schedule": 300.0,  # 5분
             "options": {"queue": "harness"},
         },
     },
@@ -703,7 +711,31 @@ def run_pipeline_task(self: Any, job_id: str, initial_state: dict) -> dict:
         publish_progress(job_id, "supervisor", "파이프라인 시작", eta_sec=g1_eta)
         return await _invoke(job_id=job_id, state=state, resume=False)
 
-    return asyncio.run(_start())
+    # HJ 2026-06-19 — 멈춤(hang) 안전망: soft time limit 초과 시 파이썬 예외(SoftTimeLimitExceeded)가
+    #   여기로 올라온다. 이걸 잡아 failure_logs 기록 + 잡 failed 로 종료한다 → 멈춤도 '오류'로 남아
+    #   자가치유 루프에 입력되고, 잡이 running 좀비로 남지 않는다. (하드 kill·진짜 고아는 watchdog 가 보완.)
+    try:
+        return asyncio.run(_start())
+    except SoftTimeLimitExceeded:
+        import traceback as _tb2
+
+        err = f"pipeline_soft_timeout: 진행 정지로 soft time limit(~{settings.pipeline_timeout_min}분) 초과 — 멈춤 자동 종료"
+        log.error("pipeline_soft_timeout", job_id=job_id)
+
+        async def _rec_timeout() -> None:
+            from ada.error_handler.auto_handler import capture_and_handle
+
+            await capture_and_handle(
+                error_message=err, stack_trace=_tb2.format_exc(), job_id=job_id, source="runner_timeout"
+            )
+            await _set_job_terminal(job_id, "failed", error=err)
+
+        try:
+            asyncio.run(_rec_timeout())
+        except Exception as _e:  # noqa: BLE001
+            log.error("pipeline_soft_timeout_record_failed", job_id=job_id, error=str(_e))
+        publish_progress(job_id, "error_recovery", err, pipeline_status="failed", error=err)
+        return {"status": "failed", "error": err}
 
 
 @celery_app.task(bind=True, name="ada.pipeline.resume", max_retries=3)
