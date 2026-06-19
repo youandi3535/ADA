@@ -1417,6 +1417,11 @@ async function poll(){
   if(isFailed()||(isCompleted()&&!_g6TypingHold())){ lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; }
   // resume 후 analyzing() 통과 확인 — staleRun(renderBody 의 이전 gate_data 무시) 보호용.
   if(lastSubmittedGate && analyzing()) _sawAnalyzingAfterSubmit=true;
+  // HJ 2026-06-19 — G6 는 다음 게이트가 없어, 생성 중 backend gate 가 'G6' 로 남으면 analyzing()=false
+  //   가 지속돼 위 줄이 _sawAnalyzingAfterSubmit 를 못 켠다 → 모달이 라이브 인사이트(g6_status/
+  //   g6_output_insights) 대신 정적 플레이스홀더만 표시. G6 는 상위 stale 게이트가 없어 stale 위험이
+  //   없으므로, 재실행 가드 해제(=새 실행 시작 확인) 후엔 켜서 실시간 생성 내용이 보이게 한다.
+  if(lastSubmittedGate==='G6' && !_awaitingResume) _sawAnalyzingAfterSubmit=true;
   // HJ 2026-06-11 버그픽스: 진행 완료(다음 단계 전진) 판정을 '게이트 번호 비교 + 모달 hold 완료' 로.
   //   • _nextGateArrived(): 제출게이트보다 높은 번호(G3→G4)만 인정 → backend stale 이전 게이트(G2)에 안 속음.
   //     (구 `curGate()!==lastSubmittedGate` 는 stale G2 에 속아 모달이 분석 도중 사라지고 선택화면으로 빠짐)
@@ -1877,6 +1882,13 @@ function _modalShouldBeActive(){
   if(cur===0 && _suppressG1Advance) return false;
   // HJ 2026-06-12 — G6 는 완료돼도 팝업 타이핑이 끝나기 전이면 모달 유지 (조기 종료·7단계 점프 방지).
   if(isCompleted() && !_g6TypingHold()) return false;
+  // HJ 2026-06-19 — G6 산출물 생성 중 '선택화면 리셋' 버그 수정.
+  //   G6 는 '다음 게이트'가 없어, 산출물 2종(PPT+PDF) 생성처럼 시간이 길어지면 backend gate_data 가
+  //   gate:'G6' 로 남아 curGate()='G6' → analyzing()=false → analyzeStart=null → _modalGateReady()
+  //   (41% 진행률)가 충족되지 않아 아래 게이트에서 모달이 사라지고 G6 선택카드가 재노출되던 리셋.
+  //   제출 직후(lastSubmittedGate==='G6')부터 완료/실패 전까지는 진행률·analyzing 과 무관하게 모달을
+  //   강제 유지한다. 실제 완료(isCompleted)·실패(isFailed)는 위 두 분기가 먼저 잡아 결과/실패로 전환.
+  if(cur===5 && lastSubmittedGate==='G6') return true;
   // HJ 2026-06-13 — 모달 생성 기준은 '단계 진행률 41%' 단일 기준(사용자 지시).
   //   시간 기반(15초) 폴백 전면 제거 — 늦게 뜨든 일찍 뜨든 모든 단계
   //   (cur 0~5)에서 _shownPct 가 41% 에 도달해야만 모달 노출. 41% 미만에서는 본문 카드만 표시한다.
@@ -2643,7 +2655,9 @@ function contentResult(){
     const dlHtml=allOuts.map(function(o){
       if(outputPaths[o]){
         const url=API+'/pipeline/download/'+jobId+'/'+encodeURIComponent(o);
-        return '<a href="'+esc(url)+'" download="ada_'+esc(EXT[o]||'bin')+'" class="dlbtn">'+esc(ICON[o]||'📦')+' '+esc(OL[o]||o)+'<span style="font-size:13px;opacity:.75;margin-left:4px">다운로드</span></a>';
+        // HJ 2026-06-19 — download 파일명에 점(.)+확장자를 명시. 이전엔 'ada_pptx'(확장자 없음)라
+        //   동일출처 다운로드가 실패 응답(JSON)을 받으면 브라우저가 ada_pptx.json 으로 저장하던 버그.
+        return '<a href="'+esc(url)+'" download="ada.'+esc(EXT[o]||'bin')+'" class="dlbtn">'+esc(ICON[o]||'📦')+' '+esc(OL[o]||o)+'<span style="font-size:13px;opacity:.75;margin-left:4px">다운로드</span></a>';
       }
       return '<span class="dlbtn unavail">'+esc(ICON[o]||'📦')+' '+esc(OL[o]||o)+'<span style="font-size:13px;opacity:.75;margin-left:4px">생성 실패</span></span>';
     }).join('');
