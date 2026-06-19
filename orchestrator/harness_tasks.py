@@ -108,6 +108,66 @@ def promote_fixers() -> dict[str, Any]:
     return run_sync()
 
 
+@celery_app.task(name="ada.harness.stalled_jobs_scan", queue="harness")
+def scan_stalled_jobs() -> dict[str, Any]:
+    """정체 잡(running 인데 일정 시간 진행 없음)을 failed + failure_logs 로 자동 기록 (HJ 2026-06-19).
+
+    hang·워커 사망·하드 time_limit kill 등 in-process 핸들러가 못 잡는 '미완료'를 포착하는 최종 그물.
+    → 멈춤도 '오류'로 failure_logs 에 남겨 자가치유 루프(scan_failures)에 다시 먹이를 공급한다.
+
+    안전(게이트 대기 정상 잡 보호): 임계값을 task 하드 time_limit(=pipeline_timeout_min) + 30분 으로 둔다.
+      활성 처리 중 task 는 time_limit 에서 강제 종료되므로, 그보다 오래 'running' 인 잡은 이미 고아이거나
+      게이트에서 30분 이상 방치된 세션 → failed 처리해도 정상 진행 중인 잡을 죽이지 않는다.
+    """
+
+    async def _do() -> dict[str, Any]:
+        import hashlib
+        from datetime import datetime, timedelta, timezone
+
+        from sqlalchemy import select
+
+        from ada.core.config import settings
+        from ada.db.models import FailureLog, Job
+        from ada.db.session import AsyncSessionLocal
+
+        stale_sec = settings.pipeline_timeout_min * 60 + 1800  # 하드 타임아웃 + 30분
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_sec)
+        swept = 0
+        async with AsyncSessionLocal() as s:
+            jobs = (await s.scalars(select(Job).where(Job.status == "running", Job.updated_at < cutoff))).all()
+            for job in jobs:
+                err = (
+                    f"stalled: 파이프라인 진행 정지 (gate={job.current_gate or '-'}, "
+                    f"last_update={job.updated_at}, threshold={stale_sec // 60}min)"
+                )
+                s.add(
+                    FailureLog(
+                        job_id=job.id,
+                        error_hash=hashlib.sha256(f"stalled:{job.id}".encode()).hexdigest(),
+                        error_message=err[:2000],
+                        stack_trace="[stalled_jobs_watchdog] 진행 정지로 자동 종료 처리",
+                        error_category="stalled",
+                    )
+                )
+                job.status = "failed"
+                job.error_message = err[:2000]
+                swept += 1
+            if swept:
+                await s.commit()
+        return {"swept": swept, "stale_min": stale_sec // 60}
+
+    try:
+        return asyncio.run(_do())
+    except Exception as e:
+        import traceback as _tb
+
+        from ada.core.logger import get_logger as _log
+
+        _log("harness_tasks").error("scan_stalled_jobs_failed", error=str(e))
+        asyncio.run(_capture("scan_stalled_jobs_failed: " + str(e), _tb.format_exc(), source="harness"))
+        return {"swept": 0, "error": str(e)}
+
+
 def register_error_handler_beat(beat_schedule: dict[str, Any] | None = None) -> dict[str, Any]:
     """beat schedule dict 에 Day 2 데몬 스케줄을 머지해 반환.
 
