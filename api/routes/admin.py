@@ -921,7 +921,7 @@ async def storage_overview(
             }
         )
 
-    _PER = 8  # 테이블당 최신 N
+    _PER = 12  # 테이블당 최신 N (내용 보강 — 더 풍부한 피드)
     _OL = {
         "OUT-01": "PPT",
         "OUT-02": "PDF 보고서",
@@ -1137,7 +1137,7 @@ async def storage_overview(
 
     # 최신순 정렬 후 상위 40개 (프론트는 10줄 표시 + 자체 스크롤로 나머지 열람)
     recent_activity.sort(key=lambda x: x["ts"], reverse=True)
-    recent_activity = recent_activity[:40]
+    recent_activity = recent_activity[:60]
 
     out.update(
         {
