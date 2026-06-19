@@ -3265,10 +3265,26 @@ def _profile_widget() -> str:
     em = _htmlmod.escape(email or "로그인됨")
     ini = _htmlmod.escape(initial)
     rl = _htmlmod.escape(role_label)
+    # 운영 콘솔(?admin=1)일 때만 '나가기'를 계정 아이콘 왼쪽에 노출. 부모 레벨이라 <a href> 로
+    # 로그인 유지(?token=&role=)한 채 랜딩 복귀 — iframe 샌드박스 우회 불필요(HJ 2026-06-19).
+    from urllib.parse import quote as _q
+
+    _exit_btn = ""
+    if st.query_params.get("admin") == "1":
+        _token = st.session_state.get("auth_token", "")
+        _ehref = "?token=" + _q(_token, safe="") + "&amp;role=" + _q(role, safe="")
+        _exit_btn = (
+            f"<a class='ada-prof-exit' href='{_ehref}' target='_self' title='운영 콘솔 나가기'>✕&nbsp;나가기</a>"
+        )
     return (
         "<style>"
         ".ada-prof{position:fixed;top:13px;right:20px;z-index:2147483646;"
+        "display:flex;align-items:center;gap:10px;"
         "font-family:'Pretendard','Inter',-apple-system,sans-serif;}"
+        ".ada-prof-exit{display:inline-flex;align-items:center;background:rgba(150,170,235,.16);"
+        "color:#dbe3ff;border:1px solid rgba(150,170,235,.34);padding:8px 15px;border-radius:999px;"
+        "font-weight:700;font-size:.8rem;text-decoration:none;cursor:pointer;white-space:nowrap;}"
+        ".ada-prof-exit:hover{background:rgba(150,170,235,.26);}"
         ".ada-prof-av{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#2f6fed,#1f3e5c);"
         "color:#fff;font-weight:800;font-size:1.02rem;display:flex;align-items:center;justify-content:center;"
         "cursor:pointer;box-shadow:0 6px 18px rgba(31,62,92,.34);border:2px solid #fff;outline:none;user-select:none;}"
@@ -3289,6 +3305,7 @@ def _profile_widget() -> str:
         ".ada-prof-lo:hover{background:#ffe3e3;}"
         "</style>"
         "<div class='ada-prof'>"
+        f"{_exit_btn}"
         f"<div class='ada-prof-av' tabindex='0' title='내 계정'>{ini}</div>"
         "<div class='ada-prof-menu'>"
         "<div class='ada-prof-hd'>"

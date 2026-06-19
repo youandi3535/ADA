@@ -21,14 +21,15 @@ a{color:inherit;}
 .tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 .btn{background:rgba(150,170,235,.13);color:#dbe3ff;border:1px solid rgba(150,170,235,.3);padding:8px 15px;border-radius:999px;text-decoration:none;font-weight:700;font-size:.8rem;cursor:pointer;}
 .btn:hover{background:rgba(150,170,235,.22);}
+.btn-sm{padding:5px 12px;font-size:.74rem;}
 .legend{display:flex;gap:13px;font-size:.76rem;color:var(--mut);align-items:center;}
 .legend span{display:inline-flex;align-items:center;gap:5px;}
 .dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:0 0 auto;}
 .dot.ok{background:var(--ok);box-shadow:0 0 7px rgba(47,207,143,.7);}
 .dot.warn{background:var(--warn);box-shadow:0 0 7px rgba(244,183,64,.7);}
 .dot.down{background:var(--down);box-shadow:0 0 7px rgba(255,107,107,.75);}
-.sect-t{font-size:1.22rem;font-weight:800;color:var(--txt);letter-spacing:-.01em;margin:46px 2px 5px;display:flex;align-items:center;gap:11px;}
-.sect-t:first-of-type{margin-top:8px;}
+.sect-t{font-size:1.22rem;font-weight:800;color:var(--txt);letter-spacing:-.01em;margin:52px 2px 6px;padding-top:26px;border-top:1px solid var(--line2);display:flex;align-items:center;gap:11px;}
+.sect-t:first-of-type{margin-top:32px;}
 .sect-t::before{content:"";width:5px;height:24px;background:linear-gradient(180deg,var(--blue),var(--vio));border-radius:3px;flex:0 0 auto;}
 .sect-d{font-size:.84rem;color:var(--mut);line-height:1.5;margin:0 2px 16px 18px;max-width:900px;}
 .item-guide{margin-top:13px;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:2px 18px 6px;}
@@ -138,14 +139,11 @@ a{color:inherit;}
       <span class="live"><i></i>실시간 감시</span>
       <span id="clock" class="muted">—</span>
       <span id="refstat" class="muted">갱신 대기…</span>
+      <button type="button" class="btn btn-sm" id="refbtn" style="margin-left:6px;">↻ 즉시 갱신</button>
     </div>
   </div>
   <div style="text-align:right;padding-right:64px;">
-    <div class="tools">
-      <button type="button" class="btn" id="refbtn">↻ 즉시 갱신</button>
-      <button type="button" class="btn" id="exitbtn">✕ 나가기</button>
-    </div>
-    <div class="legend" style="margin-top:9px;justify-content:flex-end;">
+    <div class="legend" style="justify-content:flex-end;">
       <span><i class="dot ok"></i>정상</span><span><i class="dot warn"></i>경고</span><span><i class="dot down"></i>위험</span>
     </div>
   </div>
@@ -210,20 +208,8 @@ function schedule(){countdown=REFRESH_MS/1000;}
 
 document.getElementById('refbtn').onclick=function(){load();};
 
-// 나가기 — 샌드박스 iframe 은 <a target="_top"> 가 막히므로 부모 location 으로 직접 이동.
-// 토큰·역할을 쿼리로 실어 보내 라우팅이 세션 재주입(로그인 유지) → admin 없는 랜딩(시작화면) 표시.
-document.getElementById('exitbtn').onclick=function(){
-  // 샌드박스 iframe 은 window.parent.location.replace(새URL) 가 차단된다(allow-top-navigation 없음).
-  // → flow HTML 과 동일하게 replaceState(주소만 변경, 허용) + reload(허용) 로 토큰 실어 랜딩 복귀.
-  //   절대 iframe 자기 location 으로 이동하지 않는다(그게 빈 흰 화면의 원인이었음).
-  try{
-    var base=window.parent.location.pathname;
-    window.parent.history.replaceState({}, '', base+'?token='+encodeURIComponent(TOKEN)+'&role=admin');
-    window.parent.location.reload();
-    return;
-  }catch(e){}
-  try{ window.parent.location.reload(); }catch(e){}
-};
+// 나가기 버튼은 부모(Streamlit) 공통 프로필 메뉴 옆(_profile_widget)으로 이동했다(HJ 2026-06-19).
+//   콘솔 iframe 밖 부모 레벨이라 <a href="?token=...&role=admin"> 로 로그인 유지한 채 랜딩 복귀.
 
 // 운영 콘솔 iframe 을 콘텐츠 높이에 맞춰 늘려 내부 스크롤바를 제거(브라우저 페이지 스크롤로 대체).
 // frameElement 접근 실패 시 아무것도 안 하므로 scrolling=True 폴백 — 콘텐츠는 항상 보임(깨지지 않음).
