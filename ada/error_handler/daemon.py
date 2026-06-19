@@ -42,6 +42,8 @@ async def scan_new_failures_async(session: Any) -> dict[str, Any]:
                 and_(
                     or_(FailureLog.auto_handled_by_kb.is_(False), FailureLog.auto_handled_by_kb.is_(None)),
                     FailureLog.error_kb_id.is_(None),
+                    # ★ 이미 분류·시도(Tier 0~3)한 row 는 제외 → 같은 오류 무한 재처리 방지 (HJ 2026-06-19)
+                    FailureLog.classified_as.is_(None),
                 )
             )
             .order_by(FailureLog.created_at.asc())
@@ -70,6 +72,11 @@ async def scan_new_failures_async(session: Any) -> dict[str, Any]:
         except Exception as e:
             result["errors"].append({"failure_log_id": str(row.id), "error": str(e)})
             log.warning("daemon_handle_failed", id=str(row.id), error=str(e))
+        finally:
+            # ★ 안전망(HJ 2026-06-19): handle 이 분류값을 못 세웠어도(예외 등) 시도한 row 는 마킹.
+            #   → 다음 폴에서 제외되어 무한 재처리가 절대 안 생기게 한다.
+            if not row.classified_as:
+                row.classified_as = "attempted"
 
     if rows:
         try:
