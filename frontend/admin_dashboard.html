@@ -51,6 +51,8 @@ a{color:inherit;}
 
 /* 서비스 신호등 */
 .svc-row{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;}
+.svc-legend{display:flex;align-items:center;justify-content:center;gap:18px;font-size:.86rem;color:var(--mut);}
+.svc-legend span{display:inline-flex;align-items:center;gap:7px;}
 .svc{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:14px 15px;position:relative;overflow:hidden;}
 .svc::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;}
 .svc.ok::before{background:var(--ok);} .svc.warn::before{background:var(--warn);} .svc.down::before{background:var(--down);}
@@ -149,11 +151,6 @@ a{color:inherit;}
       <span id="clock" class="muted">—</span>
       <span id="refstat" class="muted">갱신 대기…</span>
       <button type="button" class="btn btn-sm" id="refbtn" style="margin-left:6px;">↻ 즉시 갱신</button>
-    </div>
-  </div>
-  <div style="text-align:right;padding-right:64px;">
-    <div class="legend" style="justify-content:flex-end;">
-      <span><i class="dot ok"></i>정상</span><span><i class="dot warn"></i>경고</span><span><i class="dot down"></i>위험</span>
     </div>
   </div>
 </div>
@@ -269,6 +266,9 @@ function render(d){
       +'<div class="mt">'+esc(s.metric)+'</div>'
       +'<div class="dt">'+esc(s.detail||'')+'</div></div>';
   });
+  // 정상/경고/위험 범례 — 5개 카드 뒤 6번째 그리드 셀(2열에서 로컬 백업 서버 옆 빈 칸)에 배치.
+  h+='<div class="svc-legend"><span><i class="dot ok"></i>정상</span>'
+    +'<span><i class="dot warn"></i>경고</span><span><i class="dot down"></i>위험</span></div>';
   h+='</div>';
   // 항목별 역할 + 저장 경로 (정적 설명 — 어디에 어떤 방식으로 저장되는지 한눈에)
   h+='<div class="item-guide"><div class="ig-hd">📂 항목별 역할 · 저장 경로</div>'
@@ -276,7 +276,7 @@ function render(d){
     +igRow('📦 MinIO','업로드 원본 파일 · 산출물(PPT/PDF/HTML 등) · 모델 아티팩트(영구).','파일 업로드 → <b>FastAPI(/upload)</b> → <b>MinIO</b>(autoai-artifacts 버킷, VPS) 객체 저장 · 산출물은 워커가 적재')
     +igRow('⚡ Redis','Celery 작업 큐 · 진행상태 pub/sub · 임시 캐시(휘발성).','API 가 작업 enqueue → <b>Redis</b>(ada-redis) → 워커가 소비 · 진행률 publish (영구 저장 아님)')
     +igRow('📊 MLflow','모델 학습 run · 메트릭 · 파라미터 추적.','워커 학습 → <b>MLflow</b>(mlflow:5000) 기록 · 모델 아티팩트는 MinIO 에 저장')
-    +igRow('💽 로컬 백업 서버','PostgreSQL 덤프의 원격 Pull 백업(보존 14일).','학원 Linux cron(03·12·18시) → SSH <b>pg_dump</b> → <b>/srv/backup/ada</b> 저장 · backup_catalog 기록')
+    +igRow('💽 로컬 백업 서버','PostgreSQL 덤프의 원격 Pull 백업(영구 저장).','학원 Linux cron(03·12·18시) → SSH <b>pg_dump</b> → <b>/srv/backup/ada</b> 저장 · backup_catalog 기록')
     +'</div>';
 
   /* ── 2. (구 '핵심 지표' 섹션은 스토리지 연결 상태 헤드라인으로 통합 — 중복 제거) ── */
@@ -398,7 +398,7 @@ function render(d){
     +'<div class="bk-grid">'
     +'<div class="it"><div class="l">스케줄</div><div class="v">'+esc(bk.schedule||'—')+'</div></div>'
     +'<div class="it"><div class="l">방식</div><div class="v">'+esc(bk.method||'—')+'</div></div>'
-    +'<div class="it"><div class="l">보존 기간</div><div class="v">'+esc(bk.retention_days||'—')+'일</div></div>'
+    +'<div class="it"><div class="l">보존 정책</div><div class="v">'+esc(bk.retention||'영구 저장')+'</div></div>'
     +'<div class="it"><div class="l">상태</div><div class="v">'+dot(bk.status)+' '+stWord(bk.status)+'</div></div>'
     +'</div>';
   h+='<div class="stores" style="margin-bottom:10px;">'+(bk.paths||[]).map(function(p){return '<span class="sb">'+esc(p)+'</span>';}).join('')+'</div>';
