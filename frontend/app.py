@@ -578,7 +578,24 @@ function _modalContentReady(){
 //   • 타자기에 새 콘텐츠가 추가되어 다시 미완료 상태가 되면 hold 카운트 리셋 → 다시 완료 후 3초.
 let _twAllDoneAt=null;
 const POST_TYPING_HOLD_MS=3000;
+// HJ 2026-06-19 — 모달 실시간 글 '조기 전환' fix (전 단계 공통).
+//   #modal-insight 가 현재 gateData 기준 '최종 콘텐츠'를 이미 렌더했는지 검사한다. 아직이면
+//   (=render [A]블록이 곧 새 글로 교체 예정) 그 새 글을 타자기로 다 칠 때까지 전진을 보류해야 한다.
+//   증상: poll 의 전진 체크(_modalShouldBeActive, app.py:1385)가 render 의 콘텐츠 갱신([A])보다
+//   먼저 돌아, 직전 단계 글이 '완료'라고 조기 전진(3→4 등 모달 글 미완인데 다음 단계로 점프)하던 race.
+//   self-resolving(stuck 없음): 콘텐츠 stale → _typingHoldComplete()=false → _modalShouldBeActive()=true
+//   → [A]가 _mi._last 를 최신으로 교체(modalDismissed 여도 백그라운드 실행) → 다음 평가에서 current=true.
+function _modalInsightCurrent(){
+  var _mi=document.getElementById('modal-insight');
+  if(!_mi) return true;                                   // 모달 DOM 없음 → 비교 불가, 차단 안 함
+  var _miStale=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
+  var _t=modalInsightArea(_miStale?{}:gateData)||'';      // [A]블록과 동일한 데이터 선택으로 목표 콘텐츠 산출
+  if(!_t) return true;                                    // 표시할 콘텐츠 없음(데이터 미도착·모달 5초 전) → _twAllDone 가 처리
+  return _mi._last===_t;                                  // 화면에 찍힌 글 === 최신 목표 글 (교체 대기 없음)
+}
 function _typingHoldComplete(){
+  // 다음 단계 글이 아직 #modal-insight 에 안 찍혔으면(곧 교체 예정) 전진 금지 — 새 글 타이핑 완료까지 대기.
+  if(!_modalInsightCurrent()){ if(_twAllDoneAt!=null) _twAllDoneAt=null; return false; }
   if(!_twAllDone()){
     if(_twAllDoneAt!=null) _twAllDoneAt=null;
     return false;
