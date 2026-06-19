@@ -24,4 +24,22 @@ LOCAL_DATA_DIR=/srv/backup/ada/datasets
 VPS_DATA_DIR=/opt/ada/data
 
 # 보존 정책 — 0 = 영구 보관(자동 삭제 안 함, 기본). N 일만 보존하려면 N 지정.
+# (MinIO 미러는 보존정책과 무관하게 항상 영구 보관 = append-only)
 BACKUP_RETENTION_DAYS=0
+
+# =============================================================
+# MinIO 오브젝트 스토리지 증분 미러 (업로드 데이터셋·산출물 PPT/PDF·모델 백업)
+# -------------------------------------------------------------
+# 전제: 로컬 서버에 mc 설치
+#   curl -sSLo /usr/local/bin/mc https://dl.min.io/client/mc/release/linux-amd64/mc
+#   sudo chmod +x /usr/local/bin/mc
+# 아래 키 3개는 VPS .env 의 MINIO_* 값과 '동일하게' 입력한다.
+# =============================================================
+MINIO_BACKUP_ENABLED=1                  # 0 = MinIO 미러 건너뜀(DB만 백업)
+MINIO_ACCESS_KEY=<VPS .env 의 MINIO_ACCESS_KEY 와 동일>
+MINIO_SECRET_KEY=<VPS .env 의 MINIO_SECRET_KEY 와 동일>
+MINIO_BUCKET=autoai-artifacts           # VPS .env 의 MINIO_BUCKET 과 동일
+BACKUP_DIR_MINIO=/srv/backup/ada/minio  # 로컬 미러 저장 경로
+MINIO_API_PORT=9100                     # VPS 호스트 S3 API 포트(compose: 127.0.0.1:9100:9000)
+MINIO_TUNNEL_PORT=19100                 # 로컬에서 열 SSH 터널 포트(다른 서비스와 겹치면 변경)
+MC_BIN=mc                               # mc 실행 경로(PATH 에 없으면 절대경로 지정)
