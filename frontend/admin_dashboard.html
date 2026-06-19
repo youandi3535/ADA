@@ -29,9 +29,18 @@ a{color:inherit;}
 .dot.warn{background:var(--warn);box-shadow:0 0 7px rgba(244,183,64,.7);}
 .dot.down{background:var(--down);box-shadow:0 0 7px rgba(255,107,107,.75);}
 .sect-t{font-size:1.22rem;font-weight:800;color:var(--txt);letter-spacing:-.01em;margin:52px 2px 6px;padding-top:26px;border-top:1px solid var(--line2);display:flex;align-items:center;gap:11px;}
-.sect-t:first-of-type{margin-top:32px;}
+.sect-t:first-of-type{margin-top:32px;border-top:none;padding-top:0;}  /* 첫 섹션은 헤더 구분선 바로 아래라 중복되는 얇은 선 제거 */
 .sect-t::before{content:"";width:5px;height:24px;background:linear-gradient(180deg,var(--blue),var(--vio));border-radius:3px;flex:0 0 auto;}
 .sect-d{font-size:.84rem;color:var(--mut);line-height:1.5;margin:0 2px 16px 18px;max-width:900px;}
+/* 자가치유·자기학습 활용 */
+.sh-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+.sh-card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line2);border-radius:15px;padding:15px 18px;}
+.sh-t{font-size:.94rem;font-weight:800;color:var(--txt);margin-bottom:12px;}
+.sh-row{display:flex;gap:28px;flex-wrap:wrap;}
+.sh-c .sh-n{font-size:1.8rem;font-weight:800;letter-spacing:-.02em;line-height:1;}
+.sh-c .sh-l{font-size:.7rem;color:var(--mut2);margin-top:5px;}
+.sh-sub{font-size:.72rem;color:var(--mut);margin-top:13px;line-height:1.45;border-top:1px solid var(--line);padding-top:10px;}
+@media(max-width:1100px){.sh-grid{grid-template-columns:1fr;}}
 .item-guide{margin-top:13px;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:2px 18px 6px;}
 .item-guide .ig-hd{font-size:.8rem;font-weight:800;color:var(--mut);padding:14px 0 4px;letter-spacing:.02em;}
 .ig-row{display:grid;grid-template-columns:170px 1fr;gap:5px 16px;padding:12px 0;border-top:1px solid var(--line);}
@@ -301,6 +310,41 @@ function render(d){
     +trend('📦 산출물','outputs',tr24.outputs,'24h')
     +'</div>';
 
+  /* ── 3-b. 자가치유 · 자기학습 활용 현황 (저장→학습→자동수정이 실제로 작동한 수치/이벤트) ── */
+  var sh=d.self_healing||{}, she=sh.errors||{}, shl=sh.learning||{};
+  h+='<div class="sect-t">🔧 자가치유 · 자기학습 활용 현황</div>'
+    +'<div class="sect-d">저장·학습된 것이 <b>실제로 언제·어떻게 활용·자동수정에 쓰였는지</b> 보여줍니다. '
+    +'오류가 잡히면 KB 매칭(Tier 1·1.5) → Ollama 패치(Tier 2) → Claude(Tier 3) 순으로 자동 수정되고, '
+    +'샌드박스(ruff+pytest) 통과한 수정은 다시 학습되어 다음 동일 오류에 자동 적용됩니다.</div>';
+  h+='<div class="sh-grid">'
+    +shCard('🛠️ 오류 자동수정','#2fcf8f',
+       [['누적 자동수정', nf(she.auto_fixed_total||0)], ['실시간 (24h)', '+'+nf(she.auto_fixed_24h||0)]],
+       '자동 캐치 '+nf(she.caught_total||0)+'건 · KB 자동해결 '+nf(she.kb_resolved_total||0)+'건 · 롤백 '+nf(she.rolled_back||0)+'건')
+    +shCard('🧠 자기학습 활용','#9a7be8',
+       [['누적 재사용', nf(shl.reuse_total||0)], ['실시간 (24h)', '+'+nf(shl.reuse_24h||0)]],
+       '학습 자산 '+nf(shl.assets||0)+'건 · 최근 24h 활성 '+nf(shl.active_24h||0)+'건 (매칭·재사용으로 갱신)')
+    +'</div>';
+  var rec=sh.recent||[];
+  h+='<div class="panel" style="margin-top:12px;overflow-x:auto;">'
+    +'<div style="font-size:.8rem;font-weight:800;color:var(--mut);margin-bottom:9px;">🔎 최근 자동수정 이벤트 — 언제 · 어떤 단계/오류 · 누가/어떻게(commit) · 결과</div>';
+  if(!rec.length){
+    h+='<div class="muted" style="font-size:.78rem">아직 자동수정 이벤트가 없습니다. (오류가 잡혀 자동수정이 적용되면 여기에 기록됩니다.)</div>';
+  }else{
+    h+='<table class="inv"><thead><tr><th>시각</th><th>단계 / 오류</th><th>처리(누가·commit)</th><th>결과</th><th class="num">소요</th></tr></thead><tbody>';
+    rec.forEach(function(e){
+      var stcls=e.status==='success'?'ok':(e.status==='rolled_back'?'warn':'down');
+      var stko=e.status==='success'?'자동수정 적용':(e.status==='rolled_back'?'롤백':(e.status||'실패'));
+      h+='<tr><td>'+esc(ago(e.at))+'</td>'
+        +'<td><span class="pill">'+esc(e.stage||'-')+(e.error_type?' · '+esc(e.error_type):'')+'</span>'
+        +(e.signature?'<div class="td-desc">'+esc(e.signature)+'</div>':'')+'</td>'
+        +'<td>'+esc(e.by||'-')+(e.sha?' <span class="muted">('+esc(e.sha)+')</span>':'')+'</td>'
+        +'<td>'+dot(stcls)+' '+esc(stko)+'</td>'
+        +'<td class="num">'+(e.ms?Math.round(e.ms/1000)+'s':'-')+'</td></tr>';
+    });
+    h+='</tbody></table>';
+  }
+  h+='</div>';
+
   /* ── 4. 카테고리별 분류 ── */
   h+='<div class="sect-t">🗂️ 데이터 카테고리별 저장 현황</div>'
     +'<div class="sect-d">수집·생성되는 데이터를 카테고리(분석작업 · KB · 모델 · 보안 등)로 묶어, 레코드 수 · 용량 · 최근 24시간 신규를 보여줍니다.</div>'
@@ -371,6 +415,12 @@ function render(d){
   fitHeight(); setTimeout(fitHeight,80);
 }
 
+function shCard(title,color,pairs,sub){
+  var cells=pairs.map(function(p){
+    return '<div class="sh-c"><div class="sh-n" style="color:'+color+'">'+p[1]+'</div><div class="sh-l">'+p[0]+'</div></div>';
+  }).join('');
+  return '<div class="sh-card"><div class="sh-t">'+title+'</div><div class="sh-row">'+cells+'</div><div class="sh-sub">'+sub+'</div></div>';
+}
 function igRow(nm,de,pa){
   return '<div class="ig-row"><div class="ig-nm">'+nm+'</div><div class="ig-de">'+de+'</div>'
     +'<div class="ig-pa"><b>↳ 저장경로 &nbsp;</b>'+pa+'</div></div>';

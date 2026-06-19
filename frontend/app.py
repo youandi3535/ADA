@@ -3289,10 +3289,11 @@ def _profile_widget() -> str:
         "color:#fff;font-weight:800;font-size:1.02rem;display:flex;align-items:center;justify-content:center;"
         "cursor:pointer;box-shadow:0 6px 18px rgba(31,62,92,.34);border:2px solid #fff;outline:none;user-select:none;}"
         ".ada-prof-av:hover{filter:brightness(1.07);}"
-        ".ada-prof::after{content:'';position:absolute;top:40px;right:0;width:46px;height:14px;}"  # hover 다리(틈 메움)
+        ".ada-prof-acct{position:relative;display:flex;align-items:center;}"  # 아바타+메뉴 그룹 = hover 트리거 범위(나가기 제외)
+        ".ada-prof-acct::after{content:'';position:absolute;top:40px;right:0;width:42px;height:14px;}"  # hover 다리(틈 메움)
         ".ada-prof-menu{display:none;position:absolute;right:0;top:50px;min-width:240px;background:#fff;"
         "border:1px solid #e3e9f2;border-radius:16px;box-shadow:0 18px 48px rgba(20,35,60,.24);padding:15px;}"
-        ".ada-prof:hover .ada-prof-menu,.ada-prof:focus-within .ada-prof-menu{display:block;}"
+        ".ada-prof-acct:hover .ada-prof-menu,.ada-prof-acct:focus-within .ada-prof-menu{display:block;}"
         ".ada-prof-hd{display:flex;align-items:center;gap:11px;padding-bottom:12px;border-bottom:1px solid #eef2f8;}"
         ".ada-prof-hd .av2{width:40px;height:40px;border-radius:50%;flex:0 0 auto;color:#fff;font-weight:800;"
         "background:linear-gradient(135deg,#2f6fed,#1f3e5c);display:flex;align-items:center;justify-content:center;}"
@@ -3306,6 +3307,7 @@ def _profile_widget() -> str:
         "</style>"
         "<div class='ada-prof'>"
         f"{_exit_btn}"
+        "<div class='ada-prof-acct'>"
         f"<div class='ada-prof-av' tabindex='0' title='내 계정'>{ini}</div>"
         "<div class='ada-prof-menu'>"
         "<div class='ada-prof-hd'>"
@@ -3314,6 +3316,7 @@ def _profile_widget() -> str:
         f"<span class='ada-prof-role'>{rl} 권한</span></div>"
         "</div>"
         "<a class='ada-prof-lo' href='?logout=1' target='_self'>⎋ &nbsp;로그아웃</a>"
+        "</div>"
         "</div>"
         "</div>"
     )
