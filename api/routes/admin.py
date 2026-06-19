@@ -1025,6 +1025,105 @@ async def storage_overview(
             f"{_fmt_bytes(r.size_bytes)} · {r.note or ''}",
         )
 
+    # ── 나머지 항목도 '실제 내용'을 채우는 빌더 (한글 라벨 + 가용 컬럼 최대 노출) ──
+    _SEC_EVENT = {
+        "login": "로그인",
+        "logout": "로그아웃",
+        "api": "API 호출",
+        "agent": "에이전트",
+        "kb": "KB 접근",
+        "output": "산출물",
+        "security": "보안",
+        "pii_anonymized": "PII 마스킹",
+    }
+    _ART_LABEL = {
+        "chart": "차트",
+        "shap": "SHAP",
+        "confusion_matrix": "혼동행렬",
+        "calibration": "캘리브레이션",
+        "data_card": "데이터카드",
+        "report_context": "리포트 컨텍스트",
+        "plotly": "Plotly 차트",
+    }
+    _GATE_STAGE = {
+        "G1": "1.데이터파악",
+        "G2": "2.분석방향",
+        "G3": "3.전처리·피처",
+        "G4": "4.모델학습",
+        "G5": "5.평가·인사이트",
+        "G6": "6.산출물",
+    }
+
+    def _build_job(r: Any) -> tuple:
+        intent = (getattr(r, "user_intent", None) or getattr(r, "user_question", None) or "").strip()
+        n_out = len(r.requested_outputs or [])
+        det = (f"주제: {_clip(intent, 55)} · " if intent else "") + (
+            f"타깃 {r.target_column or '-'} · 게이트 {r.current_gate or 'G1'} · 산출물 {n_out}종 · 재시도 {r.retry_count or 0}"
+        )
+        return (
+            r.updated_at or r.created_at,
+            "🚀",
+            "분석 작업",
+            "PostgreSQL · jobs",
+            f"{r.category or '?'} · {r.status or 'pending'}",
+            det,
+        )
+
+    def _build_agent(r: Any) -> tuple:
+        stg = _GATE_STAGE.get(r.gate or "", r.gate or "-")
+        det = f"{stg} · {r.duration_ms or 0}ms · 토큰 in{r.input_tokens or 0}/out{r.output_tokens or 0}" + (
+            f" · 오류 {_clip(r.error, 50)}" if r.error else ""
+        )
+        return (r.created_at, "⚙️", "에이전트 실행", "PostgreSQL · agent_runs", f"{r.agent_name} · {r.status}", det)
+
+    def _build_patch(r: Any) -> tuple:
+        sv = r.sandbox_validation if isinstance(r.sandbox_validation, dict) else {}
+        checks = [f"{k}={sv[k]}" for k in ("ruff", "pytest", "passed", "tests_passed") if k in sv]
+        val = (" · 검증 " + ", ".join(checks[:3])) if checks else ""
+        return (
+            r.applied_at,
+            "🔧",
+            "자동수정",
+            "PostgreSQL · patch_applications",
+            f"{r.applied_by or 'auto-fix-bot'} · {r.status or '?'}",
+            f"commit {(r.git_commit_sha or '-')[:8]} · {r.duration_ms or 0}ms{val}",
+        )
+
+    def _build_fail(r: Any) -> tuple:
+        sev = f"[{r.severity}] " if (r.severity and r.severity != "normal") else ""
+        return (
+            r.created_at,
+            "⚠️",
+            "오류 캐치",
+            "PostgreSQL · failure_logs",
+            f"{r.error_category or '미분류'} · {r.classified_as or '대기'}",
+            sev + (r.error_message or "(메시지 없음)"),
+        )
+
+    def _build_art(r: Any) -> tuple:
+        nm = r.minio_path.split("/")[-1] if r.minio_path else ""
+        return (
+            r.created_at,
+            "🗂️",
+            "아티팩트 저장",
+            "MinIO · " + _tail(r.minio_path),
+            _ART_LABEL.get(r.artifact_type, r.artifact_type) or "아티팩트",
+            nm or _tail(r.minio_path, 80),
+        )
+
+    def _build_sec(r: Any) -> tuple:
+        ev = _SEC_EVENT.get(r.event_type or "", r.event_type or "?")
+        res = f" · {_clip(r.resource, 30)}" if r.resource else ""
+        ip = f" · IP {r.ip_address}" if r.ip_address else ""
+        return (
+            r.created_at,
+            "🔐",
+            "보안 감사",
+            "PostgreSQL · security_audit_log",
+            f"{ev} · {r.action or '-'}",
+            f"{r.actor_role or '-'} · {r.result or '-'}{res}{ip}",
+        )
+
     async def _src(model: Any, order_col: Any, build: Any) -> None:
         # 소스 1개 — 쿼리/행 변환 실패가 전체 피드를 비우지 않도록 개별 격리.
         if model is None:
@@ -1042,31 +1141,8 @@ async def storage_overview(
                 continue
 
     # ── 분석 활동 (가장 빈번): 작업 진행 + 에이전트 실행 ─────────────────────
-    await _src(
-        _J,
-        _J.updated_at if _J is not None else None,
-        lambda r: (
-            r.updated_at or r.created_at,
-            "🚀",
-            "분석 작업",
-            "PostgreSQL · jobs",
-            f"{r.category or '?'} · {r.status or 'pending'}",
-            f"게이트 {r.current_gate or 'G1'} · 타깃 {r.target_column or '-'} · 재시도 {r.retry_count or 0}",
-        ),
-    )
-    await _src(
-        _AR,
-        _AR.created_at if _AR is not None else None,
-        lambda r: (
-            r.created_at,
-            "⚙️",
-            "에이전트 실행",
-            "PostgreSQL · agent_runs",
-            f"{r.agent_name} · {r.status}",
-            f"게이트 {r.gate or '-'} · {r.duration_ms or 0}ms · 토큰 in{r.input_tokens or 0}/out{r.output_tokens or 0}"
-            + (f" · 오류 {_clip(r.error, 50)}" if r.error else ""),
-        ),
-    )
+    await _src(_J, _J.updated_at if _J is not None else None, _build_job)
+    await _src(_AR, _AR.created_at if _AR is not None else None, _build_agent)
     # ── Q&A / 자동수정 / 오류 / KB (이벤트성) ───────────────────────────────
     await _src(
         _CL,
@@ -1080,30 +1156,8 @@ async def storage_overview(
             f"Q: {_clip(r.question, 70)}  →  A: {_clip(r.answer, 90)}",
         ),
     )
-    await _src(
-        _PA,
-        _PA.applied_at if _PA is not None else None,
-        lambda r: (
-            r.applied_at,
-            "🔧",
-            "자동수정",
-            "PostgreSQL · patch_applications",
-            f"{r.applied_by or 'auto-fix-bot'} · {r.status or '?'}",
-            f"commit {(r.git_commit_sha or '-')[:8]} · {r.duration_ms or 0}ms",
-        ),
-    )
-    await _src(
-        _FL,
-        _FL.created_at if _FL is not None else None,
-        lambda r: (
-            r.created_at,
-            "⚠️",
-            "오류 캐치",
-            "PostgreSQL · failure_logs",
-            f"{r.error_category or '미분류'} · {r.classified_as or '대기'}",
-            r.error_message or "",
-        ),
-    )
+    await _src(_PA, _PA.applied_at if _PA is not None else None, _build_patch)
+    await _src(_FL, _FL.created_at if _FL is not None else None, _build_fail)
     await _src(_KB, _KB.created_at if _KB is not None else None, _build_kb)
     await _src(
         _EK,
@@ -1142,18 +1196,7 @@ async def storage_overview(
             f"mlflow {(r.mlflow_run_id or '-')[:8]} · sha {(r.model_sha256 or '-')[:8]}",
         ),
     )
-    await _src(
-        _ART,
-        _ART.created_at if _ART is not None else None,
-        lambda r: (
-            r.created_at,
-            "🗂️",
-            "아티팩트 저장",
-            "MinIO · " + _tail(r.minio_path),
-            f"{r.artifact_type}",
-            _tail(r.minio_path, 80),
-        ),
-    )
+    await _src(_ART, _ART.created_at if _ART is not None else None, _build_art)
     await _src(
         _EXP,
         _EXP.created_at if _EXP is not None else None,
@@ -1167,18 +1210,7 @@ async def storage_overview(
         ),
     )
     await _src(_BC, _BC.created_at if _BC is not None else None, _build_bk)
-    await _src(
-        _SA,
-        _SA.created_at if _SA is not None else None,
-        lambda r: (
-            r.created_at,
-            "🔐",
-            "보안 감사",
-            "PostgreSQL · security_audit_log",
-            f"{r.event_type or '?'} · {r.action or '-'}",
-            f"{r.actor_role or '-'} · {r.result or '-'}",
-        ),
-    )
+    await _src(_SA, _SA.created_at if _SA is not None else None, _build_sec)
 
     # 최신순 정렬 후 상위 40개 (프론트는 10줄 표시 + 자체 스크롤로 나머지 열람)
     recent_activity.sort(key=lambda x: x["ts"], reverse=True)
