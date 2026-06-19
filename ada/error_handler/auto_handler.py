@@ -389,6 +389,10 @@ class AutoErrorHandler:
             reason=reason,
             fingerprint=fp["hash"][:16],
         )
+        # ★ 무한 재처리 방지(HJ 2026-06-19): 분류 즉시 classified_as 를 세운다.
+        #   데몬 쿼리가 classified_as IS NULL 인 row 만 잡으므로, 한 번 시도(Tier 0~3)한 오류는
+        #   다음 폴에서 다시 안 잡힌다. (기존엔 마킹이 없어 같은 오류를 5초마다 영원히 재시도했다.)
+        log_row.classified_as = cls.value
 
         if should_skip_llm(cls):
             # LLM 호출 없이 즉시 분류 결과 반환.

@@ -28,7 +28,7 @@ POSTGRES_USER="${POSTGRES_USER:-autoai}"
 POSTGRES_DB="${POSTGRES_DB:-autoai}"
 CONTAINER="${CONTAINER:-ada-postgres}"
 BACKUP_DIR_DB="${BACKUP_DIR_DB:-/srv/backup/ada/postgres}"
-BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-0}"   # 0 = 영구 보관(자동 삭제 안 함). N 일만 보존하려면 N 지정.
 
 [[ -z "$VPS_HOST" ]] && { echo "[ERROR] VPS_HOST 가 설정되지 않았습니다. /etc/ada-backup.conf 확인"; exit 1; }
 
@@ -73,7 +73,7 @@ echo "[$(date -Is)] saved: ${LOCAL_PATH} (${SIZE})"
 #      (set -e 가 if 조건절에서는 종료를 유발하지 않음).
 SIZE_BYTES=$(stat -c%s "${LOCAL_PATH}" 2>/dev/null || echo 0)
 SHA=$(sha256sum "${LOCAL_PATH}" | cut -d' ' -f1)
-NOTE="pull pg_dump.gz · 보존 ${BACKUP_RETENTION_DAYS}일"
+if [ "${BACKUP_RETENTION_DAYS}" -gt 0 ] 2>/dev/null; then NOTE="pull pg_dump.gz · 보존 ${BACKUP_RETENTION_DAYS}일"; else NOTE="pull pg_dump.gz · 영구 저장"; fi
 # client_encoding 을 UTF8 로 고정 — VPS 로케일이 SQL_ASCII 여도 한글 note 가 깨지거나 INSERT 가
 # 실패하지 않도록 방어한다(이 한 줄이 없으면 환경에 따라 INSERT 가 조용히 실패 → 카탈로그 0행).
 CAT_SQL="SET client_encoding TO 'UTF8'; INSERT INTO backup_catalog (id, backup_type, minio_path, sha256, size_bytes, status, note, created_at) VALUES (gen_random_uuid(), 'db', '${LOCAL_PATH}', '${SHA}', ${SIZE_BYTES}, 'ok', '${NOTE}', now());"
@@ -91,9 +91,11 @@ else
     echo "[$(date -Is)] WARN: backup_catalog 기록 실패 — 백업 파일은 정상 저장됨 (위 psql 오류 메시지 확인)"
 fi
 
-# 2) 오래된 백업 로컬에서 직접 정리
-find "${BACKUP_DIR_DB}" -type f -name "ada_*.sql.gz" \
-     -mtime "+${BACKUP_RETENTION_DAYS}" -delete
-
-echo "[$(date -Is)] cleanup done (retention: ${BACKUP_RETENTION_DAYS}days)"
+# 2) 보존정책 — 기본(0)은 영구 보관(자동 삭제 안 함). BACKUP_RETENTION_DAYS>0 일 때만 N일 지난 백업 정리.
+if [ "${BACKUP_RETENTION_DAYS}" -gt 0 ] 2>/dev/null; then
+    find "${BACKUP_DIR_DB}" -type f -name "ada_*.sql.gz" -mtime "+${BACKUP_RETENTION_DAYS}" -delete
+    echo "[$(date -Is)] cleanup done (retention: ${BACKUP_RETENTION_DAYS}days)"
+else
+    echo "[$(date -Is)] 영구 보관 — 자동 삭제 없음 (BACKUP_RETENTION_DAYS=0)"
+fi
 echo "[$(date -Is)] END pull_backup OK"

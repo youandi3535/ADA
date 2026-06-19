@@ -21,16 +21,26 @@ a{color:inherit;}
 .tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 .btn{background:rgba(150,170,235,.13);color:#dbe3ff;border:1px solid rgba(150,170,235,.3);padding:8px 15px;border-radius:999px;text-decoration:none;font-weight:700;font-size:.8rem;cursor:pointer;}
 .btn:hover{background:rgba(150,170,235,.22);}
+.btn-sm{padding:5px 12px;font-size:.74rem;}
 .legend{display:flex;gap:13px;font-size:.76rem;color:var(--mut);align-items:center;}
 .legend span{display:inline-flex;align-items:center;gap:5px;}
 .dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:0 0 auto;}
 .dot.ok{background:var(--ok);box-shadow:0 0 7px rgba(47,207,143,.7);}
 .dot.warn{background:var(--warn);box-shadow:0 0 7px rgba(244,183,64,.7);}
 .dot.down{background:var(--down);box-shadow:0 0 7px rgba(255,107,107,.75);}
-.sect-t{font-size:1.22rem;font-weight:800;color:var(--txt);letter-spacing:-.01em;margin:46px 2px 5px;display:flex;align-items:center;gap:11px;}
-.sect-t:first-of-type{margin-top:8px;}
+.sect-t{font-size:1.22rem;font-weight:800;color:var(--txt);letter-spacing:-.01em;margin:52px 2px 6px;padding-top:26px;border-top:1px solid var(--line2);display:flex;align-items:center;gap:11px;}
+.sect-t:first-of-type{margin-top:32px;border-top:none;padding-top:0;}  /* 첫 섹션은 헤더 구분선 바로 아래라 중복되는 얇은 선 제거 */
 .sect-t::before{content:"";width:5px;height:24px;background:linear-gradient(180deg,var(--blue),var(--vio));border-radius:3px;flex:0 0 auto;}
 .sect-d{font-size:.84rem;color:var(--mut);line-height:1.5;margin:0 2px 16px 18px;max-width:900px;}
+/* 자가치유·자기학습 활용 */
+.sh-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+.sh-card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line2);border-radius:15px;padding:15px 18px;}
+.sh-t{font-size:.94rem;font-weight:800;color:var(--txt);margin-bottom:12px;}
+.sh-row{display:flex;gap:28px;flex-wrap:wrap;}
+.sh-c .sh-n{font-size:1.8rem;font-weight:800;letter-spacing:-.02em;line-height:1;}
+.sh-c .sh-l{font-size:.7rem;color:var(--mut2);margin-top:5px;}
+.sh-sub{font-size:.72rem;color:var(--mut);margin-top:13px;line-height:1.45;border-top:1px solid var(--line);padding-top:10px;}
+@media(max-width:1100px){.sh-grid{grid-template-columns:1fr;}}
 .item-guide{margin-top:13px;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:2px 18px 6px;}
 .item-guide .ig-hd{font-size:.8rem;font-weight:800;color:var(--mut);padding:14px 0 4px;letter-spacing:.02em;}
 .ig-row{display:grid;grid-template-columns:170px 1fr;gap:5px 16px;padding:12px 0;border-top:1px solid var(--line);}
@@ -41,6 +51,8 @@ a{color:inherit;}
 
 /* 서비스 신호등 */
 .svc-row{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;}
+.svc-legend{display:flex;align-items:center;justify-content:center;gap:18px;font-size:.86rem;color:var(--mut);}
+.svc-legend span{display:inline-flex;align-items:center;gap:7px;}
 .svc{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:14px 15px;position:relative;overflow:hidden;}
 .svc::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;}
 .svc.ok::before{background:var(--ok);} .svc.warn::before{background:var(--warn);} .svc.down::before{background:var(--down);}
@@ -138,15 +150,7 @@ a{color:inherit;}
       <span class="live"><i></i>실시간 감시</span>
       <span id="clock" class="muted">—</span>
       <span id="refstat" class="muted">갱신 대기…</span>
-    </div>
-  </div>
-  <div style="text-align:right;padding-right:64px;">
-    <div class="tools">
-      <button type="button" class="btn" id="refbtn">↻ 즉시 갱신</button>
-      <button type="button" class="btn" id="exitbtn">✕ 나가기</button>
-    </div>
-    <div class="legend" style="margin-top:9px;justify-content:flex-end;">
-      <span><i class="dot ok"></i>정상</span><span><i class="dot warn"></i>경고</span><span><i class="dot down"></i>위험</span>
+      <button type="button" class="btn btn-sm" id="refbtn" style="margin-left:6px;">↻ 즉시 갱신</button>
     </div>
   </div>
 </div>
@@ -210,20 +214,8 @@ function schedule(){countdown=REFRESH_MS/1000;}
 
 document.getElementById('refbtn').onclick=function(){load();};
 
-// 나가기 — 샌드박스 iframe 은 <a target="_top"> 가 막히므로 부모 location 으로 직접 이동.
-// 토큰·역할을 쿼리로 실어 보내 라우팅이 세션 재주입(로그인 유지) → admin 없는 랜딩(시작화면) 표시.
-document.getElementById('exitbtn').onclick=function(){
-  // 샌드박스 iframe 은 window.parent.location.replace(새URL) 가 차단된다(allow-top-navigation 없음).
-  // → flow HTML 과 동일하게 replaceState(주소만 변경, 허용) + reload(허용) 로 토큰 실어 랜딩 복귀.
-  //   절대 iframe 자기 location 으로 이동하지 않는다(그게 빈 흰 화면의 원인이었음).
-  try{
-    var base=window.parent.location.pathname;
-    window.parent.history.replaceState({}, '', base+'?token='+encodeURIComponent(TOKEN)+'&role=admin');
-    window.parent.location.reload();
-    return;
-  }catch(e){}
-  try{ window.parent.location.reload(); }catch(e){}
-};
+// 나가기 버튼은 부모(Streamlit) 공통 프로필 메뉴 옆(_profile_widget)으로 이동했다(HJ 2026-06-19).
+//   콘솔 iframe 밖 부모 레벨이라 <a href="?token=...&role=admin"> 로 로그인 유지한 채 랜딩 복귀.
 
 // 운영 콘솔 iframe 을 콘텐츠 높이에 맞춰 늘려 내부 스크롤바를 제거(브라우저 페이지 스크롤로 대체).
 // frameElement 접근 실패 시 아무것도 안 하므로 scrolling=True 폴백 — 콘텐츠는 항상 보임(깨지지 않음).
@@ -274,6 +266,9 @@ function render(d){
       +'<div class="mt">'+esc(s.metric)+'</div>'
       +'<div class="dt">'+esc(s.detail||'')+'</div></div>';
   });
+  // 정상/경고/위험 범례 — 5개 카드 뒤 6번째 그리드 셀(2열에서 로컬 백업 서버 옆 빈 칸)에 배치.
+  h+='<div class="svc-legend"><span><i class="dot ok"></i>정상</span>'
+    +'<span><i class="dot warn"></i>경고</span><span><i class="dot down"></i>위험</span></div>';
   h+='</div>';
   // 항목별 역할 + 저장 경로 (정적 설명 — 어디에 어떤 방식으로 저장되는지 한눈에)
   h+='<div class="item-guide"><div class="ig-hd">📂 항목별 역할 · 저장 경로</div>'
@@ -281,7 +276,7 @@ function render(d){
     +igRow('📦 MinIO','업로드 원본 파일 · 산출물(PPT/PDF/HTML 등) · 모델 아티팩트(영구).','파일 업로드 → <b>FastAPI(/upload)</b> → <b>MinIO</b>(autoai-artifacts 버킷, VPS) 객체 저장 · 산출물은 워커가 적재')
     +igRow('⚡ Redis','Celery 작업 큐 · 진행상태 pub/sub · 임시 캐시(휘발성).','API 가 작업 enqueue → <b>Redis</b>(ada-redis) → 워커가 소비 · 진행률 publish (영구 저장 아님)')
     +igRow('📊 MLflow','모델 학습 run · 메트릭 · 파라미터 추적.','워커 학습 → <b>MLflow</b>(mlflow:5000) 기록 · 모델 아티팩트는 MinIO 에 저장')
-    +igRow('💽 로컬 백업 서버','PostgreSQL 덤프의 원격 Pull 백업(보존 14일).','학원 Linux cron(03·12·18시) → SSH <b>pg_dump</b> → <b>/srv/backup/ada</b> 저장 · backup_catalog 기록')
+    +igRow('💽 로컬 백업 서버','PostgreSQL 덤프의 원격 Pull 백업(영구 저장).','학원 Linux cron(03·12·18시) → SSH <b>pg_dump</b> → <b>/srv/backup/ada</b> 저장 · backup_catalog 기록')
     +'</div>';
 
   /* ── 2. (구 '핵심 지표' 섹션은 스토리지 연결 상태 헤드라인으로 통합 — 중복 제거) ── */
@@ -314,6 +309,41 @@ function render(d){
     +trend('💬 Q&A 수집','qa',tr24.qa,'24h')
     +trend('📦 산출물','outputs',tr24.outputs,'24h')
     +'</div>';
+
+  /* ── 3-b. 자가치유 · 자기학습 활용 현황 (저장→학습→자동수정이 실제로 작동한 수치/이벤트) ── */
+  var sh=d.self_healing||{}, she=sh.errors||{}, shl=sh.learning||{};
+  h+='<div class="sect-t">🔧 자가치유 · 자기학습 활용 현황</div>'
+    +'<div class="sect-d">저장·학습된 것이 <b>실제로 언제·어떻게 활용·자동수정에 쓰였는지</b> 보여줍니다. '
+    +'오류가 잡히면 KB 매칭(Tier 1·1.5) → Ollama 패치(Tier 2) → Claude(Tier 3) 순으로 자동 수정되고, '
+    +'샌드박스(ruff+pytest) 통과한 수정은 다시 학습되어 다음 동일 오류에 자동 적용됩니다.</div>';
+  h+='<div class="sh-grid">'
+    +shCard('🛠️ 오류 자동수정','#2fcf8f',
+       [['누적 자동수정', nf(she.auto_fixed_total||0)], ['실시간 (24h)', '+'+nf(she.auto_fixed_24h||0)]],
+       '자동 캐치 '+nf(she.caught_total||0)+'건 · KB 자동해결 '+nf(she.kb_resolved_total||0)+'건 · 롤백 '+nf(she.rolled_back||0)+'건')
+    +shCard('🧠 자기학습 활용','#9a7be8',
+       [['누적 재사용', nf(shl.reuse_total||0)], ['실시간 (24h)', '+'+nf(shl.reuse_24h||0)]],
+       '학습 자산 '+nf(shl.assets||0)+'건 · 최근 24h 활성 '+nf(shl.active_24h||0)+'건 (매칭·재사용으로 갱신)')
+    +'</div>';
+  var rec=sh.recent||[];
+  h+='<div class="panel" style="margin-top:12px;overflow-x:auto;">'
+    +'<div style="font-size:.8rem;font-weight:800;color:var(--mut);margin-bottom:9px;">🔎 최근 자동수정 이벤트 — 언제 · 어떤 단계/오류 · 누가/어떻게(commit) · 결과</div>';
+  if(!rec.length){
+    h+='<div class="muted" style="font-size:.78rem">아직 자동수정 이벤트가 없습니다. (오류가 잡혀 자동수정이 적용되면 여기에 기록됩니다.)</div>';
+  }else{
+    h+='<table class="inv"><thead><tr><th>시각</th><th>단계 / 오류</th><th>처리(누가·commit)</th><th>결과</th><th class="num">소요</th></tr></thead><tbody>';
+    rec.forEach(function(e){
+      var stcls=e.status==='success'?'ok':(e.status==='rolled_back'?'warn':'down');
+      var stko=e.status==='success'?'자동수정 적용':(e.status==='rolled_back'?'롤백':(e.status||'실패'));
+      h+='<tr><td>'+esc(ago(e.at))+'</td>'
+        +'<td><span class="pill">'+esc(e.stage||'-')+(e.error_type?' · '+esc(e.error_type):'')+'</span>'
+        +(e.signature?'<div class="td-desc">'+esc(e.signature)+'</div>':'')+'</td>'
+        +'<td>'+esc(e.by||'-')+(e.sha?' <span class="muted">('+esc(e.sha)+')</span>':'')+'</td>'
+        +'<td>'+dot(stcls)+' '+esc(stko)+'</td>'
+        +'<td class="num">'+(e.ms?Math.round(e.ms/1000)+'s':'-')+'</td></tr>';
+    });
+    h+='</tbody></table>';
+  }
+  h+='</div>';
 
   /* ── 4. 카테고리별 분류 ── */
   h+='<div class="sect-t">🗂️ 데이터 카테고리별 저장 현황</div>'
@@ -368,7 +398,7 @@ function render(d){
     +'<div class="bk-grid">'
     +'<div class="it"><div class="l">스케줄</div><div class="v">'+esc(bk.schedule||'—')+'</div></div>'
     +'<div class="it"><div class="l">방식</div><div class="v">'+esc(bk.method||'—')+'</div></div>'
-    +'<div class="it"><div class="l">보존 기간</div><div class="v">'+esc(bk.retention_days||'—')+'일</div></div>'
+    +'<div class="it"><div class="l">보존 정책</div><div class="v">'+esc(bk.retention||'영구 저장')+'</div></div>'
     +'<div class="it"><div class="l">상태</div><div class="v">'+dot(bk.status)+' '+stWord(bk.status)+'</div></div>'
     +'</div>';
   h+='<div class="stores" style="margin-bottom:10px;">'+(bk.paths||[]).map(function(p){return '<span class="sb">'+esc(p)+'</span>';}).join('')+'</div>';
@@ -385,6 +415,12 @@ function render(d){
   fitHeight(); setTimeout(fitHeight,80);
 }
 
+function shCard(title,color,pairs,sub){
+  var cells=pairs.map(function(p){
+    return '<div class="sh-c"><div class="sh-n" style="color:'+color+'">'+p[1]+'</div><div class="sh-l">'+p[0]+'</div></div>';
+  }).join('');
+  return '<div class="sh-card"><div class="sh-t">'+title+'</div><div class="sh-row">'+cells+'</div><div class="sh-sub">'+sub+'</div></div>';
+}
 function igRow(nm,de,pa){
   return '<div class="ig-row"><div class="ig-nm">'+nm+'</div><div class="ig-de">'+de+'</div>'
     +'<div class="ig-pa"><b>↳ 저장경로 &nbsp;</b>'+pa+'</div></div>';

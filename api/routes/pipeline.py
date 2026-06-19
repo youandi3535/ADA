@@ -478,7 +478,7 @@ _DL_META: dict[str, tuple[str, str]] = {
 
 
 @router.get("/download/{job_id}/{output_code}")
-async def download_output(job_id: str, output_code: str) -> None:
+async def download_output(job_id: str, output_code: str, db: AsyncSession = Depends(get_db)) -> None:
     """MinIO 에 저장된 산출물을 스트리밍 다운로드 (브라우저 직접 요청용)."""
     import io as _io
     import json as _json
@@ -489,20 +489,30 @@ async def download_output(job_id: str, output_code: str) -> None:
     from ada.core.config import settings as _s
     from tools.minio_tool import get_minio_client
 
-    # Redis gate_data 에서 output_paths 읽기
+    # 1) Redis gate_data 의 output_paths (완료 직후 1차 소스)
+    minio_path: str | None = None
     try:
         _r = _redis.from_url(_s.redis_url, decode_responses=True)
         _raw = _r.get(f"ada:gate_data:{job_id}")
-        if not _raw:
-            raise HTTPException(404, "결과를 찾을 수 없습니다.")
-        _gd = _json.loads(_raw)
-        _output_paths: dict = _gd.get("output_paths") or {}
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(500, "Redis 조회 실패")
+        if _raw:
+            _gd = _json.loads(_raw)
+            minio_path = (_gd.get("output_paths") or {}).get(output_code)
+    except Exception:  # noqa: BLE001
+        minio_path = None  # Redis 실패는 비치명 — 아래 DB 폴백으로 이어간다.
 
-    minio_path = _output_paths.get(output_code)
+    # 2) Redis 누락·만료 시 DB Output 행으로 폴백.
+    #    완료 페이지의 다운로드 버튼은 DB Output 행으로도 렌더되므로(status 응답), Redis gate_data
+    #    가 비어도 DB 경로로 실제 다운로드가 되게 한다. 이 폴백이 없으면 '버튼은 보이는데 클릭 시
+    #    404 JSON' → 브라우저가 ada_pptx.json 으로 저장하던 다운로드 버그가 난다.
+    if not minio_path:
+        try:
+            jid = uuid.UUID(job_id)
+            row = await db.scalar(select(Output).where(Output.job_id == jid, Output.output_code == output_code))
+            if row is not None:
+                minio_path = row.minio_path
+        except Exception:  # noqa: BLE001
+            minio_path = None
+
     if not minio_path:
         raise HTTPException(404, f"{output_code} 파일이 생성되지 않았습니다.")
 

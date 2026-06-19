@@ -23,5 +23,5 @@ LOCAL_DATA_DIR=/srv/backup/ada/datasets
 # VPS 데이터셋 경로
 VPS_DATA_DIR=/opt/ada/data
 
-# 보존 기간 (일)
-BACKUP_RETENTION_DAYS=14
+# 보존 정책 — 0 = 영구 보관(자동 삭제 안 함, 기본). N 일만 보존하려면 N 지정.
+BACKUP_RETENTION_DAYS=0

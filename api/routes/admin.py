@@ -673,7 +673,7 @@ async def storage_overview(
             age = (now - _p).total_seconds() / 3600.0
             backup_age_h = round(age, 1)
             backup_status = "ok" if age <= 20 else ("warn" if age <= 30 else "down")
-            backup_note = f"최근 백업 {backup_age_h}시간 전 · 보존 14일"
+            backup_note = f"최근 백업 {backup_age_h}시간 전 · 영구 저장"
         except Exception:  # noqa: BLE001
             pass
 
@@ -820,6 +820,65 @@ async def storage_overview(
     except Exception:  # noqa: BLE001
         highlight = {}
 
+    # ── 7-b) 자가치유·자기학습 활용 현황 (언제/무엇이/어떻게 작동·적용됐나) ───────────
+    #   저장만 하는 게 아니라 '실제로 활용/자동수정에 쓰인' 수치 + 최근 이벤트(과정·결과)를 노출.
+    self_healing: dict[str, Any] = {"errors": {}, "learning": {}, "recent": []}
+    try:
+
+        async def _c(sql: str) -> int:
+            return int(await db.scalar(text(sql)) or 0)
+
+        _d24 = "now() - interval '24 hours'"
+        # 오류: 캐치(failure_logs) + 실제 자동수정 적용(patch_applications) + KB 자동해결(auto_handled_by_kb)
+        self_healing["errors"] = {
+            "caught_total": counts.get("failure_logs", 0),
+            "caught_24h": await _c(f"SELECT count(*) FROM failure_logs WHERE created_at > {_d24}"),
+            "auto_fixed_total": await _c("SELECT count(*) FROM patch_applications WHERE status='success'"),
+            "auto_fixed_24h": await _c(
+                f"SELECT count(*) FROM patch_applications WHERE status='success' AND applied_at > {_d24}"
+            ),
+            "kb_resolved_total": await _c("SELECT count(*) FROM failure_logs WHERE auto_handled_by_kb = true"),
+            "kb_resolved_24h": await _c(
+                f"SELECT count(*) FROM failure_logs WHERE auto_handled_by_kb = true AND created_at > {_d24}"
+            ),
+            "rolled_back": await _c("SELECT count(*) FROM patch_applications WHERE status='rolled_back'"),
+        }
+        # 자기학습: 학습자산 수 + 재사용(누적 success_count 합) + 24h 활용(최근 갱신/자동해결)
+        self_healing["learning"] = {
+            "assets": counts.get("self_learning_kb", 0) + counts.get("error_kb", 0),
+            "reuse_total": (await _c("SELECT coalesce(sum(success_count),0) FROM self_learning_kb"))
+            + (await _c("SELECT coalesce(sum(success_count),0) FROM error_kb")),
+            "reuse_24h": self_healing["errors"]["kb_resolved_24h"],
+            "active_24h": await _c(f"SELECT count(*) FROM self_learning_kb WHERE updated_at > {_d24}"),
+        }
+        # 최근 자동수정 이벤트 (언제 · 어떤 단계/오류 · 누가/어떻게(commit) · 결과)
+        ev_rows = (
+            await db.execute(
+                text(
+                    "SELECT pa.applied_at, pa.status, pa.applied_by, pa.git_commit_sha, pa.duration_ms, "
+                    "ek.error_signature, ek.fingerprint "
+                    "FROM patch_applications pa LEFT JOIN error_kb ek ON ek.id = pa.error_kb_id "
+                    "ORDER BY pa.applied_at DESC LIMIT 8"
+                )
+            )
+        ).all()
+        for r in ev_rows:
+            fp = r.fingerprint if isinstance(r.fingerprint, dict) else {}
+            self_healing["recent"].append(
+                {
+                    "at": r.applied_at.isoformat() if r.applied_at else None,
+                    "status": r.status or "",
+                    "by": r.applied_by or "",
+                    "sha": (r.git_commit_sha or "")[:8],
+                    "ms": int(r.duration_ms or 0),
+                    "stage": str(fp.get("stage", "") or ""),
+                    "error_type": str(fp.get("error_type", "") or ""),
+                    "signature": (r.error_signature or "")[:120],
+                }
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
     # ── 8) 스토리지 토폴로지 (VPS 원본 → 로컬 백업) ────────────────────────
     storage_nodes = [
         {
@@ -861,10 +920,11 @@ async def storage_overview(
             "trends": trends,
             "trends_24h": trends_24h,
             "highlight": highlight,
+            "self_healing": self_healing,
             "backup": {
                 "schedule": "매일 03 · 12 · 18시 (1일 3회)",
                 "method": "Pull (로컬 서버 → VPS pg_dump)",
-                "retention_days": 14,
+                "retention": "영구 저장",
                 "paths": ["/srv/backup/ada/postgres", "/srv/backup/ada/datasets"],
                 "status": backup_status,
                 "note": backup_note,

@@ -1417,6 +1417,11 @@ async function poll(){
   if(isFailed()||(isCompleted()&&!_g6TypingHold())){ lastSubmittedGate=null; _sawAnalyzingAfterSubmit=false; }
   // resume 후 analyzing() 통과 확인 — staleRun(renderBody 의 이전 gate_data 무시) 보호용.
   if(lastSubmittedGate && analyzing()) _sawAnalyzingAfterSubmit=true;
+  // HJ 2026-06-19 — G6 는 다음 게이트가 없어, 생성 중 backend gate 가 'G6' 로 남으면 analyzing()=false
+  //   가 지속돼 위 줄이 _sawAnalyzingAfterSubmit 를 못 켠다 → 모달이 라이브 인사이트(g6_status/
+  //   g6_output_insights) 대신 정적 플레이스홀더만 표시. G6 는 상위 stale 게이트가 없어 stale 위험이
+  //   없으므로, 재실행 가드 해제(=새 실행 시작 확인) 후엔 켜서 실시간 생성 내용이 보이게 한다.
+  if(lastSubmittedGate==='G6' && !_awaitingResume) _sawAnalyzingAfterSubmit=true;
   // HJ 2026-06-11 버그픽스: 진행 완료(다음 단계 전진) 판정을 '게이트 번호 비교 + 모달 hold 완료' 로.
   //   • _nextGateArrived(): 제출게이트보다 높은 번호(G3→G4)만 인정 → backend stale 이전 게이트(G2)에 안 속음.
   //     (구 `curGate()!==lastSubmittedGate` 는 stale G2 에 속아 모달이 분석 도중 사라지고 선택화면으로 빠짐)
@@ -1877,6 +1882,13 @@ function _modalShouldBeActive(){
   if(cur===0 && _suppressG1Advance) return false;
   // HJ 2026-06-12 — G6 는 완료돼도 팝업 타이핑이 끝나기 전이면 모달 유지 (조기 종료·7단계 점프 방지).
   if(isCompleted() && !_g6TypingHold()) return false;
+  // HJ 2026-06-19 — G6 산출물 생성 중 '선택화면 리셋' 버그 수정.
+  //   G6 는 '다음 게이트'가 없어, 산출물 2종(PPT+PDF) 생성처럼 시간이 길어지면 backend gate_data 가
+  //   gate:'G6' 로 남아 curGate()='G6' → analyzing()=false → analyzeStart=null → _modalGateReady()
+  //   (41% 진행률)가 충족되지 않아 아래 게이트에서 모달이 사라지고 G6 선택카드가 재노출되던 리셋.
+  //   제출 직후(lastSubmittedGate==='G6')부터 완료/실패 전까지는 진행률·analyzing 과 무관하게 모달을
+  //   강제 유지한다. 실제 완료(isCompleted)·실패(isFailed)는 위 두 분기가 먼저 잡아 결과/실패로 전환.
+  if(cur===5 && lastSubmittedGate==='G6') return true;
   // HJ 2026-06-13 — 모달 생성 기준은 '단계 진행률 41%' 단일 기준(사용자 지시).
   //   시간 기반(15초) 폴백 전면 제거 — 늦게 뜨든 일찍 뜨든 모든 단계
   //   (cur 0~5)에서 _shownPct 가 41% 에 도달해야만 모달 노출. 41% 미만에서는 본문 카드만 표시한다.
@@ -2643,7 +2655,9 @@ function contentResult(){
     const dlHtml=allOuts.map(function(o){
       if(outputPaths[o]){
         const url=API+'/pipeline/download/'+jobId+'/'+encodeURIComponent(o);
-        return '<a href="'+esc(url)+'" download="ada_'+esc(EXT[o]||'bin')+'" class="dlbtn">'+esc(ICON[o]||'📦')+' '+esc(OL[o]||o)+'<span style="font-size:13px;opacity:.75;margin-left:4px">다운로드</span></a>';
+        // HJ 2026-06-19 — download 파일명에 점(.)+확장자를 명시. 이전엔 'ada_pptx'(확장자 없음)라
+        //   동일출처 다운로드가 실패 응답(JSON)을 받으면 브라우저가 ada_pptx.json 으로 저장하던 버그.
+        return '<a href="'+esc(url)+'" download="ada.'+esc(EXT[o]||'bin')+'" class="dlbtn">'+esc(ICON[o]||'📦')+' '+esc(OL[o]||o)+'<span style="font-size:13px;opacity:.75;margin-left:4px">다운로드</span></a>';
       }
       return '<span class="dlbtn unavail">'+esc(ICON[o]||'📦')+' '+esc(OL[o]||o)+'<span style="font-size:13px;opacity:.75;margin-left:4px">생성 실패</span></span>';
     }).join('');
@@ -3265,18 +3279,35 @@ def _profile_widget() -> str:
     em = _htmlmod.escape(email or "로그인됨")
     ini = _htmlmod.escape(initial)
     rl = _htmlmod.escape(role_label)
+    # 운영 콘솔(?admin=1)일 때만 '나가기'를 계정 아이콘 왼쪽에 노출. 부모 레벨이라 <a href> 로
+    # 로그인 유지(?token=&role=)한 채 랜딩 복귀 — iframe 샌드박스 우회 불필요(HJ 2026-06-19).
+    from urllib.parse import quote as _q
+
+    _exit_btn = ""
+    if st.query_params.get("admin") == "1":
+        _token = st.session_state.get("auth_token", "")
+        _ehref = "?token=" + _q(_token, safe="") + "&amp;role=" + _q(role, safe="")
+        _exit_btn = (
+            f"<a class='ada-prof-exit' href='{_ehref}' target='_self' title='운영 콘솔 나가기'>✕&nbsp;나가기</a>"
+        )
     return (
         "<style>"
         ".ada-prof{position:fixed;top:13px;right:20px;z-index:2147483646;"
+        "display:flex;align-items:center;gap:10px;"
         "font-family:'Pretendard','Inter',-apple-system,sans-serif;}"
+        ".ada-prof-exit{display:inline-flex;align-items:center;background:rgba(150,170,235,.16);"
+        "color:#dbe3ff;border:1px solid rgba(150,170,235,.34);padding:8px 15px;border-radius:999px;"
+        "font-weight:700;font-size:.8rem;text-decoration:none;cursor:pointer;white-space:nowrap;}"
+        ".ada-prof-exit:hover{background:rgba(150,170,235,.26);}"
         ".ada-prof-av{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#2f6fed,#1f3e5c);"
         "color:#fff;font-weight:800;font-size:1.02rem;display:flex;align-items:center;justify-content:center;"
         "cursor:pointer;box-shadow:0 6px 18px rgba(31,62,92,.34);border:2px solid #fff;outline:none;user-select:none;}"
         ".ada-prof-av:hover{filter:brightness(1.07);}"
-        ".ada-prof::after{content:'';position:absolute;top:40px;right:0;width:46px;height:14px;}"  # hover 다리(틈 메움)
+        ".ada-prof-acct{position:relative;display:flex;align-items:center;}"  # 아바타+메뉴 그룹 = hover 트리거 범위(나가기 제외)
+        ".ada-prof-acct::after{content:'';position:absolute;top:40px;right:0;width:42px;height:14px;}"  # hover 다리(틈 메움)
         ".ada-prof-menu{display:none;position:absolute;right:0;top:50px;min-width:240px;background:#fff;"
         "border:1px solid #e3e9f2;border-radius:16px;box-shadow:0 18px 48px rgba(20,35,60,.24);padding:15px;}"
-        ".ada-prof:hover .ada-prof-menu,.ada-prof:focus-within .ada-prof-menu{display:block;}"
+        ".ada-prof-acct:hover .ada-prof-menu,.ada-prof-acct:focus-within .ada-prof-menu{display:block;}"
         ".ada-prof-hd{display:flex;align-items:center;gap:11px;padding-bottom:12px;border-bottom:1px solid #eef2f8;}"
         ".ada-prof-hd .av2{width:40px;height:40px;border-radius:50%;flex:0 0 auto;color:#fff;font-weight:800;"
         "background:linear-gradient(135deg,#2f6fed,#1f3e5c);display:flex;align-items:center;justify-content:center;}"
@@ -3289,6 +3320,8 @@ def _profile_widget() -> str:
         ".ada-prof-lo:hover{background:#ffe3e3;}"
         "</style>"
         "<div class='ada-prof'>"
+        f"{_exit_btn}"
+        "<div class='ada-prof-acct'>"
         f"<div class='ada-prof-av' tabindex='0' title='내 계정'>{ini}</div>"
         "<div class='ada-prof-menu'>"
         "<div class='ada-prof-hd'>"
@@ -3297,6 +3330,7 @@ def _profile_widget() -> str:
         f"<span class='ada-prof-role'>{rl} 권한</span></div>"
         "</div>"
         "<a class='ada-prof-lo' href='?logout=1' target='_self'>⎋ &nbsp;로그아웃</a>"
+        "</div>"
         "</div>"
         "</div>"
     )
