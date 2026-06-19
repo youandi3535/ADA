@@ -2178,7 +2178,17 @@ function modalInsightArea(d){
   if(!_modalContentReady()) return '';
   // 1단계 (G1, cur=0): 데이터 도메인 정보 — domain_partial streaming
   if(cur===0){
-    return modalTopicArea(d);
+    var _g1=modalTopicArea(d);
+    if(_g1) return _g1;
+    // HJ 2026-06-19 — domain_partial 도착 전(데이터 로드·카테고리 감지 구간)에도 G1 이 '빈 화면'처럼
+    //   보이지 않도록 G2~G6 과 동일한 '▶ 현재 작업' 라이브 상태줄(10초 회전 메시지)을 보장한다.
+    //   (기존엔 modalTopicArea 가 ''를 반환해 정적 플레이스홀더만 떠 타이핑이 0 인 것처럼 보였다.)
+    var _r=[]; var _sp=(d&&d.stage_partial)||{};
+    _r.push(_labelRow('▶ 현재 작업', _sp.g1_status || loadMsg(), {fs:22, mt:8, twk:'g1-status'}));
+    if(d.category&&d.category!=='pending') _r.push(_labelRow('카테고리', d.category, {bold:true, mt:14}));
+    if(d.target_column) _r.push(_labelRow('타깃', d.target_column, {bold:true, mt:8}));
+    var _h1=_liveHintRows(0); if(_h1) _r.push(_h1);
+    return _stageBox('📊','데이터 도메인 분석', _r);
   }
   const dp=(d&&d.data_profile)||{};
   // 2단계 (G2 — EDA·방법론 분석)

@@ -446,7 +446,7 @@ function render(d){
   }
   h+='</div></div>';
 
-  h+='<div class="src">출처: PostgreSQL pg_stat · MinIO list_objects · Redis INFO · MLflow /health · backup_catalog · conversation_logs · 생성 '+esc(d.generated_at||'')+'</div>';
+  h+='<div class="src">출처(실제 저장): PostgreSQL(jobs·agent_runs·outputs·models·self_learning_kb·error_kb·failure_logs·patch_applications·security_audit_log·conversation_logs·backup_catalog) · MinIO 저장경로 · MLflow experiments · 생성 '+esc(d.generated_at||'')+'</div>';
 
   document.getElementById('root').innerHTML=h;
   fitHeight(); setTimeout(fitHeight,80);

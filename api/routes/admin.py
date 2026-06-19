@@ -929,107 +929,211 @@ async def storage_overview(
         "OUT-04": "HTML 대시보드",
         "OUT-07": "인사이트 요약",
     }
+    # HJ 2026-06-19 — '실시간 활동 로그' 비어 보임 수정 + '무엇이 어디에 어떻게 저장되는지' 전면 노출.
+    #   기존 8개 소스(Q&A·자동수정·오류·KB·산출물·백업·감사)는 모두 이벤트성이라 분석이 돌아도 거의 안 쌓임.
+    #   정작 분석 중 실제로 쓰이는 jobs/agent_runs/models/experiments/artifacts 가 피드에 없었다.
+    #   → 분석 활동(작업·에이전트 실행·모델·실험·아티팩트)을 추가하고, where 에 저장 위치
+    #     (PostgreSQL·테이블 / MinIO·경로 / MLflow)를 명시한다. 소스별 try 격리로 한 테이블 실패가
+    #     전체 피드를 비우지 않게 한다(기존 단일 try 는 한 곳만 어긋나도 통째로 빈 배열이 됐다).
     try:
         from ada.db.models import (
+            AgentRun as _AR,
+            Artifact as _ART,
             BackupCatalog as _BC,
             ConversationLog as _CL,
             ErrorKB as _EK,
+            Experiment as _EXP,
             FailureLog as _FL,
+            Job as _J,
+            Model as _M,
             Output as _OUT,
             PatchApplication as _PA,
             SecurityAuditLog as _SA,
             SelfLearningKB as _KB,
         )
-
-        async def _q(model: Any, order_col: Any) -> list[Any]:
-            try:
-                return list((await db.scalars(select(model).order_by(desc(order_col)).limit(_PER))).all())
-            except Exception:  # noqa: BLE001
-                return []
-
-        # 1) Claude/Ollama Q&A 저장
-        for r in await _q(_CL, _CL.created_at):
-            _push(
-                r.created_at,
-                "💬",
-                "Q&A 저장",
-                "conversation_logs",
-                f"{r.team_member or '?'} · {r.source or 'claude_code'}",
-                f"Q: {_clip(r.question, 70)}  →  A: {_clip(r.answer, 90)}",
-            )
-        # 2) 자동수정 적용
-        for r in await _q(_PA, _PA.applied_at):
-            _push(
-                r.applied_at,
-                "🔧",
-                "자동수정",
-                "patch_applications",
-                f"{r.applied_by or 'auto-fix-bot'} · {r.status or '?'}",
-                f"commit {(r.git_commit_sha or '-')[:8]} · {r.duration_ms or 0}ms",
-            )
-        # 3) 오류 캐치
-        for r in await _q(_FL, _FL.created_at):
-            _push(
-                r.created_at,
-                "⚠️",
-                "오류 캐치",
-                "failure_logs",
-                f"{r.error_category or '미분류'} · {r.classified_as or '대기'}",
-                r.error_message or "",
-            )
-        # 4) KB 학습
-        for r in await _q(_KB, _KB.created_at):
-            _conf = f" · 신뢰도 {r.confidence:.2f}" if r.confidence is not None else ""
-            _push(
-                r.created_at,
-                "🧠",
-                "KB 학습",
-                "self_learning_kb",
-                f"{r.kb_type or '?'} · {r.category or '-'}",
-                f"성공 {r.success_count or 0}회{_conf}",
-            )
-        # 5) 오류 KB 등록
-        for r in await _q(_EK, _EK.created_at):
-            _push(
-                r.created_at,
-                "📚",
-                "오류 KB",
-                "error_kb",
-                r.error_signature or "(서명 없음)",
-                f"해결: {_clip(r.resolution, 110)}",
-            )
-        # 6) 산출물 생성
-        for r in await _q(_OUT, _OUT.created_at):
-            _push(
-                r.created_at,
-                "📦",
-                "산출물 생성",
-                "outputs",
-                f"{_OL.get(r.output_code, r.output_code)} · {r.status or 'completed'}",
-                f"{_fmt_bytes(r.file_size_bytes)} · {r.generation_ms or 0}ms",
-            )
-        # 7) 백업
-        for r in await _q(_BC, _BC.created_at):
-            _push(
-                r.created_at,
-                "💾",
-                "백업",
-                "backup_catalog",
-                f"{r.backup_type or '?'} · {r.status or 'ok'}",
-                f"{_fmt_bytes(r.size_bytes)} · {r.note or ''}",
-            )
-        # 8) 보안 감사
-        for r in await _q(_SA, _SA.created_at):
-            _push(
-                r.created_at,
-                "🔐",
-                "보안 감사",
-                "security_audit_log",
-                f"{r.event_type or '?'} · {r.action or '-'}",
-                f"{r.actor_role or '-'} · {r.result or '-'}",
-            )
     except Exception:  # noqa: BLE001
-        recent_activity = []
+        _AR = _ART = _BC = _CL = _EK = _EXP = _FL = _J = _M = _OUT = _PA = _SA = _KB = None
+
+    def _tail(s: Any, n: int = 56) -> str:
+        t = "" if s is None else str(s)
+        return ("…" + t[-(n - 1) :]) if len(t) > n else t
+
+    async def _src(model: Any, order_col: Any, build: Any) -> None:
+        # 소스 1개 — 쿼리/행 변환 실패가 전체 피드를 비우지 않도록 개별 격리.
+        if model is None:
+            return
+        try:
+            rows = list((await db.scalars(select(model).order_by(desc(order_col)).limit(_PER))).all())
+        except Exception:  # noqa: BLE001
+            return
+        for r in rows:
+            try:
+                args = build(r)
+                if args:
+                    _push(*args)
+            except Exception:  # noqa: BLE001
+                continue
+
+    # ── 분석 활동 (가장 빈번): 작업 진행 + 에이전트 실행 ─────────────────────
+    await _src(
+        _J,
+        _J.updated_at if _J is not None else None,
+        lambda r: (
+            r.updated_at or r.created_at,
+            "🚀",
+            "분석 작업",
+            "PostgreSQL · jobs",
+            f"{r.category or '?'} · {r.status or 'pending'}",
+            f"게이트 {r.current_gate or 'G1'} · 타깃 {r.target_column or '-'} · 재시도 {r.retry_count or 0}",
+        ),
+    )
+    await _src(
+        _AR,
+        _AR.created_at if _AR is not None else None,
+        lambda r: (
+            r.created_at,
+            "⚙️",
+            "에이전트 실행",
+            "PostgreSQL · agent_runs",
+            f"{r.agent_name} · {r.status}",
+            f"게이트 {r.gate or '-'} · {r.duration_ms or 0}ms · 토큰 in{r.input_tokens or 0}/out{r.output_tokens or 0}"
+            + (f" · 오류 {_clip(r.error, 50)}" if r.error else ""),
+        ),
+    )
+    # ── Q&A / 자동수정 / 오류 / KB (이벤트성) ───────────────────────────────
+    await _src(
+        _CL,
+        _CL.created_at if _CL is not None else None,
+        lambda r: (
+            r.created_at,
+            "💬",
+            "Q&A 저장",
+            "PostgreSQL · conversation_logs",
+            f"{r.team_member or '?'} · {r.source or 'claude_code'}",
+            f"Q: {_clip(r.question, 70)}  →  A: {_clip(r.answer, 90)}",
+        ),
+    )
+    await _src(
+        _PA,
+        _PA.applied_at if _PA is not None else None,
+        lambda r: (
+            r.applied_at,
+            "🔧",
+            "자동수정",
+            "PostgreSQL · patch_applications",
+            f"{r.applied_by or 'auto-fix-bot'} · {r.status or '?'}",
+            f"commit {(r.git_commit_sha or '-')[:8]} · {r.duration_ms or 0}ms",
+        ),
+    )
+    await _src(
+        _FL,
+        _FL.created_at if _FL is not None else None,
+        lambda r: (
+            r.created_at,
+            "⚠️",
+            "오류 캐치",
+            "PostgreSQL · failure_logs",
+            f"{r.error_category or '미분류'} · {r.classified_as or '대기'}",
+            r.error_message or "",
+        ),
+    )
+    await _src(
+        _KB,
+        _KB.created_at if _KB is not None else None,
+        lambda r: (
+            r.created_at,
+            "🧠",
+            "KB 학습",
+            "PostgreSQL · self_learning_kb",
+            f"{r.kb_type or '?'} · {r.category or '-'}",
+            f"성공 {r.success_count or 0}회" + (f" · 신뢰도 {r.confidence:.2f}" if r.confidence is not None else ""),
+        ),
+    )
+    await _src(
+        _EK,
+        _EK.created_at if _EK is not None else None,
+        lambda r: (
+            r.created_at,
+            "📚",
+            "오류 KB",
+            "PostgreSQL · error_kb",
+            r.error_signature or "(서명 없음)",
+            f"해결: {_clip(r.resolution, 110)}",
+        ),
+    )
+    # ── 파일/모델 실제 저장 위치 (MinIO 경로 노출) ─────────────────────────
+    await _src(
+        _OUT,
+        _OUT.created_at if _OUT is not None else None,
+        lambda r: (
+            r.created_at,
+            "📦",
+            "산출물 저장",
+            "MinIO · " + _tail(r.minio_path),
+            f"{_OL.get(r.output_code, r.output_code)} · {r.status or 'completed'}",
+            f"{_fmt_bytes(r.file_size_bytes)} · {r.generation_ms or 0}ms",
+        ),
+    )
+    await _src(
+        _M,
+        _M.created_at if _M is not None else None,
+        lambda r: (
+            r.created_at,
+            "🤖",
+            "모델 저장",
+            "MinIO · " + _tail(r.minio_path),
+            f"{r.model_name} · {r.framework}" + (" · best" if r.is_best else ""),
+            f"mlflow {(r.mlflow_run_id or '-')[:8]} · sha {(r.model_sha256 or '-')[:8]}",
+        ),
+    )
+    await _src(
+        _ART,
+        _ART.created_at if _ART is not None else None,
+        lambda r: (
+            r.created_at,
+            "🗂️",
+            "아티팩트 저장",
+            "MinIO · " + _tail(r.minio_path),
+            f"{r.artifact_type}",
+            _tail(r.minio_path, 80),
+        ),
+    )
+    await _src(
+        _EXP,
+        _EXP.created_at if _EXP is not None else None,
+        lambda r: (
+            r.created_at,
+            "🧪",
+            "실험 기록",
+            "MLflow · experiments",
+            f"{r.category or '?'} · {r.status or 'created'}",
+            f"mlflow_exp {r.mlflow_experiment_id or '-'}",
+        ),
+    )
+    await _src(
+        _BC,
+        _BC.created_at if _BC is not None else None,
+        lambda r: (
+            r.created_at,
+            "💾",
+            "백업",
+            "MinIO · " + _tail(r.minio_path),
+            f"{r.backup_type or '?'} · {r.status or 'ok'}",
+            f"{_fmt_bytes(r.size_bytes)} · {r.note or ''}",
+        ),
+    )
+    await _src(
+        _SA,
+        _SA.created_at if _SA is not None else None,
+        lambda r: (
+            r.created_at,
+            "🔐",
+            "보안 감사",
+            "PostgreSQL · security_audit_log",
+            f"{r.event_type or '?'} · {r.action or '-'}",
+            f"{r.actor_role or '-'} · {r.result or '-'}",
+        ),
+    )
 
     # 최신순 정렬 후 상위 40개 (프론트는 10줄 표시 + 자체 스크롤로 나머지 열람)
     recent_activity.sort(key=lambda x: x["ts"], reverse=True)

@@ -41,6 +41,10 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,  # R-202 Bulkhead
+    # HJ 2026-06-19 — 자식 프로세스 메모리 상한(KB). 누적 사용량이 ~2GB 초과 시 현재 task 완료 후
+    #   자식을 우아하게 재생성 → 메모리 누수·DataFrame 캐시 누적으로 인한 cgroup 2500M OOM kill
+    #   (워커 사망 → 실행 중 job 고아화 → "running" 고착)을 사전 차단한다. 한도(2.5GB)보다 낮게 둬 여유 확보.
+    worker_max_memory_per_child=2_000_000,
     task_time_limit=settings.pipeline_timeout_min * 60,
     task_soft_time_limit=settings.pipeline_timeout_min * 60 - 60,
     # 워커가 시작될 때 추가 모듈을 import 해 task 데코레이터가 등록되도록 한다.
