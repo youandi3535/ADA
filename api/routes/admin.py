@@ -958,6 +958,73 @@ async def storage_overview(
         t = "" if s is None else str(s)
         return ("…" + t[-(n - 1) :]) if len(t) > n else t
 
+    # ── KB 학습: kb_type 한글 라벨 + payload 에서 '실제 학습 내용' 한 줄 추출 ──
+    _KB_LABEL = {
+        "qa_pair": "Q&A 학습",
+        "success_pattern": "성공 패턴",
+        "recipe": "재사용 레시피",
+        "hpo_warm_start": "HPO 시드",
+        "eda_template": "EDA 템플릿",
+        "failure_lesson": "실패 교훈",
+    }
+
+    def _kb_detail(kb_type: str, payload: Any) -> str:
+        """self_learning_kb payload 에서 사람이 읽을 '실제 학습 내용' 한 줄."""
+        p = payload if isinstance(payload, dict) else {}
+        t = kb_type or ""
+        if t == "qa_pair":
+            return f"Q: {_clip(p.get('question'), 70)}  →  A: {_clip(p.get('answer'), 95)}"
+        if t == "success_pattern":
+            return (
+                f"{p.get('category') or '?'} / 타깃 {p.get('target') or '-'} / 의도: {_clip(p.get('user_intent'), 80)}"
+            )
+        if t == "recipe":
+            m = p.get("metric") if isinstance(p.get("metric"), dict) else {}
+            mtxt = f"{m.get('name', '')} {m.get('value', '')}".strip()
+            base = f"{p.get('category') or '?'} → {p.get('best_model') or '?'}({p.get('framework') or '-'})"
+            return base + (f" · {mtxt}" if mtxt else "")
+        if t == "hpo_warm_start":
+            bp = p.get("best_params") if isinstance(p.get("best_params"), dict) else {}
+            keys = ", ".join(list(bp)[:6])
+            return f"{p.get('model') or '?'} 하이퍼파라미터" + (f": {keys}" if keys else "")
+        if t == "eda_template":
+            return f"{p.get('category') or '?'} · {p.get('n_rows') or '?'}행 × {p.get('n_cols') or '?'}컬럼 EDA 절차"
+        if t == "failure_lesson":
+            return f"{p.get('category') or '?'} 실패 → {_clip(p.get('error'), 100)}"
+        return _clip(", ".join(f"{k}={v}" for k, v in list(p.items())[:4]), 120) if p else "-"
+
+    def _build_kb(r: Any) -> tuple:
+        label = _KB_LABEL.get(r.kb_type, r.kb_type or "?")
+        cat = f" · {r.category}" if r.category else ""
+        conf = f" · 신뢰도 {r.confidence:.2f}" if r.confidence is not None else ""
+        reuse = f" · 재사용 {r.success_count}회" if (r.success_count or 0) > 1 else ""
+        return (
+            r.created_at,
+            "🧠",
+            "KB 학습",
+            "PostgreSQL · self_learning_kb",
+            f"{label}{cat}{conf}{reuse}",
+            _kb_detail(r.kb_type, r.payload),
+        )
+
+    _BK_WHAT = {
+        "db": "PostgreSQL 전체 DB 덤프(pg_dump · 모든 테이블)",
+        "minio": "MinIO 오브젝트(업로드 데이터셋·산출물·모델)",
+        "data": "데이터셋 파일",
+        "vault": "Vault 시크릿",
+    }
+
+    def _build_bk(r: Any) -> tuple:
+        bt = r.backup_type or "?"
+        return (
+            r.created_at,
+            "💾",
+            "백업",
+            "로컬 · " + _tail(r.minio_path, 48),
+            f"{_BK_WHAT.get(bt, bt)} · {r.status or 'ok'}",
+            f"{_fmt_bytes(r.size_bytes)} · {r.note or ''}",
+        )
+
     async def _src(model: Any, order_col: Any, build: Any) -> None:
         # 소스 1개 — 쿼리/행 변환 실패가 전체 피드를 비우지 않도록 개별 격리.
         if model is None:
@@ -1037,18 +1104,7 @@ async def storage_overview(
             r.error_message or "",
         ),
     )
-    await _src(
-        _KB,
-        _KB.created_at if _KB is not None else None,
-        lambda r: (
-            r.created_at,
-            "🧠",
-            "KB 학습",
-            "PostgreSQL · self_learning_kb",
-            f"{r.kb_type or '?'} · {r.category or '-'}",
-            f"성공 {r.success_count or 0}회" + (f" · 신뢰도 {r.confidence:.2f}" if r.confidence is not None else ""),
-        ),
-    )
+    await _src(_KB, _KB.created_at if _KB is not None else None, _build_kb)
     await _src(
         _EK,
         _EK.created_at if _EK is not None else None,
@@ -1110,18 +1166,7 @@ async def storage_overview(
             f"mlflow_exp {r.mlflow_experiment_id or '-'}",
         ),
     )
-    await _src(
-        _BC,
-        _BC.created_at if _BC is not None else None,
-        lambda r: (
-            r.created_at,
-            "💾",
-            "백업",
-            "MinIO · " + _tail(r.minio_path),
-            f"{r.backup_type or '?'} · {r.status or 'ok'}",
-            f"{_fmt_bytes(r.size_bytes)} · {r.note or ''}",
-        ),
-    )
+    await _src(_BC, _BC.created_at if _BC is not None else None, _build_bk)
     await _src(
         _SA,
         _SA.created_at if _SA is not None else None,
