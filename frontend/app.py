@@ -1375,10 +1375,15 @@ async function poll(){
   }
   // job이 failed 상태이고 업로드 화면(cur=0)에 머물고 있으면 자동 초기화.
   // 사용자가 F12 → localStorage 직접 지울 필요 없이 다음 폴링 시 자동 리셋.
+  // HJ 2026-06-22 — clearState()/jobId=null 만으론 메모리 status·gateData 의 failed 플래그가
+  //   남아 isFailed()=true 가 고착(jobId=null → poll 조기 return 으로 영영 갱신 안 됨) → 새 파일을
+  //   올려도 '⛔ 실패' 배지·배너가 안 사라지던 회귀 수정. 여기서 두 변수를 비워 잔상을 끊는다.
+  //   이미 새 파일을 고른 상태면 '업로드해 주세요' 안내는 오히려 오해라 errMsg 를 비운다.
   if(isFailed() && cur===0){
     clearState();
     jobId=null; cur=0; frontier=0; maxReached=0; polling=false;
-    errMsg='이전 분석이 실패했습니다. 새 파일을 업로드해 주세요.';
+    status={}; gateData={};
+    errMsg = selectedFile ? '' : '이전 분석이 실패했습니다. 새 파일을 업로드해 주세요.';
     render(); return;
   }
   computeFrontier();

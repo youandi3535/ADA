@@ -120,7 +120,15 @@ class Settings(BaseSettings):
     ollama_num_gpu: int = Field(default=0, validation_alias="OLLAMA_NUM_GPU")
     # CPU 스레드 수: 순수 CPU 추론은 SMT 포함 가능한 한 많은 스레드가 효율적.
     # Ryzen 7 3800XT = 8C/16T → 14 (시스템용 2 여유).
+    # ⚠️ 런타임에 _ollama_num_thread() 가 실제 가용 코어 수로 상한을 건다(코어보다 많은
+    #    스레드 지정 시 oversubscription 으로 오히려 추론이 느려짐 — VPS 저코어 환경 보호).
     ollama_num_thread: int = Field(default=14, validation_alias="OLLAMA_NUM_THREAD")
+    # HJ 2026-06-22 — Ollama HTTP(urlopen) 호출 타임아웃(초). 기존 코드 하드코딩 220 을 분리·상향.
+    #   저성능 VPS(GPU 없음·저코어)에서 qwen2.5:7b CPU 추론이 단계당 220s 를 넘기면 urlopen 이
+    #   강제 종료 → 예외 → 파이프라인이 '실패'로 굳던 회귀(로컬 4~5분 작업이 VPS 에선 220s 벽에
+    #   걸려 중단)를 막는다. 진행 중이던 정상 추론은 더 기다려 완료시키고, 정말 멈춘 경우만
+    #   Celery soft_time_limit(pipeline_timeout_min) 가 최종 안전망. .env OLLAMA_TIMEOUT_SEC 로 조정.
+    ollama_timeout_sec: int = Field(default=300, validation_alias="OLLAMA_TIMEOUT_SEC")
 
 
 @lru_cache(maxsize=1)
