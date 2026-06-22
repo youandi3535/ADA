@@ -433,6 +433,19 @@ def publish_progress(
         r.set(f"ada:progress:{job_id}", body, ex=3600)
     except Exception:  # noqa: BLE001
         pass
+    # HJ 2026-06-22 — '분석 활성' 신호(harness 양보용). 저사양 VPS 는 RAM(7.9GB)에 Ollama 모델(4.7GB)+
+    #   harness 임베더(~1GB)가 동시에 못 올라가 모델이 swap → prompt_eval 파국(86~222s). 분석이 도는
+    #   동안만 ada:analysis_active 를 refresh 하면, harness 데몬이 이를 보고 스캔을 건너뛰어(임베더 미적재
+    #   + 메모리한도 child 재활용으로 기적재분 반환) RAM 을 분석에 양보한다. 유휴 시엔 정상 자가치유.
+    #   비종단 진행마다 90s TTL 갱신(LLM 보간이 ~1s 마다 publish → 분석 중 만료 없음). 완료/실패 시 즉시
+    #   삭제해 자가치유 즉시 재개. 워커 사망 등 비정상 종료 시에도 TTL 만료로 자동 해제(영구 차단 방지).
+    try:
+        if pipeline_status in ("completed", "failed"):
+            r.delete("ada:analysis_active")
+        else:
+            r.set("ada:analysis_active", "1", ex=90)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def _set_job_terminal(job_id: str, status: str, error: str | None = None) -> None:

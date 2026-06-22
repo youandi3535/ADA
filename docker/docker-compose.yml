@@ -300,7 +300,18 @@ services:
     image: ghcr.io/youandi3535/ada-worker:latest
     container_name: ada-worker-harness
     restart: unless-stopped
-    command: celery -A orchestrator.runner worker -Q harness -c 1 -n harness@%h --loglevel=info
+    # HJ 2026-06-22 — 하네스 메모리 바운딩. 싱글톤(②, ada/harness/rag.py)으로 임베더 '반복적재' 래칫은
+    #   제거했으나, 오류수정 경로(LLM 패치·sandbox 검증)에 task 당 수십 MB 의 실제 anon 누수가 남아 한
+    #   자식 안에서 계속 누적된다(관측: 약 20 task 에 anon 0.4→1.57GiB, file 캐시 아님). 누수 자체의 근본
+    #   수정 전까지, leaky 워커 표준 처리대로 자식 프로세스를 주기 재생성해 메모리를 OS 로 완전 반환·바운딩.
+    #   글로벌 worker_max_memory_per_child(2GB, runner.py)는 2500M pipeline 기준이라 하네스엔 안 터지므로
+    #   이 워커만 per-worker 플래그로 강하게 덮어쓴다:
+    #   --max-memory-per-child=1100000(KB,≈1.05GiB): 1차 바운드. anon 이 이 선을 넘으면 task 완료 후 자식
+    #       재생성 → 메모리 완전 반환(다음 사이클 베이스 ~0.6GB 부터). 한도(2000M)와 ~0.9GB 간격이라 단일
+    #       task 순간피크가 튀어도 OOM(exit137) 전에 회수한다(이전엔 밸브를 벽에 붙여 회수 여유가 없었음).
+    #   --max-tasks-per-child=12 : 2차 바운드(카운트 기반·RSS 측정오차 무관). 재생성 시 싱글톤 모델 1회
+    #       재로드(수초·무해).
+    command: celery -A orchestrator.runner worker -Q harness -c 1 -n harness@%h --max-memory-per-child=1100000 --max-tasks-per-child=12 --loglevel=info
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
@@ -327,7 +338,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1500M
+          memory: 2000M     # HJ 2026-06-22 — 누수 바운딩(자식 재생성) 피크 ~1.1GB 위로 transient 여유. 1800M(95% peg)→상향.
     networks: [ada-net]
 
   beat:

@@ -92,9 +92,40 @@ def retract_kb() -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-@celery_app.task(name="ada.error_handler.scan", queue="harness")
+def _analysis_active() -> bool:
+    """분석이 진행 중이면 True — harness 데몬이 RAM(임베더 ~1GB)·CPU 를 분석에 양보하도록 스캔을 건너뛴다.
+
+    HJ 2026-06-22 — 저사양 VPS(7.9GB)는 Ollama 모델(4.7GB)+harness 임베더가 동시에 못 올라가 모델이
+    swap → prompt_eval 파국. runner.publish_progress 가 분석 중 ada:analysis_active 를 90s TTL 로
+    refresh 하므로, 그 키가 있으면 분석 중으로 보고 스캔을 건너뛴다. 키 없음/조회 실패 시엔 정상 수행
+    (자가치유 우선). TTL 만료로 비정상 종료 시에도 자동 해제 → harness 가 영구 차단되지 않는다.
+    """
+    try:
+        from orchestrator.runner import _get_redis
+
+        return bool(_get_redis().exists("ada:analysis_active"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@celery_app.task(
+    name="ada.error_handler.scan",
+    queue="harness",
+    soft_time_limit=240,
+    time_limit=300,
+)
 def scan_failures() -> dict[str, Any]:
-    """auto_handled_by_kb=False 인 FailureLog 를 폴링하고 처리."""
+    """auto_handled_by_kb=False 인 FailureLog 를 폴링하고 처리.
+
+    HJ 2026-06-22 — 글로벌 task_time_limit(pipeline_timeout_min 기준, 수십 분)을 이 task 만 짧게
+    덮어쓴다. MAX_BATCH=5 × ~25s ≈ 125s 가 정상치. soft 240s 초과 시 graceful 종료, hard 300s 에 강제
+    종료 → 한 scan 이 워커·메모리를 길게 점유(누수 인질·peg)하지 못하게 상한. 중단돼도 daemon 의
+    handle-전-커밋 덕에 무한 재처리는 없다(처리분은 durable 마킹됨).
+
+    HJ 2026-06-22 — 분석 중에는 건너뛴다(RAM 양보). 자가치유는 분석 유휴 시 이어서 처리(백로그 보존).
+    """
+    if _analysis_active():
+        return {"skipped": "analysis_active"}
     from ada.error_handler.daemon import scan_new_failures
 
     return scan_new_failures()
@@ -103,6 +134,8 @@ def scan_failures() -> dict[str, Any]:
 @celery_app.task(name="ada.error_handler.promote_fixers", queue="harness")
 def promote_fixers() -> dict[str, Any]:
     """반복 오류 패턴을 감지해 Tier 0 fixer 로 자동 승격 (1일 1회)."""
+    if _analysis_active():
+        return {"skipped": "analysis_active"}
     from ada.error_handler.fixer_promoter import run_sync
 
     return run_sync()
@@ -118,7 +151,12 @@ def scan_stalled_jobs() -> dict[str, Any]:
     안전(게이트 대기 정상 잡 보호): 임계값을 task 하드 time_limit(=pipeline_timeout_min) + 30분 으로 둔다.
       활성 처리 중 task 는 time_limit 에서 강제 종료되므로, 그보다 오래 'running' 인 잡은 이미 고아이거나
       게이트에서 30분 이상 방치된 세션 → failed 처리해도 정상 진행 중인 잡을 죽이지 않는다.
+
+    HJ 2026-06-22 — 분석 중에는 건너뛴다: (1) RAM 양보(harness child 재활용 트리거 회피), (2) 느리지만
+      정상 진행 중인 활성 잡을 watchdog 가 성급히 죽이지 않게. 분석 유휴 시 다음 폴에서 고아 잡 정리 재개.
     """
+    if _analysis_active():
+        return {"swept": 0, "skipped": "analysis_active"}
 
     async def _do() -> dict[str, Any]:
         import hashlib
