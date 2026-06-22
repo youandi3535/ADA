@@ -1375,10 +1375,15 @@ async function poll(){
   }
   // job이 failed 상태이고 업로드 화면(cur=0)에 머물고 있으면 자동 초기화.
   // 사용자가 F12 → localStorage 직접 지울 필요 없이 다음 폴링 시 자동 리셋.
+  // HJ 2026-06-22 — clearState()/jobId=null 만으론 메모리 status·gateData 의 failed 플래그가
+  //   남아 isFailed()=true 가 고착(jobId=null → poll 조기 return 으로 영영 갱신 안 됨) → 새 파일을
+  //   올려도 '⛔ 실패' 배지·배너가 안 사라지던 회귀 수정. 여기서 두 변수를 비워 잔상을 끊는다.
+  //   이미 새 파일을 고른 상태면 '업로드해 주세요' 안내는 오히려 오해라 errMsg 를 비운다.
   if(isFailed() && cur===0){
     clearState();
     jobId=null; cur=0; frontier=0; maxReached=0; polling=false;
-    errMsg='이전 분석이 실패했습니다. 새 파일을 업로드해 주세요.';
+    status={}; gateData={};
+    errMsg = selectedFile ? '' : '이전 분석이 실패했습니다. 새 파일을 업로드해 주세요.';
     render(); return;
   }
   computeFrontier();
@@ -1627,7 +1632,11 @@ function isGateLoading(){
   if(cur<1 || cur>5) return false;
   const tg='G'+(cur+1);
   const ag=curGate();
-  if(lastSubmittedGate===tg && !ag) return true;
+  // HJ 2026-06-19 — contentGate 와 동일 가드(도메인 stale republish). 방금 제출한 게이트(tg)로 분석 중인데
+  //   백엔드가 tg 또는 그보다 낮은 stale 게이트를 잠깐 republish 하면 진행바를 '로딩' 으로 유지한다.
+  //   !ag 만 보던 기존 조건은 ag===tg(동일 게이트 stale)를 못 잡아 진행바가 사라지고 선택카드로 regress.
+  const _agStaleLow = !ag || (/^G[2-6]$/.test(ag) && parseInt(ag.slice(1),10) <= parseInt(tg.slice(1),10));
+  if(lastSubmittedGate===tg && _agStaleLow) return true;
   const _staleRun=!!(lastSubmittedGate&&!_sawAnalyzingAfterSubmit);
   const d=_staleRun?{}:((ag===tg)?gateData:_gateBack(tg));
   const llmProps=(d.proposals||[]).filter(function(p){return !p.is_custom;});
@@ -2174,7 +2183,17 @@ function modalInsightArea(d){
   if(!_modalContentReady()) return '';
   // 1단계 (G1, cur=0): 데이터 도메인 정보 — domain_partial streaming
   if(cur===0){
-    return modalTopicArea(d);
+    var _g1=modalTopicArea(d);
+    if(_g1) return _g1;
+    // HJ 2026-06-19 — domain_partial 도착 전(데이터 로드·카테고리 감지 구간)에도 G1 이 '빈 화면'처럼
+    //   보이지 않도록 G2~G6 과 동일한 '▶ 현재 작업' 라이브 상태줄(10초 회전 메시지)을 보장한다.
+    //   (기존엔 modalTopicArea 가 ''를 반환해 정적 플레이스홀더만 떠 타이핑이 0 인 것처럼 보였다.)
+    var _r=[]; var _sp=(d&&d.stage_partial)||{};
+    _r.push(_labelRow('▶ 현재 작업', _sp.g1_status || loadMsg(), {fs:22, mt:8, twk:'g1-status'}));
+    if(d.category&&d.category!=='pending') _r.push(_labelRow('카테고리', d.category, {bold:true, mt:14}));
+    if(d.target_column) _r.push(_labelRow('타깃', d.target_column, {bold:true, mt:8}));
+    var _h1=_liveHintRows(0); if(_h1) _r.push(_h1);
+    return _stageBox('📊','데이터 도메인 분석', _r);
   }
   const dp=(d&&d.data_profile)||{};
   // 2단계 (G2 — EDA·방법론 분석)
@@ -2563,9 +2582,17 @@ function contentGate(){
   // HJ 2026-06-12 — G3 진행 시 G3 선택카드로 regress 하는 버그 fix.
   //   resume 재실행 중 backend(schema_validator)가 stale 이전 게이트 'G2' 를 publish 하면 ag='G2'.
   //   cur=2(tg='G3') 에선 ag='G2'<'G3' 라 기존 `!ag` 가드를 못 타고 d=gateCache['G3'] → G3 카드 regress.
-  //   제출한 게이트(tg)로 분석 중인데 ag 가 그보다 '낮은' stale 게이트면 카드 대신 로딩 표시.
-  //   (cur=1 은 stale ag='G2'===tg 라 이 조건에 안 걸려 기존 동작 그대로 — G2 무영향.)
-  var _agStaleLow = !ag || (/^G[2-6]$/.test(ag) && parseInt(ag.slice(1),10) < parseInt(tg.slice(1),10));
+  //   제출한 게이트(tg)로 분석 중인데 ag 가 그와 같거나(stale republish) 더 낮은 stale 게이트면 카드 대신 로딩 표시.
+  // HJ 2026-06-19 — 도메인(프록시) 한정 '선택화면 되돌아옴' 버그 핵심 수정: '<' → '<='.
+  //   증상: 도메인(localhost 아님)에서 2·3·4단계 옵션 제출 후 분석 도중 같은 단계 옵션 카드로 회귀.
+  //   원인: 백엔드가 다음 단계 분석 중 '방금 제출한 게이트(tg)'를 stale 로 잠깐 republish(ag===tg).
+  //     이때 analyzing()=false → analyzeStart=null → _modalGateReady(41%/6s) 미충족 → inModalLoading=false
+  //     → 이 카드 분기로 떨어진다. localhost 는 그 창이 짧아 거의 안 걸리지만, 프록시 지연이 큰 도메인
+  //     에선 2.5초 폴링이 그 창에 걸려 재현. 기존 '<' 는 ag===tg(동일 게이트 stale)를 못 잡아 G(tg) 카드 재노출.
+  //   수정: 제출한 게이트(tg)와 같거나 낮은 stale 게이트면 카드 대신 로딩(다음 게이트 G(tg+1) 도착 시 전진).
+  //   안전성: 가드는 lastSubmittedGate===tg 일 때만 — 즉 '이미 제출한' 게이트에만 적용. 처음 도착(미제출)
+  //     단계는 lastSubmittedGate!==tg 라 카드 정상 표시. 다음 게이트(ag>tg) 도착 시 가드 해제되어 전진.
+  var _agStaleLow = !ag || (/^G[2-6]$/.test(ag) && parseInt(ag.slice(1),10) <= parseInt(tg.slice(1),10));
   if(lastSubmittedGate===tg && _agStaleLow){ return gateHeader(tg)+loadingBlock(); }
   // 실시간: ag===tg면 gateData, 뒤로가기 등 이전 단계: 캐시 사용
   // stale: resume 직후 analyzing() 미확인 구간은 이전 gate_data 무시

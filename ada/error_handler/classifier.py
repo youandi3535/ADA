@@ -95,6 +95,10 @@ CLASSIFIERS: list[_Rule] = [
             r"(ConnectionError|ConnectionResetError|ConnectionAbortedError|ConnectionRefusedError|"
             r"TimeoutError|ReadTimeout|WriteTimeout|"
             r"socket\.timeout|asyncio\.TimeoutError|"
+            # HJ 2026-06-22 — urllib 의 timeout 은 URLError 로 감싸여 "<urlopen error timed out>"
+            #   형태로 올라오는 경우가 있다. TimeoutError 클래스명에 안 걸려 UNKNOWN→LLM_PATCH(느린
+            #   qwen2.5-coder 코드수정)로 오분류되던 것을 막는다 (Ollama CPU 추론 타임아웃 보호).
+            r"urlopen error|timed out|"
             r"TemporaryFailure|TempFailure|"
             r"http.*5\d\d|"  # 5xx HTTP
             r"503 Service Unavailable|502 Bad Gateway|504 Gateway Timeout|"

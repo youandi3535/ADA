@@ -254,7 +254,11 @@ services:
     image: ghcr.io/youandi3535/ada-worker:latest
     container_name: ada-worker-pipeline
     restart: unless-stopped
-    command: celery -A orchestrator.runner worker -Q pipeline -c 2 -n pipeline@%h --loglevel=info
+    # HJ 2026-06-19 — 동시성 2 → 1. 워커 메모리 예산(2500M)은 분석 task 1개 기준으로 설계됐는데
+    #   -c 2 라 데이터셋 2개 동시 로드·프로파일링 시 한도를 넘겨 OOM kill(exit 137) → 워커가 분석
+    #   도중 사망·재시작 → 실행 중이던 job 이 고아가 되어 "running" 고착(팝업 글자 0) 되던 원인.
+    #   1개씩 처리하면 단일 task 가 2.5GB 예산을 온전히 써 OOM 을 막는다(분석은 큐로 직렬화).
+    command: celery -A orchestrator.runner worker -Q pipeline -c 1 -n pipeline@%h --loglevel=info
     env_file: ../.env
     environment:
       CUDA_VISIBLE_DEVICES: ""
