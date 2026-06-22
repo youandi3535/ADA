@@ -42,6 +42,22 @@ def _ollama_num_thread() -> int:
     return max(1, min(configured, cores - 1)) if cores > 1 else max(1, configured)
 
 
+def _mark_analysis_active(ttl: int = 300) -> None:
+    """Ollama 호출 직전 'ada:analysis_active'(ttl 초) 를 set → harness 데몬이 RAM 을 분석에 양보(스캔 스킵).
+
+    HJ 2026-06-22 — 양보 신호를 워커 publish_progress 한 곳에만 두면, API 컨테이너에서 도는 Ollama 호출
+    (G2 분석방향 endpoint·G3 prefetch 등)이 플래그를 못 켜 harness 가 양보하지 않고 경합 → 모델 swap →
+    타임아웃 나던 갭이 생긴다. 모든 Ollama 진입점(_call_llm_ollama*)에서 set 하므로 worker·api 어느
+    컨테이너가 모델을 쓰든 일관 적용된다. ttl 은 호출 간격보다 길게 둬(연속 호출이 갱신) 분석 중 만료를
+    막고, 분석 종료 후엔 ttl 경과 시 자동 해제(harness 자가치유 재개). 실패는 무시(분석 영향 0)."""
+    try:
+        from orchestrator.runner import _get_redis
+
+        _get_redis().set("ada:analysis_active", "1", ex=ttl)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # HJ 2026-06-09 G1 단축 T — module-level stop 토큰 (Ollama 호출 공통).
 # γ streaming 호출에서도 동일 사용.
 _OLLAMA_STOP_TOKENS: list[str] = [
@@ -715,6 +731,7 @@ class BaseAgent(abc.ABC):
         import urllib.error as _ue
         import urllib.request as _ur
 
+        _mark_analysis_active()  # HJ 2026-06-22 — Ollama 사용 신호 → harness RAM 양보(worker·api 공통)
         base_url = settings.ollama_base_url.rstrip("/")
         model = settings.ollama_model_analysis
 
@@ -846,6 +863,7 @@ class BaseAgent(abc.ABC):
         import urllib.error as _ue
         import urllib.request as _ur
 
+        _mark_analysis_active()  # HJ 2026-06-22 — Ollama 사용 신호 → harness RAM 양보(worker·api 공통)
         base_url = settings.ollama_base_url.rstrip("/")
         model = settings.ollama_model_analysis
         payload = _json.dumps(
