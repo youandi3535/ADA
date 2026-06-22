@@ -162,6 +162,18 @@ class ModelSelectionAgent(BaseAgent):
                 top3 = ["XGBoost"]
                 rationale = "최후 fallback"
 
+            # HJ 2026-06-22 — 사용자 지시: tabular_ml 후보 4종(RF/XGBoost/LightGBM/CatBoost)을 항상 전부
+            #   후보·학습한다. 기존엔 큐레이터가 top3-of-4 로 1개를 누락해 "넣어둔 모델(예: XGBoost)이
+            #   조용히 빠지는" 문제가 있었다. LLM 의 top3 는 '추천 순위'로 앞에 두고, 풀의 나머지를 뒤에
+            #   합쳐 전 종을 추천순으로 정렬 → UI 표시·학습 모두 4종 보장. (tabular_dl 등 무거운 카테고리는
+            #   기존 top-N 유지 — 여기 풀에 없으면 미적용.)
+            _FULL_POOL = {"tabular_ml": ["RandomForest", "XGBoost", "LightGBM", "CatBoost"]}
+            _pool = _FULL_POOL.get(state.category)
+            if _pool:
+                _pool_set = set(_pool)
+                _ranked = [m for m in top3 if m in _pool_set]
+                top3 = _ranked + [m for m in _pool if m not in _ranked]
+
             # HJ 2026-06-11 — G4 모달 라이브 피드: top3 모델 + LLM rationale 자연어 인사이트 publish.
             # G2 의 methodology_candidates 와 동일 패턴 — 사용자가 어떤 모델이 왜 선정됐는지 즉시 확인.
             try:
