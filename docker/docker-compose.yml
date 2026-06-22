@@ -72,7 +72,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1500M
+          memory: 1200M
     networks: [ada-net]
 
   redis:
@@ -155,7 +155,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 1500M
     networks: [ada-net]
 
   api:
@@ -208,7 +208,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3500M                   # sentence-transformers 모델 로드 여유
+          memory: 1000M                   # sentence-transformers 모델 로드 여유
     networks: [ada-net]
 
   frontend:
@@ -285,7 +285,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2500M
+          memory: 1500M
     networks: [ada-net]
 
   worker-harness:
@@ -323,7 +323,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 500M
+          memory: 1500M
     networks: [ada-net]
 
   beat:
@@ -431,7 +431,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4000M
+          memory: 3000M
     networks: [ada-net]
 
   worker-output:
