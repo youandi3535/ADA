@@ -59,8 +59,14 @@ def _split_xy(df: Any, target: str | None, state: Any = None) -> tuple[Any, Any]
     if target and target in df.columns:
         X = df.drop(columns=[target])
         y = df[target]
-        return X.select_dtypes(include=[np.number, "bool"]).fillna(0).values, y.values
-    return df.select_dtypes(include=[np.number]).fillna(0).values, np.zeros(len(df))
+        # HJ 2026-06-22 — .values(numpy) 제거 → DataFrame 유지로 컬럼명 보존. 기존엔 여기서 이름이
+        #   소실돼 모델이 nameless 학습(feature_names_in_ 미설정)되고 X_val 도 numpy → SHAP/진단이
+        #   'feature_9' 폴백을 써 사용자가 실제 컬럼명을 못 봤다. DataFrame 으로 두면 학습 시
+        #   feature_names_in_ 설정 + X_val.columns 로 SHAP·인사이트·리포트·프론트 전부 실제/파생
+        #   이름(예: Sex_male, Age) 표시. 하류 슬라이싱은 X[:n]/X[n:] 위치 행슬라이스라 DataFrame 에서도
+        #   동일 동작(컬럼 위치 인덱싱 X[:,j] 없음) → 회귀 없음.
+        return X.select_dtypes(include=[np.number, "bool"]).fillna(0), y.values
+    return df.select_dtypes(include=[np.number]).fillna(0), np.zeros(len(df))
 
 
 def _resolve_timeseries_target(df: Any, date_col: str | None) -> str | None:

@@ -336,7 +336,13 @@ class FeatureEngineerAgent(BaseAgent):
             try:
                 _after_cols = [str(c) for c in df.columns]
                 _before_set = set(_before_cols)
+                _after_set = set(_after_cols)
                 _new_cols = [c for c in _after_cols if c not in _before_set]
+                # HJ 2026-06-22 — 제거 컬럼도 추적. 피처 엔지니어링은 신규 추가 + 일부 제거(인코딩 원본·
+                #   상수·중복)를 동시에 하므로 net 증감(원본→최종)은 '신규 - 제거'다. 제거 개수를 표시하지
+                #   않으면 "원본 12 → 13 (신규 3)" 처럼 산수가 안 맞아 보여(실제론 12-2+3=13) 사용자가
+                #   수치를 의심하게 된다 → 제거 개수/목록을 함께 publish 해 일관성·신뢰성 확보.
+                _removed_cols = [c for c in _before_cols if c not in _after_set]
                 plan_raw = state.preprocessing_plan or []
                 _step_names: list[str] = []
                 for s in plan_raw:
@@ -350,11 +356,15 @@ class FeatureEngineerAgent(BaseAgent):
                         "g3_phase": "feature_engineer_done",
                         "g3_status": (
                             f"피처 엔지니어링 완료 — 원본 {len(_before_cols)}개 → "
-                            f"{len(_after_cols)}개 (신규 {len(_new_cols)}개)"
+                            f"{len(_after_cols)}개 (신규 {len(_new_cols)}개"
+                            + (f", 제거 {len(_removed_cols)}개" if _removed_cols else "")
+                            + ")"
                         ),
                         "fe_before_count": len(_before_cols),
                         "fe_after_count": len(_after_cols),
                         "fe_new_columns": _new_cols[:30],
+                        "fe_removed_columns": _removed_cols[:30],
+                        "fe_removed_count": len(_removed_cols),
                         "fe_applied_steps": _step_names[:20],
                     },
                 )

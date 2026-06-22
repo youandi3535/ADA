@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
 from typing import Any
 
 import agents.handlers.anomaly  # noqa: F401
@@ -37,6 +38,7 @@ def _safe_publish_stage_partial(job_id: str | None, partial: dict) -> None:
         _psp(job_id, partial)
     except Exception:  # noqa: BLE001
         pass
+
 
 CATEGORY_TO_MODULE = {
     "timeseries": "agents.handlers.timeseries.insight",
@@ -167,7 +169,14 @@ class InsightAgent(BaseAgent):
             # HJ 2026-06-11 — G5 모달 라이브 피드: 최종 인사이트 자연어 publish.
             # 한국어 3~5 문장을 문장 단위로 분리해 G2 의 eda_insights 처럼 그룹 표시.
             try:
-                _sentences = [s.strip() for s in text.replace("\n", " ").split(".") if s.strip() and len(s.strip()) > 5]
+                # HJ 2026-06-22 — 마침표 무조건 split 은 소수점(F1 0.83·중요도(1.77))까지 끊어 한 문장이
+                #   여러 줄로 쪼개진다("F1 0" / "83"). 문장 종결 마침표(뒤에 공백/끝 — 소수점은 뒤가 숫자라
+                #   매칭 제외)만 경계로 분리한다.
+                _sentences = [
+                    s.strip()
+                    for s in re.split(r"\.(?=\s|$)", text.replace("\n", " "))
+                    if s.strip() and len(s.strip()) > 5
+                ]
                 _g5_final_insights = [f"인사이트: {s[:200]}" for s in _sentences[:6]]
                 _safe_publish_stage_partial(
                     state.job_id,
@@ -201,7 +210,7 @@ class InsightAgent(BaseAgent):
                 per_feature_story: dict[str, str] = {}
                 for feat in top_feats[:3]:
                     # 인사이트에서 해당 피처를 포함한 문장만 추출 (best-effort).
-                    sents = [s.strip() for s in text.split(".") if feat in s]
+                    sents = [s.strip() for s in re.split(r"\.(?=\s|$)", text) if feat in s]
                     if sents:
                         per_feature_story[str(feat)] = sents[0][:200]
                 if per_feature_story:
