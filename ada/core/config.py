@@ -51,7 +51,9 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="dev-secret", validation_alias="SECRET_KEY")
     jwt_secret: str = Field(default="dev-jwt", validation_alias="JWT_SECRET")
     jwt_algo: str = Field(default="HS256", validation_alias="JWT_ALGO")
-    jwt_expire_min: int = Field(default=60, validation_alias="JWT_EXPIRE_MIN")
+    # 토큰 유효시간 24시간(1440분). 시크릿이 아닌 설정값이므로 여기(코드)가 단일 소스다.
+    #   ※ .env.sops 에는 JWT_EXPIRE_MIN 을 두지 않는다(두면 env 가 이 기본값을 덮어써 divergence 발생).
+    jwt_expire_min: int = Field(default=1440, validation_alias="JWT_EXPIRE_MIN")
 
     # ----- Google OAuth (v1 소셜 로그인) -----
     # 값은 .env 에서 주입 (코드 하드코딩 금지 R-001). 미설정이면 구글 로그인만 비활성.
