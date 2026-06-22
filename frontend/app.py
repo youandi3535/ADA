@@ -1404,7 +1404,13 @@ async function poll(){
   //   전진하던 문제가 있었다. 닫기/열기는 화면 시각 토글일 뿐 — 분석·글작성·전진조건에 영향 없어야 한다.
   //   전진 조건은 '타자기 글 작성 완료 + 3초'(=_modalShouldBeActive()=false) 단일 기준으로 통일(사용자 지시).
   //   (닫아도 위 [A] _active 경로가 모달 DOM 을 살려둬 타자기가 계속 → _typingHoldComplete() 정상 → 교착 없음)
-  if(follow && !_modalShouldBeActive()) cur=Math.max(cur, frontier);
+  // HJ 2026-06-22 — cur=0(1단계)→1(2단계) 전진은 위 전용 블록(_typingHoldComplete 가드 포함)으로만 한다.
+  //   이 일반 follow 전진을 cur=0 에도 적용하면 버그: _modalShouldBeActive() 는 cur=0 에서 '진행률<41%'
+  //   (_modalGateReady()=false)만으로도 false 를 반환(타이핑 hold 무관)한다. 느린 VPS 에서 gate_direction
+  //   이 topic_proposals 를 만들어 curGate()='G2'(frontier=1)가 된 순간 진행바가 아직 41% 에 못 미치면,
+  //   모달(1단계 분석중 + 라이브 인사이트)도 안 뜬 채 곧장 cur=1 로 점프 → "1단계 분석중인데 갑자기
+  //   2단계 분석 화면으로 넘어감". cur>=1 단계는 _modalShouldBeActive() 가 타이핑 hold 를 반영하므로 안전.
+  if(follow && !_modalShouldBeActive() && cur>=1) cur=Math.max(cur, frontier);
   // HJ 2026-06-14 — G6(cur=LAST-1)에서 완료되면 follow 와 무관하게 완료페이지(LAST)로 전진.
   //   산출물 선택 제출 후 follow=false 로 남으면 완료돼도 cur 이 6단계에 멈춰, 본문은 'G6 생성
   //   중' 모달인데 진행바만 7단계로 보이던 불일치 해소. 단 타이핑 hold 중에는 모달 유지(전진 보류).
