@@ -6,6 +6,7 @@ dataset_embeddings / intent_embeddings / lesson_embeddings 3 컬렉션.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Optional
 
 import numpy as np
@@ -20,6 +21,52 @@ from ada.db.models import (
 log = get_logger("rag")
 
 
+# ---------------------------------------------------------------------------
+# 임베더 싱글톤 (HJ 2026-06-22) — 프로세스당 1회 로드·전역 재사용.
+# ---------------------------------------------------------------------------
+# 기존엔 KBRAG 인스턴스마다 _embedder 를 따로 들어, 오류처리·KB검색이 KBRAG 를 매번 새로 만들 때마다
+# 1GB SentenceTransformer 를 재적재했다. 파이썬/torch 가 그 메모리를 OS 로 잘 반환하지 않아 RSS 가
+# 고수위로 래칫(ratchet)·단편화 → 하네스 워커가 컨테이너 한도까지 차오르던 근본 원인.
+# 모듈 전역에 1회만 로드해 모든 KBRAG(및 api/worker 전 프로세스)가 공유하면 작업셋이 평평해진다.
+# api 컨테이너는 멀티스레드라 동시 첫 로드 경합을 Lock 으로 막는다(double-checked locking).
+_EMBEDDER_SINGLETON: Any = None
+_EMBEDDER_FAILED = False
+_EMBEDDER_LOCK = threading.Lock()
+
+
+def _load_shared_embedder() -> Any:
+    """프로세스 전역 SentenceTransformer 싱글톤 — 1회 로드 후 재사용.
+
+    로드 실패 시 ``_EMBEDDER_FAILED`` 로 표시해 재시도 폭주를 막고 호출측의 0 벡터 폴백을 유도한다.
+    """
+    global _EMBEDDER_SINGLETON, _EMBEDDER_FAILED
+    if _EMBEDDER_SINGLETON is not None:
+        return _EMBEDDER_SINGLETON
+    if _EMBEDDER_FAILED:
+        return None
+    with _EMBEDDER_LOCK:
+        # double-check — Lock 대기 중 다른 스레드가 이미 로드/실패 처리했을 수 있음
+        if _EMBEDDER_SINGLETON is not None:
+            return _EMBEDDER_SINGLETON
+        if _EMBEDDER_FAILED:
+            return None
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+
+            _EMBEDDER_SINGLETON = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+        except Exception as e:
+            # 임베더 미설치/로드 실패 → 0 벡터 폴백. silent 가 아니라 명시적으로 경고한다
+            # (KB 벡터검색이 무력화되어 R-501 인용 품질이 보장되지 않는 상태 신호).
+            _EMBEDDER_FAILED = True
+            log.warning(
+                "rag_embedder_unavailable",
+                error=str(e),
+                impact="zero-vector fallback — KB vector search unreliable, citations not guaranteed",
+            )
+            return None
+    return _EMBEDDER_SINGLETON
+
+
 class KBRAG:
     """pgvector 코사인 유사도 검색 + 인용 강제."""
 
@@ -31,21 +78,9 @@ class KBRAG:
 
     # ------------------------------------------------------------------
     def _get_embedder(self) -> Any:
-        if self._embedder is not None:
-            return self._embedder
-        try:
-            from sentence_transformers import SentenceTransformer  # type: ignore
-
-            self._embedder = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
-        except Exception as e:
-            # 임베더 미설치/로드 실패 → 0 벡터 폴백. silent 가 아니라 명시적으로 경고한다
-            # (KB 벡터검색이 무력화되어 R-501 인용 품질이 보장되지 않는 상태 신호).
-            self._embedder = None
-            log.warning(
-                "rag_embedder_unavailable",
-                error=str(e),
-                impact="zero-vector fallback — KB vector search unreliable, citations not guaranteed",
-            )
+        # HJ 2026-06-22 — 인스턴스별 재적재 폐지. 프로세스 전역 싱글톤을 참조만 한다(매 KBRAG 1GB 재로드 방지).
+        if self._embedder is None:
+            self._embedder = _load_shared_embedder()
         return self._embedder
 
     def embed(self, text_in: str) -> list[float]:

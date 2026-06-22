@@ -22,7 +22,11 @@ from ada.core.logger import get_logger
 log = get_logger("error_handler.daemon")
 
 # 1회 폴링당 처리 상한 (백로그 폭주 방지)
-MAX_BATCH = 50
+# HJ 2026-06-22 — 50 → 2. 건당 ~25s(Ollama)·~200MB(임베딩·LLM 버퍼, 자식 재생성 전엔 미해제)라,
+#   배치가 클수록 한 scan 의 anon 피크가 비례해 커진다(관측: 5 → 피크 ~1.7GiB). 2 로 줄여 한 scan 의
+#   누적을 ~400MB 로 제한 → 피크 anon ~1.1~1.2GiB(2000M 한도의 ~60%)로 바운딩. 백로그는 여러 scan 에
+#   걸쳐 점진 소진. (근본은 '오류 재발 자체'를 멈추는 것 — 그게 해결되면 이 배치값은 사실상 무의미.)
+MAX_BATCH = 2
 
 
 async def scan_new_failures_async(session: Any) -> dict[str, Any]:
@@ -62,6 +66,17 @@ async def scan_new_failures_async(session: Any) -> dict[str, Any]:
     # "auto_self_learning_match" 를 발행한다. 두 액션 모두 KB 자동 해결로 집계.
     _KB_MATCH_ACTIONS = {"auto_kb_match", "auto_self_learning_match"}
     for row in rows:
+        # ★ HJ 2026-06-22 — handle() '전에' attempted 로 마킹·즉시 커밋한다.
+        #   기존엔 배치 전체를 처리한 뒤 루프 끝에서 한 번만 커밋했는데, 건당 ~25s(Ollama)라 배치가 길면
+        #   한 scan 이 수~수십 분 → 도중 중단(time_limit/워커 재시작/OOM)되면 커밋 전이라 처리분이 전부
+        #   미마킹 → task_acks_late redeliver 로 같은 row 들이 무한 재처리되는 루프가 발생했다(메모리
+        #   1.7GiB 인질의 근본 원인). handle 전에 durable 마킹하면 handle 이 아무리 느리거나 task 가 죽어도
+        #   이 row 는 다음 폴에서 반드시 제외된다(expire_on_commit=False 라 커밋 후 row 접근 안전 — session.py).
+        row.classified_as = "attempted"
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
         try:
             outcome = await handler.handle(row)
             action = outcome.get("action", "")
@@ -69,20 +84,12 @@ async def scan_new_failures_async(session: Any) -> dict[str, Any]:
                 result["auto_kb_matched"] += 1
             elif action.startswith("patch"):
                 result["patches_queued"] += 1
+            # handle() 의 DB 기록(패치 큐·KB 갱신·실제 분류값 덮어쓰기) 영속화
+            await session.commit()
         except Exception as e:
+            await session.rollback()
             result["errors"].append({"failure_log_id": str(row.id), "error": str(e)})
             log.warning("daemon_handle_failed", id=str(row.id), error=str(e))
-        finally:
-            # ★ 안전망(HJ 2026-06-19): handle 이 분류값을 못 세웠어도(예외 등) 시도한 row 는 마킹.
-            #   → 다음 폴에서 제외되어 무한 재처리가 절대 안 생기게 한다.
-            if not row.classified_as:
-                row.classified_as = "attempted"
-
-    if rows:
-        try:
-            await session.commit()
-        except Exception:
-            await session.rollback()
 
     log.info("scanned_new_failures", **{k: v for k, v in result.items() if k != "errors"})
     return result
