@@ -9,6 +9,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import json
+import os
 import re
 import time
 import traceback
@@ -23,6 +24,23 @@ from ada.core.config import settings
 from ada.core.logger import bind_context, get_logger, log_agent_run
 from ada.core.state import REPORT_CONTEXT_STAGES, PipelineState
 from agents.personas import get_persona
+
+
+def _ollama_num_thread() -> int:
+    """Ollama num_thread 를 실제 가용 코어 수로 상한 건 값.
+
+    HJ 2026-06-22 — 설정값(settings.ollama_num_thread, 기본 14)을 그대로 쓰면 저코어 VPS
+    (예: 2~4 vCPU)에서 코어보다 많은 스레드가 떠 oversubscription(컨텍스트 스위칭·캐시 thrash)
+    으로 추론이 오히려 느려진다. 가용 코어 수보다 크면 (1 코어는 OS/다른 컨테이너 여유로 남겨)
+    상한을 건다. dev 16T 머신에선 min(14, 16-1)=14 로 불변(회귀 없음).
+    """
+    configured = getattr(settings, "ollama_num_thread", 8)
+    try:
+        cores = os.cpu_count() or configured
+    except Exception:  # noqa: BLE001
+        cores = configured
+    return max(1, min(configured, cores - 1)) if cores > 1 else max(1, configured)
+
 
 # HJ 2026-06-09 G1 단축 T — module-level stop 토큰 (Ollama 호출 공통).
 # γ streaming 호출에서도 동일 사용.
@@ -716,7 +734,7 @@ class BaseAgent(abc.ABC):
                 "temperature": temperature,
                 "top_p": 0.9,
                 "num_gpu": getattr(settings, "ollama_num_gpu", 0),
-                "num_thread": getattr(settings, "ollama_num_thread", 8),
+                "num_thread": _ollama_num_thread(),
                 "stop": _OLLAMA_STOP_TOKENS,
             },
         }
@@ -739,7 +757,7 @@ class BaseAgent(abc.ABC):
                 method="POST",
             )
             try:
-                with _ur.urlopen(req, timeout=220) as resp:
+                with _ur.urlopen(req, timeout=settings.ollama_timeout_sec) as resp:
                     data = _json.loads(resp.read())
                 # HJ 2026-06-12 — Ollama 네이티브 타이밍 메트릭 로깅 (병목 진단).
                 #   load=콜드스타트(모델 로딩), prompt_eval=입력 처리, eval=토큰 생성.
@@ -846,7 +864,7 @@ class BaseAgent(abc.ABC):
                     "temperature": temperature,
                     "top_p": 0.9,
                     "num_gpu": getattr(settings, "ollama_num_gpu", 0),
-                    "num_thread": getattr(settings, "ollama_num_thread", 8),
+                    "num_thread": _ollama_num_thread(),
                     "stop": _OLLAMA_STOP_TOKENS,
                 },
             },
@@ -864,7 +882,7 @@ class BaseAgent(abc.ABC):
                 method="POST",
             )
             try:
-                with _ur.urlopen(req, timeout=220) as resp:
+                with _ur.urlopen(req, timeout=settings.ollama_timeout_sec) as resp:
                     for raw_line in resp:
                         if not raw_line:
                             continue
@@ -1092,8 +1110,11 @@ class BaseAgent(abc.ABC):
                 # HJ 2026-06-15 — ollama(qwen 7B·CPU, ~5 tok/s) 실측: EDA 8항목 윤색 total ~161s
                 #   (prompt_eval 20~60s 고정비 + eval). 기존 상한 165s/공식 n*20 이 1~2초 차이로
                 #   wait_for 타임아웃 → dynamic_insights_llm_failed(error="") → 전 항목 템플릿 폴백.
-                #   prompt_eval 고정비 흡수 위해 base 120s, 항목 비례 n*22, urlopen(220s) 안쪽 상한 210s.
-                timeout_s = min(210.0, max(120.0, len(prompt_items) * 22.0))
+                #   prompt_eval 고정비 흡수 위해 base 120s, 항목 비례 n*22.
+                # HJ 2026-06-22 — 상한을 urlopen 타임아웃(settings.ollama_timeout_sec) 안쪽으로 동적 연동.
+                #   기존 하드코딩 210s 가 저성능 VPS 에서 윤색을 조기 절단(부분 템플릿 폴백)하던 것을 완화.
+                _cap = max(120.0, float(settings.ollama_timeout_sec) - 10.0)
+                timeout_s = min(_cap, max(120.0, len(prompt_items) * 22.0))
 
         # HJ 2026-06-15 — 부분 성공 보존(전 단계 공통, 모두 ollama 윤색):
         #   ollama 를 streaming 으로 받아 on_partial 로 누적분을 보관 → 타임아웃/중단 시 그 시점까지
