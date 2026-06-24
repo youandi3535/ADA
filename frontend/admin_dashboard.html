@@ -175,6 +175,15 @@ a{color:inherit;}
 .fstage .fs-t{font-size:.62rem;color:var(--mut2);margin-top:2px;}
 .farrow{display:flex;align-items:center;color:var(--mut2);font-weight:800;flex:0 0 auto;}
 @media(max-width:1100px){.svc-row{grid-template-columns:repeat(2,1fr);}.cat-grid,.tr-grid{grid-template-columns:1fr;}.grandtotal{flex-direction:column;align-items:flex-start;}.ll-ti{max-width:130px;}.ll-w{display:none;}.cost-cards{grid-template-columns:repeat(2,1fr);}}
+/* 세션(토큰) 만료 → 재로그인 안내 오버레이 (HJ 영역 위임 작업, NY 2026-06-22) */
+.relogin-ov{position:fixed;inset:0;background:rgba(5,9,18,.82);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;}
+.relogin-card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line2);border-radius:18px;padding:34px 38px;max-width:420px;width:100%;text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.5);}
+.relogin-card .ic{font-size:2.6rem;line-height:1;}
+.relogin-card .ti{font-size:1.3rem;font-weight:800;margin-top:12px;letter-spacing:-.01em;}
+.relogin-card .de{font-size:.86rem;color:var(--mut);line-height:1.55;margin-top:12px;}
+.relogin-btn{margin-top:22px;background:linear-gradient(90deg,var(--blue),var(--blue2));color:#fff;border:none;padding:12px 26px;border-radius:999px;font-weight:800;font-size:.92rem;cursor:pointer;width:100%;}
+.relogin-btn:hover{filter:brightness(1.08);}
+.relogin-card .cd{font-size:.74rem;color:var(--mut2);margin-top:14px;}
 </style></head><body>
 
 <div class="head">
@@ -198,6 +207,7 @@ var TOKEN="__TOKEN__";
 // flow HTML 과 동일하게 부모(Streamlit 페이지) location 으로 호스트를 잡는다(same-origin 허용).
 var API=(function(){var p='http:',h='localhost';try{p=window.parent.location.protocol;h=window.parent.location.hostname;}catch(e){}if(p!=='http:'&&p!=='https:')p='http:';if(!h)h='localhost';if(h==='localhost'||h==='127.0.0.1')return p+'//'+h+':8000';return p+'//'+h+'/api';})();
 var REFRESH_MS=15000, timer=null, countdown=REFRESH_MS/1000;
+var _expired=false;  // 세션(토큰) 만료 감지 시 폴링 중단 + 재로그인 유도 (중복 실행 방지, NY 2026-06-22)
 
 function esc(x){return (''+x).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function fb(n){if(n===null||n===undefined)return '—';if(n<1024)return Math.round(n)+' B';var u=['KB','MB','GB','TB'],i=-1,v=n;do{v/=1024;i++;}while(v>=1024&&i<u.length-1);return v.toFixed(1)+' '+u[i];}
@@ -249,7 +259,7 @@ function tdesc(n){return TBL_DESC[n]||'';}
 function clock(){var d=new Date();document.getElementById('clock').textContent=d.toLocaleString('ko-KR',{hour12:false});}
 setInterval(clock,1000);clock();
 
-function tick(){countdown--;if(countdown<=0){load();return;}document.getElementById('refstat').textContent='다음 갱신 '+countdown+'초';}
+function tick(){if(_expired)return;countdown--;if(countdown<=0){load();return;}document.getElementById('refstat').textContent='다음 갱신 '+countdown+'초';}
 function schedule(){countdown=REFRESH_MS/1000;}
 
 // ── 실시간 활동 로그: 자동 추적(디폴트=최신줄) + 사용자 스크롤 시 1분 유지 ──
@@ -295,13 +305,53 @@ function fitHeight(){
 }
 window.addEventListener('resize',fitHeight);
 
+// ── 세션 만료(401) 처리 — 만료 토큰으로 무한 재시도 대신 재로그인으로 유도 (NY 2026-06-22) ──
+function relogin(){
+  // 부모(Streamlit)를 로그아웃 경로로 보낸다. app.py 의 ?logout=1 처리가
+  // session_state + localStorage 의 만료 토큰까지 비워 랜딩(로그인 화면)으로 떨군다 →
+  // 만료 토큰이 재주입되는 루프 없이 깨끗하게 재로그인된다.
+  try{
+    var loc=window.parent.location;
+    loc.href=loc.origin+loc.pathname+'?logout=1';
+  }catch(e){
+    try{window.parent.location.href='/?logout=1';}
+    catch(_e){location.href='/?logout=1';}
+  }
+}
+function sessionExpired(){
+  if(_expired)return; _expired=true;            // 1회만 — 이후 폴링/재시도 전면 중단
+  document.getElementById('refstat').textContent='세션 만료';
+  var sec=5;
+  var ov=document.createElement('div');ov.className='relogin-ov';
+  ov.innerHTML='<div class="relogin-card"><div class="ic">🔒</div>'
+    +'<div class="ti">세션이 만료되었습니다</div>'
+    +'<div class="de">보안을 위해 로그인은 24시간 동안만 유지됩니다.<br>다시 로그인하면 운영 콘솔로 돌아옵니다.</div>'
+    +'<button type="button" class="relogin-btn" id="reloginBtn">지금 다시 로그인</button>'
+    +'<div class="cd" id="reloginCd">5초 후 자동으로 로그인 화면으로 이동합니다…</div></div>';
+  document.body.appendChild(ov);
+  document.getElementById('reloginBtn').onclick=relogin;
+  var iv=setInterval(function(){
+    sec--;
+    if(sec<=0){clearInterval(iv);relogin();return;}
+    var cd=document.getElementById('reloginCd');
+    if(cd)cd.textContent=sec+'초 후 자동으로 로그인 화면으로 이동합니다…';
+  },1000);
+}
+
 function load(){
+  if(_expired)return;                            // 만료 감지 후엔 더 호출하지 않음
   document.getElementById('refstat').textContent='갱신 중…';
   fetch(API+'/admin/storage/overview',{headers:{'Authorization':'Bearer '+TOKEN}})
-   .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-   .then(function(d){render(d);schedule();
+   .then(function(r){
+     if(r.status===401){sessionExpired();return null;}   // 토큰 만료/누락 → 재로그인 유도
+     if(!r.ok)throw new Error('HTTP '+r.status);          // 그 외(403/500/503 등)는 기존 재시도 유지
+     return r.json();})
+   .then(function(d){
+     if(!d)return;                                        // 세션 만료로 중단된 경우 렌더 skip
+     render(d);schedule();
      document.getElementById('refstat').textContent='갱신됨 '+new Date().toLocaleTimeString('ko-KR',{hour12:false});})
    .catch(function(e){
+     if(_expired)return;
      document.getElementById('refstat').textContent='갱신 실패';
      document.getElementById('root').innerHTML='<div class="err">⚠️ 불러오기 실패: '+esc(e.message||e)+
        '<br><span style="font-size:.8rem">관리자 권한 또는 백엔드(API) 연결을 확인하세요. 다음 자동 갱신에서 재시도합니다.</span></div>';
