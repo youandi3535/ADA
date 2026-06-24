@@ -49,29 +49,16 @@
 
 ## 🖥️ 데모 & 스크린샷
 
-> 📸 로컬 서버(<code>localhost:8501</code>)에서 실제 캡처한 화면입니다.
-> <sub>아래는 자리표시(placeholder) 이미지입니다 — <code>docs/screenshots/</code> 의 같은 파일명에 실제 캡처 PNG를 덮어쓰면 README 수정 없이 그대로 반영됩니다.</sub>
+> 🌐 라이브 서비스 <a href="https://ada-aiagent.com"><b>ada-aiagent.com</b></a> 에서 캡처한 실제 화면입니다.
 
 <p align="center">
-  <img src="docs/screenshots/01-landing.png" alt="랜딩 · 스튜디오 시작" width="46%"/>
+  <img src="docs/screenshots/00-dashboard.png" alt="랜딩 · 스튜디오" width="46%"/>
   &nbsp;
-  <img src="docs/screenshots/02-agents.png" alt="에이전트 소개 · 엔진" width="46%"/>
+  <img src="docs/screenshots/02-agents.png" alt="에이전트 동작 흐름" width="46%"/>
 </p>
-<p align="center"><sub><b>랜딩 · 스튜디오 시작</b> — 원본 데이터 → “전문가 인사이트”　|　<b>에이전트 소개 · 엔진</b> — 28 에이전트 협력 현황판 (<code>?board=1</code>)</sub></p>
+<p align="center"><sub><b>랜딩 · 스튜디오</b> — 원본 데이터 → “전문가 인사이트”　|　<b>✦ 에이전트 소개</b> — 28 에이전트 동작 흐름 (<code>?board=1</code>)</sub></p>
 
-<p align="center">
-  <img src="docs/screenshots/03-console-activity.png" alt="운영 콘솔 · 실시간 활동 로그" width="46%"/>
-  &nbsp;
-  <img src="docs/screenshots/04-learning-trend.png" alt="학습 효과 추이" width="46%"/>
-</p>
-<p align="center"><sub><b>운영 콘솔 · 실시간 활동 로그</b> (<code>?admin=1</code>)　|　<b>학습 효과 추이</b> — 자가치유·자기학습 재사용 누적 추이</sub></p>
-
-<p align="center">
-  <img src="docs/screenshots/05-api-cost.png" alt="API 운영 비용" width="46%"/>
-  &nbsp;
-  <img src="docs/screenshots/06-pipeline.png" alt="분석 단계 진행" width="46%"/>
-</p>
-<p align="center"><sub><b>API 운영 비용</b> — LLM 호출 비용 집계·가시화　|　<b>분석 단계</b> — G1 의도 → … → G6 산출물, WebSocket 실시간 진행률</sub></p>
+> 🔒 <b>운영 콘솔</b>(실시간 활동 로그 · 학습 효과 추이 · API 운영 비용)과 <b>분석 진행</b> 화면은 로그인 후 제공됩니다 — <a href="https://ada-aiagent.com">ada-aiagent.com</a> 에서 직접 체험해 보세요.
 
 ---
 
