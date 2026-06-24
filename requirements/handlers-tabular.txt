@@ -14,7 +14,7 @@ lightgbm==4.3.0
 catboost==1.2.5
 
 # 클래스 불균형 (Day 2 jh — SMOTE)
-imbalanced-learn==0.12.2
+imbalanced-learn==0.12.4   # 0.12.2 는 scikit-learn==1.5.0(worker.txt)에서 import 자체가 깨짐(_get_column_indices 이동). 0.12.4 가 sklearn 1.5 호환 — 사용자 승인.
 
 # 정형 DL (Day 6 jh 본구현 시 활성화)
 # pytorch-tabular==1.1.0     # TabTransformer / FT-Transformer / NODE / TabNet 통합
