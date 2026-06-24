@@ -51,14 +51,33 @@
 
 > 🌐 라이브 서비스 <a href="https://ada-aiagent.com"><b>ada-aiagent.com</b></a> 에서 캡처한 실제 화면입니다.
 
-<p align="center">
-  <img src="docs/screenshots/00-dashboard.png" alt="랜딩 · 스튜디오" width="46%"/>
-  &nbsp;
-  <img src="docs/screenshots/02-agents.png" alt="에이전트 동작 흐름" width="46%"/>
-</p>
-<p align="center"><sub><b>랜딩 · 스튜디오</b> — 원본 데이터 → “전문가 인사이트”　|　<b>✦ 에이전트 소개</b> — 28 에이전트 동작 흐름 (<code>?board=1</code>)</sub></p>
+**✦ 에이전트 소개 — 28 에이전트 실시간 오케스트레이션**
 
-> 🔒 <b>운영 콘솔</b>(실시간 활동 로그 · 학습 효과 추이 · API 운영 비용)과 <b>분석 진행</b> 화면은 로그인 후 제공됩니다 — <a href="https://ada-aiagent.com">ada-aiagent.com</a> 에서 직접 체험해 보세요.
+<p align="center">
+  <img src="docs/screenshots/01-agents-a.png" alt="하이퍼튜닝 진행" width="32%"/>
+  <img src="docs/screenshots/01-agents-b.png" alt="피처 엔지니어링 진행" width="32%"/>
+  <img src="docs/screenshots/01-agents-c.png" alt="성능 미달 → 재학습" width="32%"/>
+</p>
+<p align="center"><sub>진행 단계에 따라 <b>활성 에이전트</b>와 <b>자기학습 재학습 루프</b>가 실시간으로 바뀝니다 — 하이퍼튜닝 · 피처 엔지니어링 · 성능 미달→재학습 (<code>?board=1</code>)</sub></p>
+
+**📊 분석 스튜디오 — 6 HITL 게이트 파이프라인**
+
+<p align="center">
+  <img src="docs/screenshots/02-studio.png" alt="분석 스튜디오 게이트 진행" width="82%"/>
+</p>
+<p align="center"><sub>업로드(G1) → 분석 방향(G2) → 방법론(G3) → 모델 전략(G4) → 모델 선택(G5) → 산출물(G6) → 완료(G7) · WebSocket 실시간 진행률</sub></p>
+
+**🛠️ 운영 콘솔 (관리자) — 실데이터**
+
+<p align="center">
+  <img src="docs/screenshots/03-console-storage.png" alt="스토리지 · 누적 데이터" width="46%"/>
+  &nbsp;
+  <img src="docs/screenshots/04-console-learning.png" alt="시간에 따른 학습 효과" width="46%"/>
+</p>
+<p align="center">
+  <img src="docs/screenshots/05-console-cost.png" alt="API 운영 비용" width="46%"/>
+</p>
+<p align="center"><sub><b>스토리지 연결 · 누적 데이터</b>(신호등 · 30테이블)　|　<b>시간에 따른 학습 효과</b>(자립도 추이)　|　<b>API 운영 비용</b>(단계별 집계) · <code>?admin=1</code></sub></p>
 
 ---
 
