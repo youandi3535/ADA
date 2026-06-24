@@ -7,9 +7,9 @@
 > **버전**: v2.6.0 · Python 3.10 (`>=3.10,<3.11`)
 
 <p align="center">
-  <a href="http://localhost:8501"><img src="https://img.shields.io/badge/🚀%20웹%20대시보드%20열기-LOCALHOST%3A8501-3FB950?style=for-the-badge" alt="웹 대시보드 열기"/></a>
+  <a href="https://ada-aiagent.com"><img src="https://img.shields.io/badge/🚀%20웹%20대시보드%20열기-ada--aiagent.com-3FB950?style=for-the-badge" alt="웹 대시보드 열기"/></a>
 </p>
-<p align="center"><sub>⚠️ 본인 컴퓨터에서 서버를 먼저 실행한 뒤 클릭 → 각자의 로컬 대시보드가 열립니다 · <a href="#개발-환경-설정">실행 방법 보기</a><br>
+<p align="center"><sub>🌐 라이브 서비스 <a href="https://ada-aiagent.com"><b>ada-aiagent.com</b></a> · 로컬에서 직접 띄우려면 → <a href="#개발-환경-설정">실행 방법 보기</a><br>
 프로젝트 폴더에서 <code>cd docker &amp;&amp; docker compose --profile core up -d</code> 실행 후 <code>localhost:8501</code> 접속</sub></p>
 
 <p align="center">
@@ -52,44 +52,26 @@
 > 📸 로컬 서버(<code>localhost:8501</code>)에서 실제 캡처한 화면입니다.
 > <sub>아래는 자리표시(placeholder) 이미지입니다 — <code>docs/screenshots/</code> 의 같은 파일명에 실제 캡처 PNG를 덮어쓰면 README 수정 없이 그대로 반영됩니다.</sub>
 
-<table>
-  <tr>
-    <th width="50%">랜딩 · 스튜디오 시작</th>
-    <th width="50%">에이전트 소개 · 엔진</th>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/01-landing.png" alt="랜딩 · 스튜디오 시작"/></td>
-    <td align="center"><img src="docs/screenshots/02-agents.png" alt="에이전트 소개 · 엔진"/></td>
-  </tr>
-  <tr>
-    <td align="center">원본 데이터 → “전문가 인사이트” · 분석 시작</td>
-    <td align="center">28 에이전트 협력 현황판 (<code>?board=1</code>)</td>
-  </tr>
-  <tr>
-    <th>운영 콘솔 · 실시간 활동 로그</th>
-    <th>학습 효과 추이 (자가학습 KB)</th>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/03-console-activity.png" alt="운영 콘솔 · 실시간 활동 로그"/></td>
-    <td align="center"><img src="docs/screenshots/04-learning-trend.png" alt="학습 효과 추이"/></td>
-  </tr>
-  <tr>
-    <td align="center">학습·백업·KB 검색 등 운영 활동을 실시간 노출 (<code>?admin=1</code>)</td>
-    <td align="center">자가치유·자기학습 재사용이 시간에 따라 쌓이는 추이</td>
-  </tr>
-  <tr>
-    <th>API 운영 비용</th>
-    <th>분석 단계 (5 HITL 게이트 진행)</th>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/05-api-cost.png" alt="API 운영 비용"/></td>
-    <td align="center"><img src="docs/screenshots/06-pipeline.png" alt="분석 단계 진행"/></td>
-  </tr>
-  <tr>
-    <td align="center">LLM 호출 비용을 운영 콘솔에서 집계·가시화</td>
-    <td align="center">G1 의도 → G2 전략 → … → G6 산출물, WebSocket 실시간 진행률</td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/screenshots/01-landing.png" alt="랜딩 · 스튜디오 시작" width="46%"/>
+  &nbsp;
+  <img src="docs/screenshots/02-agents.png" alt="에이전트 소개 · 엔진" width="46%"/>
+</p>
+<p align="center"><sub><b>랜딩 · 스튜디오 시작</b> — 원본 데이터 → “전문가 인사이트”　|　<b>에이전트 소개 · 엔진</b> — 28 에이전트 협력 현황판 (<code>?board=1</code>)</sub></p>
+
+<p align="center">
+  <img src="docs/screenshots/03-console-activity.png" alt="운영 콘솔 · 실시간 활동 로그" width="46%"/>
+  &nbsp;
+  <img src="docs/screenshots/04-learning-trend.png" alt="학습 효과 추이" width="46%"/>
+</p>
+<p align="center"><sub><b>운영 콘솔 · 실시간 활동 로그</b> (<code>?admin=1</code>)　|　<b>학습 효과 추이</b> — 자가치유·자기학습 재사용 누적 추이</sub></p>
+
+<p align="center">
+  <img src="docs/screenshots/05-api-cost.png" alt="API 운영 비용" width="46%"/>
+  &nbsp;
+  <img src="docs/screenshots/06-pipeline.png" alt="분석 단계 진행" width="46%"/>
+</p>
+<p align="center"><sub><b>API 운영 비용</b> — LLM 호출 비용 집계·가시화　|　<b>분석 단계</b> — G1 의도 → … → G6 산출물, WebSocket 실시간 진행률</sub></p>
 
 ---
 
@@ -221,7 +203,7 @@ CPU 친화적이고 GTX 1060 3GB VRAM 환경에서도 안정 동작하는 정형
 ## 아키텍처
 
 <p align="center">
-  <img src="docs/architecture.svg" alt="ADA 시스템 아키텍처" width="900"/>
+  <img src="docs/architecture.png" alt="ADA 시스템 아키텍처" width="720"/>
 </p>
 
 ### 컨테이너 토폴로지
